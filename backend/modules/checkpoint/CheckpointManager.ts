@@ -5,6 +5,12 @@
  * - 在工具执行前后创建工作区快照
  * - 存储检查点记录到对话元数据
  * - 支持恢复到指定检查点
+ *
+ * 增量备份策略：
+ * - 第一个检查点：完整备份所有文件
+ * - 后续检查点：始终使用增量备份，只复制有变化的文件（added/modified）
+ * - 无变化时：创建空的增量备份，不复制任何文件
+ * - 每个检查点都记录完整的文件哈希映射（fileHashes），用于增量比较和恢复
  */
 
 import { t } from '../../i18n';
@@ -221,35 +227,35 @@ export class CheckpointManager {
                 const totalChanges = added.length + modified.length + deleted.length;
                 const totalFiles = Object.keys(currentHashes).length;
                 
-                if (totalChanges < totalFiles * 0.5 && totalChanges > 0) {
-                    isIncremental = true;
-                    baseCheckpointId = lastCheckpoint.id;
+                // 始终使用增量备份（只要有上一个检查点）
+                // 增量备份的主要目的是节省磁盘空间，恢复时性能差异可忽略
+                isIncremental = true;
+                baseCheckpointId = lastCheckpoint.id;
+                
+                // 构建变更列表
+                changes = [
+                    ...added.map(p => ({ path: p, type: 'added' as const, hash: currentHashes[p] })),
+                    ...modified.map(p => ({ path: p, type: 'modified' as const, hash: currentHashes[p] })),
+                    ...deleted.map(p => ({ path: p, type: 'deleted' as const }))
+                ];
+                
+                // 只复制变更的文件（如果没有变更，则不复制任何文件）
+                for (const change of changes) {
+                    if (change.type === 'deleted') continue;
                     
-                    // 构建变更列表
-                    changes = [
-                        ...added.map(p => ({ path: p, type: 'added' as const, hash: currentHashes[p] })),
-                        ...modified.map(p => ({ path: p, type: 'modified' as const, hash: currentHashes[p] })),
-                        ...deleted.map(p => ({ path: p, type: 'deleted' as const }))
-                    ];
+                    const srcPath = path.join(workspaceRoot.fsPath, change.path);
+                    const destPath = path.join(backupDir, change.path);
                     
-                    // 只复制变更的文件
-                    for (const change of changes) {
-                        if (change.type === 'deleted') continue;
-                        
-                        const srcPath = path.join(workspaceRoot.fsPath, change.path);
-                        const destPath = path.join(backupDir, change.path);
-                        
-                        try {
-                            await fs.mkdir(path.dirname(destPath), { recursive: true });
-                            await fs.copyFile(srcPath, destPath);
-                            fileCount++;
-                        } catch (err) {
-                            console.warn(`[CheckpointManager] Failed to copy ${change.path}:`, err);
-                        }
+                    try {
+                        await fs.mkdir(path.dirname(destPath), { recursive: true });
+                        await fs.copyFile(srcPath, destPath);
+                        fileCount++;
+                    } catch (err) {
+                        console.warn(`[CheckpointManager] Failed to copy ${change.path}:`, err);
                     }
-                    
-                    console.log(`[CheckpointManager] Incremental backup: ${added.length} added, ${modified.length} modified, ${deleted.length} deleted`);
                 }
+                
+                console.log(`[CheckpointManager] Incremental backup: ${added.length} added, ${modified.length} modified, ${deleted.length} deleted`);
             }
             
             // 如果不是增量备份，进行完整备份
