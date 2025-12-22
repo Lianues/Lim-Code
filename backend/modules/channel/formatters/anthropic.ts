@@ -59,6 +59,29 @@ import type {
  */
 export class AnthropicFormatter extends BaseFormatter {
     /**
+     * 流式 tool_use 状态管理
+     *
+     * Anthropic 的流式响应中，tool_use 的 input 是分块传输的：
+     * 1. content_block_start: 包含 id、name，input 为空 {}
+     * 2. content_block_delta (input_json_delta): 包含 partial_json 片段
+     * 3. content_block_stop: 表示该块结束
+     *
+     * 需要累积 partial_json 并在 content_block_stop 时解析完整的 input
+     */
+    private toolUseBlocks: Map<number, {
+        id: string;
+        name: string;
+        inputParts: string[];
+    }> = new Map();
+
+    /**
+     * 重置流式状态（每次新的流式请求前调用）
+     */
+    resetStreamState(): void {
+        this.toolUseBlocks.clear();
+    }
+
+    /**
      * 构建 Anthropic API 请求
      */
     buildRequest(
@@ -68,22 +91,22 @@ export class AnthropicFormatter extends BaseFormatter {
     ): HttpRequestOptions {
         const { history } = request;
         const toolMode = (config as any).toolMode || 'function_call';
-        
+
         // 处理系统指令
         let systemInstruction = (config as any).systemInstruction || '';
-        
+
         // 追加动态系统提示词（环境信息、文件树等）
         if (request.dynamicSystemPrompt) {
             systemInstruction = systemInstruction
                 ? `${systemInstruction}\n\n${request.dynamicSystemPrompt}`
                 : request.dynamicSystemPrompt;
         }
-        
+
         // 处理工具描述 - 替换占位符或追加到系统提示词
         // 准备工具定义内容
         let toolsContent = '';
         let mcpToolsContent = '';
-        
+
         if (tools && tools.length > 0) {
             if (toolMode === 'xml') {
                 // XML 模式：工具转换为 XML
@@ -93,12 +116,12 @@ export class AnthropicFormatter extends BaseFormatter {
                 toolsContent = convertToolsToJSON(tools);
             }
         }
-        
+
         // MCP 工具由外部传入
         if (request.mcpToolsContent) {
             mcpToolsContent = request.mcpToolsContent;
         }
-        
+
         // 替换占位符（如果存在）
         if (systemInstruction.includes('{{$TOOLS}}') || systemInstruction.includes('{{$MCP_TOOLS}}')) {
             // 替换 TOOLS 占位符
@@ -111,50 +134,50 @@ export class AnthropicFormatter extends BaseFormatter {
                 ? `${systemInstruction}\n\n${toolsContent}`
                 : toolsContent;
         }
-        
+
         // 转换思考签名格式
         const processedHistory = this.convertThoughtSignatures(history);
-        
+
         // 转换历史消息为 Anthropic 格式
         const messages = this.convertToAnthropicMessages(processedHistory, toolMode);
-        
+
         // 构建请求体
         const body: any = {
             model: config.model,
             messages: messages
         };
-        
+
         // 添加系统指令（Anthropic 使用独立的 system 字段）
         if (systemInstruction) {
             body.system = systemInstruction;
         }
-        
+
         // 添加工具（Function Call 模式）
         if (tools && tools.length > 0 && toolMode === 'function_call') {
             body.tools = this.convertTools(tools);
         }
-        
+
         // 添加生成配置
         const genConfig = this.buildGenerationConfig(config);
         Object.assign(body, genConfig);
-        
+
         // 决定是否使用流式（始终发送 stream 字段）
         const useStream = (config.options as any)?.stream ?? (config as any).preferStream ?? false;
         body.stream = useStream;
-        
+
         // 构建 URL
         const baseUrl = config.url.endsWith('/')
             ? config.url.slice(0, -1)
             : config.url;
-        
+
         const url = `${baseUrl}/messages`;
-        
+
         // 构建请求头
         const headers: Record<string, string> = {
             'Content-Type': 'application/json',
             'anthropic-version': '2023-06-01'
         };
-        
+
         // 只有当 apiKey 存在时才添加认证头
         if (config.apiKey) {
             if ((config as any).useAuthorizationHeader) {
@@ -165,7 +188,7 @@ export class AnthropicFormatter extends BaseFormatter {
                 headers['x-api-key'] = config.apiKey;
             }
         }
-        
+
         // 应用自定义标头（如果启用）
         if ((config as any).customHeadersEnabled && (config as any).customHeaders) {
             for (const header of (config as any).customHeaders) {
@@ -175,10 +198,10 @@ export class AnthropicFormatter extends BaseFormatter {
                 }
             }
         }
-        
+
         // 应用自定义 body（如果启用）
         const finalBody = applyCustomBody(body, (config as any).customBody, (config as any).customBodyEnabled);
-        
+
         // 构建请求选项
         return {
             url,
@@ -189,7 +212,7 @@ export class AnthropicFormatter extends BaseFormatter {
             stream: useStream
         };
     }
-    
+
     /**
      * 转换为 Anthropic 消息格式
      *
@@ -202,7 +225,7 @@ export class AnthropicFormatter extends BaseFormatter {
         toolMode: string = 'function_call'
     ): any[] {
         const messages: any[] = [];
-        
+
         // 根据模式使用不同的转换策略
         if (toolMode === 'function_call') {
             this.convertHistoryFunctionCallMode(history, messages);
@@ -210,10 +233,10 @@ export class AnthropicFormatter extends BaseFormatter {
             // XML 或 JSON 模式
             this.convertHistoryTextMode(history, messages, toolMode as 'xml' | 'json');
         }
-        
+
         return messages;
     }
-    
+
     /**
      * Function Call 模式转换
      *
@@ -225,7 +248,7 @@ export class AnthropicFormatter extends BaseFormatter {
     private convertHistoryFunctionCallMode(history: Content[], messages: any[]): void {
         for (const content of history) {
             const role = content.role === 'model' ? 'assistant' : content.role;
-            
+
             // 分离各种类型的 parts
             const textParts = content.parts.filter(p => 'text' in p && !p.thought);
             const thoughtParts = content.parts.filter(p => 'text' in p && p.thought);
@@ -234,14 +257,14 @@ export class AnthropicFormatter extends BaseFormatter {
             const functionCallParts = content.parts.filter(p => p.functionCall);
             const functionResponseParts = content.parts.filter(p => p.functionResponse);
             const mediaParts = content.parts.filter(p => p.inlineData || p.fileData);
-            
+
             if (functionCallParts.length > 0) {
                 // assistant 消息包含 tool_use
                 const contentArray: any[] = [];
-                
+
                 // 添加思考内容（如果有）- 包括普通思考和加密思考
                 this.addThinkingBlocks(contentArray, thoughtParts, redactedThinkingParts, signatureParts);
-                
+
                 // 添加文本内容
                 for (const part of textParts) {
                     if (part.text) {
@@ -251,7 +274,7 @@ export class AnthropicFormatter extends BaseFormatter {
                         });
                     }
                 }
-                
+
                 // 添加 tool_use
                 for (const part of functionCallParts) {
                     const fc = part.functionCall!;
@@ -262,7 +285,7 @@ export class AnthropicFormatter extends BaseFormatter {
                         input: fc.args
                     });
                 }
-                
+
                 messages.push({
                     role: 'assistant',
                     content: contentArray
@@ -270,7 +293,7 @@ export class AnthropicFormatter extends BaseFormatter {
             } else if (functionResponseParts.length > 0) {
                 // user 消息包含 tool_result
                 const contentArray: any[] = [];
-                
+
                 for (const part of functionResponseParts) {
                     const resp = part.functionResponse!;
                     contentArray.push({
@@ -279,7 +302,7 @@ export class AnthropicFormatter extends BaseFormatter {
                         content: JSON.stringify(resp.response)
                     });
                 }
-                
+
                 messages.push({
                     role: 'user',
                     content: contentArray
@@ -287,13 +310,13 @@ export class AnthropicFormatter extends BaseFormatter {
             } else if (textParts.length > 0 || mediaParts.length > 0 || thoughtParts.length > 0 || redactedThinkingParts.length > 0) {
                 // 普通消息（可能包含文本、多媒体和/或思考内容）
                 const contentArray: any[] = [];
-                
+
                 // 添加思考内容（如果有）- 包括普通思考和加密思考
                 this.addThinkingBlocks(contentArray, thoughtParts, redactedThinkingParts, signatureParts);
-                
+
                 // 添加普通内容
                 contentArray.push(...this.buildMessageContent(textParts, mediaParts));
-                
+
                 messages.push({
                     role,
                     content: contentArray
@@ -301,7 +324,7 @@ export class AnthropicFormatter extends BaseFormatter {
             }
         }
     }
-    
+
     /**
      * 添加思考块到内容数组
      *
@@ -329,7 +352,7 @@ export class AnthropicFormatter extends BaseFormatter {
             }
             contentArray.push(thinkingBlock);
         }
-        
+
         // 添加加密思考内容
         for (const part of redactedThinkingParts) {
             if (part.redactedThinking) {
@@ -340,7 +363,7 @@ export class AnthropicFormatter extends BaseFormatter {
             }
         }
     }
-    
+
     /**
      * 构建消息内容（支持多模态）
      *
@@ -350,7 +373,7 @@ export class AnthropicFormatter extends BaseFormatter {
      */
     private buildMessageContent(textParts: ContentPart[], mediaParts: ContentPart[]): any[] {
         const contentArray: any[] = [];
-        
+
         // 添加多媒体部分（图片通常放在文本前面）
         for (const part of mediaParts) {
             if (part.inlineData) {
@@ -374,7 +397,7 @@ export class AnthropicFormatter extends BaseFormatter {
                 });
             }
         }
-        
+
         // 添加文本部分
         for (const part of textParts) {
             if (part.text) {
@@ -384,10 +407,10 @@ export class AnthropicFormatter extends BaseFormatter {
                 });
             }
         }
-        
+
         return contentArray;
     }
-    
+
     /**
      * XML/JSON 模式转换
      *
@@ -397,27 +420,27 @@ export class AnthropicFormatter extends BaseFormatter {
     private convertHistoryTextMode(history: Content[], messages: any[], mode: 'xml' | 'json'): void {
         for (const content of history) {
             const role = content.role === 'model' ? 'assistant' : content.role;
-            
+
             // 分离各种类型的 parts
             const functionResponseParts = content.parts.filter(p => p.functionResponse);
             const mediaParts = content.parts.filter(p => p.inlineData || p.fileData);
-            
+
             if (functionResponseParts.length > 0) {
                 // functionResponse 作为 user 消息发送
                 const contentArray: any[] = [];
-                
+
                 for (const part of functionResponseParts) {
                     const resp = part.functionResponse!;
                     const responseText = mode === 'xml'
                         ? convertFunctionResponseToXML(resp.name, resp.response)
                         : convertFunctionResponseToJSON(resp.name, resp.response);
-                    
+
                     contentArray.push({
                         type: 'text',
                         text: responseText
                     });
                 }
-                
+
                 messages.push({
                     role: 'user',
                     content: contentArray
@@ -425,16 +448,16 @@ export class AnthropicFormatter extends BaseFormatter {
             } else {
                 // 将 functionCall 转回文本，与 text 合并
                 const textParts: ContentPart[] = [];
-                
+
                 for (const part of content.parts) {
                     if (part.thought) {
                         continue;
                     }
-                    
+
                     if (part.inlineData || part.fileData) {
                         continue;
                     }
-                    
+
                     if (part.functionCall) {
                         const callText = mode === 'xml'
                             ? convertFunctionCallToXML(part.functionCall.name, part.functionCall.args)
@@ -444,7 +467,7 @@ export class AnthropicFormatter extends BaseFormatter {
                         textParts.push({ text: part.text });
                     }
                 }
-                
+
                 if (textParts.length > 0 || mediaParts.length > 0) {
                     const contentArray = this.buildMessageContent(textParts, mediaParts);
                     messages.push({
@@ -455,44 +478,44 @@ export class AnthropicFormatter extends BaseFormatter {
             }
         }
     }
-    
+
     /**
      * 构建生成配置
      */
     private buildGenerationConfig(config: AnthropicConfig): any {
         const genConfig: any = {};
         const optionsEnabled = (config as any).optionsEnabled || {};
-        
+
         // max_tokens: 仅在启用时发送
         if (optionsEnabled.max_tokens && config.options?.max_tokens !== undefined) {
             genConfig.max_tokens = config.options.max_tokens;
         }
-        
+
         if (optionsEnabled.temperature && config.options?.temperature !== undefined) {
             genConfig.temperature = config.options.temperature;
         }
-        
+
         if (optionsEnabled.top_p && config.options?.top_p !== undefined) {
             genConfig.top_p = config.options.top_p;
         }
-        
+
         if (optionsEnabled.top_k && config.options?.top_k !== undefined) {
             genConfig.top_k = config.options.top_k;
         }
-        
+
         if (config.options?.stop_sequences && config.options.stop_sequences.length > 0) {
             genConfig.stop_sequences = config.options.stop_sequences;
         }
-        
+
         // 添加 thinking 配置（如果启用）
         const thinkingEnabled = optionsEnabled.thinking;
         const thinking = config.options?.thinking;
-        
+
         if (thinkingEnabled && thinking) {
             const thinkingConfig: any = {
                 type: 'enabled'
             };
-            
+
             // 思考预算（budget_tokens）
             if (thinking.budget_tokens && thinking.budget_tokens > 0) {
                 thinkingConfig.budget_tokens = thinking.budget_tokens;
@@ -500,13 +523,13 @@ export class AnthropicFormatter extends BaseFormatter {
                 // 默认预算
                 thinkingConfig.budget_tokens = 10000;
             }
-            
+
             genConfig.thinking = thinkingConfig;
         }
-        
+
         return genConfig;
     }
-    
+
     /**
      * 解析 Anthropic API 响应
      *
@@ -530,10 +553,10 @@ export class AnthropicFormatter extends BaseFormatter {
         if (!response || !response.content) {
             throw new Error(t('modules.channel.formatters.anthropic.errors.invalidResponse'));
         }
-        
+
         // 构建 ContentPart 数组
         let parts: ContentPart[] = [];
-        
+
         // 解析 content 数组
         for (const block of response.content) {
             if (block.type === 'thinking') {
@@ -573,7 +596,7 @@ export class AnthropicFormatter extends BaseFormatter {
                 });
             }
         }
-        
+
         // 如果没有原生工具调用，尝试从文本中检测
         const hasToolUse = response.content.some((b: any) => b.type === 'tool_use');
         if (!hasToolUse) {
@@ -581,22 +604,22 @@ export class AnthropicFormatter extends BaseFormatter {
                 .filter(p => 'text' in p && !p.thought)
                 .map(p => p.text)
                 .join('\n');
-            
+
             if (textContent) {
                 // 保留思考内容和签名，只对普通文本进行工具调用检测
-                        const thoughtParts = parts.filter(p => p.thought || p.thoughtSignatures);
+                const thoughtParts = parts.filter(p => p.thought || p.thoughtSignatures);
                 const detectedParts = this.parseResponseAutoDetect(textContent);
                 parts = [...thoughtParts, ...detectedParts];
             }
         }
-        
+
         // 构建完整的 Content
         const content: Content = {
             role: 'model',
             parts,
             modelVersion: response.model
         };
-        
+
         // 存储 usageMetadata
         if (response.usage) {
             content.usageMetadata = {
@@ -605,10 +628,10 @@ export class AnthropicFormatter extends BaseFormatter {
                 totalTokenCount: (response.usage.input_tokens || 0) + (response.usage.output_tokens || 0)
             };
         }
-        
+
         // 提取结束原因
         const finishReason = response.stop_reason;
-        
+
         return {
             content,
             finishReason,
@@ -616,40 +639,40 @@ export class AnthropicFormatter extends BaseFormatter {
             raw: response
         };
     }
-    
+
     /**
      * 自动检测模式解析响应
      */
     private parseResponseAutoDetect(contentText: string): ContentPart[] {
         const parts: ContentPart[] = [];
-        
+
         // 检测 JSON 边界标记
         if (contentText.includes(TOOL_CALL_START)) {
             return this.extractJSONToolCallsFromContent(contentText, parts);
         }
-        
+
         // 检测 XML 工具调用
         if (contentText.includes('<tool_use>')) {
             return this.extractXMLToolCallsFromContent(contentText, parts);
         }
-        
+
         // 无工具调用，作为纯文本
         if (contentText.trim()) {
             parts.push({ text: contentText });
         }
         return parts;
     }
-    
+
     /**
      * 从内容中提取 JSON 格式的工具调用
      */
     private extractJSONToolCallsFromContent(content: string, existingParts: ContentPart[]): ContentPart[] {
         const parts = [...existingParts];
         const segments = content.split(TOOL_CALL_START);
-        
+
         for (let i = 0; i < segments.length; i++) {
             const segment = segments[i];
-            
+
             if (i === 0) {
                 const text = segment.trim();
                 if (text) {
@@ -657,7 +680,7 @@ export class AnthropicFormatter extends BaseFormatter {
                 }
             } else {
                 const endIndex = segment.indexOf(TOOL_CALL_END);
-                
+
                 if (endIndex !== -1) {
                     const jsonStr = segment.substring(0, endIndex).trim();
                     try {
@@ -675,7 +698,7 @@ export class AnthropicFormatter extends BaseFormatter {
                         console.warn('Failed to parse JSON tool call:', error);
                         parts.push({ text: `${TOOL_CALL_START}${jsonStr}${TOOL_CALL_END}` });
                     }
-                    
+
                     const afterText = segment.substring(endIndex + TOOL_CALL_END.length).trim();
                     if (afterText) {
                         parts.push({ text: afterText });
@@ -685,10 +708,10 @@ export class AnthropicFormatter extends BaseFormatter {
                 }
             }
         }
-        
+
         return parts;
     }
-    
+
     /**
      * 从内容中提取 XML 格式的工具调用
      */
@@ -697,13 +720,13 @@ export class AnthropicFormatter extends BaseFormatter {
         const toolUseRegex = /<tool_use>([\s\S]*?)<\/tool_use>/g;
         let lastIndex = 0;
         let match;
-        
+
         while ((match = toolUseRegex.exec(content)) !== null) {
             const beforeText = content.substring(lastIndex, match.index).trim();
             if (beforeText) {
                 parts.push({ text: beforeText });
             }
-            
+
             const toolCalls = parseXMLToolCalls(match[0]);
             for (const call of toolCalls) {
                 parts.push({
@@ -714,22 +737,22 @@ export class AnthropicFormatter extends BaseFormatter {
                     }
                 });
             }
-            
+
             lastIndex = match.index + match[0].length;
         }
-        
+
         const afterText = content.substring(lastIndex).trim();
         if (afterText) {
             parts.push({ text: afterText });
         }
-        
+
         if (parts.length === existingParts.length && content.trim()) {
             parts.push({ text: content });
         }
-        
+
         return parts;
     }
-    
+
     /**
      * 解析流式响应块
      *
@@ -751,11 +774,12 @@ export class AnthropicFormatter extends BaseFormatter {
         let done = false;
         let usage: any;
         let finishReason: string | undefined;
-        
+
         // 处理不同的事件类型
         if (chunk.type === 'content_block_delta') {
             const delta = chunk.delta;
-            
+            const index = chunk.index;
+
             if (delta?.type === 'text_delta') {
                 parts.push({ text: delta.text });
             } else if (delta?.type === 'thinking_delta') {
@@ -777,12 +801,16 @@ export class AnthropicFormatter extends BaseFormatter {
                     redactedThinking: delta.data
                 });
             } else if (delta?.type === 'input_json_delta') {
-                // 工具调用参数增量（通常需要累积）
-                // 这里简化处理
+                // 工具调用参数增量 - 累积 partial_json
+                const block = this.toolUseBlocks.get(index);
+                if (block && delta.partial_json) {
+                    block.inputParts.push(delta.partial_json);
+                }
             }
         } else if (chunk.type === 'content_block_start') {
             const block = chunk.content_block;
-            
+            const index = chunk.index;
+
             if (block?.type === 'thinking') {
                 // 思考块开始，可能包含初始内容
                 if (block.thinking) {
@@ -799,17 +827,46 @@ export class AnthropicFormatter extends BaseFormatter {
                     });
                 }
             } else if (block?.type === 'tool_use') {
+                // 记录 tool_use 块，等待 input_json_delta 累积完成
+                this.toolUseBlocks.set(index, {
+                    id: block.id,
+                    name: block.name,
+                    inputParts: []
+                });
+                // 不在这里输出 functionCall，等 content_block_stop 时输出完整的
+            }
+        } else if (chunk.type === 'content_block_stop') {
+            // 内容块结束 - 检查是否有待完成的 tool_use
+            const index = chunk.index;
+            const block = this.toolUseBlocks.get(index);
+
+            if (block) {
+                // 拼接并解析完整的 input JSON
+                let input: Record<string, unknown> = {};
+                if (block.inputParts.length > 0) {
+                    const fullJson = block.inputParts.join('');
+                    try {
+                        input = JSON.parse(fullJson);
+                    } catch (e) {
+                        console.warn('Failed to parse tool_use input JSON:', e, fullJson);
+                    }
+                }
+
+                // 输出完整的 functionCall
                 parts.push({
                     functionCall: {
                         name: block.name,
-                        args: block.input || {},
+                        args: input,
                         id: block.id
                     }
                 });
+
+                // 清理已完成的块
+                this.toolUseBlocks.delete(index);
             }
         } else if (chunk.type === 'message_delta') {
             finishReason = chunk.delta?.stop_reason;
-            
+
             if (chunk.usage) {
                 usage = {
                     candidatesTokenCount: chunk.usage.output_tokens
@@ -817,6 +874,8 @@ export class AnthropicFormatter extends BaseFormatter {
             }
         } else if (chunk.type === 'message_stop') {
             done = true;
+            // 清理所有状态（以防万一）
+            this.toolUseBlocks.clear();
         } else if (chunk.type === 'message_start') {
             // 消息开始，可能包含 usage 信息
             if (chunk.message?.usage) {
@@ -825,23 +884,23 @@ export class AnthropicFormatter extends BaseFormatter {
                 };
             }
         }
-        
+
         const streamChunk: StreamChunk = {
             delta: parts,
             done
         };
-        
+
         if (finishReason) {
             streamChunk.finishReason = finishReason;
         }
-        
+
         if (usage) {
             streamChunk.usage = usage;
         }
-        
+
         return streamChunk;
     }
-    
+
     /**
      * 验证配置（不验证 API Key）
      */
@@ -849,24 +908,24 @@ export class AnthropicFormatter extends BaseFormatter {
         if (config.type !== 'anthropic') {
             return false;
         }
-        
+
         const anthropicConfig = config as AnthropicConfig;
-        
+
         // 检查必需字段（不验证 apiKey）
         if (!anthropicConfig.url || !anthropicConfig.model) {
             return false;
         }
-        
+
         return true;
     }
-    
+
     /**
      * 获取支持的配置类型
      */
     getSupportedType(): string {
         return 'anthropic';
     }
-    
+
     /**
      * 转换思考签名格式
      *
@@ -903,7 +962,7 @@ export class AnthropicFormatter extends BaseFormatter {
             })
         }));
     }
-    
+
     /**
      * 转换工具声明为 Anthropic 格式
      *
@@ -918,7 +977,7 @@ export class AnthropicFormatter extends BaseFormatter {
         if (!tools || tools.length === 0) {
             return undefined;
         }
-        
+
         return tools.map(tool => ({
             name: tool.name,
             description: tool.description,
