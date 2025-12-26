@@ -142,10 +142,16 @@ const hasAttachments = computed(() =>
 )
 
 // 是否可以发送 - 只在等待响应或上传时禁用发送
+// 例外：当有待确认工具时允许发送（用于带批注拒绝）
 const canSend = computed(() => {
   const hasContent = inputValue.value.trim().length > 0 ||
     (props.attachments && props.attachments.length > 0)
-  
+
+  // 如果有待确认的工具，允许发送（作为批注拒绝）
+  if (chatStore.hasPendingToolConfirmation && hasContent) {
+    return true
+  }
+
   return hasContent && !chatStore.isWaitingForResponse && !props.uploading
 })
 

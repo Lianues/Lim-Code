@@ -47,12 +47,19 @@ function handleNewChat() {
 // 处理发送消息
 async function handleSend(content: string, messageAttachments: Attachment[]) {
   if (!content.trim() && messageAttachments.length === 0) return
-  
+
   // 先立即清除附件，不需要等待响应完成
   clearAttachments()
-  
+
   try {
-    // 发送消息时传递附件
+    // 检查是否有待确认的工具调用
+    // 如果有，则发送内容作为批注并拒绝所有待确认工具
+    if (chatStore.hasPendingToolConfirmation) {
+      await chatStore.rejectPendingToolsWithAnnotation(content)
+      return
+    }
+
+    // 正常发送消息（传递附件）
     await chatStore.sendMessage(content, messageAttachments)
   } catch (err) {
     console.error('发送失败:', err)

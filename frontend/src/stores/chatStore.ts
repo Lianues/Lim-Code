@@ -421,6 +421,43 @@ export const useChatStore = defineStore('chat', () => {
     return Math.min(100, (usedTokens.value / maxContextTokens.value) * 100)
   })
 
+  /**
+   * 检测是否有待确认的工具调用
+   *
+   * 当 isWaitingForResponse = true 且 isStreaming = false 时，
+   * 检查最后一条助手消息中是否有 status = 'pending' 的工具
+   */
+  const hasPendingToolConfirmation = computed(() => {
+    // 必须在等待响应但不在流式状态
+    if (!isWaitingForResponse.value || isStreaming.value) return false
+
+    // 从后往前找最后一条助手消息
+    for (let i = allMessages.value.length - 1; i >= 0; i--) {
+      const msg = allMessages.value[i]
+      if (msg.role === 'assistant' && msg.tools && msg.tools.length > 0) {
+        // 检查是否有 pending 状态的工具
+        return msg.tools.some(tool => tool.status === 'pending')
+      }
+    }
+    return false
+  })
+
+  /**
+   * 获取待确认的工具列表
+   */
+  const pendingToolCalls = computed(() => {
+    if (!hasPendingToolConfirmation.value) return []
+
+    // 从后往前找最后一条助手消息
+    for (let i = allMessages.value.length - 1; i >= 0; i--) {
+      const msg = allMessages.value[i]
+      if (msg.role === 'assistant' && msg.tools && msg.tools.length > 0) {
+        return msg.tools.filter(tool => tool.status === 'pending')
+      }
+    }
+    return []
+  })
+
   // ============ 工具函数 ============
   
   /**
@@ -1234,12 +1271,16 @@ export const useChatStore = defineStore('chat', () => {
       // 工具迭代完成：当前消息包含工具调用
       const messageIndex = allMessages.value.findIndex(m => m.id === streamingMessageId.value)
       
-      // 检查是否有工具被取消
+      // 检查是否有工具被取消或拒绝
       const cancelledToolIds = new Set<string>()
+      const rejectedToolIds = new Set<string>()
       if (chunk.toolResults) {
         for (const r of chunk.toolResults) {
           if ((r.result as any).cancelled && r.id) {
             cancelledToolIds.add(r.id)
+          }
+          if ((r.result as any).rejected && r.id) {
+            rejectedToolIds.add(r.id)
           }
         }
       }
@@ -1268,11 +1309,11 @@ export const useChatStore = defineStore('chat', () => {
           restoredTools = existingTools
         }
         
-        // 更新工具状态：被取消的工具标记为 error，其他标记为 success
+        // 更新工具状态：被取消或拒绝的工具标记为 error，其他标记为 success
         if (restoredTools) {
           restoredTools = restoredTools.map(tool => ({
             ...tool,
-            status: cancelledToolIds.has(tool.id) ? 'error' as const : 'success' as const
+            status: (cancelledToolIds.has(tool.id) || rejectedToolIds.has(tool.id)) ? 'error' as const : 'success' as const
           }))
         }
         
@@ -2041,7 +2082,83 @@ export const useChatStore = defineStore('chat', () => {
       isWaitingForResponse.value = false
     }
   }
-  
+
+  /**
+   * 发送带批注的工具确认响应
+   *
+   * 当用户在有待确认工具时输入内容并发送，会调用此方法：
+   * - 所有待确认的工具都会被拒绝
+   * - 用户输入的内容作为批注发送给 AI
+   * - 在聊天流中显示用户的批注消息
+   *
+   * @param annotation 用户的批注内容
+   */
+  async function rejectPendingToolsWithAnnotation(annotation: string): Promise<void> {
+    if (!hasPendingToolConfirmation.value || !currentConversationId.value || !currentConfig.value?.id) {
+      return
+    }
+
+    // 构建拒绝所有待确认工具的响应
+    const toolResponses = pendingToolCalls.value.map(tool => ({
+      id: tool.id,
+      name: tool.name,
+      confirmed: false
+    }))
+
+    if (toolResponses.length === 0) return
+
+    const trimmedAnnotation = annotation.trim()
+
+    // 更新本地工具状态为 running（表示正在处理）
+    if (streamingMessageId.value) {
+      const messageIndex = allMessages.value.findIndex(m => m.id === streamingMessageId.value)
+      if (messageIndex !== -1) {
+        const message = allMessages.value[messageIndex]
+        const updatedTools = message.tools?.map(tool => {
+          if (tool.status === 'pending') {
+            return { ...tool, status: 'running' as const }
+          }
+          return tool
+        })
+
+        const updatedMessage: Message = {
+          ...message,
+          tools: updatedTools
+        }
+
+        allMessages.value = [
+          ...allMessages.value.slice(0, messageIndex),
+          updatedMessage,
+          ...allMessages.value.slice(messageIndex + 1)
+        ]
+      }
+    }
+
+    // 先在聊天流中添加用户的批注消息（确保显示顺序正确：用户消息在前，AI回答在后）
+    if (trimmedAnnotation) {
+      const userMessage: Message = {
+        id: generateId(),
+        role: 'user',
+        content: trimmedAnnotation,
+        timestamp: Date.now(),
+        parts: [{ text: trimmedAnnotation }]
+      }
+      allMessages.value.push(userMessage)
+    }
+
+    // 发送到后端（带批注）
+    try {
+      await sendToExtension('toolConfirmation', {
+        conversationId: currentConversationId.value,
+        configId: currentConfig.value.id,
+        toolResponses,
+        annotation: trimmedAnnotation
+      })
+    } catch (error) {
+      console.error('Failed to send tool confirmation with annotation:', error)
+    }
+  }
+
   /**
    * 错误后重试（直接调用 retryStream，不删除消息）
    */
@@ -2666,7 +2783,9 @@ export const useChatStore = defineStore('chat', () => {
     usedTokens,
     tokenUsagePercent,
     needsContinueButton,
-    
+    hasPendingToolConfirmation,
+    pendingToolCalls,
+
     // 对话管理
     createNewConversation,
     loadConversations,
@@ -2681,6 +2800,7 @@ export const useChatStore = defineStore('chat', () => {
     retryFromMessage,
     retryAfterError,
     cancelStream,
+    rejectPendingToolsWithAnnotation,
     editAndRetry,
     deleteMessage,
     deleteSingleMessage,

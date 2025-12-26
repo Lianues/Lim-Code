@@ -1471,8 +1471,18 @@ export class ChatHandler {
             
             // 计算工具响应消息的 token 数
             await this.preCountUserMessageTokens(conversationId, config.type);
-            
-            // 7. 继续 AI 对话（让 AI 处理工具结果）
+
+            // 9.5 如果有用户批注，添加为新的用户消息
+            if (request.annotation && request.annotation.trim()) {
+                await this.conversationManager.addContent(conversationId, {
+                    role: 'user',
+                    parts: [{ text: request.annotation.trim() }]
+                });
+                // 计算批注消息的 token 数
+                await this.preCountUserMessageTokens(conversationId, config.type);
+            }
+
+            // 10. 继续 AI 对话（让 AI 处理工具结果）
             // 工具调用循环
             const maxToolIterations = this.getMaxToolIterations();
             let iteration = 0;

@@ -291,14 +291,17 @@ export interface ToolConfirmationResponseData {
     toolResponses: Array<{
         /** 工具调用 ID */
         id: string;
-        
+
         /** 工具名称 */
         name: string;
-        
+
         /** 是否确认执行 */
         confirmed: boolean;
     }>;
-    
+
+    /** 用户批注（可选，会作为用户消息发送给 AI） */
+    annotation?: string;
+
     /** 取消信号 */
     abortSignal?: AbortSignal;
 }

@@ -11,12 +11,13 @@
  */
 
 import { ref, computed, Component, h, watchEffect } from 'vue'
-import type { ToolUsage } from '../../types'
+import type { ToolUsage, Message } from '../../types'
 import { getToolConfig } from '../../utils/toolRegistry'
 import { ensureMcpToolRegistered } from '../../utils/tools'
 import { useChatStore } from '../../stores'
 import { sendToExtension } from '../../utils/vscode'
 import { useI18n } from '../../i18n'
+import { generateId } from '../../utils/format'
 
 const { t } = useI18n()
 
@@ -122,48 +123,67 @@ function hasUserDecision(toolId: string): boolean {
 // 提交所有用户决定到后端
 async function submitAllDecisions() {
   const toolResponses: Array<{ id: string; name: string; confirmed: boolean }> = []
-  
+
   for (const tool of enhancedTools.value) {
     if (tool.awaitingConfirmation) {
       const decision = userDecisions.value.get(tool.id)
       // 如果用户没有做出决定，默认为拒绝
       const confirmed = decision === true
-      
+
       toolResponses.push({
         id: tool.id,
         name: tool.name,
         confirmed
       })
-      
+
       // 标记为正在处理
       processingToolIds.value.add(tool.id)
     }
   }
-  
+
   if (toolResponses.length === 0) return
-  
+
+  // 获取输入栏的批注内容
+  const annotation = chatStore.inputValue.trim()
+
   // 清空用户决定状态
   userDecisions.value.clear()
-  
-  // 发送到后端
-  await sendToolConfirmation(toolResponses)
+
+  // 清空输入栏
+  if (annotation) {
+    chatStore.clearInputValue()
+
+    // 先在聊天流中添加用户的批注消息（确保显示顺序正确）
+    const userMessage: Message = {
+      id: generateId(),
+      role: 'user',
+      content: annotation,
+      timestamp: Date.now(),
+      parts: [{ text: annotation }]
+    }
+    chatStore.allMessages.push(userMessage)
+  }
+
+  // 发送到后端（带批注）
+  await sendToolConfirmation(toolResponses, annotation)
 }
 
 // 发送工具确认响应到后端
-async function sendToolConfirmation(toolResponses: Array<{ id: string; name: string; confirmed: boolean }>) {
+async function sendToolConfirmation(toolResponses: Array<{ id: string; name: string; confirmed: boolean }>, annotation?: string) {
   try {
     const currentConversationId = chatStore.currentConversationId
     const currentConfig = chatStore.currentConfig
-    
+
     if (!currentConversationId || !currentConfig?.id) {
       console.error('No conversation or config ID')
       return
     }
-    
+
     await sendToExtension('toolConfirmation', {
       conversationId: currentConversationId,
       configId: currentConfig.id,
-      toolResponses
+      toolResponses,
+      annotation
     })
   } catch (error) {
     console.error('Failed to send tool confirmation:', error)

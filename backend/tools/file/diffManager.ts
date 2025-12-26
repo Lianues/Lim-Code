@@ -261,7 +261,7 @@ export class DiffManager {
         });
         
         // 5. 监听文档保存事件
-        const saveListener = vscode.workspace.onDidSaveTextDocument((savedDoc) => {
+        const saveListener = vscode.workspace.onDidSaveTextDocument(async (savedDoc) => {
             if (savedDoc.uri.fsPath === diff.absolutePath) {
                 diff.status = 'accepted';
                 saveListener.dispose();
@@ -269,6 +269,12 @@ export class DiffManager {
                 this.notifyStatusChange();
                 this.notifySaveComplete(diff);
                 vscode.window.showInformationMessage(t('tools.file.diffManager.saved', { filePath: diff.filePath }));
+
+                // 非自动保存模式下，用户手动保存后自动关闭 diff 标签页
+                const currentSettings = this.getSettings();
+                if (!currentSettings.autoSave) {
+                    await this.closeDiffTab(diff.absolutePath);
+                }
             }
         });
         
