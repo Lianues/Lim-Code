@@ -407,6 +407,8 @@ Important:
                 const finalDiff = diffManager.getDiff(pendingDiff.id);
                 const wasAccepted = !wasInterrupted && (!finalDiff || finalDiff.status === 'accepted');
 
+                // 检查用户是否编辑了内容
+                const userEditedContent = finalDiff?.userEditedContent;
                 // 尝试将大内容保存到 DiffStorageManager
                 const diffStorageManager = getDiffStorageManager();
                 let diffContentId: string | undefined;
@@ -444,14 +446,19 @@ Important:
                         }
                     };
                 }
-                
+
                 // 简化返回：AI 已经知道 diffs 内容，不需要重复返回
                 let message = wasAccepted
                     ? `Diff applied and saved to ${filePath}`
                     : `Diff was rejected for ${filePath}`;
-                
+
                 if (wasAccepted && failedCount > 0) {
                     message = `Partially applied diffs to ${filePath}: ${appliedCount} succeeded, ${failedCount} failed. Saved successfully.`;
+                }
+
+                // 如果用户编辑了内容，在消息中告知 AI
+                if (wasAccepted && userEditedContent) {
+                    message += `\n\n[USER EDIT] The user modified the AI-suggested content before saving. User's final content:\n${userEditedContent}`;
                 }
 
                 return {
@@ -465,6 +472,8 @@ Important:
                         failedCount: failedCount,
                         // 包含失败详情供 AI 修复
                         failedDiffs: failedDiffs.length > 0 ? failedDiffs : undefined,
+                        // 用户编辑的内容（供前端展示）
+                        userEditedContent: userEditedContent,
                         // 仅供前端按需加载用，不发送给 AI
                         diffContentId,
                         // Diff 会话 ID

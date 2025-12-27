@@ -103,6 +103,11 @@ const resultData = computed(() => {
   return result?.data || null
 })
 
+// 获取用户编辑的内容
+const userEditedContent = computed(() => {
+  return resultData.value?.userEditedContent as string | undefined
+})
+
 // 是否为全失败
 const isFailed = computed(() => {
   return !!props.error || (resultData.value && resultData.value.appliedCount === 0)
@@ -395,6 +400,19 @@ onBeforeUnmount(() => {
       <span v-else-if="resultData.status === 'accepted'" class="status-badge accepted">{{ t('components.tools.file.applyDiffPanel.accepted') }}</span>
       <span v-else-if="resultData.status === 'rejected'" class="status-badge rejected">{{ t('components.tools.file.applyDiffPanel.rejected') }}</span>
     </div>
+
+    <!-- 用户编辑提示 -->
+    <div v-if="userEditedContent" class="user-edit-section">
+      <div class="user-edit-header">
+        <span class="codicon codicon-edit user-edit-icon"></span>
+        <span class="user-edit-title">{{ t('components.tools.file.applyDiffPanel.userEdited') }}</span>
+      </div>
+      <div class="user-edit-content">
+        <CustomScrollbar :horizontal="true" :max-height="200">
+          <pre class="user-edit-code">{{ userEditedContent }}</pre>
+        </CustomScrollbar>
+      </div>
+    </div>
     
     <!-- 全局错误 -->
     <div v-if="error && !resultData" class="panel-error">
@@ -644,85 +662,49 @@ onBeforeUnmount(() => {
   color: var(--vscode-editor-background);
 }
 
-/* 操作页脚 */
-.action-footer {
+/* 用户编辑区块 */
+.user-edit-section {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-sm, 8px);
-  margin-top: var(--spacing-xs, 4px);
+  gap: var(--spacing-xs, 4px);
   padding: var(--spacing-sm, 8px);
-  background: var(--vscode-editor-inactiveSelectionBackground);
+  background: rgba(0, 122, 204, 0.08);
+  border: 1px solid var(--vscode-charts-blue, #007acc);
   border-radius: var(--radius-sm, 2px);
-  border: 1px solid var(--vscode-panel-border);
 }
 
-.footer-top {
+.user-edit-header {
   display: flex;
   align-items: center;
-  gap: var(--spacing-sm, 8px);
+  gap: var(--spacing-xs, 4px);
 }
 
-.timer-container {
-  flex: 1;
-  position: relative;
-  height: 4px;
-  background: rgba(128, 128, 128, 0.1);
-  border-radius: 2px;
+.user-edit-icon {
+  color: var(--vscode-charts-blue, #007acc);
+  font-size: 12px;
+}
+
+.user-edit-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--vscode-charts-blue, #007acc);
+}
+
+.user-edit-content {
+  background: var(--vscode-editor-background);
+  border-radius: var(--radius-sm, 2px);
   overflow: hidden;
 }
 
-.timer-bar {
-  position: absolute;
-  top: 0;
-  left: 0;
-  height: 100%;
-  background: var(--vscode-charts-blue);
-  transition: width 0.05s linear;
-}
-
-.timer-text {
-  font-size: 10px;
-  color: var(--vscode-descriptionForeground);
-  min-width: 24px;
-  text-align: right;
-}
-
-.footer-buttons {
-  display: flex;
-  gap: var(--spacing-sm, 8px);
-  justify-content: flex-end;
-}
-
-.footer-buttons button {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 12px;
+.user-edit-code {
+  margin: 0;
+  padding: var(--spacing-sm, 8px);
+  font-family: var(--vscode-editor-font-family);
   font-size: 11px;
-  font-weight: 500;
-  cursor: pointer;
-  border-radius: 2px;
-  border: none;
-  transition: opacity 0.12s ease;
-}
-
-.footer-buttons .confirm-btn {
-  background: var(--vscode-button-background);
-  color: var(--vscode-button-foreground);
-}
-
-.footer-buttons .confirm-btn:hover {
-  background: var(--vscode-button-hoverBackground);
-}
-
-.footer-buttons .reject-btn {
-  background: transparent;
+  line-height: 1.5;
   color: var(--vscode-foreground);
-  border: 1px solid var(--vscode-panel-border);
-}
-
-.footer-buttons .reject-btn:hover {
-  background: var(--vscode-toolbar-hoverBackground);
+  white-space: pre;
+  overflow-x: auto;
 }
 
 /* 全局错误 */

@@ -1758,7 +1758,9 @@ const zhCN: LanguageMessages = {
                     copied: '已复制',
                     copyNew: '复制新内容',
                     deletedLines: '删除',
-                    addedLines: '新增'
+                    addedLines: '新增',
+                    userEdited: '用户已编辑',
+                    userEditedContent: '用户修改后的内容'
                 },
                 createDirectoryPanel: {
                     title: '创建目录',

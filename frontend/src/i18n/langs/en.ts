@@ -1758,7 +1758,9 @@ const en: LanguageMessages = {
                     copied: 'Copied',
                     copyNew: 'Copy new content',
                     deletedLines: 'Deleted',
-                    addedLines: 'Added'
+                    addedLines: 'Added',
+                    userEdited: 'User Edited',
+                    userEditedContent: 'User modified content'
                 },
                 createDirectoryPanel: {
                     title: 'Create Directory',
