@@ -1372,45 +1372,13 @@ export const useChatStore = defineStore('chat', () => {
         // 获取输入框内容作为批注
         const annotation = inputValue.value.trim()
 
-        // 如果有批注，先在聊天流中添加用户的批注消息
+        // 如果有批注，清空输入框
         if (annotation) {
-          const userMessage: Message = {
-            id: generateId(),
-            role: 'user',
-            content: annotation,
-            timestamp: Date.now(),
-            parts: [{ text: annotation }]
-          }
-          allMessages.value.push(userMessage)
-          // 清空输入框
           inputValue.value = ''
         }
 
-        // 创建新的占位消息用于接收后续 AI 响应
-        const newAssistantMessageId = generateId()
-        const newAssistantMessage: Message = {
-          id: newAssistantMessageId,
-          role: 'assistant',
-          content: '',
-          timestamp: Date.now(),
-          streaming: true,
-          metadata: {
-            modelVersion: currentModelName.value
-          }
-        }
-        allMessages.value.push(newAssistantMessage)
-        streamingMessageId.value = newAssistantMessageId
-
-        // 发送 continueWithAnnotation 请求
-        sendToExtension('continueWithAnnotation', {
-          conversationId: currentConversationId.value,
-          configId: configId.value,
-          annotation: annotation
-        })
-
-        // 保持 streaming 状态
-        isStreaming.value = true
-        isWaitingForResponse.value = true
+        // 复用批注发送逻辑（只在有批注时添加用户消息）
+        _createAnnotationMessagesAndSend(annotation, !!annotation)
         return
       }
 
@@ -2642,6 +2610,89 @@ export const useChatStore = defineStore('chat', () => {
   }
   
   /**
+   * 内部方法：创建批注消息并发送到后端
+   *
+   * 复用逻辑：创建用户消息、AI 占位消息，发送 continueWithAnnotation 请求
+   * 用于 needAnnotation 处理和 sendDiffAnnotation
+   *
+   * @param annotation 批注内容
+   * @param addUserMessage 是否添加用户消息到聊天流（needAnnotation 场景需要，因为输入框有内容；sendDiffAnnotation 总是需要）
+   */
+  function _createAnnotationMessagesAndSend(annotation: string, addUserMessage: boolean = true): void {
+    // 如果需要添加用户消息
+    if (addUserMessage && annotation) {
+      const userMessage: Message = {
+        id: generateId(),
+        role: 'user',
+        content: annotation,
+        timestamp: Date.now(),
+        parts: [{ text: annotation }]
+      }
+      allMessages.value.push(userMessage)
+    }
+
+    // 创建新的占位消息用于接收后续 AI 响应
+    const newAssistantMessageId = generateId()
+    const newAssistantMessage: Message = {
+      id: newAssistantMessageId,
+      role: 'assistant',
+      content: '',
+      timestamp: Date.now(),
+      streaming: true,
+      metadata: {
+        modelVersion: currentModelName.value
+      }
+    }
+    allMessages.value.push(newAssistantMessage)
+    streamingMessageId.value = newAssistantMessageId
+
+    // 发送 continueWithAnnotation 请求
+    sendToExtension('continueWithAnnotation', {
+      conversationId: currentConversationId.value,
+      configId: configId.value,
+      annotation: annotation
+    })
+
+    // 保持 streaming 状态
+    isStreaming.value = true
+    isWaitingForResponse.value = true
+  }
+
+  /**
+   * 发送 diff 批注给 AI
+   *
+   * 当用户在聊天面板中点击保存/拒绝按钮并有输入框内容时，
+   * 将格式化后的批注作为用户消息发送给 AI 继续对话。
+   *
+   * @param fullAnnotation 完整的批注内容（已包含操作类型前缀，如 "[用户已保存修改] xxx"）
+   */
+  async function sendDiffAnnotation(fullAnnotation: string): Promise<void> {
+    if (!fullAnnotation.trim() || !currentConversationId.value || !configId.value) {
+      return
+    }
+
+    // 清除之前的错误状态
+    error.value = null
+    isLoading.value = true
+
+    // 重置工具调用缓冲区
+    toolCallBuffer.value = ''
+    inToolCall.value = null
+
+    // 更新对话信息
+    const conv = conversations.value.find(c => c.id === currentConversationId.value)
+    if (conv) {
+      conv.updatedAt = Date.now()
+      conv.messageCount = allMessages.value.length + 2 // 预计添加用户消息 + AI 占位消息
+    }
+
+    // 复用批注发送逻辑
+    _createAnnotationMessagesAndSend(fullAnnotation, true)
+
+    isLoading.value = false
+  }
+
+  /**
    * 总结上下文
    *
    * 将旧的对话历史压缩为一条总结消息
@@ -2890,7 +2941,10 @@ export const useChatStore = defineStore('chat', () => {
     
     // 上下文总结
     summarizeContext,
-    
+
+    // Diff 批注发送
+    sendDiffAnnotation,
+
     // 初始化
     initialize
   }

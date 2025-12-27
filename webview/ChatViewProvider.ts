@@ -1085,11 +1085,21 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
                 case 'diff.accept': {
                     try {
-                        const { diffId } = data;
+                        const { diffId, annotation } = data;
                         const diffManager = getDiffManager();
                         // 手动保存模式，isAutoSave = false，会保留用户编辑
                         const success = await diffManager.acceptDiff(diffId, true, false);
-                        this.sendResponse(requestId, { success });
+
+                        // 返回成功状态和是否有批注需要发送
+                        // 如果有批注，前端会负责调用 continueWithAnnotation
+                        const hasAnnotation = !!(annotation && annotation.trim());
+                        const fullAnnotation = hasAnnotation ? annotation.trim() : '';
+
+                        this.sendResponse(requestId, {
+                            success,
+                            hasAnnotation,
+                            fullAnnotation
+                        });
                     } catch (error: any) {
                         this.sendError(requestId, 'ACCEPT_DIFF_ERROR', error.message || t('webview.errors.acceptDiffFailed'));
                     }
@@ -1098,10 +1108,20 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
                 case 'diff.reject': {
                     try {
-                        const { diffId } = data;
+                        const { diffId, annotation } = data;
                         const diffManager = getDiffManager();
                         const success = await diffManager.rejectDiff(diffId);
-                        this.sendResponse(requestId, { success });
+
+                        // 返回成功状态和是否有批注需要发送
+                        // 如果有批注，前端会负责调用 continueWithAnnotation
+                        const hasAnnotation = !!(annotation && annotation.trim());
+                        const fullAnnotation = hasAnnotation ? annotation.trim() : '';
+
+                        this.sendResponse(requestId, {
+                            success,
+                            hasAnnotation,
+                            fullAnnotation
+                        });
                     } catch (error: any) {
                         this.sendError(requestId, 'REJECT_DIFF_ERROR', error.message || t('webview.errors.rejectDiffFailed'));
                     }

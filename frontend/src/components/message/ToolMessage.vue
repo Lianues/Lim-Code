@@ -169,10 +169,33 @@ async function handleAcceptDiff(tool: ToolUsage) {
 
   diffAcceptingIds.value.add(tool.id)
   try {
+    // 获取输入框内容作为批注（仅第一个 diff 携带批注，避免重复发送）
+    const annotation = chatStore.inputValue.trim()
+    let isFirstDiff = true
+    let fullAnnotation = ''
+
     // 处理所有 pending 的 diff
     for (const diffId of diffIds) {
-      await acceptDiff(diffId)
+      // 只有第一个 diff 携带批注
+      const result = await acceptDiff(diffId, isFirstDiff ? annotation : undefined)
+
+      // 保存第一个 diff 返回的完整批注（用于发送给 AI）
+      if (isFirstDiff && result.hasAnnotation && result.fullAnnotation) {
+        fullAnnotation = result.fullAnnotation
+      }
+      isFirstDiff = false
     }
+
+    // 如果有批注，清空输入框并发送批注给 AI
+    if (annotation) {
+      chatStore.setInputValue('')
+
+      // 如果后端返回了完整批注，使用 chatStore 发送给 AI
+      if (fullAnnotation) {
+        await chatStore.sendDiffAnnotation(fullAnnotation)
+      }
+    }
+
     // 保存成功后清除对应的 pending 状态
     const paths = getToolFilePaths(tool)
     for (const path of paths) {
@@ -190,10 +213,33 @@ async function handleRejectDiff(tool: ToolUsage) {
 
   diffRejectingIds.value.add(tool.id)
   try {
+    // 获取输入框内容作为批注（仅第一个 diff 携带批注，避免重复发送）
+    const annotation = chatStore.inputValue.trim()
+    let isFirstDiff = true
+    let fullAnnotation = ''
+
     // 处理所有 pending 的 diff
     for (const diffId of diffIds) {
-      await rejectDiff(diffId)
+      // 只有第一个 diff 携带批注
+      const result = await rejectDiff(diffId, isFirstDiff ? annotation : undefined)
+
+      // 保存第一个 diff 返回的完整批注（用于发送给 AI）
+      if (isFirstDiff && result.hasAnnotation && result.fullAnnotation) {
+        fullAnnotation = result.fullAnnotation
+      }
+      isFirstDiff = false
     }
+
+    // 如果有批注，清空输入框并发送批注给 AI
+    if (annotation) {
+      chatStore.setInputValue('')
+
+      // 如果后端返回了完整批注，使用 chatStore 发送给 AI
+      if (fullAnnotation) {
+        await chatStore.sendDiffAnnotation(fullAnnotation)
+      }
+    }
+
     // 拒绝成功后清除对应的 pending 状态
     const paths = getToolFilePaths(tool)
     for (const path of paths) {
