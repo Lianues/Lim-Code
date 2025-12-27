@@ -299,6 +299,7 @@ Requirements:
                 saveFailed: 'Save failed: {error}',
                 savedShort: 'Saved: {filePath}',
                 rejected: 'Rejected changes: {filePath}',
+                rejectFailed: 'Reject failed: {error}',
                 diffTitle: '{filePath} (AI changes - Ctrl+S to save)'
             },
             readFile: {
@@ -414,7 +415,9 @@ Requirements:
             invalidDiffData: 'Invalid diff data',
             noFileContent: 'No file content',
             unsupportedToolType: 'Unsupported tool type: {toolName}',
-            
+            acceptDiffFailed: 'Failed to accept diff changes',
+            rejectDiffFailed: 'Failed to reject diff changes',
+
             getRelativePathFailed: 'Failed to get relative path',
             previewAttachmentFailed: 'Failed to preview attachment',
             readImageFailed: 'Failed to read image',

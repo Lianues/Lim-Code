@@ -10,12 +10,12 @@
  * 5. 通过工具 ID 从 store 获取响应结果
  */
 
-import { ref, computed, Component, h, watchEffect } from 'vue'
+import { ref, computed, Component, h, watchEffect, onMounted, onBeforeUnmount } from 'vue'
 import type { ToolUsage, Message } from '../../types'
 import { getToolConfig } from '../../utils/toolRegistry'
 import { ensureMcpToolRegistered } from '../../utils/tools'
 import { useChatStore } from '../../stores'
-import { sendToExtension } from '../../utils/vscode'
+import { sendToExtension, acceptDiff, rejectDiff, getPendingDiffs } from '../../utils/vscode'
 import { useI18n } from '../../i18n'
 import { generateId } from '../../utils/format'
 
@@ -83,6 +83,197 @@ const enhancedTools = computed<ToolUsage[]>(() => {
 // 正在处理确认的工具 ID 集合
 // eslint-disable-next-line no-undef
 const processingToolIds = ref<Set<string>>(new Set())
+
+// ========== apply_diff 保存/拒绝按钮相关状态 ==========
+
+// 轮询获取的 pending diff 映射：filePath -> diffId
+const pendingDiffMap = ref<Map<string, string>>(new Map())
+
+// 轮询定时器
+let diffPollTimer: ReturnType<typeof setInterval> | null = null
+
+// 按钮加载状态
+const diffAcceptingIds = ref<Set<string>>(new Set())
+const diffRejectingIds = ref<Set<string>>(new Set())
+
+// 获取工具涉及的文件路径列表
+function getToolFilePaths(tool: ToolUsage): string[] {
+  if (tool.name === 'apply_diff') {
+    const path = tool.args?.path as string
+    return path ? [path] : []
+  }
+  if (tool.name === 'write_file') {
+    const files = tool.args?.files as Array<{ path: string }> | undefined
+    return files ? files.map(f => f.path) : []
+  }
+  return []
+}
+
+// 检查文件修改工具是否应该显示保存/拒绝按钮
+function shouldShowDiffButtons(tool: ToolUsage): boolean {
+  if (tool.name !== 'apply_diff' && tool.name !== 'write_file') return false
+
+  const paths = getToolFilePaths(tool)
+  
+  // 检查是否有任何文件在 pendingDiffMap 中
+  for (const path of paths) {
+    if (pendingDiffMap.value.has(path)) {
+      return true
+    }
+  }
+
+  // 检查 result 中是否有 pending 状态
+  const resultData = (tool.result as any)?.data
+  if (resultData?.status === 'pending' && resultData?.pendingDiffId) {
+    return true
+  }
+  
+  // 对于 write_file，检查 results 中是否有任何 pending
+  if (tool.name === 'write_file' && resultData?.results) {
+    for (const r of resultData.results) {
+      if (r.status === 'pending') {
+        return true
+      }
+    }
+  }
+
+  return false
+}
+
+// 获取工具所有的 pending diff IDs
+function getDiffIds(tool: ToolUsage): string[] {
+  const diffIds: string[] = []
+  const paths = getToolFilePaths(tool)
+  
+  // 从 pendingDiffMap 获取
+  for (const path of paths) {
+    const diffId = pendingDiffMap.value.get(path)
+    if (diffId && !diffIds.includes(diffId)) {
+      diffIds.push(diffId)
+    }
+  }
+  
+  // 也检查 result 中的 pendingDiffId
+  const resultData = (tool.result as any)?.data
+  if (resultData?.pendingDiffId && !diffIds.includes(resultData.pendingDiffId)) {
+    diffIds.push(resultData.pendingDiffId)
+  }
+
+  return diffIds
+}
+
+// 保存 diff（支持多个 diff）
+async function handleAcceptDiff(tool: ToolUsage) {
+  const diffIds = getDiffIds(tool)
+  if (diffIds.length === 0 || diffAcceptingIds.value.has(tool.id) || diffRejectingIds.value.has(tool.id)) return
+
+  diffAcceptingIds.value.add(tool.id)
+  try {
+    // 处理所有 pending 的 diff
+    for (const diffId of diffIds) {
+      await acceptDiff(diffId)
+    }
+    // 保存成功后清除对应的 pending 状态
+    const paths = getToolFilePaths(tool)
+    for (const path of paths) {
+      pendingDiffMap.value.delete(path)
+    }
+  } finally {
+    diffAcceptingIds.value.delete(tool.id)
+  }
+}
+
+// 拒绝 diff（支持多个 diff）
+async function handleRejectDiff(tool: ToolUsage) {
+  const diffIds = getDiffIds(tool)
+  if (diffIds.length === 0 || diffAcceptingIds.value.has(tool.id) || diffRejectingIds.value.has(tool.id)) return
+
+  diffRejectingIds.value.add(tool.id)
+  try {
+    // 处理所有 pending 的 diff
+    for (const diffId of diffIds) {
+      await rejectDiff(diffId)
+    }
+    // 拒绝成功后清除对应的 pending 状态
+    const paths = getToolFilePaths(tool)
+    for (const path of paths) {
+      pendingDiffMap.value.delete(path)
+    }
+  } finally {
+    diffRejectingIds.value.delete(tool.id)
+  }
+}
+
+// 检查是否正在保存
+function isDiffAccepting(toolId: string): boolean {
+  return diffAcceptingIds.value.has(toolId)
+}
+
+// 检查是否正在拒绝
+function isDiffRejecting(toolId: string): boolean {
+  return diffRejectingIds.value.has(toolId)
+}
+
+// 开始轮询 pending diffs
+async function startDiffPolling() {
+  if (diffPollTimer) return
+
+  const checkPending = async () => {
+    // 检查是否有正在运行的文件修改工具
+    const hasRunningFileTool = enhancedTools.value.some(
+      tool => (tool.name === 'apply_diff' || tool.name === 'write_file') &&
+              (tool.status === 'running' || tool.status === 'pending')
+    )
+
+    if (!hasRunningFileTool) {
+      stopDiffPolling()
+      return
+    }
+
+    try {
+      const diffs = await getPendingDiffs()
+      // 更新映射
+      const newMap = new Map<string, string>()
+      for (const diff of diffs) {
+        newMap.set(diff.filePath, diff.id)
+      }
+      pendingDiffMap.value = newMap
+    } catch (err) {
+      console.error('Failed to poll pending diffs:', err)
+    }
+  }
+
+  // 立即检查一次
+  await checkPending()
+
+  // 每 500ms 检查一次
+  diffPollTimer = setInterval(checkPending, 500)
+}
+
+// 停止轮询
+function stopDiffPolling() {
+  if (diffPollTimer) {
+    clearInterval(diffPollTimer)
+    diffPollTimer = null
+  }
+}
+
+// 监听工具状态变化，启动/停止轮询
+watchEffect(() => {
+  const hasRunningFileTool = enhancedTools.value.some(
+    tool => (tool.name === 'apply_diff' || tool.name === 'write_file') &&
+            (tool.status === 'running' || tool.status === 'pending')
+  )
+
+  if (hasRunningFileTool) {
+    startDiffPolling()
+  }
+})
+
+// 组件卸载时停止轮询
+onBeforeUnmount(() => {
+  stopDiffPolling()
+})
 
 // 用户决定状态：记录每个工具的用户决定（true=确认，false=拒绝，undefined=未决定）
 // eslint-disable-next-line no-undef
@@ -158,29 +349,11 @@ async function submitAllDecisions() {
 
   if (toolResponses.length === 0) return
 
-  // 获取输入栏的批注内容
-  const annotation = chatStore.inputValue.trim()
-
   // 清空用户决定状态
   userDecisions.value.clear()
 
-  // 清空输入栏
-  if (annotation) {
-    chatStore.clearInputValue()
-
-    // 先在聊天流中添加用户的批注消息（确保显示顺序正确）
-    const userMessage: Message = {
-      id: generateId(),
-      role: 'user',
-      content: annotation,
-      timestamp: Date.now(),
-      parts: [{ text: annotation }]
-    }
-    chatStore.allMessages.push(userMessage)
-  }
-
-  // 发送到后端（带批注）
-  await sendToolConfirmation(toolResponses, annotation)
+  // 发送到后端（不带批注，批注在工具执行完成后由 chatStore 发送）
+  await sendToolConfirmation(toolResponses)
 }
 
 // 发送工具确认响应到后端
@@ -488,6 +661,28 @@ function renderToolContent(tool: ToolUsage) {
       <div v-if="isExpandable(tool) && isExpanded(tool.id)" class="tool-content">
         <component :is="() => renderToolContent(tool)" />
       </div>
+
+      <!-- apply_diff 底部操作按钮 -->
+      <div v-if="shouldShowDiffButtons(tool)" class="diff-action-footer">
+        <button
+          class="diff-action-btn accept"
+          :disabled="isDiffAccepting(tool.id) || isDiffRejecting(tool.id)"
+          @click.stop="handleAcceptDiff(tool)"
+        >
+          <span v-if="isDiffAccepting(tool.id)" class="codicon codicon-loading codicon-modifier-spin"></span>
+          <span v-else class="codicon codicon-check"></span>
+          <span class="btn-text">{{ t('components.tools.file.applyDiffPanel.save') }}</span>
+        </button>
+        <button
+          class="diff-action-btn reject"
+          :disabled="isDiffAccepting(tool.id) || isDiffRejecting(tool.id)"
+          @click.stop="handleRejectDiff(tool)"
+        >
+          <span v-if="isDiffRejecting(tool.id)" class="codicon codicon-loading codicon-modifier-spin"></span>
+          <span v-else class="codicon codicon-close"></span>
+          <span class="btn-text">{{ t('components.tools.file.applyDiffPanel.reject') }}</span>
+        </button>
+      </div>
     </div>
   </div>
 </template>
@@ -721,6 +916,72 @@ function renderToolContent(tool: ToolUsage) {
 
 .decision-text {
   white-space: nowrap;
+}
+
+/* 文件修改底部操作按钮区域 */
+.diff-action-footer {
+  display: flex;
+  gap: var(--spacing-xs, 4px);
+  padding: var(--spacing-xs, 4px) var(--spacing-sm, 8px);
+  border-top: 1px solid var(--vscode-panel-border);
+  background: var(--vscode-editor-inactiveSelectionBackground);
+}
+
+.diff-action-btn {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.12s ease;
+  background: transparent;
+}
+
+.diff-action-btn.accept {
+  color: var(--vscode-testing-iconPassed);
+  border-color: var(--vscode-testing-iconPassed);
+}
+
+.diff-action-btn.accept:hover:not(:disabled) {
+  background: rgba(40, 167, 69, 0.15);
+}
+
+.diff-action-btn.reject {
+  color: var(--vscode-testing-iconFailed);
+  border-color: var(--vscode-testing-iconFailed);
+}
+
+.diff-action-btn.reject:hover:not(:disabled) {
+  background: rgba(220, 53, 69, 0.15);
+}
+
+.diff-action-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.diff-action-btn .codicon {
+  font-size: 12px;
+}
+
+.btn-text {
+  white-space: nowrap;
+}
+
+/* codicon loading spin 动画 */
+@keyframes codicon-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.codicon-modifier-spin {
+  animation: codicon-spin 1s linear infinite;
 }
 
 /* Diff 预览按钮 - 极简灰白设计 */

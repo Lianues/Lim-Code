@@ -33,6 +33,12 @@ interface WriteResult {
     error?: string;
     /** 前端按需加载 diff 内容用 */
     diffContentId?: string;
+    /** 用户编辑后的内容（仅当用户修改了 AI 建议时存在） */
+    userEditedContent?: string;
+    /** 消息（包含用户编辑说明等） */
+    message?: string;
+    /** pending diff ID */
+    pendingDiffId?: string;
 }
 
 /**
@@ -100,6 +106,23 @@ async function writeSingleFile(entry: WriteFileEntry, isMultiRoot: boolean): Pro
             content
         );
 
+        // 尝试将内容保存到 DiffStorageManager，供前端按需加载
+        const diffStorageManager = getDiffStorageManager();
+        let diffContentId: string | undefined;
+        
+        if (diffStorageManager) {
+            try {
+                const diffRef = await diffStorageManager.saveGlobalDiff({
+                    originalContent,
+                    newContent: content,
+                    filePath
+                });
+                diffContentId = diffRef.diffId;
+            } catch (e) {
+                console.warn('Failed to save diff content to storage:', e);
+            }
+        }
+
         // 等待 diff 被处理（保存或拒绝）或用户中断
         const wasInterrupted = await new Promise<boolean>((resolve) => {
             const checkStatus = () => {
@@ -122,42 +145,35 @@ async function writeSingleFile(entry: WriteFileEntry, isMultiRoot: boolean): Pro
         const finalDiff = diffManager.getDiff(pendingDiff.id);
         const wasAccepted = !wasInterrupted && (!finalDiff || finalDiff.status === 'accepted');
         
-        // 尝试将内容保存到 DiffStorageManager，供前端按需加载
-        const diffStorageManager = getDiffStorageManager();
-        let diffContentId: string | undefined;
-        
-        if (diffStorageManager) {
-            try {
-                const diffRef = await diffStorageManager.saveGlobalDiff({
-                    originalContent,
-                    newContent: content,
-                    filePath
-                });
-                diffContentId = diffRef.diffId;
-            } catch (e) {
-                console.warn('Failed to save diff content to storage:', e);
-            }
-        }
+        // 检查用户是否编辑了内容
+        const userEditedContent = finalDiff?.userEditedContent;
         
         if (wasInterrupted) {
-            // 简化返回：AI 已经知道写入的内容，不需要重复返回
             return {
                 path: filePath,
                 success: true,  // 用户主动中断，不算失败
                 action: fileExists ? 'modified' : 'created',
                 status: 'pending',
-                diffContentId
+                diffContentId,
+                pendingDiffId: pendingDiff.id
             };
         }
         
-        // 简化返回：AI 已经知道写入的内容，不需要重复返回
+        // 构建消息，如果用户编辑了内容则包含在返回中
+        let message: string | undefined;
+        if (wasAccepted && userEditedContent) {
+            message = `[USER EDIT] The user modified the AI-suggested content before saving. User's final content:\n${userEditedContent}`;
+        }
+        
         return {
             path: filePath,
             success: wasAccepted,
             action: fileExists ? 'modified' : 'created',
             status: wasAccepted ? 'accepted' : 'rejected',
             error: wasAccepted ? undefined : 'Diff was rejected',
-            diffContentId
+            diffContentId,
+            userEditedContent,
+            message
         };
     } catch (error) {
         return {

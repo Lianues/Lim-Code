@@ -1366,7 +1366,54 @@ export const useChatStore = defineStore('chat', () => {
         isWaitingForResponse.value = false
         return
       }
-      
+
+      // 如果需要等待用户批注（工具确认流程）
+      if (chunk.needAnnotation) {
+        // 获取输入框内容作为批注
+        const annotation = inputValue.value.trim()
+
+        // 如果有批注，先在聊天流中添加用户的批注消息
+        if (annotation) {
+          const userMessage: Message = {
+            id: generateId(),
+            role: 'user',
+            content: annotation,
+            timestamp: Date.now(),
+            parts: [{ text: annotation }]
+          }
+          allMessages.value.push(userMessage)
+          // 清空输入框
+          inputValue.value = ''
+        }
+
+        // 创建新的占位消息用于接收后续 AI 响应
+        const newAssistantMessageId = generateId()
+        const newAssistantMessage: Message = {
+          id: newAssistantMessageId,
+          role: 'assistant',
+          content: '',
+          timestamp: Date.now(),
+          streaming: true,
+          metadata: {
+            modelVersion: currentModelName.value
+          }
+        }
+        allMessages.value.push(newAssistantMessage)
+        streamingMessageId.value = newAssistantMessageId
+
+        // 发送 continueWithAnnotation 请求
+        sendToExtension('continueWithAnnotation', {
+          conversationId: currentConversationId.value,
+          configId: configId.value,
+          annotation: annotation
+        })
+
+        // 保持 streaming 状态
+        isStreaming.value = true
+        isWaitingForResponse.value = true
+        return
+      }
+
       // 创建新的占位消息用于接收后续 AI 响应
       const newAssistantMessageId = generateId()
       const newAssistantMessage: Message = {
@@ -1381,7 +1428,7 @@ export const useChatStore = defineStore('chat', () => {
       }
       allMessages.value.push(newAssistantMessage)
       streamingMessageId.value = newAssistantMessageId
-      
+
       // 确保状态正确设置，这样用户可以在后续 AI 响应期间点击取消按钮
       // 这对于非流式模式尤为重要，因为工具执行完毕后会自动发起新的 AI 请求
       isStreaming.value = true

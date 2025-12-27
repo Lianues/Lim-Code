@@ -1581,7 +1581,14 @@ const ja: LanguageMessages = {
                     copied: 'コピーしました',
                     copyNew: '新しい内容をコピー',
                     deletedLines: '削除',
-                    addedLines: '追加'
+                    addedLines: '追加',
+                    userEdited: 'ユーザー編集済み',
+                    userEditedContent: 'ユーザーが修正した内容',
+                    save: '保存',
+                    reject: '拒否',
+                    saveChanges: '変更を保存 (Ctrl+S)',
+                    rejectChanges: '変更を破棄',
+                    waitingForAction: 'ユーザー操作を待っています'
                 },
                 createDirectoryPanel: {
                     title: 'ディレクトリを作成',

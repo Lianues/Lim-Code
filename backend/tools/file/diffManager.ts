@@ -25,8 +25,10 @@ export interface PendingDiff {
     absolutePath: string;
     /** 原始内容 */
     originalContent: string;
-    /** 修改后的内容 */
+    /** 修改后的内容（AI 建议的内容） */
     newContent: string;
+    /** 用户编辑后的最终内容（仅当用户修改了 AI 建议时存在） */
+    userEditedContent?: string;
     /** 创建时间 */
     timestamp: number;
     /** 状态 */
@@ -263,6 +265,13 @@ export class DiffManager {
         // 5. 监听文档保存事件
         const saveListener = vscode.workspace.onDidSaveTextDocument(async (savedDoc) => {
             if (savedDoc.uri.fsPath === diff.absolutePath) {
+                // 检查用户是否修改了内容
+                const savedContent = savedDoc.getText();
+                if (savedContent !== diff.newContent && savedContent !== diff.originalContent) {
+                    // 用户修改了内容，记录下来
+                    diff.userEditedContent = savedContent;
+                }
+
                 diff.status = 'accepted';
                 saveListener.dispose();
                 this.cleanup(diff.id);
@@ -308,25 +317,29 @@ export class DiffManager {
         if (existingTimer) {
             clearTimeout(existingTimer);
         }
-        
+
         const currentSettings = this.getSettings();
         const timer = setTimeout(async () => {
-            await this.acceptDiff(id, true);
+            // 自动保存模式：传递 isAutoSave = true，使用 AI 建议的内容
+            await this.acceptDiff(id, true, true);
             this.autoSaveTimers.delete(id);
         }, currentSettings.autoSaveDelay);
-        
+
         this.autoSaveTimers.set(id, timer);
     }
     
     /**
      * 接受 diff（保存修改）
+     * @param id diff ID
+     * @param closeTab 是否关闭标签页
+     * @param isAutoSave 是否为自动保存（自动保存时使用 AI 内容，手动保存时保留用户修改）
      */
-    public async acceptDiff(id: string, closeTab: boolean = false): Promise<boolean> {
+    public async acceptDiff(id: string, closeTab: boolean = false, isAutoSave: boolean = false): Promise<boolean> {
         const diff = this.pendingDiffs.get(id);
         if (!diff || diff.status !== 'pending') {
             return false;
         }
-        
+
         try {
             // 移除监听器（避免重复处理）
             const saveListener = this.saveListeners.get(id);
@@ -339,47 +352,58 @@ export class DiffManager {
                 closeListener.dispose();
                 this.closeListeners.delete(id);
             }
-            
+
             const uri = vscode.Uri.file(diff.absolutePath);
             let doc = vscode.workspace.textDocuments.find(d => d.uri.fsPath === diff.absolutePath);
-            
+
             // 如果文档未打开，先打开它
             if (!doc) {
                 doc = await vscode.workspace.openTextDocument(uri);
             }
-            
-            // 检查文档内容是否已经是新内容
+
             const currentContent = doc.getText();
-            if (currentContent !== diff.newContent) {
-                // 通过 WorkspaceEdit 更新文档内容
-                const edit = new vscode.WorkspaceEdit();
-                const fullRange = new vscode.Range(
-                    doc.positionAt(0),
-                    doc.positionAt(currentContent.length)
-                );
-                edit.replace(uri, fullRange, diff.newContent);
-                await vscode.workspace.applyEdit(edit);
+
+            // 判断是否需要覆盖用户修改
+            if (isAutoSave) {
+                // 自动保存模式：强制使用 AI 建议的内容
+                if (currentContent !== diff.newContent) {
+                    const edit = new vscode.WorkspaceEdit();
+                    const fullRange = new vscode.Range(
+                        doc.positionAt(0),
+                        doc.positionAt(currentContent.length)
+                    );
+                    edit.replace(uri, fullRange, diff.newContent);
+                    await vscode.workspace.applyEdit(edit);
+                }
+            } else {
+                // 手动保存模式：保留用户的修改，记录用户编辑的内容
+                if (currentContent !== diff.newContent && currentContent !== diff.originalContent) {
+                    // 用户修改了内容，记录下来
+                    diff.userEditedContent = currentContent;
+                }
+                // 不覆盖，直接使用当前编辑器中的内容
             }
-            
-            // 保存文档（使用 overwriteReadonly 选项强制保存）
+
+            // 保存文档
             const saved = await doc.save();
-            
+
             if (!saved) {
                 // 如果 VSCode API 保存失败，尝试直接写入文件
-                fs.writeFileSync(diff.absolutePath, diff.newContent, 'utf8');
+                const contentToSave = isAutoSave ? diff.newContent : (diff.userEditedContent || diff.newContent);
+                fs.writeFileSync(diff.absolutePath, contentToSave, 'utf8');
             }
-            
+
             diff.status = 'accepted';
             this.cleanup(id);
             this.notifyStatusChange();
             this.notifySaveComplete(diff);
-            
+
             vscode.window.setStatusBarMessage(`$(check) ${t('tools.file.diffManager.savedShort', { filePath: diff.filePath })}`, 3000);
-            
+
             if (closeTab) {
                 await this.closeDiffTab(diff.absolutePath);
             }
-            
+
             return true;
         } catch (error) {
             vscode.window.showErrorMessage(t('tools.file.diffManager.saveFailed', { error: error instanceof Error ? error.message : String(error) }));
@@ -405,7 +429,7 @@ export class DiffManager {
     }
     
     /**
-     * 拒绝 diff（放弃修改）
+     * 拒绝 diff（放弃修改，还原文件并关闭标签页）
      */
     public async rejectDiff(id: string): Promise<boolean> {
         const diff = this.pendingDiffs.get(id);
@@ -413,13 +437,65 @@ export class DiffManager {
             return false;
         }
         
-        diff.status = 'rejected';
-        this.cleanup(id);
-        this.notifyStatusChange();
-        
-        vscode.window.showInformationMessage(t('tools.file.diffManager.rejected', { filePath: diff.filePath }));
-        
-        return true;
+        try {
+            // 移除监听器（避免重复处理）
+            const saveListener = this.saveListeners.get(id);
+            if (saveListener) {
+                saveListener.dispose();
+                this.saveListeners.delete(id);
+            }
+            const closeListener = this.closeListeners.get(id);
+            if (closeListener) {
+                closeListener.dispose();
+                this.closeListeners.delete(id);
+            }
+
+            // 尝试还原文件到原始状态
+            const uri = vscode.Uri.file(diff.absolutePath);
+            let doc = vscode.workspace.textDocuments.find(d => d.uri.fsPath === diff.absolutePath);
+            
+            if (doc) {
+                // 文档已打开，恢复到原始内容
+                const currentContent = doc.getText();
+                if (currentContent !== diff.originalContent) {
+                    const edit = new vscode.WorkspaceEdit();
+                    const fullRange = new vscode.Range(
+                        doc.positionAt(0),
+                        doc.positionAt(currentContent.length)
+                    );
+                    edit.replace(uri, fullRange, diff.originalContent);
+                    await vscode.workspace.applyEdit(edit);
+                    
+                    // 保存还原后的文件
+                    await doc.save();
+                }
+            } else {
+                // 文档未打开，直接写入原始内容到磁盘
+                const currentContent = fs.readFileSync(diff.absolutePath, 'utf8');
+                if (currentContent !== diff.originalContent) {
+                    fs.writeFileSync(diff.absolutePath, diff.originalContent, 'utf8');
+                }
+            }
+            
+            // 关闭 diff 标签页
+            await this.closeDiffTab(diff.absolutePath);
+            
+            diff.status = 'rejected';
+            this.cleanup(id);
+            this.notifyStatusChange();
+            
+            vscode.window.showInformationMessage(t('tools.file.diffManager.rejected', { filePath: diff.filePath }));
+            
+            return true;
+        } catch (error) {
+            // 即使还原失败，也标记为已拒绝
+            diff.status = 'rejected';
+            this.cleanup(id);
+            this.notifyStatusChange();
+            
+            vscode.window.showErrorMessage(t('tools.file.diffManager.rejectFailed', { error: error instanceof Error ? error.message : String(error) }));
+            return false;
+        }
     }
     
     /**

@@ -43,6 +43,8 @@ interface WriteResult {
   status?: string
   error?: string
   diffContentId?: string
+  userEditedContent?: string
+  message?: string
 }
 
 // Diff 内容（从后端加载）
@@ -101,6 +103,11 @@ const mergedFiles = computed((): MergedFile[] => {
     }
   })
 })
+
+// 获取文件的用户编辑内容
+function getUserEditedContent(file: MergedFile): string | undefined {
+  return file.result?.userEditedContent
+}
 
 // 监听结果变化，自动加载 diff 内容
 watch(writeResults, async (results) => {
@@ -558,6 +565,19 @@ onBeforeUnmount(() => {
           {{ file.result.error }}
         </div>
         
+        <!-- 用户编辑提示 -->
+        <div v-if="getUserEditedContent(file)" class="user-edit-section">
+          <div class="user-edit-header">
+            <span class="codicon codicon-edit user-edit-icon"></span>
+            <span class="user-edit-title">{{ t('components.tools.file.applyDiffPanel.userEdited') }}</span>
+          </div>
+          <div class="user-edit-content">
+            <CustomScrollbar :horizontal="true" :max-height="200">
+              <pre class="user-edit-code">{{ getUserEditedContent(file) }}</pre>
+            </CustomScrollbar>
+          </div>
+        </div>
+        
         <!-- 视图切换按钮 -->
         <div v-if="hasDiffContent(file.path)" class="view-toggle">
           <button
@@ -863,6 +883,52 @@ onBeforeUnmount(() => {
   font-size: 11px;
   color: var(--vscode-inputValidation-errorForeground);
   background: var(--vscode-inputValidation-errorBackground);
+}
+
+/* 用户编辑区块 */
+.user-edit-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs, 4px);
+  padding: var(--spacing-sm, 8px);
+  background: rgba(0, 122, 204, 0.08);
+  border: 1px solid var(--vscode-charts-blue, #007acc);
+  border-radius: var(--radius-sm, 2px);
+  margin: var(--spacing-xs, 4px);
+}
+
+.user-edit-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs, 4px);
+}
+
+.user-edit-icon {
+  color: var(--vscode-charts-blue, #007acc);
+  font-size: 12px;
+}
+
+.user-edit-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--vscode-charts-blue, #007acc);
+}
+
+.user-edit-content {
+  background: var(--vscode-editor-background);
+  border-radius: var(--radius-sm, 2px);
+  overflow: hidden;
+}
+
+.user-edit-code {
+  margin: 0;
+  padding: var(--spacing-sm, 8px);
+  font-family: var(--vscode-editor-font-family);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--vscode-foreground);
+  white-space: pre;
+  overflow-x: auto;
 }
 
 /* 文件内容 */

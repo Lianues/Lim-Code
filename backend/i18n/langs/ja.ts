@@ -299,6 +299,7 @@ const ja: BackendLanguageMessages = {
                 saveFailed: '保存に失敗しました: {error}',
                 savedShort: '保存完了: {filePath}',
                 rejected: '変更を拒否しました: {filePath}',
+                rejectFailed: '拒否に失敗しました: {error}',
                 diffTitle: '{filePath} (AI の変更 - Ctrl+S で保存)'
             },
             readFile: {
@@ -414,7 +415,9 @@ const ja: BackendLanguageMessages = {
             invalidDiffData: '無効な diff データ',
             noFileContent: 'ファイルコンテンツがありません',
             unsupportedToolType: 'サポートされていないツールタイプ: {toolName}',
-            
+            acceptDiffFailed: 'Diff 変更の保存に失敗しました',
+            rejectDiffFailed: 'Diff 変更の拒否に失敗しました',
+
             getRelativePathFailed: '相対パスの取得に失敗しました',
             previewAttachmentFailed: '添付ファイルのプレビューに失敗しました',
             readImageFailed: '画像の読み取りに失敗しました',

@@ -299,6 +299,7 @@ const zhCN: BackendLanguageMessages = {
                 saveFailed: '保存失败: {error}',
                 savedShort: '已保存: {filePath}',
                 rejected: '已拒绝修改: {filePath}',
+                rejectFailed: '拒绝失败: {error}',
                 diffTitle: '{filePath} (AI 修改 - Ctrl+S 保存)'
             },
             readFile: {
@@ -414,7 +415,9 @@ const zhCN: BackendLanguageMessages = {
             invalidDiffData: '无效的 diff 数据',
             noFileContent: '无文件内容',
             unsupportedToolType: '不支持的工具类型: {toolName}',
-            
+            acceptDiffFailed: '保存 diff 更改失败',
+            rejectDiffFailed: '拒绝 diff 更改失败',
+
             getRelativePathFailed: '获取相对路径失败',
             previewAttachmentFailed: '预览附件失败',
             readImageFailed: '读取图片失败',

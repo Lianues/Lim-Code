@@ -121,6 +121,8 @@ export interface ChatStreamToolIterationData {
     }>;
     /** 创建的检查点（如果有） */
     checkpoints?: CheckpointRecord[];
+    /** 标记需要等待用户批注（工具确认后使用） */
+    needAnnotation?: true;
 }
 
 /**
@@ -301,6 +303,24 @@ export interface ToolConfirmationResponseData {
 
     /** 用户批注（可选，会作为用户消息发送给 AI） */
     annotation?: string;
+
+    /** 取消信号 */
+    abortSignal?: AbortSignal;
+}
+
+/**
+ * 继续对话并带批注请求数据（前端发送到后端）
+ * 用于工具确认执行完成后，用户发送批注
+ */
+export interface ContinueWithAnnotationRequestData {
+    /** 对话 ID */
+    conversationId: string;
+
+    /** 配置 ID */
+    configId: string;
+
+    /** 用户批注（会作为用户消息发送给 AI） */
+    annotation: string;
 
     /** 取消信号 */
     abortSignal?: AbortSignal;

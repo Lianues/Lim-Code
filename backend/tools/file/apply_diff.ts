@@ -303,34 +303,11 @@ Important:
                     originalContent,
                     currentContent
                 );
-                
-                // 等待 diff 被处理（保存或拒绝）或用户中断
-                const wasInterrupted = await new Promise<boolean>((resolve) => {
-                    const checkStatus = () => {
-                        // 检查用户中断
-                        if (diffManager.isUserInterrupted()) {
-                            resolve(true);
-                            return;
-                        }
-                        
-                        const diff = diffManager.getDiff(pendingDiff.id);
-                        if (!diff || diff.status !== 'pending') {
-                            resolve(false);
-                        } else {
-                            setTimeout(checkStatus, 100);
-                        }
-                    };
-                    checkStatus();
-                });
-                
-                // 获取最终状态
-                const finalDiff = diffManager.getDiff(pendingDiff.id);
-                const wasAccepted = !wasInterrupted && (!finalDiff || finalDiff.status === 'accepted');
-                
+
                 // 尝试将大内容保存到 DiffStorageManager
                 const diffStorageManager = getDiffStorageManager();
                 let diffContentId: string | undefined;
-                
+
                 if (diffStorageManager) {
                     try {
                         const diffRef = await diffStorageManager.saveGlobalDiff({
@@ -343,35 +320,64 @@ Important:
                         console.warn('Failed to save diff content to storage:', e);
                     }
                 }
-                
+
+                // 等待 diff 被处理（保存或拒绝）或用户中断
+                const wasInterrupted = await new Promise<boolean>((resolve) => {
+                    const checkStatus = () => {
+                        // 检查用户中断
+                        if (diffManager.isUserInterrupted()) {
+                            resolve(true);
+                            return;
+                        }
+
+                        const diff = diffManager.getDiff(pendingDiff.id);
+                        if (!diff || diff.status !== 'pending') {
+                            resolve(false);
+                        } else {
+                            setTimeout(checkStatus, 100);
+                        }
+                    };
+                    checkStatus();
+                });
+
+                // 获取最终状态
+                const finalDiff = diffManager.getDiff(pendingDiff.id);
+                const wasAccepted = !wasInterrupted && (!finalDiff || finalDiff.status === 'accepted');
+
+                // 检查用户是否编辑了内容
+                const userEditedContent = finalDiff?.userEditedContent;
+
                 if (wasInterrupted) {
-                    // 简化返回：AI 已经知道 diffs 内容，不需要重复返回
+                    // 用户中断，返回 pending 状态
                     return {
-                        success: true,  // 用户主动中断，不算失败
+                        success: true,
                         data: {
                             file: filePath,
-                            message: failedCount === 0 
+                            message: failedCount === 0
                                 ? `Diff for ${filePath} is still pending. User may not have reviewed/saved the changes yet.`
                                 : `Applied ${appliedCount}/${diffs.length} diffs for ${filePath}, but ${failedCount} failed. Still pending user review.`,
                             status: 'pending',
                             diffCount: diffs.length,
                             appliedCount: appliedCount,
                             failedCount: failedCount,
-                            // 包含失败详情供 AI 修复
                             failedDiffs: failedDiffs.length > 0 ? failedDiffs : undefined,
-                            // 仅供前端按需加载用，不发送给 AI
-                            diffContentId
+                            diffContentId,
+                            pendingDiffId: pendingDiff.id
                         }
                     };
                 }
-                
-                // 简化返回：AI 已经知道 diffs 内容，不需要重复返回
+
+                // 完成，返回最终状态
                 let message = wasAccepted
                     ? `Diff applied and saved to ${filePath}`
                     : `Diff was rejected for ${filePath}`;
-                
+
                 if (wasAccepted && failedCount > 0) {
                     message = `Partially applied diffs to ${filePath}: ${appliedCount} succeeded, ${failedCount} failed. Saved successfully.`;
+                }
+
+                if (wasAccepted && userEditedContent) {
+                    message += `\n\n[USER EDIT] The user modified the AI-suggested content before saving. User's final content:\n${userEditedContent}`;
                 }
 
                 return {
@@ -383,9 +389,8 @@ Important:
                         diffCount: diffs.length,
                         appliedCount: appliedCount,
                         failedCount: failedCount,
-                        // 包含失败详情供 AI 修复
                         failedDiffs: failedDiffs.length > 0 ? failedDiffs : undefined,
-                        // 仅供前端按需加载用，不发送给 AI
+                        userEditedContent: userEditedContent,
                         diffContentId
                     }
                 };

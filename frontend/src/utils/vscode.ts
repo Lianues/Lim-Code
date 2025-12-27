@@ -151,7 +151,7 @@ export async function loadDiffContent(diffContentId: string): Promise<{
       filePath?: string
       error?: string
     }>('diff.loadContent', { diffContentId })
-    
+
     if (result.success && result.originalContent && result.newContent) {
       return {
         originalContent: result.originalContent,
@@ -163,5 +163,52 @@ export async function loadDiffContent(diffContentId: string): Promise<{
   } catch (err) {
     console.error('Failed to load diff content:', err)
     return null
+  }
+}
+
+/**
+ * 接受 diff 修改（保存文件）
+ *
+ * @param diffId Diff ID
+ * @returns 是否成功
+ */
+export async function acceptDiff(diffId: string): Promise<boolean> {
+  try {
+    const result = await sendToExtension<{ success: boolean }>('diff.accept', { diffId })
+    return result.success
+  } catch (err) {
+    console.error('Failed to accept diff:', err)
+    return false
+  }
+}
+
+/**
+ * 拒绝 diff 修改（放弃更改）
+ *
+ * @param diffId Diff ID
+ * @returns 是否成功
+ */
+export async function rejectDiff(diffId: string): Promise<boolean> {
+  try {
+    const result = await sendToExtension<{ success: boolean }>('diff.reject', { diffId })
+    return result.success
+  } catch (err) {
+    console.error('Failed to reject diff:', err)
+    return false
+  }
+}
+
+/**
+ * 获取当前 pending 的 diff 列表
+ *
+ * @returns Pending diff 列表
+ */
+export async function getPendingDiffs(): Promise<Array<{ id: string; filePath: string }>> {
+  try {
+    const result = await sendToExtension<{ diffs: Array<{ id: string; filePath: string }> }>('diff.getPending', {})
+    return result.diffs || []
+  } catch (err) {
+    console.error('Failed to get pending diffs:', err)
+    return []
   }
 }

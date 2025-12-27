@@ -16,6 +16,8 @@ const props = defineProps<{
   args: Record<string, unknown>
   result?: Record<string, unknown>
   error?: string
+  /** 工具执行状态 */
+  status?: 'pending' | 'running' | 'completed'
 }>()
 
 const { t } = useI18n()
@@ -80,6 +82,11 @@ const resultData = computed(() => {
   return result?.data || null
 })
 
+// 获取用户编辑的内容
+const userEditedContent = computed(() => {
+  return resultData.value?.userEditedContent as string | undefined
+})
+
 // 是否为全失败
 const isFailed = computed(() => {
   return !!props.error || (resultData.value && resultData.value.appliedCount === 0)
@@ -89,6 +96,11 @@ const isFailed = computed(() => {
 const isPartial = computed(() => {
   const data = resultData.value
   return !props.error && data && data.appliedCount > 0 && data.failedCount > 0
+})
+
+// 是否处于 pending 状态（需要用户操作）
+const isPending = computed(() => {
+  return resultData.value?.status === 'pending' && resultData.value?.pendingDiffId
 })
 
 // 获取文件名
@@ -326,6 +338,7 @@ function getDiffStats(diffLines: DiffLine[]) {
 
 // 清理定时器
 onBeforeUnmount(() => {
+  // 清理复制状态定时器
   for (const timeout of copyTimeouts.values()) {
     clearTimeout(timeout)
   }
@@ -370,6 +383,19 @@ onBeforeUnmount(() => {
       </span>
       <span v-if="resultData.status === 'pending'" class="status-badge pending">{{ t('components.tools.file.applyDiffPanel.pending') }}</span>
       <span v-else-if="resultData.status === 'accepted'" class="status-badge accepted">{{ t('components.tools.file.applyDiffPanel.accepted') }}</span>
+    </div>
+
+    <!-- 用户编辑提示 -->
+    <div v-if="userEditedContent" class="user-edit-section">
+      <div class="user-edit-header">
+        <span class="codicon codicon-edit user-edit-icon"></span>
+        <span class="user-edit-title">{{ t('components.tools.file.applyDiffPanel.userEdited') }}</span>
+      </div>
+      <div class="user-edit-content">
+        <CustomScrollbar :horizontal="true" :max-height="200">
+          <pre class="user-edit-code">{{ userEditedContent }}</pre>
+        </CustomScrollbar>
+      </div>
     </div>
     
     <!-- 全局错误 -->
@@ -572,6 +598,11 @@ onBeforeUnmount(() => {
   border-color: var(--vscode-charts-orange);
 }
 
+.result-status.is-running {
+  background: rgba(0, 122, 204, 0.1);
+  border-color: var(--vscode-charts-blue);
+}
+
 .status-icon {
   font-size: 12px;
   position: relative;
@@ -590,6 +621,10 @@ onBeforeUnmount(() => {
 
 .status-icon.partial {
   color: var(--vscode-charts-yellow);
+}
+
+.status-icon.running {
+  color: var(--vscode-charts-blue);
 }
 
 .status-text {
@@ -613,6 +648,108 @@ onBeforeUnmount(() => {
 .status-badge.accepted {
   background: var(--vscode-testing-iconPassed);
   color: var(--vscode-editor-background);
+}
+
+/* 操作按钮组 */
+.diff-action-buttons {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs, 4px);
+  margin-left: auto;
+}
+
+.diff-action-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  border: none;
+  border-radius: var(--radius-sm, 2px);
+  cursor: pointer;
+  transition: all var(--transition-fast, 0.1s);
+}
+
+.diff-action-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.diff-action-btn.accept {
+  background: var(--vscode-testing-iconPassed);
+  color: var(--vscode-editor-background);
+}
+
+.diff-action-btn.accept:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+.diff-action-btn.reject {
+  background: var(--vscode-testing-iconFailed);
+  color: var(--vscode-editor-background);
+}
+
+.diff-action-btn.reject:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+.diff-action-btn .codicon {
+  font-size: 12px;
+}
+
+/* codicon loading spin 动画 */
+@keyframes codicon-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.codicon-modifier-spin {
+  animation: codicon-spin 1s linear infinite;
+}
+
+/* 用户编辑区块 */
+.user-edit-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs, 4px);
+  padding: var(--spacing-sm, 8px);
+  background: rgba(0, 122, 204, 0.08);
+  border: 1px solid var(--vscode-charts-blue, #007acc);
+  border-radius: var(--radius-sm, 2px);
+}
+
+.user-edit-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs, 4px);
+}
+
+.user-edit-icon {
+  color: var(--vscode-charts-blue, #007acc);
+  font-size: 12px;
+}
+
+.user-edit-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--vscode-charts-blue, #007acc);
+}
+
+.user-edit-content {
+  background: var(--vscode-editor-background);
+  border-radius: var(--radius-sm, 2px);
+  overflow: hidden;
+}
+
+.user-edit-code {
+  margin: 0;
+  padding: var(--spacing-sm, 8px);
+  font-family: var(--vscode-editor-font-family);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--vscode-foreground);
+  white-space: pre;
+  overflow-x: auto;
 }
 
 /* 全局错误 */

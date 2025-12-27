@@ -311,6 +311,7 @@ export interface BackendLanguageMessages {
                 saveFailed: string;
                 savedShort: string;
                 rejected: string;
+                rejectFailed: string;
                 diffTitle: string;
             };
             readFile: {
@@ -443,6 +444,8 @@ export interface BackendLanguageMessages {
             invalidDiffData: string;
             noFileContent: string;
             unsupportedToolType: string;
+            acceptDiffFailed: string;
+            rejectDiffFailed: string;
             
             /** 文件相关 */
             getRelativePathFailed: string;

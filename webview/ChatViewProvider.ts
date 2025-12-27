@@ -35,6 +35,7 @@ import {
     setGlobalDiffStorageManager
 } from '../backend/core/settingsContext';
 import { DiffStorageManager } from '../backend/modules/conversation';
+import { getDiffManager } from '../backend/tools/file/diffManager';
 
 /**
  * Diff 预览内容提供者
@@ -513,7 +514,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     void this.handleToolConfirmationStream(data, requestId);
                     break;
                 }
-                
+
+                case 'continueWithAnnotation': {
+                    // 工具确认后继续对话（带批注）
+                    void this.handleContinueWithAnnotationStream(data, requestId);
+                    break;
+                }
+
                 // ========== 配置管理 ==========
                 
                 case 'config.listConfigs': {
@@ -1075,7 +1082,48 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     }
                     break;
                 }
-                
+
+                case 'diff.accept': {
+                    try {
+                        const { diffId } = data;
+                        const diffManager = getDiffManager();
+                        // 手动保存模式，isAutoSave = false，会保留用户编辑
+                        const success = await diffManager.acceptDiff(diffId, true, false);
+                        this.sendResponse(requestId, { success });
+                    } catch (error: any) {
+                        this.sendError(requestId, 'ACCEPT_DIFF_ERROR', error.message || t('webview.errors.acceptDiffFailed'));
+                    }
+                    break;
+                }
+
+                case 'diff.reject': {
+                    try {
+                        const { diffId } = data;
+                        const diffManager = getDiffManager();
+                        const success = await diffManager.rejectDiff(diffId);
+                        this.sendResponse(requestId, { success });
+                    } catch (error: any) {
+                        this.sendError(requestId, 'REJECT_DIFF_ERROR', error.message || t('webview.errors.rejectDiffFailed'));
+                    }
+                    break;
+                }
+
+                case 'diff.getPending': {
+                    try {
+                        const diffManager = getDiffManager();
+                        const pendingDiffs = diffManager.getPendingDiffs();
+                        this.sendResponse(requestId, {
+                            diffs: pendingDiffs.map(d => ({
+                                id: d.id,
+                                filePath: d.filePath
+                            }))
+                        });
+                    } catch (error: any) {
+                        this.sendResponse(requestId, { diffs: [] });
+                    }
+                    break;
+                }
+
                 // ========== 工作区信息 ==========
                 
                 case 'getWorkspaceUri': {
@@ -2499,7 +2547,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                             content: chunk.content,
                             toolIteration: true,
                             toolResults: (chunk as any).toolResults,
-                            checkpoints: (chunk as any).checkpoints
+                            checkpoints: (chunk as any).checkpoints,
+                            needAnnotation: (chunk as any).needAnnotation
                         }
                     });
                 } else if ('content' in chunk && chunk.content) {
@@ -2567,12 +2616,141 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
 
     /**
+     * 处理继续对话（带批注）流式请求
+     */
+    private async handleContinueWithAnnotationStream(data: any, requestId: string) {
+        let hasError = false;
+        const conversationId = data.conversationId;
+
+        console.log(`[ChatViewProvider.handleContinueWithAnnotationStream] Starting stream for conversation: ${conversationId}`);
+
+        // 创建取消控制器
+        const abortController = new AbortController();
+        this.streamAbortControllers.set(conversationId, abortController);
+
+        try {
+            const stream = this.chatHandler.continueWithAnnotation({
+                ...data,
+                abortSignal: abortController.signal
+            });
+
+            for await (const chunk of stream) {
+                if ('checkpointOnly' in chunk && chunk.checkpointOnly) {
+                    this._view?.webview.postMessage({
+                        type: 'streamChunk',
+                        data: {
+                            conversationId: data.conversationId,
+                            type: 'checkpoints',
+                            checkpoints: (chunk as any).checkpoints
+                        }
+                    });
+                } else if ('toolsExecuting' in chunk && chunk.toolsExecuting) {
+                    this._view?.webview.postMessage({
+                        type: 'streamChunk',
+                        data: {
+                            conversationId: data.conversationId,
+                            type: 'toolsExecuting',
+                            content: (chunk as any).content,
+                            pendingToolCalls: (chunk as any).pendingToolCalls,
+                            toolsExecuting: true
+                        }
+                    });
+                } else if ('awaitingConfirmation' in chunk && chunk.awaitingConfirmation) {
+                    this._view?.webview.postMessage({
+                        type: 'streamChunk',
+                        data: {
+                            conversationId: data.conversationId,
+                            type: 'awaitingConfirmation',
+                            content: (chunk as any).content,
+                            pendingToolCalls: (chunk as any).pendingToolCalls
+                        }
+                    });
+                } else if ('chunk' in chunk && chunk.chunk) {
+                    this._view?.webview.postMessage({
+                        type: 'streamChunk',
+                        data: {
+                            conversationId: data.conversationId,
+                            type: 'chunk',
+                            chunk: chunk.chunk
+                        }
+                    });
+                } else if ('toolIteration' in chunk && chunk.toolIteration) {
+                    this._view?.webview.postMessage({
+                        type: 'streamChunk',
+                        data: {
+                            conversationId: data.conversationId,
+                            type: 'toolIteration',
+                            content: chunk.content,
+                            toolIteration: true,
+                            toolResults: (chunk as any).toolResults,
+                            checkpoints: (chunk as any).checkpoints
+                        }
+                    });
+                } else if ('content' in chunk && chunk.content) {
+                    this._view?.webview.postMessage({
+                        type: 'streamChunk',
+                        data: {
+                            conversationId: data.conversationId,
+                            type: 'complete',
+                            content: chunk.content,
+                            checkpoints: (chunk as any).checkpoints
+                        }
+                    });
+                } else if ('cancelled' in chunk && (chunk as any).cancelled) {
+                    this._view?.webview.postMessage({
+                        type: 'streamChunk',
+                        data: {
+                            conversationId: data.conversationId,
+                            type: 'cancelled',
+                            content: (chunk as any).content
+                        }
+                    });
+                } else if ('error' in chunk && chunk.error) {
+                    hasError = true;
+                    this._view?.webview.postMessage({
+                        type: 'streamChunk',
+                        data: {
+                            conversationId: data.conversationId,
+                            type: 'error',
+                            error: chunk.error
+                        }
+                    });
+                    this.sendError(requestId, chunk.error.code || 'CONTINUE_ANNOTATION_ERROR', chunk.error.message);
+                }
+            }
+
+            if (!hasError) {
+                this.sendResponse(requestId, { success: true });
+            }
+        } catch (error: any) {
+            if (abortController.signal.aborted) {
+                return;
+            }
+
+            this._view?.webview.postMessage({
+                type: 'streamChunk',
+                data: {
+                    conversationId,
+                    type: 'error',
+                    error: {
+                        code: error.code || 'CONTINUE_ANNOTATION_ERROR',
+                        message: error.message
+                    }
+                }
+            });
+            this.sendError(requestId, error.code || 'CONTINUE_ANNOTATION_ERROR', error.message);
+        } finally {
+            this.streamAbortControllers.delete(conversationId);
+        }
+    }
+
+    /**
      * 处理编辑并重试流式请求
      */
     private async handleEditAndRetryStream(data: any, requestId: string) {
         let hasError = false;
         const conversationId = data.conversationId;
-        
+
         // 创建取消控制器
         const abortController = new AbortController();
         this.streamAbortControllers.set(conversationId, abortController);
