@@ -325,37 +325,6 @@ watch(requiredDiffToolIds, (newIds) => {
   }
 })
 
-/**
- * 查找与当前工具匹配的 requiredDiffToolIds 中的 ID
- * 通过文件路径匹配，因为工具 ID 可能因前后端生成不同而不匹配
- */
-function findMatchingRequiredToolId(tool: ToolUsage): string | null {
-  const toolPaths = new Set(getToolFilePaths(tool))
-  if (toolPaths.size === 0) return null
-
-  for (const reqId of requiredDiffToolIds.value) {
-    // 在 enhancedTools 中找到具有该 ID 的工具
-    const matchingTool = enhancedTools.value.find(t => t.id === reqId)
-    if (matchingTool) {
-      const matchPaths = new Set(getToolFilePaths(matchingTool))
-      // 检查路径是否完全匹配
-      if (matchPaths.size === toolPaths.size) {
-        let allMatch = true
-        for (const p of toolPaths) {
-          if (!matchPaths.has(p)) {
-            allMatch = false
-            break
-          }
-        }
-        if (allMatch) {
-          return reqId
-        }
-      }
-    }
-  }
-  return null
-}
-
 // 保存 diff
 async function handleAcceptDiff(tool: ToolUsage) {
   const diffIds = getDiffIds(tool)
@@ -391,22 +360,14 @@ async function handleAcceptDiff(tool: ToolUsage) {
       pendingDiffMap.value.delete(path)
     }
 
-    // 记录已处理：同时标记 tool.id 和匹配的 requiredDiffToolId
-    // 这解决了前后端工具 ID 不匹配的问题
+    // 记录已处理
+    // 注意：后端现在在 StreamAccumulator 中统一生成工具 ID，
+    // 前端工具 ID 与后端 pendingDiffToolIds 应该一致，无需路径匹配
     processedDiffTools.value.set(tool.id, 'accept')
-
-    // 尝试找到匹配的 requiredDiffToolId 并标记
-    const matchingReqId = findMatchingRequiredToolId(tool)
-    if (matchingReqId && matchingReqId !== tool.id) {
-      processedDiffTools.value.set(matchingReqId, 'accept')
-    }
-
     processedDiffTools.value = new Map(processedDiffTools.value)
 
     // 检查是否所有 diff 工具都已处理
-    const allProcessed = areAllDiffsProcessed()
-
-    if (allProcessed) {
+    if (areAllDiffsProcessed()) {
       // 防止重复发送：在清空状态前检查并设置标志
       if (isSendingContinue) {
         return

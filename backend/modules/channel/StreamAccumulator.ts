@@ -290,22 +290,27 @@ export class StreamAccumulator {
                 }
                 
                 // 找不到可合并的块，作为新块添加
-                console.log(`[Accumulator] No mergeable FC found, adding new FC part`);
                 // 添加前尝试解析初始参数
                 if (fc.partialArgs) {
                     try {
                         fc.args = JSON.parse(fc.partialArgs);
                     } catch (e) {}
                 }
-                
+
                 // 构建新 Part，保留非 functionCall 的属性（如 thoughtSignatures）
                 const newPart: ContentPart = { ...part };
                 // 确保 functionCall 是深拷贝的，且处理了 args
                 newPart.functionCall = { ...fc };
                 if (fc.args) newPart.functionCall.args = { ...fc.args };
-                
+
+                // 关键：如果没有 ID，立即生成
+                // 这确保前端接收到的 chunk 中的 functionCall 始终有 ID
+                // 解决前后端工具 ID 不一致的问题
+                if (!newPart.functionCall.id) {
+                    newPart.functionCall.id = `fc_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+                }
+
                 this.parts.push(newPart);
-                console.log(`[Accumulator] After adding, parts count: ${this.parts.length}`);
                 return;
             }
             

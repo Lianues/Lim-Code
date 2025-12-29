@@ -1294,6 +1294,9 @@ export const useChatStore = defineStore('chat', () => {
         })
         if (hasDiffToolsInResults) {
           skipContinueConversation = true
+          // isSendingAnnotation 的唯一作用是判断 skipContinueConversation
+          // 判断完成后立即重置，避免阻塞后续用户操作
+          isSendingAnnotation = false
         }
       }
 
@@ -1480,6 +1483,9 @@ export const useChatStore = defineStore('chat', () => {
           streamingMessageId.value = null
           isStreaming.value = false
           isWaitingForResponse.value = false
+          // 重置防重复标志，因为当前请求已结束（后端 yield toolIteration 后 return，不会发送 complete）
+          // 这样用户点击保存/拒绝时，continueDiffWithAnnotation 才能正常发送新请求
+          isSendingAnnotation = false
           return
         }
 
