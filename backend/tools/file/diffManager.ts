@@ -461,8 +461,12 @@ export class DiffManager {
         if (!diff || diff.status !== 'pending') {
             return false;
         }
-        
+
         try {
+            // 重要：先将状态设置为 'rejected'，防止后续 doc.save() 触发的 onDidSaveTextDocument 事件
+            // 错误地认为这是用户手动保存并调用 acceptDiff + notifyManualSave，导致重复发送请求
+            diff.status = 'rejected';
+
             // 移除监听器（避免重复处理）
             const saveListener = this.saveListeners.get(id);
             if (saveListener) {
@@ -478,7 +482,7 @@ export class DiffManager {
             // 尝试还原文件到原始状态
             const uri = vscode.Uri.file(diff.absolutePath);
             let doc = vscode.workspace.textDocuments.find(d => d.uri.fsPath === diff.absolutePath);
-            
+
             if (doc) {
                 // 文档已打开，恢复到原始内容
                 const currentContent = doc.getText();
@@ -490,8 +494,8 @@ export class DiffManager {
                     );
                     edit.replace(uri, fullRange, diff.originalContent);
                     await vscode.workspace.applyEdit(edit);
-                    
-                    // 保存还原后的文件
+
+                    // 保存还原后的文件（状态已为 rejected，不会触发 saveListener）
                     await doc.save();
                 }
             } else {
@@ -501,11 +505,11 @@ export class DiffManager {
                     fs.writeFileSync(diff.absolutePath, diff.originalContent, 'utf8');
                 }
             }
-            
+
             // 关闭 diff 标签页
             await this.closeDiffTab(diff.absolutePath);
-            
-            diff.status = 'rejected';
+
+            // 状态已在函数开头设置
             this.cleanup(id);
             this.notifyStatusChange();
             

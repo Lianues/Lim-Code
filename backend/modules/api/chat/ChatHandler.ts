@@ -56,30 +56,130 @@ const DEFAULT_MAX_TOOL_ITERATIONS = 20;
 const FILE_MODIFICATION_TOOLS = ['apply_diff', 'write_file'] as const;
 
 /**
- * 检查工具执行结果中是否包含文件修改工具
+ * 检查工具执行结果中是否包含需要用户确认的文件修改工具
+ *
+ * 【重要】此函数决定后端是否暂停等待用户确认 diff 并发送批注
+ *
+============================================================================
+ *
+ * 这个函数涉及前后端复杂的时序交互，曾出现两个严重 bug：
+ *
+ * ============================================================================
+ * 【问题一：两条并发 AI 请求】
+ * ============================================================================
+ *
+ * 问题表现：用户点击保存/拒绝按钮后，发送了两条 `continueWithAnnotation` 请求
+ *
+ * 根本原因：前端有两个触发点可以发送请求
+ *   1. 用户点击按钮 → `markDiffAsAccepted/Rejected` → `checkAndContinueConversation`
+ *   2. 后端发送 `toolIteration` → `watch(requiredDiffToolIds)` → `checkAndContinueConversation`
+ *
+ * 时序问题：
+ *   - 用户快速点击按钮时，`requiredDiffToolIds` 还是空的（后端还没发送 toolIteration）
+ *   - 旧的 `areAllDiffsProcessed()` 在 `requiredDiffToolIds` 为空时返回 true
+ *   - 导致按钮点击触发一次，后端 toolIteration 到达后又触发一次
+ *
+ * 前端修复：
+ *   - `areAllDiffsProcessed()` 必须等待 `requiredDiffToolIds` 被设置后才返回 true
+ *   - 添加 `isSendingContinue` 防重标志
+ *   - 前后端工具 ID 可能不匹配（前端生成 vs 后端 fc_xxx），需要通过文件路径匹配
+ *
+ * ============================================================================
+ * 【问题二：批注丢失】
+ * ============================================================================
+ *
+ * 问题表现：用户点击拒绝按钮后，输入框中的批注没有被发送给 AI
+ *
+ * 根本原因：`apply_diff` 工具内部有 pending diff **阻塞等待**机制
+ *
+ * 【工具执行时序 - 关键！】
+ *   1. AI 调用 apply_diff 工具
+ *   2. 工具创建 pending diff，**阻塞等待**用户确认（保存/拒绝）
+ *   3. 用户点击拒绝按钮 → `rejectDiff` API 被调用
+ *   4. `rejectDiff` 处理 pending diff，设置结果为 `{success: false, data: {status: "rejected"}}`
+ *   5. 工具等待结束，返回这个"拒绝"结果
+ *   6. 后端调用**此函数**检查是否需要等待批注
+ *
+ * 【错误的旧逻辑】
+ *   旧代码检查 `success === false` 就认为是执行错误，返回 false，不等待批注。
+ *   但 `success: false` + `data.status: "rejected"` 实际上是**用户主动拒绝**，
+ *   不是执行错误！用户的批注仍然需要发送给 AI。
+ *
+ * 【正确的新逻辑】
+ *   - 只检查 `error` 字段是否存在（真正的执行错误，如文件不存在、权限问题）
+ *   - 不检查 `success === false`（用户拒绝 diff 时 success 为 false，但需要发送批注）
+ *   - `rejected === true` 是工具**确认阶段**的拒绝（工具还没执行），这种情况不需要批注
+ *
+ * 【两种"拒绝"的区别】
+ *   1. `result.rejected === true`：工具确认阶段拒绝（工具未执行）→ 不需要批注
+ *   2. `result.data.status === "rejected"`：diff 预览阶段拒绝（工具已执行）→ 需要批注
+ *
+ * ============================================================================
  *
  * @param toolResults 工具执行结果列表
- * @returns 是否包含文件修改工具
+ * @returns 是否有需要用户确认的文件修改（true = 暂停等待批注）
  */
 function hasFileModificationToolInResults(
-    toolResults: Array<{ name: string; [key: string]: unknown }>
+    toolResults: Array<{ name: string; result?: { success?: boolean; rejected?: boolean; error?: string; data?: { pendingDiffId?: string; status?: string } }; [key: string]: unknown }>
 ): boolean {
-    return toolResults.some(r =>
-        (FILE_MODIFICATION_TOOLS as readonly string[]).includes(r.name)
-    );
+    return toolResults.some(r => {
+        // 必须是文件修改工具
+        if (!(FILE_MODIFICATION_TOOLS as readonly string[]).includes(r.name)) {
+            return false;
+        }
+        // 排除工具确认阶段的拒绝（工具未执行，rejected === true）
+        if ((r.result as any)?.rejected) {
+            return false;
+        }
+        // 排除真正的执行错误（有 error 字段），让 AI 处理错误
+        // 【关键】不检查 success === false！
+        // 因为用户拒绝 diff 时 success 为 false，但 data.status 为 "rejected"
+        // 这种情况仍需要等待批注
+        const result = r.result as any;
+        if (result?.error) {
+            return false;
+        }
+        // 文件修改工具执行完成（无论成功还是被用户拒绝），需要等待用户批注
+        return true;
+    });
 }
 
 /**
- * 从工具执行结果中提取文件修改工具的 ID 列表
+ * 从工具执行结果中提取需要用户确认的文件修改工具 ID 列表
+ *
+ * 【重要】此函数返回的 ID 会发送给前端作为 pendingDiffToolIds
+ * 前端根据这个列表显示保存/拒绝按钮
+ *
+ * 【与 hasFileModificationToolInResults 保持一致】
+ * 两个函数的过滤逻辑必须完全一致，否则会导致：
+ * - hasFileModificationToolInResults 返回 true（后端等待）
+ * - 但 getFileModificationToolIds 返回空（前端不显示按钮）
+ * - 死锁：后端等待，但用户无法操作
  *
  * @param toolResults 工具执行结果列表
- * @returns 文件修改工具的 ID 列表
+ * @returns 需要用户确认的文件修改工具 ID 列表
  */
 function getFileModificationToolIds(
-    toolResults: Array<{ id?: string; name: string; [key: string]: unknown }>
+    toolResults: Array<{ id?: string; name: string; result?: { success?: boolean; rejected?: boolean; error?: string; data?: { pendingDiffId?: string; status?: string } }; [key: string]: unknown }>
 ): string[] {
     return toolResults
-        .filter(r => (FILE_MODIFICATION_TOOLS as readonly string[]).includes(r.name) && r.id)
+        .filter(r => {
+            // 必须是文件修改工具且有 ID
+            if (!(FILE_MODIFICATION_TOOLS as readonly string[]).includes(r.name) || !r.id) {
+                return false;
+            }
+            // 排除被用户拒绝执行的工具（在工具确认阶段点击了拒绝）
+            if ((r.result as any)?.rejected) {
+                return false;
+            }
+            // 排除真正的执行错误（与 hasFileModificationToolInResults 一致）
+            const result = r.result as any;
+            if (result?.error) {
+                return false;
+            }
+            // 文件修改工具执行完成（无论成功还是被用户拒绝），返回其 ID
+            return true;
+        })
         .map(r => r.id as string);
 }
 
@@ -717,7 +817,7 @@ export class ChatHandler {
                 // 检查是否有文件修改工具执行，需要暂停循环等待用户确认
                 if (hasFileModificationToolInResults(toolResults)) {
                     const diffToolIds = getFileModificationToolIds(toolResults);
-                    // 注意：functionResponse 已在上面第 688-698 行添加到历史
+                    // 注意：functionResponse 已在上面添加到历史
                     // 这里只需 yield toolIteration，后端 continueWithAnnotation 会继续对话
                     yield {
                         conversationId,
@@ -1369,7 +1469,7 @@ export class ChatHandler {
         ChatStreamChunkData | ChatStreamCompleteData | ChatStreamErrorData | ChatStreamToolIterationData | ChatStreamCheckpointsData | ChatStreamToolConfirmationData | ChatStreamToolsExecutingData
     > {
         try {
-            const { conversationId, configId, toolResponses } = request;
+            const { conversationId, configId, toolResponses, annotation } = request;
             
             // 1. 确保对话存在
             await this.ensureConversation(conversationId);
@@ -1516,19 +1616,54 @@ export class ChatHandler {
             // 计算工具响应消息的 token 数
             await this.preCountUserMessageTokens(conversationId, config.type);
 
-            // 9. 发送工具执行结果，并标记需要等待用户批注
-            // 工具确认流程：发送 needAnnotation 信号，让前端在工具完成后获取批注
+            // 9. 检查是否有文件修改工具执行
+            const hasDiffTools = hasFileModificationToolInResults(allToolResults);
+            const diffToolIds = getFileModificationToolIds(allToolResults);
+
+            if (hasDiffTools) {
+                // 有 diff 工具，需要等待用户确认
+                // 【重要】如果有批注，必须通过 pendingAnnotation 返回给前端！
+                // 否则批注会丢失（前端无法清空输入框、显示用户消息）
+                // 前端会在 diff 确认时将 pendingAnnotation 与 diff 批注合并后发送
+                const pendingAnnotation = annotation && annotation.trim() ? annotation.trim() : undefined;
+                yield {
+                    conversationId,
+                    content: lastMessage,
+                    toolIteration: true as const,
+                    toolResults: allToolResults,
+                    checkpoints: allCheckpoints,
+                    needAnnotation: true as const,
+                    pendingDiffToolIds: diffToolIds,
+                    pendingAnnotation
+                };
+                // 返回，等待前端调用 continueWithAnnotation
+                return;
+            }
+
+            // 没有 diff 工具，检查是否有批注
+            const hasAnnotation = annotation && annotation.trim();
+            if (hasAnnotation) {
+                // 有批注，添加为用户消息
+                await this.conversationManager.addContent(conversationId, {
+                    role: 'user',
+                    parts: [{ text: annotation.trim() }]
+                });
+                // 计算批注消息的 token 数
+                await this.preCountUserMessageTokens(conversationId, config.type);
+            }
+
+            // 发送工具执行结果（标记批注是否已使用，让前端知道是否需要显示用户消息）
             yield {
                 conversationId,
                 content: lastMessage,
                 toolIteration: true as const,
                 toolResults: allToolResults,
                 checkpoints: allCheckpoints,
-                needAnnotation: true as const,
-                pendingDiffToolIds: getFileModificationToolIds(allToolResults)
+                annotationUsed: hasAnnotation ? annotation!.trim() : undefined
             };
 
-            // 返回，等待前端调用 continueWithAnnotation
+            // 直接继续 AI 对话
+            yield* this.continueToolLoop(conversationId, configId, config, request.abortSignal);
             return;
 
         } catch (error) {
@@ -1595,11 +1730,12 @@ export class ChatHandler {
                     role: 'user',
                     parts: [{ text: annotation.trim() }]
                 });
+
                 // 计算批注消息的 token 数
                 await this.preCountUserMessageTokens(conversationId, config.type);
             }
 
-            // 5. 继续 AI 对话（复用现有的工具调用循环逻辑）
+            // 4. 继续 AI 对话（复用现有的工具调用循环逻辑）
             yield* this.continueToolLoop(conversationId, configId, config, request.abortSignal);
 
         } catch (error) {

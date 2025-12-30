@@ -181,6 +181,12 @@ export const useChatStore = defineStore('chat', () => {
    */
   const pendingDiffToolIds = ref<string[]>([])
 
+  /**
+   * 待处理的批注（工具确认时用户输入的批注）
+   * 当有 diff 工具需要确认时，批注暂存于此，等待 diff 确认时一并发送
+   */
+  const pendingAnnotation = ref<string>('')
+
   // ============ 辅助函数 ============
   
   /**
@@ -568,6 +574,7 @@ export const useChatStore = defineStore('chat', () => {
     checkpoints.value = []  // 清空检查点
     error.value = null
     pendingDiffToolIds.value = []  // 清空待确认的 diff 工具列表
+    pendingAnnotation.value = ''  // 清空待处理的批注
 
     // 清除所有加载和流式状态
     isLoading.value = false
@@ -690,6 +697,7 @@ export const useChatStore = defineStore('chat', () => {
     checkpoints.value = []
     error.value = null
     pendingDiffToolIds.value = []  // 清空待确认的 diff 工具列表
+    pendingAnnotation.value = ''  // 清空待处理的批注
     isLoading.value = false
     isStreaming.value = false
     streamingMessageId.value = null
@@ -1294,9 +1302,9 @@ export const useChatStore = defineStore('chat', () => {
         })
         if (hasDiffToolsInResults) {
           skipContinueConversation = true
-          // isSendingAnnotation 的唯一作用是判断 skipContinueConversation
-          // 判断完成后立即重置，避免阻塞后续用户操作
-          isSendingAnnotation = false
+          // 注意：不要在这里重置 isSendingAnnotation！
+          // 保持 true 状态，防止后续的 toolIteration/needAnnotation 再次发送请求
+          // isSendingAnnotation 会在 complete/cancelled/error 时统一重置
         }
       }
 
@@ -1447,7 +1455,22 @@ export const useChatStore = defineStore('chat', () => {
           addCheckpoint(cp)
         }
       }
-      
+
+      // 如果后端已使用批注，清空输入框并显示用户消息
+      // 这发生在工具确认流程中，没有 diff 工具需要确认的情况
+      if (chunk.annotationUsed) {
+        inputValue.value = ''
+        // 在前端添加用户消息显示（后端已将批注添加到对话历史）
+        const userMessage: Message = {
+          id: generateId(),
+          role: 'user',
+          content: chunk.annotationUsed,
+          timestamp: Date.now(),
+          parts: [{ text: chunk.annotationUsed }]
+        }
+        allMessages.value.push(userMessage)
+      }
+
       // 如果有工具被取消，结束 streaming 状态，不继续后续 AI 响应
       if (hasCancelledTools) {
         streamingMessageId.value = null
@@ -1472,6 +1495,14 @@ export const useChatStore = defineStore('chat', () => {
 
       // 如果需要等待用户批注（工具确认流程）
       if (chunk.needAnnotation) {
+        // 关键检查：如果已经在发送批注请求，直接返回，防止重复发送
+        // 场景：用户点击保存/拒绝按钮后，continueDiffWithAnnotation 已发送请求，
+        // 但后端返回的 toolIteration 可能没有 pendingDiffToolIds（diff 已处理完毕），
+        // 此时不应该再次发送请求
+        if (isSendingAnnotation) {
+          return
+        }
+
         // 后端直接告知需要确认的工具 ID 列表
         if (chunk.pendingDiffToolIds && chunk.pendingDiffToolIds.length > 0) {
           // pendingDiffToolIds 通常已在消息更新前设置
@@ -1479,13 +1510,35 @@ export const useChatStore = defineStore('chat', () => {
           if (pendingDiffToolIds.value.length === 0) {
             pendingDiffToolIds.value = chunk.pendingDiffToolIds
           }
+
+          // 【重要】处理工具确认时用户输入的批注
+          // 后端通过 pendingAnnotation 返回暂存的批注，前端必须：
+          // 1. 存储批注以便 diff 确认时发送（continueDiffWithAnnotation 会合并）
+          // 2. 清空输入框
+          // 3. 显示用户消息
+          // 注意：此字段需要 ChatViewProvider 中转发，曾因遗漏导致批注丢失
+          if (chunk.pendingAnnotation) {
+            pendingAnnotation.value = chunk.pendingAnnotation
+            inputValue.value = ''
+            // 在前端添加用户消息显示（批注尚未添加到对话历史，等待 diff 确认时一并发送）
+            const userMessage: Message = {
+              id: generateId(),
+              role: 'user',
+              content: chunk.pendingAnnotation,
+              timestamp: Date.now(),
+              parts: [{ text: chunk.pendingAnnotation }]
+            }
+            allMessages.value.push(userMessage)
+          }
+
           // 结束 streaming 状态，等待用户通过保存/拒绝按钮触发 continueDiffWithAnnotation
           streamingMessageId.value = null
           isStreaming.value = false
           isWaitingForResponse.value = false
-          // 重置防重复标志，因为当前请求已结束（后端 yield toolIteration 后 return，不会发送 complete）
-          // 这样用户点击保存/拒绝时，continueDiffWithAnnotation 才能正常发送新请求
-          isSendingAnnotation = false
+          // 注意：不要在这里重置 isSendingAnnotation！
+          // 如果用户已经点击了保存/拒绝按钮，isSendingAnnotation 为 true，
+          // 需要保持这个状态直到 complete/cancelled/error，防止后续 toolIteration 重复发送请求
+          // 如果用户尚未点击按钮，isSendingAnnotation 本来就是 false，不需要重置
           return
         }
 
@@ -1498,7 +1551,15 @@ export const useChatStore = defineStore('chat', () => {
         }
 
         // 复用批注发送逻辑（只在有批注时添加用户消息）
+        // 防重复检查由 _createAnnotationMessagesAndSend 内部统一处理
         _createAnnotationMessagesAndSend(annotation, !!annotation)
+        return
+      }
+
+      // 关键检查：如果 continueDiffWithAnnotation 已经发送了请求并创建了占位消息，
+      // 这里不应该再创建新的占位消息
+      // 场景：用户点击保存/拒绝按钮后，后端返回的 toolIteration 可能没有 needAnnotation 标志
+      if (isSendingAnnotation) {
         return
       }
 
@@ -2742,7 +2803,8 @@ export const useChatStore = defineStore('chat', () => {
    * @param addUserMessage 是否添加用户消息到聊天流（needAnnotation 场景需要，因为输入框有内容；sendDiffAnnotation 总是需要）
    */
   function _createAnnotationMessagesAndSend(annotation: string, addUserMessage: boolean = true): void {
-    // 防止重复发送
+    // 防止重复发送（关键检查点）
+    // 场景：continueDiffWithAnnotation 发送请求后，后端返回 toolIteration 又触发此函数
     if (isSendingAnnotation) {
       return
     }
@@ -2791,6 +2853,27 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   /**
+   * 添加用户消息到 UI（不发送到后端）
+   *
+   * 用于在前端显示用户消息，当批注通过其他方式发送到后端时使用。
+   * 例如：工具确认时的批注通过 toolConfirmation 发送，但需要在 UI 显示用户消息。
+   *
+   * @param content 消息内容
+   */
+  function addUserMessageToUI(content: string): void {
+    if (!content.trim()) return
+
+    const userMessage: Message = {
+      id: generateId(),
+      role: 'user',
+      content: content.trim(),
+      timestamp: Date.now(),
+      parts: [{ text: content.trim() }]
+    }
+    allMessages.value.push(userMessage)
+  }
+
+  /**
    * Diff 操作后继续 AI 对话
    *
    * 当用户点击保存/拒绝按钮后调用此方法继续对话。
@@ -2801,6 +2884,12 @@ export const useChatStore = defineStore('chat', () => {
    */
   async function continueDiffWithAnnotation(annotation: string = ''): Promise<void> {
     if (!currentConversationId.value || !configId.value) {
+      return
+    }
+
+    // 防止重复发送（多组件实例可能同时调用此方法）
+    // 检查由 _createAnnotationMessagesAndSend 内部统一处理
+    if (isSendingAnnotation) {
       return
     }
 
@@ -2815,17 +2904,41 @@ export const useChatStore = defineStore('chat', () => {
     toolCallBuffer.value = ''
     inToolCall.value = null
 
+    // 合并存储的 pendingAnnotation 和传入的 annotation
+    // pendingAnnotation 是工具确认时用户输入的批注，在收到 chunk 时已存储
+    // annotation 是 diff 确认时的格式化批注（如 "[用户已保存修改] xxx"）
+    let finalAnnotation = ''
+    const storedAnnotation = pendingAnnotation.value
+    const newAnnotation = annotation.trim()
+
+    if (storedAnnotation && newAnnotation) {
+      // 两者都有，合并
+      finalAnnotation = `${storedAnnotation}\n${newAnnotation}`
+    } else if (storedAnnotation) {
+      finalAnnotation = storedAnnotation
+    } else if (newAnnotation) {
+      finalAnnotation = newAnnotation
+    }
+
+    // 清除 pendingAnnotation 状态
+    pendingAnnotation.value = ''
+
     // 更新对话信息
     const conv = conversations.value.find(c => c.id === currentConversationId.value)
     if (conv) {
       conv.updatedAt = Date.now()
       // 如果有批注，会添加用户消息 + AI 占位消息；否则只添加 AI 占位消息
-      conv.messageCount = allMessages.value.length + (annotation.trim() ? 2 : 1)
+      // 注意：如果有 storedAnnotation，用户消息已经在收到 chunk 时显示了
+      // 只有 newAnnotation 需要在这里添加用户消息
+      const needAddUserMessage = !storedAnnotation && !!newAnnotation
+      conv.messageCount = allMessages.value.length + (needAddUserMessage ? 2 : 1)
     }
 
     // 发送批注并继续对话
-    // 如果有批注内容，添加用户消息；否则只创建 AI 占位消息继续对话
-    _createAnnotationMessagesAndSend(annotation.trim(), !!annotation.trim())
+    // 如果有 storedAnnotation，用户消息已显示，不需要再添加
+    // 如果只有 newAnnotation，需要添加用户消息
+    const needAddUserMessage = !storedAnnotation && !!newAnnotation
+    _createAnnotationMessagesAndSend(finalAnnotation, needAddUserMessage)
 
     isLoading.value = false
   }
@@ -3083,6 +3196,9 @@ export const useChatStore = defineStore('chat', () => {
     // Diff 操作后继续对话
     continueDiffWithAnnotation,
     pendingDiffToolIds,
+
+    // UI 辅助方法
+    addUserMessageToUI,
 
     // 初始化
     initialize

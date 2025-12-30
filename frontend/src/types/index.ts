@@ -463,6 +463,13 @@ export interface StreamChunk {
   needAnnotation?: boolean
   /** 需要用户确认的文件修改工具 ID 列表（后端直接告知，前端无需推断） */
   pendingDiffToolIds?: string[]
+  /** 批注已被使用（后端已将批注添加到对话历史），前端应清空输入框并显示用户消息 */
+  annotationUsed?: string
+  /**
+   * 待处理的批注（当有 diff 工具需要确认时，批注暂存于此，前端应在 diff 确认时重新发送）
+   * 【重要】此字段由 ChatViewProvider 从后端中转，需确保 webview 层正确转发
+   */
+  pendingAnnotation?: string
 }
 
 // ============ 错误类型 ============

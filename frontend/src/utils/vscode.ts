@@ -28,7 +28,13 @@ export function sendToExtension<T = any>(type: string, data: any): Promise<T> {
   return new Promise((resolve, reject) => {
     const requestId = generateRequestId()
     const vscode = getVSCodeAPI()
-    
+
+    // 针对 continueWithAnnotation 的详细日志
+    if (type === 'continueWithAnnotation') {
+      console.log('[sendToExtension] continueWithAnnotation - requestId:', requestId, 'timestamp:', Date.now())
+      console.trace('[sendToExtension] continueWithAnnotation call stack')
+    }
+
     // 注册响应处理器
     messageHandlers.set(requestId, {
       resolve: (data: T) => {
@@ -38,7 +44,7 @@ export function sendToExtension<T = any>(type: string, data: any): Promise<T> {
         reject(error)
       }
     })
-    
+
     // 发送消息
     vscode.postMessage({
       type,

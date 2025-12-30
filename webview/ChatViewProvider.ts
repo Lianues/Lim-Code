@@ -410,10 +410,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private async handleMessage(message: any) {
         const { type, data, requestId } = message;
 
+        // 针对 continueWithAnnotation 的详细日志
+        if (type === 'continueWithAnnotation') {
+            console.log('[handleMessage] received continueWithAnnotation - requestId:', requestId, 'timestamp:', Date.now());
+        }
+
         try {
             // 等待初始化完成
             await this.initPromise;
-            
+
             switch (type) {
                 // ========== 对话管理 ==========
                 
@@ -539,6 +544,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
                 case 'continueWithAnnotation': {
                     // 工具确认后继续对话（带批注）
+                    console.log('[ChatViewProvider] case continueWithAnnotation - requestId:', requestId, 'conversationId:', data.conversationId, 'annotation:', data.annotation);
                     void this.handleContinueWithAnnotationStream(data, requestId);
                     break;
                 }
@@ -2293,6 +2299,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     });
                 } else if ('toolIteration' in chunk && chunk.toolIteration) {
                     // ChatStreamToolIterationData - 工具调用迭代完成
+                    // 【重要】新增字段时必须在此处同步添加，否则前端无法接收！
+                    // 曾因遗漏 pendingAnnotation/annotationUsed 导致工具确认批注丢失
                     this._view?.webview.postMessage({
                         type: 'streamChunk',
                         data: {
@@ -2303,7 +2311,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                             toolResults: (chunk as any).toolResults,
                             checkpoints: (chunk as any).checkpoints,
                             needAnnotation: (chunk as any).needAnnotation,
-                            pendingDiffToolIds: (chunk as any).pendingDiffToolIds
+                            pendingDiffToolIds: (chunk as any).pendingDiffToolIds,
+                            pendingAnnotation: (chunk as any).pendingAnnotation,
+                            annotationUsed: (chunk as any).annotationUsed
                         }
                     });
                 } else if ('content' in chunk && chunk.content) {
@@ -2437,6 +2447,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     });
                 } else if ('toolIteration' in chunk && chunk.toolIteration) {
                     // ChatStreamToolIterationData - 工具调用迭代完成
+                    // 【重要】新增字段时必须在此处同步添加，否则前端无法接收！
+                    // 曾因遗漏 pendingAnnotation/annotationUsed 导致工具确认批注丢失
                     this._view?.webview.postMessage({
                         type: 'streamChunk',
                         data: {
@@ -2447,7 +2459,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                             toolResults: (chunk as any).toolResults,
                             checkpoints: (chunk as any).checkpoints,
                             needAnnotation: (chunk as any).needAnnotation,
-                            pendingDiffToolIds: (chunk as any).pendingDiffToolIds
+                            pendingDiffToolIds: (chunk as any).pendingDiffToolIds,
+                            pendingAnnotation: (chunk as any).pendingAnnotation,
+                            annotationUsed: (chunk as any).annotationUsed
                         }
                     });
                 } else if ('content' in chunk && chunk.content) {
@@ -2579,6 +2593,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     });
                 } else if ('toolIteration' in chunk && chunk.toolIteration) {
                     // ChatStreamToolIterationData - 工具调用迭代完成
+                    // 【重要】新增字段时必须在此处同步添加，否则前端无法接收！
+                    // 曾因遗漏 pendingAnnotation/annotationUsed 导致工具确认批注丢失
                     this._view?.webview.postMessage({
                         type: 'streamChunk',
                         data: {
@@ -2589,7 +2605,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                             toolResults: (chunk as any).toolResults,
                             checkpoints: (chunk as any).checkpoints,
                             needAnnotation: (chunk as any).needAnnotation,
-                            pendingDiffToolIds: (chunk as any).pendingDiffToolIds
+                            pendingDiffToolIds: (chunk as any).pendingDiffToolIds,
+                            pendingAnnotation: (chunk as any).pendingAnnotation,
+                            annotationUsed: (chunk as any).annotationUsed
                         }
                     });
                 } else if ('content' in chunk && chunk.content) {
@@ -2660,6 +2678,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
      * 处理继续对话（带批注）流式请求
      */
     private async handleContinueWithAnnotationStream(data: any, requestId: string) {
+        console.log('[handleContinueWithAnnotationStream] ENTRY - requestId:', requestId, 'conversationId:', data.conversationId, 'annotation:', data.annotation);
         let hasError = false;
         const conversationId = data.conversationId;
 
@@ -2668,6 +2687,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.streamAbortControllers.set(conversationId, abortController);
 
         try {
+            console.log('[handleContinueWithAnnotationStream] calling chatHandler.continueWithAnnotation');
             const stream = this.chatHandler.continueWithAnnotation({
                 ...data,
                 abortSignal: abortController.signal
@@ -2850,6 +2870,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     });
                 } else if ('toolIteration' in chunk && chunk.toolIteration) {
                     // ChatStreamToolIterationData - 工具调用迭代完成
+                    // 【重要】新增字段时必须在此处同步添加，否则前端无法接收！
+                    // 曾因遗漏 pendingAnnotation/annotationUsed 导致工具确认批注丢失
                     this._view?.webview.postMessage({
                         type: 'streamChunk',
                         data: {
@@ -2860,7 +2882,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                             toolResults: (chunk as any).toolResults,
                             checkpoints: (chunk as any).checkpoints,
                             needAnnotation: (chunk as any).needAnnotation,
-                            pendingDiffToolIds: (chunk as any).pendingDiffToolIds
+                            pendingDiffToolIds: (chunk as any).pendingDiffToolIds,
+                            pendingAnnotation: (chunk as any).pendingAnnotation,
+                            annotationUsed: (chunk as any).annotationUsed
                         }
                     });
                 } else if ('content' in chunk && chunk.content) {
