@@ -27,6 +27,8 @@ const props = defineProps<{
 
 const chatStore = useChatStore()
 
+// 从 store 解构响应式状态，确保在函数中使用时能正确追踪依赖
+const { isDiffProcessingStarted } = chatStore
 
 // 确保 MCP 工具已注册
 watchEffect(() => {
@@ -59,7 +61,8 @@ const enhancedTools = computed<ToolUsage[]>(() => {
 
       // 关键修复：如果工具需要确认，保持 pending 状态
       // 同时检查 pendingDiffMap 和 chatStore.pendingDiffToolIds（后者作为回退）
-      if ((tool.name === 'apply_diff' || tool.name === 'write_file') && status !== 'error') {
+      // 【重要】用户已开始处理 diff 时，不再将状态设为 pending
+      if ((tool.name === 'apply_diff' || tool.name === 'write_file') && status !== 'error' && !isDiffProcessingStarted) {
         let hasPending = false
 
         // 检查 pendingDiffMap（轮询获取）
@@ -190,6 +193,14 @@ function shouldShowDiffArea(tool: ToolUsage): boolean {
 
   // 非文件修改工具不显示
   if (tool.name !== 'apply_diff' && tool.name !== 'write_file') {
+    return false
+  }
+
+  // 【关键检查】用户已开始处理 diff 时，不显示按钮
+  // isDiffProcessingStarted 在用户点击保存/拒绝按钮时立即设置为 true
+  // 这解决了时序问题：用户点击按钮后，后端 toolIteration 到达时不应重新显示按钮
+  // 注意：从 Pinia store 解构后自动解包，直接访问即可
+  if (isDiffProcessingStarted) {
     return false
   }
 
@@ -542,6 +553,12 @@ async function handleRejectDiff(tool: ToolUsage) {
 // 检查是否需要轮询 pending diffs
 // 当有工具正在执行，或工具执行完成但有未处理的 pending diff 时，需要轮询
 function shouldPollDiffs(): boolean {
+  // 【关键】用户已开始处理 diff 时，停止轮询
+  // 防止轮询返回的数据覆盖用户操作，导致按钮重新出现
+  if (isDiffProcessingStarted) {
+    return false
+  }
+
   // 如果所有 diff 都已处理完成，停止轮询
   if (processedDiffTools.value.size > 0 && areAllDiffsProcessed()) {
     return false
@@ -641,6 +658,8 @@ onMounted(() => {
       })
 
       if (tool && !processedDiffTools.value.has(tool.id)) {
+        // 【关键】立即标记用户已开始处理 diff
+        chatStore.markDiffProcessingStarted()
         // 直接更新状态，无需调用 API（后端 saveListener 已确认文件已保存）
         markDiffAsAccepted(tool)
       }
@@ -1060,7 +1079,8 @@ function renderToolContent(tool: ToolUsage) {
       <!-- apply_diff 底部操作按钮 -->
       <div v-if="shouldShowDiffArea(tool)" class="diff-action-footer">
         <!-- 未处理状态：显示保存/拒绝按钮 -->
-        <template v-if="!isDiffProcessed(tool)">
+        <!-- 关键：模板中直接检查 isDiffProcessingStarted 确保响应式更新，防止按钮重新显示 -->
+        <template v-if="!isDiffProcessed(tool) && !isDiffProcessingStarted">
           <button
             class="diff-action-btn accept"
             :disabled="isDiffLoading(tool.id)"

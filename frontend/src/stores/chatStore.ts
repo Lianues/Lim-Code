@@ -1420,13 +1420,11 @@ export const useChatStore = defineStore('chat', () => {
         // 这样当 ToolMessage 组件因为 allMessages 变化而重新渲染时，
         // pendingDiffToolIds 已经包含正确的数据
         //
-        // 【关键修复】当用户已开始处理 diff 时，不设置 pendingDiffToolIds
-        // isDiffProcessingStarted 在用户点击保存/拒绝按钮时立即设置为 true
-        // 这解决了时序问题：用户点击按钮 → 后端发送 toolIteration → 不应重新显示按钮
-        //
-        // 同时也检查 skipContinueConversation（基于 isSendingAnnotation），
-        // 作为双重保护，确保在任何情况下都不会重新显示按钮
-        if (!isDiffProcessingStarted.value && !skipContinueConversation && chunk.needAnnotation && chunk.pendingDiffToolIds && chunk.pendingDiffToolIds.length > 0) {
+        // 注意：必须始终设置 pendingDiffToolIds，因为：
+        // 1. areAllDiffsProcessed() 依赖 requiredDiffToolIds（由 pendingDiffToolIds 派生）
+        // 2. 如果不设置，areAllDiffsProcessed() 会因为 requiredDiffToolIds.size===0 返回 false
+        // 3. 按钮重新显示的问题在 ToolMessage.vue 的 shouldShowDiffArea 中通过检查 isDiffProcessingStarted 解决
+        if (chunk.needAnnotation && chunk.pendingDiffToolIds && chunk.pendingDiffToolIds.length > 0) {
           pendingDiffToolIds.value = chunk.pendingDiffToolIds
         }
 
@@ -3239,6 +3237,7 @@ export const useChatStore = defineStore('chat', () => {
     continueDiffWithAnnotation,
     pendingDiffToolIds,
     markDiffProcessingStarted,
+    isDiffProcessingStarted,
 
     // UI 辅助方法
     addUserMessageToUI,

@@ -270,6 +270,7 @@ async function callGeminiImageApi(
     // 构建请求体
     const requestBody: Record<string, unknown> = {
         contents: [{
+            role: 'user',
             parts
         }],
         generationConfig: {
