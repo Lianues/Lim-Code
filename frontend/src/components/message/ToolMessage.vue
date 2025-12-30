@@ -437,6 +437,11 @@ async function handleAcceptDiff(tool: ToolUsage) {
     return
   }
 
+  // 【关键】立即标记用户已开始处理 diff
+  // 这会阻止后端发送的 toolIteration 重新设置 pendingDiffToolIds
+  // 从而避免按钮重新显示的问题
+  chatStore.markDiffProcessingStarted()
+
   diffLoadingIds.value.add(tool.id)
   try {
     // 第一个操作携带批注
@@ -499,6 +504,11 @@ async function handleRejectDiff(tool: ToolUsage) {
   if (isDiffProcessed(tool)) {
     return
   }
+
+  // 【关键】立即标记用户已开始处理 diff
+  // 这会阻止后端发送的 toolIteration 重新设置 pendingDiffToolIds
+  // 从而避免按钮重新显示的问题
+  chatStore.markDiffProcessingStarted()
 
   diffLoadingIds.value.add(tool.id)
   try {

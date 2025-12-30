@@ -187,6 +187,23 @@ export const useChatStore = defineStore('chat', () => {
    */
   const pendingAnnotation = ref<string>('')
 
+  /**
+   * 用户是否已开始处理 diff（点击了保存/拒绝按钮）
+   *
+   * 这个标志解决了时序问题：
+   * 1. 用户点击保存/拒绝按钮
+   * 2. ToolMessage.vue 调用 markDiffProcessingStarted()
+   * 3. 后端发送 toolIteration
+   * 4. handleStreamChunk 检查此标志，跳过设置 pendingDiffToolIds
+   * 5. 避免按钮重新显示
+   *
+   * 重置时机：
+   * - continueDiffWithAnnotation 完成后
+   * - 创建新对话时
+   * - 切换对话时
+   */
+  const isDiffProcessingStarted = ref(false)
+
   // ============ 辅助函数 ============
   
   /**
@@ -575,6 +592,7 @@ export const useChatStore = defineStore('chat', () => {
     error.value = null
     pendingDiffToolIds.value = []  // 清空待确认的 diff 工具列表
     pendingAnnotation.value = ''  // 清空待处理的批注
+    isDiffProcessingStarted.value = false  // 重置 diff 处理标志
 
     // 清除所有加载和流式状态
     isLoading.value = false
@@ -698,6 +716,7 @@ export const useChatStore = defineStore('chat', () => {
     error.value = null
     pendingDiffToolIds.value = []  // 清空待确认的 diff 工具列表
     pendingAnnotation.value = ''  // 清空待处理的批注
+    isDiffProcessingStarted.value = false  // 重置 diff 处理标志
     isLoading.value = false
     isStreaming.value = false
     streamingMessageId.value = null
@@ -1400,7 +1419,14 @@ export const useChatStore = defineStore('chat', () => {
         // 重要：在更新消息到数组之前，先设置 pendingDiffToolIds
         // 这样当 ToolMessage 组件因为 allMessages 变化而重新渲染时，
         // pendingDiffToolIds 已经包含正确的数据
-        if (chunk.needAnnotation && chunk.pendingDiffToolIds && chunk.pendingDiffToolIds.length > 0) {
+        //
+        // 【关键修复】当用户已开始处理 diff 时，不设置 pendingDiffToolIds
+        // isDiffProcessingStarted 在用户点击保存/拒绝按钮时立即设置为 true
+        // 这解决了时序问题：用户点击按钮 → 后端发送 toolIteration → 不应重新显示按钮
+        //
+        // 同时也检查 skipContinueConversation（基于 isSendingAnnotation），
+        // 作为双重保护，确保在任何情况下都不会重新显示按钮
+        if (!isDiffProcessingStarted.value && !skipContinueConversation && chunk.needAnnotation && chunk.pendingDiffToolIds && chunk.pendingDiffToolIds.length > 0) {
           pendingDiffToolIds.value = chunk.pendingDiffToolIds
         }
 
@@ -1624,6 +1650,7 @@ export const useChatStore = defineStore('chat', () => {
       isStreaming.value = false
       isWaitingForResponse.value = false  // 结束等待
       isSendingAnnotation = false  // 重置防重复标志
+      isDiffProcessingStarted.value = false  // 重置 diff 处理标志
 
       // 流式完成后更新对话元数据
       updateConversationAfterMessage()
@@ -1709,6 +1736,7 @@ export const useChatStore = defineStore('chat', () => {
       isStreaming.value = false
       isWaitingForResponse.value = false
       isSendingAnnotation = false  // 重置防重复标志
+      isDiffProcessingStarted.value = false  // 重置 diff 处理标志
     } else if (chunk.type === 'error') {
       error.value = chunk.error || {
         code: 'STREAM_ERROR',
@@ -1729,6 +1757,7 @@ export const useChatStore = defineStore('chat', () => {
       isStreaming.value = false
       isWaitingForResponse.value = false  // 结束等待
       isSendingAnnotation = false  // 重置防重复标志
+      isDiffProcessingStarted.value = false  // 重置 diff 处理标志
     }
   }
 
@@ -2940,7 +2969,20 @@ export const useChatStore = defineStore('chat', () => {
     const needAddUserMessage = !storedAnnotation && !!newAnnotation
     _createAnnotationMessagesAndSend(finalAnnotation, needAddUserMessage)
 
+    // 注意：isDiffProcessingStarted 在 complete/cancelled/error 时重置
+    // 不在这里重置，因为请求是异步的，需要等待响应后才能重置
+
     isLoading.value = false
+  }
+
+  /**
+   * 标记用户已开始处理 diff（点击了保存/拒绝按钮）
+   *
+   * 由 ToolMessage.vue 在用户点击按钮时调用
+   * 用于防止 handleStreamChunk 设置 pendingDiffToolIds 导致按钮重新显示
+   */
+  function markDiffProcessingStarted(): void {
+    isDiffProcessingStarted.value = true
   }
 
   /**
@@ -3196,6 +3238,7 @@ export const useChatStore = defineStore('chat', () => {
     // Diff 操作后继续对话
     continueDiffWithAnnotation,
     pendingDiffToolIds,
+    markDiffProcessingStarted,
 
     // UI 辅助方法
     addUserMessageToUI,
