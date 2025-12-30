@@ -11,6 +11,7 @@
  */
 
 import { ref, computed, Component, h, watchEffect, watch, onMounted, onBeforeUnmount } from 'vue'
+import { storeToRefs } from 'pinia'
 import type { ToolUsage, Message } from '../../types'
 import { getToolConfig } from '../../utils/toolRegistry'
 import { ensureMcpToolRegistered } from '../../utils/tools'
@@ -27,8 +28,11 @@ const props = defineProps<{
 
 const chatStore = useChatStore()
 
-// 从 store 解构响应式状态，确保在函数中使用时能正确追踪依赖
-const { isDiffProcessingStarted } = chatStore
+// 【关键】必须使用 storeToRefs 解构响应式状态！
+// 直接解构 const { isDiffProcessingStarted } = chatStore 会丢失响应性，
+// 导致组件中的值是挂载时的快照，不会跟随 store 变化更新。
+// 这是之前 bug 的根本原因。
+const { isDiffProcessingStarted } = storeToRefs(chatStore)
 
 // 确保 MCP 工具已注册
 watchEffect(() => {
@@ -62,7 +66,7 @@ const enhancedTools = computed<ToolUsage[]>(() => {
       // 关键修复：如果工具需要确认，保持 pending 状态
       // 同时检查 pendingDiffMap 和 chatStore.pendingDiffToolIds（后者作为回退）
       // 【重要】用户已开始处理 diff 时，不再将状态设为 pending
-      if ((tool.name === 'apply_diff' || tool.name === 'write_file') && status !== 'error' && !isDiffProcessingStarted) {
+      if ((tool.name === 'apply_diff' || tool.name === 'write_file') && status !== 'error' && !isDiffProcessingStarted.value) {
         let hasPending = false
 
         // 检查 pendingDiffMap（轮询获取）
@@ -199,8 +203,8 @@ function shouldShowDiffArea(tool: ToolUsage): boolean {
   // 【关键检查】用户已开始处理 diff 时，不显示按钮
   // isDiffProcessingStarted 在用户点击保存/拒绝按钮时立即设置为 true
   // 这解决了时序问题：用户点击按钮后，后端 toolIteration 到达时不应重新显示按钮
-  // 注意：从 Pinia store 解构后自动解包，直接访问即可
-  if (isDiffProcessingStarted) {
+  // 注意：使用 storeToRefs 后，需要访问 .value
+  if (isDiffProcessingStarted.value) {
     return false
   }
 
@@ -290,18 +294,13 @@ function isDiffLoading(toolId: string): boolean {
 }
 
 // 检查 diff 工具是否已处理
-// 对于多文件工具，需要检查是否还有 pending diff
+// 注意：一旦用户点击保存/拒绝，就认为工具已处理，不再根据 pendingDiffMap 判断
 function isDiffProcessed(tool: ToolUsage): boolean {
-  // 如果工具已被标记为已处理
+  // 如果工具已被标记为已处理，直接返回 true
+  // 不再检查 pendingDiffMap，因为：
+  // 1. 点击按钮会处理该工具的所有 diff
+  // 2. 轮询可能在处理完成后仍返回旧数据，导致误判
   if (processedDiffTools.value.has(tool.id)) {
-    // 对于 write_file 多文件情况，即使已处理也要检查是否还有 pending
-    if (tool.name === 'write_file') {
-      const diffIds = getDiffIds(tool)
-      // 如果还有 pending diff，说明还没处理完
-      if (diffIds.length > 0) {
-        return false
-      }
-    }
     return true
   }
   return false
@@ -368,9 +367,15 @@ function hasRemainingDiffs(): boolean {
 /**
  * 重置组件内 diff 相关状态（在继续对话后调用）
  * 注意：requiredDiffToolIds 由 store 管理，会在 continueDiffWithAnnotation 中清除
+ *
+ * 【重要】不再清空 processedDiffTools！
+ * 原因：在 continueDiffWithAnnotation 发送请求后、complete 到达前，
+ * 如果清空 processedDiffTools，isDiffProcessed 会返回 false，
+ * 加上轮询可能返回旧数据，会导致按钮重新显示。
+ * processedDiffTools 会在 complete 时由 isDiffProcessingStarted=false 自然失效。
  */
 function resetDiffState(): void {
-  processedDiffTools.value = new Map()
+  // 不清空 processedDiffTools，保留已处理状态直到对话完成
   firstDiffAnnotation = ''
 }
 
@@ -555,7 +560,7 @@ async function handleRejectDiff(tool: ToolUsage) {
 function shouldPollDiffs(): boolean {
   // 【关键】用户已开始处理 diff 时，停止轮询
   // 防止轮询返回的数据覆盖用户操作，导致按钮重新出现
-  if (isDiffProcessingStarted) {
+  if (isDiffProcessingStarted.value) {
     return false
   }
 
@@ -613,6 +618,14 @@ async function startDiffPolling() {
 
     try {
       const diffs = await getPendingDiffs()
+
+      // 【关键】再次检查 isDiffProcessingStarted，防止竞态条件
+      // 场景：shouldPollDiffs() 检查后、getPendingDiffs() 返回前，用户点击了保存
+      // 此时 isDiffProcessingStarted 已变为 true，不应再更新 pendingDiffMap
+      if (isDiffProcessingStarted.value) {
+        return
+      }
+
       const newMap = new Map<string, string>()
       for (const diff of diffs) {
         newMap.set(diff.filePath, diff.id)

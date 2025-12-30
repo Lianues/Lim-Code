@@ -593,6 +593,7 @@ export const useChatStore = defineStore('chat', () => {
     pendingDiffToolIds.value = []  // 清空待确认的 diff 工具列表
     pendingAnnotation.value = ''  // 清空待处理的批注
     isDiffProcessingStarted.value = false  // 重置 diff 处理标志
+    isSendingAnnotation = false  // 【关键】重置批注发送标志
 
     // 清除所有加载和流式状态
     isLoading.value = false
@@ -717,6 +718,7 @@ export const useChatStore = defineStore('chat', () => {
     pendingDiffToolIds.value = []  // 清空待确认的 diff 工具列表
     pendingAnnotation.value = ''  // 清空待处理的批注
     isDiffProcessingStarted.value = false  // 重置 diff 处理标志
+    isSendingAnnotation = false  // 【关键】重置批注发送标志，防止上次请求未完成导致后续操作失败
     isLoading.value = false
     isStreaming.value = false
     streamingMessageId.value = null
