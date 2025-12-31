@@ -1552,14 +1552,9 @@ export const useChatStore = defineStore('chat', () => {
         return
       }
 
-      // 关键检查：如果 continueDiffWithAnnotation 已经发送了请求并创建了占位消息，
-      // 这里不应该再创建新的占位消息
-      // 场景：用户点击保存/拒绝按钮后，后端返回的 toolIteration 可能没有 needAnnotation 标志
-      if (isSendingAnnotation) {
-        return
-      }
-
       // 创建新的占位消息用于接收后续 AI 响应
+      // 注意：即使 isSendingAnnotation = true，当 needAnnotation = undefined 时（如 diff 失败），
+      // 后端仍会继续发送 AI 响应，需要创建占位消息来接收
       const newAssistantMessageId = generateId()
       const newAssistantMessage: Message = {
         id: newAssistantMessageId,
@@ -1621,6 +1616,8 @@ export const useChatStore = defineStore('chat', () => {
       isWaitingForResponse.value = false
       isSendingAnnotation = false
       isSendingDiffContinue.value = false
+      // 清空 pendingDiffToolIds，避免对话完成后仍显示暂停状态
+      pendingDiffToolIds.value = []
 
       updateConversationAfterMessage()
     } else if (chunk.type === 'checkpoints') {
@@ -1706,6 +1703,7 @@ export const useChatStore = defineStore('chat', () => {
       isWaitingForResponse.value = false
       isSendingAnnotation = false
       isSendingDiffContinue.value = false
+      pendingDiffToolIds.value = []
     } else if (chunk.type === 'error') {
       error.value = chunk.error || {
         code: 'STREAM_ERROR',
@@ -1724,6 +1722,7 @@ export const useChatStore = defineStore('chat', () => {
       isWaitingForResponse.value = false
       isSendingAnnotation = false
       isSendingDiffContinue.value = false
+      pendingDiffToolIds.value = []
     }
   }
 
