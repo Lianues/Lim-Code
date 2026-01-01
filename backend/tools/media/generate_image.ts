@@ -634,16 +634,11 @@ async function executeImageTask(
         const errorMessage = error instanceof Error ? error.message : String(error);
         const errorName = error instanceof Error ? error.name : '';
         
-        // 检测各种可能的取消错误
+        // 检测取消错误
+        // 【重要】只有当 abortSignal 真正被触发时才认为是用户取消
+        // 网络错误（如 fetch failed）不应该被当作用户取消，否则会导致会话暂停
         const isCancelled = abortSignal?.aborted ||
-            errorName === 'AbortError' ||
-            errorMessage.includes('aborted') ||
-            errorMessage.includes('cancelled') ||
-            errorMessage.includes('canceled') ||
-            errorMessage.includes('Request cancelled') ||
-            errorMessage.includes('The operation was aborted') ||
-            errorMessage.includes('signal is aborted') ||
-            errorMessage.includes('fetch failed');  // Node.js fetch 的 abort 错误
+            (errorName === 'AbortError' && abortSignal?.aborted);
         
         return {
             index,
@@ -1022,11 +1017,10 @@ Generated images will be saved to the specified path and returned for viewing.`;
                 const errorMessage = error instanceof Error ? error.message : String(error);
                 const errorName = error instanceof Error ? error.name : '';
                 
+                // 【重要】只有当 abortSignal 真正被触发时才认为是用户取消
+                // 网络错误（如 fetch failed）不应该被当作用户取消，否则会导致会话暂停
                 const isCancelled = abortSignal.aborted ||
-                    errorName === 'AbortError' ||
-                    errorMessage.includes('aborted') ||
-                    errorMessage.includes('cancelled') ||
-                    errorMessage.includes('canceled');
+                    (errorName === 'AbortError' && abortSignal.aborted);
                 
                 // 使用 TaskManager 注销任务
                 TaskManager.unregisterTask(
