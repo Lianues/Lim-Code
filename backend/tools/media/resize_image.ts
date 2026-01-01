@@ -3,7 +3,8 @@
  *
  * 将图片缩放到指定的目标尺寸：
  * - 支持指定目标宽度和高度
- * - 自动拉伸填充（不保持宽高比）
+ * - 支持多种填充模式（fill/cover/contain/inside/outside）
+ * - 支持多种缩放算法（lanczos3/lanczos2/cubic/mitchell/nearest）
  * - 使用 sharp 进行缩放
  * - 返回缩放后的图片
  *
@@ -64,6 +65,18 @@ export function cancelResizeImage(toolId: string): { success: boolean; error?: s
     return TaskManager.cancelTask(toolId);
 }
 
+/** 支持的填充模式 */
+type FitMode = 'fill' | 'cover' | 'contain' | 'inside' | 'outside';
+
+/** 支持的缩放算法 */
+type KernelMode = 'lanczos3' | 'lanczos2' | 'cubic' | 'mitchell' | 'nearest';
+
+/** 有效的填充模式列表 */
+const VALID_FIT_MODES: FitMode[] = ['fill', 'cover', 'contain', 'inside', 'outside'];
+
+/** 有效的缩放算法列表 */
+const VALID_KERNEL_MODES: KernelMode[] = ['lanczos3', 'lanczos2', 'cubic', 'mitchell', 'nearest'];
+
 /**
  * 单个缩放任务
  */
@@ -76,6 +89,10 @@ interface ResizeTask {
     width: number;
     /** 目标高度（像素） */
     height: number;
+    /** 填充模式（可选，默认 fill） */
+    fit?: FitMode;
+    /** 缩放算法（可选，默认 lanczos3） */
+    kernel?: KernelMode;
 }
 
 /**
@@ -130,7 +147,7 @@ async function executeResizeTask(
     index: number,
     abortSignal?: AbortSignal
 ): Promise<TaskResult> {
-    const { image_path, output_path, width, height } = task;
+    const { image_path, output_path, width, height, fit = 'fill', kernel = 'lanczos3' } = task;
 
     // 验证参数
     if (!image_path) {
@@ -189,13 +206,18 @@ async function executeResizeTask(
             return { index, success: false, error: `Task ${index + 1}: User cancelled the resize operation`, cancelled: true };
         }
 
-        // 执行缩放（使用 fit: 'fill' 进行拉伸填充，不保持宽高比）
+        // 执行缩放
         const resizedBuffer = await sharp(imageFile.data)
             .resize(width, height, {
-                fit: 'fill',  // 拉伸填充整个目标尺寸
-                kernel: 'lanczos3'  // 使用高质量的 Lanczos 算法
+                fit,     // 填充模式
+                kernel   // 缩放算法
             })
             .toBuffer();
+
+        // 获取缩放后的实际尺寸（contain/inside/outside 模式下可能与指定尺寸不同）
+        const resizedMetadata = await sharp(resizedBuffer).metadata();
+        const actualWidth = resizedMetadata.width || width;
+        const actualHeight = resizedMetadata.height || height;
 
         // 确定输出格式
         const outputExt = path.extname(output_path).toLowerCase();
@@ -246,9 +268,9 @@ async function executeResizeTask(
                 aspectRatio: calculateAspectRatio(originalWidth, originalHeight)
             },
             resizedDimensions: {
-                width,
-                height,
-                aspectRatio: calculateAspectRatio(width, height)
+                width: actualWidth,
+                height: actualHeight,
+                aspectRatio: calculateAspectRatio(actualWidth, actualHeight)
             },
             multimodal
         };
@@ -286,19 +308,35 @@ export function createResizeImageTool(maxBatchTasks: number = 10): Tool {
 
 **Features**:
 - Resize image to specified width and height
-- Uses stretch fill mode (does not preserve aspect ratio)
-- Suitable for scenarios requiring exact dimensions
+- Multiple fit modes for aspect ratio control
+- Multiple resize algorithms for quality/speed tradeoff
 
 **Parameters**:
 - width: Target width (pixels, required)
 - height: Target height (pixels, required)
 - image_path: Source image path (required)
 - output_path: Output file path (required)
+- fit: Fit mode (optional, default: fill)
+- kernel: Resize algorithm (optional, default: lanczos3)
+
+**Fit Modes**:
+- fill: Stretch to fill (ignores aspect ratio) - default
+- cover: Preserve ratio, crop to fill target
+- contain: Preserve ratio, fit within target (may have padding)
+- inside: Preserve ratio, ensure image fits inside target
+- outside: Preserve ratio, ensure image covers target
+
+**Kernel Algorithms**:
+- lanczos3: Lanczos 3-lobe (highest quality) - default
+- lanczos2: Lanczos 2-lobe
+- cubic: Bicubic interpolation
+- mitchell: Mitchell-Netravali filter
+- nearest: Nearest neighbor (fastest, good for pixel art)
 
 **Examples**:
 - Resize to 800x600: width=800, height=600
-- Resize to square 512x512: width=512, height=512
-- Resize to 1920x1080: width=1920, height=1080
+- Resize keeping ratio: width=800, height=600, fit=contain
+- Fast resize for pixel art: width=256, height=256, fit=fill, kernel=nearest
 
 **Supported Formats**: PNG, JPEG, WebP (auto-selected based on output path extension)
 
@@ -341,6 +379,16 @@ export function createResizeImageTool(maxBatchTasks: number = 10): Tool {
                                 height: {
                                     type: 'integer',
                                     description: 'Target height (pixels, required)'
+                                },
+                                fit: {
+                                    type: 'string',
+                                    enum: ['fill', 'cover', 'contain', 'inside', 'outside'],
+                                    description: 'Fit mode: fill (stretch), cover (crop), contain (fit within), inside, outside. Default: fill'
+                                },
+                                kernel: {
+                                    type: 'string',
+                                    enum: ['lanczos3', 'lanczos2', 'cubic', 'mitchell', 'nearest'],
+                                    description: 'Resize algorithm: lanczos3 (best quality), lanczos2, cubic, mitchell, nearest (fastest). Default: lanczos3'
                                 }
                             },
                             required: ['image_path', 'output_path', 'width', 'height']
@@ -366,6 +414,16 @@ export function createResizeImageTool(maxBatchTasks: number = 10): Tool {
                     height: {
                         type: 'integer',
                         description: 'Single mode: Target height (pixels, required)'
+                    },
+                    fit: {
+                        type: 'string',
+                        enum: ['fill', 'cover', 'contain', 'inside', 'outside'],
+                        description: 'Single mode: Fit mode - fill (stretch, default), cover (crop), contain (fit within), inside, outside'
+                    },
+                    kernel: {
+                        type: 'string',
+                        enum: ['lanczos3', 'lanczos2', 'cubic', 'mitchell', 'nearest'],
+                        description: 'Single mode: Resize algorithm - lanczos3 (best, default), lanczos2, cubic, mitchell, nearest (fastest)'
                     }
                 }
             }
@@ -389,12 +447,18 @@ export function createResizeImageTool(maxBatchTasks: number = 10): Tool {
             const singleOutputPath = args.output_path as string | undefined;
             const singleWidth = args.width as number | undefined;
             const singleHeight = args.height as number | undefined;
+            const singleFit = args.fit as FitMode | undefined;
+            const singleKernel = args.kernel as KernelMode | undefined;
 
             let tasks: ResizeTask[] = [];
 
             if (imagesArray && Array.isArray(imagesArray) && imagesArray.length > 0) {
-                // 批量模式
-                tasks = imagesArray;
+                // 批量模式 - 验证并规范化 fit 和 kernel 参数
+                tasks = imagesArray.map(task => ({
+                    ...task,
+                    fit: task.fit && VALID_FIT_MODES.includes(task.fit) ? task.fit : 'fill',
+                    kernel: task.kernel && VALID_KERNEL_MODES.includes(task.kernel) ? task.kernel : 'lanczos3'
+                }));
             } else if (singleImagePath && singleOutputPath && 
                        singleWidth !== undefined && singleHeight !== undefined) {
                 // 单张模式 - 转换为单任务数组
@@ -402,7 +466,9 @@ export function createResizeImageTool(maxBatchTasks: number = 10): Tool {
                     image_path: singleImagePath,
                     output_path: singleOutputPath,
                     width: singleWidth,
-                    height: singleHeight
+                    height: singleHeight,
+                    fit: singleFit && VALID_FIT_MODES.includes(singleFit) ? singleFit : 'fill',
+                    kernel: singleKernel && VALID_KERNEL_MODES.includes(singleKernel) ? singleKernel : 'lanczos3'
                 }];
             } else {
                 return {
@@ -474,7 +540,8 @@ export function createResizeImageTool(maxBatchTasks: number = 10): Tool {
                         message = `✅ Batch resize completed: ${successResults.length}/${tasks.length} tasks succeeded\n\nSaved to:\n${allPaths.map(p => `• ${p}`).join('\n')}`;
                     } else {
                         const r = successResults[0];
-                        message = `✅ Resize completed!\n\nOriginal: ${r.originalDimensions?.width}×${r.originalDimensions?.height} (${r.originalDimensions?.aspectRatio})\nResized: ${r.resizedDimensions?.width}×${r.resizedDimensions?.height} (${r.resizedDimensions?.aspectRatio})\n\nOutput: ${allPaths[0]}`;
+                        const t = tasks[0];
+                        message = `✅ Resize completed!\n\nOriginal: ${r.originalDimensions?.width}×${r.originalDimensions?.height} (${r.originalDimensions?.aspectRatio})\nResized: ${r.resizedDimensions?.width}×${r.resizedDimensions?.height} (${r.resizedDimensions?.aspectRatio})\nFit: ${t.fit || 'fill'}, Kernel: ${t.kernel || 'lanczos3'}\n\nOutput: ${allPaths[0]}`;
                     }
                 } else if (successResults.length === 0) {
                     // 全部失败
