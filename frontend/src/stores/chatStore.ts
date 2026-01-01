@@ -1503,15 +1503,40 @@ export const useChatStore = defineStore('chat', () => {
         return
       }
 
+      // 如果已经在发送批注请求，检查是否需要创建占位消息
+      // 场景：rejectPendingToolsWithAnnotation 设置了 isSendingAnnotation 但没有创建占位消息
+      if (isSendingAnnotation) {
+        // 检查当前 streamingMessageId 指向的消息是否是一个空的占位消息
+        const currentMsg = streamingMessageId.value 
+          ? allMessages.value.find(m => m.id === streamingMessageId.value)
+          : null
+        
+        // 如果不是空的占位消息（即旧消息有内容或工具），需要创建新的占位消息
+        const needNewPlaceholder = !currentMsg 
+          || (currentMsg.content && currentMsg.content.length > 0)
+          || (currentMsg.tools && currentMsg.tools.length > 0)
+          || !currentMsg.streaming
+        
+        if (needNewPlaceholder) {
+          const newAssistantMessageId = generateId()
+          const newAssistantMessage: Message = {
+            id: newAssistantMessageId,
+            role: 'assistant',
+            content: '',
+            timestamp: Date.now(),
+            streaming: true,
+            metadata: {
+              modelVersion: currentModelName.value
+            }
+          }
+          allMessages.value.push(newAssistantMessage)
+          streamingMessageId.value = newAssistantMessageId
+        }
+        return
+      }
+
       // 如果需要等待用户批注（工具确认流程）
       if (chunk.needAnnotation) {
-        // 关键检查：如果已经在发送批注请求，直接返回，防止重复发送
-        // 场景：用户点击保存/拒绝按钮后，continueDiffWithAnnotation 已发送请求，
-        // 但后端返回的 toolIteration 可能没有 pendingDiffToolIds（diff 已处理完毕），
-        // 此时不应该再次发送请求
-        if (isSendingAnnotation) {
-          return
-        }
 
         if (chunk.pendingDiffToolIds && chunk.pendingDiffToolIds.length > 0) {
           if (pendingDiffToolIds.value.length === 0) {
@@ -2291,6 +2316,11 @@ export const useChatStore = defineStore('chat', () => {
       return
     }
 
+    // 防止重复发送：如果已经在发送批注，直接返回
+    if (isSendingAnnotation) {
+      return
+    }
+
     // 构建拒绝所有待确认工具的响应
     const toolResponses = pendingToolCalls.value.map(tool => ({
       id: tool.id,
@@ -2301,6 +2331,14 @@ export const useChatStore = defineStore('chat', () => {
     if (toolResponses.length === 0) return
 
     const trimmedAnnotation = annotation.trim()
+
+    // 【关键】设置标志防止后续 toolIteration 处理中重复发送批注
+    // 后端收到 toolConfirmation 后会返回 toolIteration，如果 needAnnotation=true
+    // 且此标志为 false，会触发 _createAnnotationMessagesAndSend 导致发送两次批注
+    isSendingAnnotation = true
+    // 同时设置状态标志，防止其他操作（如 retryAfterError）在此期间触发
+    isStreaming.value = true
+    isWaitingForResponse.value = true
 
     // 更新本地工具状态为 running（表示正在处理）
     if (streamingMessageId.value) {
@@ -2339,6 +2377,23 @@ export const useChatStore = defineStore('chat', () => {
       allMessages.value.push(userMessage)
     }
 
+    // 【关键】创建占位消息用于接收后续 AI 响应
+    // 后端收到 toolConfirmation 后会执行工具并继续 AI 对话
+    // 如果不创建占位消息，后续的 chunk 会被追加到旧消息（带工具调用的消息）上
+    const newAssistantMessageId = generateId()
+    const newAssistantMessage: Message = {
+      id: newAssistantMessageId,
+      role: 'assistant',
+      content: '',
+      timestamp: Date.now(),
+      streaming: true,
+      metadata: {
+        modelVersion: currentModelName.value
+      }
+    }
+    allMessages.value.push(newAssistantMessage)
+    streamingMessageId.value = newAssistantMessageId
+
     // 发送到后端（带批注）
     try {
       await sendToExtension('toolConfirmation', {
@@ -2349,6 +2404,10 @@ export const useChatStore = defineStore('chat', () => {
       })
     } catch (error) {
       console.error('Failed to send tool confirmation with annotation:', error)
+      // 发送失败时重置所有标志
+      isSendingAnnotation = false
+      isStreaming.value = false
+      isWaitingForResponse.value = false
     }
   }
 
@@ -2357,7 +2416,8 @@ export const useChatStore = defineStore('chat', () => {
    */
   async function retryAfterError(): Promise<void> {
     if (!currentConversationId.value) return
-    if (isLoading.value || isStreaming.value) return
+    // 防止与正在进行的操作冲突（包括批注发送）
+    if (isLoading.value || isStreaming.value || isSendingAnnotation) return
     
     error.value = null  // 清除错误
     isLoading.value = true

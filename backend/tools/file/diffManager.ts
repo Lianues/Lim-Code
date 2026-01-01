@@ -340,8 +340,18 @@ export class DiffManager {
 
         const currentSettings = this.getSettings();
         const timer = setTimeout(async () => {
+            // 先获取 diff 引用（acceptDiff 后状态会变但对象仍在）
+            const diff = this.pendingDiffs.get(id);
+            
             // 自动保存模式：传递 isAutoSave = true，使用 AI 建议的内容
-            await this.acceptDiff(id, true, true);
+            const success = await this.acceptDiff(id, true, true);
+            
+            // 自动保存成功后，通知前端更新 UI 状态
+            // 复用 manualSave 通知机制，前端会调用 markDiffAsAccepted 清除按钮
+            if (success && diff) {
+                this.notifyManualSave(diff);
+            }
+            
             this.autoSaveTimers.delete(id);
         }, currentSettings.autoSaveDelay);
 
