@@ -675,6 +675,7 @@ export interface LanguageMessages {
                     file: string;
                     search: string;
                     terminal: string;
+                    media: string;
                     mcp: string;
                     other: string;
                 };
@@ -1011,6 +1012,27 @@ export interface LanguageMessages {
                     warning: string;
                 };
             };
+            googleSearch: {
+                useDedicatedModel: {
+                    label: string;
+                    hint: string;
+                };
+                selectChannel: {
+                    label: string;
+                    hint: string;
+                    placeholder: string;
+                };
+                selectModel: {
+                    label: string;
+                    hint: string;
+                    placeholder: string;
+                };
+                currentModelHint: string;
+                warningHint: string;
+                noGeminiChannelError: string;
+                invalidChannelError: string;
+                saving: string;
+            };
             mcpSettings: {
                 toolbar: {
                     addServer: string;
@@ -1326,6 +1348,7 @@ export interface LanguageMessages {
                     file: string;
                     search: string;
                     terminal: string;
+                    media: string;
                     other: string;
                 };
                 dependency: {
@@ -1715,6 +1738,7 @@ export interface LanguageMessages {
             search: {
                 findFiles: string;
                 searchInFiles: string;
+                googleSearch: string;
                 filesFound: string;
                 matchesFound: string;
                 noResults: string;

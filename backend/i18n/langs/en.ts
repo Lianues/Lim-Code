@@ -321,6 +321,11 @@ Requirements:
         },
 
         search: {
+            google_search: {
+                errors: {
+                    unsupportedChannel: 'The current channel type "{channel}" does not support Google Search. This feature is currently only supported on Gemini channels.'
+                }
+            },
             errors: {
                 searchFailed: 'Search failed: {error}',
                 invalidPattern: 'Invalid search pattern: {pattern}'
@@ -440,6 +445,9 @@ Requirements:
             
             getGenerateImageConfigFailed: 'Failed to get image generation config',
             updateGenerateImageConfigFailed: 'Failed to update image generation config',
+            
+            getGoogleSearchConfigFailed: 'Failed to get Google Search config',
+            updateGoogleSearchConfigFailed: 'Failed to update Google Search config',
             
             getContextAwarenessConfigFailed: 'Failed to get context awareness config',
             updateContextAwarenessConfigFailed: 'Failed to update context awareness config',

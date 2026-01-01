@@ -12,13 +12,12 @@
 
 import { ref, computed, Component, h, watchEffect, watch, onMounted, onBeforeUnmount } from 'vue'
 import { storeToRefs } from 'pinia'
-import type { ToolUsage, Message } from '../../types'
+import type { ToolUsage } from '../../types'
 import { getToolConfig } from '../../utils/toolRegistry'
 import { ensureMcpToolRegistered } from '../../utils/tools'
 import { useChatStore } from '../../stores'
 import { sendToExtension, acceptDiff, rejectDiff, getPendingDiffs, onMessageFromExtension } from '../../utils/vscode'
 import { useI18n } from '../../i18n'
-import { generateId } from '../../utils/format'
 
 const { t } = useI18n()
 
@@ -684,6 +683,34 @@ function isExpanded(toolId: string): boolean {
 // 获取工具显示名称
 function getToolLabel(tool: ToolUsage): string {
   const config = getToolConfig(tool.name)
+  
+  // 优先使用国际化翻译
+  const i18nKeyMap: Record<string, string> = {
+    'read_file': 'components.tools.file.readFile',
+    'write_file': 'components.tools.file.writeFile',
+    'delete_file': 'components.tools.file.deleteFile',
+    'create_directory': 'components.tools.file.createDirectory',
+    'list_files': 'components.tools.file.listFiles',
+    'apply_diff': 'components.tools.file.applyDiff',
+    'find_files': 'components.tools.search.findFiles',
+    'search_in_files': 'components.tools.search.searchInFiles',
+    'google_search': 'components.tools.search.googleSearch',
+    'execute_command': 'components.tools.terminal.executeCommand',
+    'generate_image': 'components.tools.media.generateImage',
+    'resize_image': 'components.tools.media.resizeImage',
+    'crop_image': 'components.tools.media.cropImage',
+    'rotate_image': 'components.tools.media.rotateImage',
+    'remove_background': 'components.tools.media.removeBackground'
+  }
+  
+  const key = i18nKeyMap[tool.name]
+  if (key) {
+    const localized = t(key)
+    if (localized && localized !== key) {
+      return localized
+    }
+  }
+  
   return config?.label || tool.name
 }
 

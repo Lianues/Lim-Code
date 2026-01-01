@@ -321,6 +321,11 @@ const zhCN: BackendLanguageMessages = {
         },
 
         search: {
+            google_search: {
+                errors: {
+                    unsupportedChannel: '当前渠道类型 "{channel}" 不支持 Google 搜索。目前仅 Gemini 渠道支持此功能。'
+                }
+            },
             errors: {
                 searchFailed: '搜索失败: {error}',
                 invalidPattern: '无效的搜索模式: {pattern}'
@@ -440,6 +445,9 @@ const zhCN: BackendLanguageMessages = {
             
             getGenerateImageConfigFailed: '获取图像生成配置失败',
             updateGenerateImageConfigFailed: '更新图像生成配置失败',
+            
+            getGoogleSearchConfigFailed: '获取 Google 搜索配置失败',
+            updateGoogleSearchConfigFailed: '更新 Google 搜索配置失败',
             
             getContextAwarenessConfigFailed: '获取上下文感知配置失败',
             updateContextAwarenessConfigFailed: '更新上下文感知配置失败',

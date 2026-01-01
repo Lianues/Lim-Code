@@ -532,6 +532,7 @@ const en: LanguageMessages = {
                     file: 'File Operations',
                     search: 'Search',
                     terminal: 'Terminal',
+                    media: 'Media',
                     mcp: 'MCP Tools',
                     other: 'Other'
                 },
@@ -867,6 +868,27 @@ const en: LanguageMessages = {
                     step4: 'Generated images will be saved to the generated_images directory in the workspace',
                     warning: 'Please configure API Key before using image generation feature'
                 }
+            },
+            googleSearch: {
+                useDedicatedModel: {
+                    label: 'Use Dedicated Search Channel',
+                    hint: 'When enabled, search requests will use the channel and model specified below, otherwise use the current conversation channel and model.'
+                },
+                selectChannel: {
+                    label: 'Select Channel',
+                    hint: 'Only Gemini channels are supported (Google Search relies on Gemini grounding feature)',
+                    placeholder: 'Select Gemini channel for search'
+                },
+                selectModel: {
+                    label: 'Select Model',
+                    hint: 'Only shows models added to this channel. To add more models, go to channel settings.',
+                    placeholder: 'Select model for search'
+                },
+                currentModelHint: 'Currently using conversation channel and model for search',
+                warningHint: 'Please select a channel and model, otherwise the conversation channel and model will be used for search',
+                noGeminiChannelError: 'No Gemini channel available. Google Search tool only supports Gemini channels. Please add and enable a Gemini channel in channel settings first.',
+                invalidChannelError: 'The selected channel is not a Gemini type. Please select a Gemini channel.',
+                saving: 'Saving...'
             },
             mcpSettings: {
                 toolbar: {
@@ -1289,6 +1311,7 @@ const en: LanguageMessages = {
                     file: 'File Operations',
                     search: 'Search',
                     terminal: 'Terminal',
+                    media: 'Media',
                     other: 'Other'
                 },
                 dependency: {
@@ -1653,6 +1676,7 @@ const en: LanguageMessages = {
             search: {
                 findFiles: 'Find Files',
                 searchInFiles: 'Search in Files',
+                googleSearch: 'Google Search',
                 filesFound: 'Files found',
                 matchesFound: 'Matches found',
                 noResults: 'No results',

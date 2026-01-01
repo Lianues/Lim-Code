@@ -21,6 +21,7 @@ import type { GetHistoryOptions } from '../../conversation/ConversationManager';
 import type { BaseChannelConfig } from '../../config/configs/base';
 import type { StreamChunk, GenerateResponse } from '../../channel/types';
 import { ChannelError, ErrorType } from '../../channel/types';
+import { createProxyFetch } from '../../channel/proxyFetch';
 import { parseXMLToolCalls } from '../../../tools/xmlFormatter';
 import { parseJSONToolCalls, TOOL_CALL_START } from '../../../tools/jsonFormatter';
 import { getDiffManager } from '../../../tools/file/diffManager';
@@ -1246,13 +1247,20 @@ export class ChatHandler {
                         const multimodalEnabled = config?.multimodalToolsEnabled ?? false;
                         const capability = getMultimodalCapability(channelType, currentToolMode, multimodalEnabled);
                         
+                        // 获取有效的代理 URL
+                        const proxyUrl = this.settingsManager?.getEffectiveProxyUrl();
+
                         // 构建工具执行上下文，包含多模态配置、能力、取消信号和工具调用 ID
                         const toolContext: Record<string, unknown> = {
                             multimodalEnabled,
                             capability,
                             abortSignal,
                             toolId: call.id,  // 使用函数调用 ID 作为工具 ID，用于追踪和取消
-                            toolOptions: config?.toolOptions  // 传递工具配置
+                            toolOptions: config?.toolOptions,  // 传递工具配置
+                            channelType,
+                            config: config,
+                            proxyUrl,
+                            fetcher: createProxyFetch(proxyUrl)
                         };
                         
                         // 为特定工具添加配置
@@ -1261,6 +1269,17 @@ export class ChatHandler {
                             // 添加代理配置
                             toolContext.config = {
                                 ...imageConfig,
+                                proxyUrl: this.settingsManager.getEffectiveProxyUrl()
+                            };
+                        }
+
+                        // 为 google_search 工具添加配置
+                        if (call.name === 'google_search' && this.settingsManager) {
+                            const searchConfig = this.settingsManager.getGoogleSearchConfig();
+                            // 合并渠道配置和搜索配置，传入子请求
+                            toolContext.config = {
+                                ...config, // 包含 apiKey, url, model 等渠道信息
+                                ...searchConfig,
                                 proxyUrl: this.settingsManager.getEffectiveProxyUrl()
                             };
                         }

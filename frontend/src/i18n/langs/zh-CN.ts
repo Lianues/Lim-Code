@@ -532,6 +532,7 @@ const zhCN: LanguageMessages = {
                     file: '文件操作',
                     search: '搜索',
                     terminal: '终端',
+                    media: '媒体',
                     mcp: 'MCP 工具',
                     other: '其他'
                 },
@@ -862,11 +863,32 @@ const zhCN: LanguageMessages = {
                 usage: {
                     title: '使用说明',
                     step1: '配置上方的 API URL、API Key 和模型名称',
-                    step2: '确保工具在"工具设置"中已启用',
+                    step2: '确保工具进"工具设置"中已启用',
                     step3: '在对话中让 AI 调用 generate_image 工具生成图片',
                     step4: '生成的图片会保存到工作区的 generated_images 目录',
                     warning: '请配置 API Key 后才能使用图像生成功能'
                 }
+            },
+            googleSearch: {
+                useDedicatedModel: {
+                    label: '使用专用搜索渠道',
+                    hint: '开启后，搜索请求将使用下方指定的渠道和模型，否则使用当前对话的渠道和模型。'
+                },
+                selectChannel: {
+                    label: '选择渠道',
+                    hint: '仅支持 Gemini 渠道（Google Search 依赖 Gemini 的 grounding 功能）',
+                    placeholder: '选择用于搜索的 Gemini 渠道'
+                },
+                selectModel: {
+                    label: '选择模型',
+                    hint: '只显示该渠道已添加的模型。如需添加更多模型，请前往渠道设置进行配置。',
+                    placeholder: '选择用于搜索的模型'
+                },
+                currentModelHint: '当前使用对话时的渠道和模型进行搜索',
+                warningHint: '请选择渠道和模型，否则将使用对话时的渠道和模型进行搜索',
+                noGeminiChannelError: '未找到可用的 Gemini 渠道。Google Search 工具仅支持 Gemini 渠道，请先在渠道设置中添加并启用 Gemini 渠道。',
+                invalidChannelError: '当前选择的渠道不是 Gemini 类型，请重新选择 Gemini 渠道。',
+                saving: '正在保存...'
             },
             mcpSettings: {
                 toolbar: {
@@ -1289,6 +1311,7 @@ const zhCN: LanguageMessages = {
                     file: '文件操作',
                     search: '搜索',
                     terminal: '终端',
+                    media: '媒体',
                     other: '其他'
                 },
                 dependency: {
@@ -1852,6 +1875,7 @@ const zhCN: LanguageMessages = {
             search: {
                 findFiles: '查找文件',
                 searchInFiles: '在文件中搜索',
+                googleSearch: 'Google 搜索',
                 filesFound: '找到文件',
                 matchesFound: '找到匹配',
                 noResults: '无结果',

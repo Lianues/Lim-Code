@@ -399,6 +399,31 @@ export interface RotateImageToolConfig {
 }
 
 /**
+ * Google 搜索工具配置
+ */
+export interface GoogleSearchToolConfig {
+    /**
+     * 是否使用专门的搜索渠道和模型
+     * 
+     * true: 使用指定的渠道和模型发起子请求
+     * false: 使用主对话当前配置的渠道和模型发起子请求
+     */
+    useDedicatedModel: boolean;
+    
+    /**
+     * 搜索用的渠道 ID（仅当 useDedicatedModel 为 true 时使用）
+     */
+    dedicatedChannelId: string;
+    
+    /**
+     * 搜索用的模型 ID（仅当 useDedicatedModel 为 true 时使用）
+     */
+    dedicatedModelId: string;
+    
+    [key: string]: unknown;
+}
+
+/**
  * 固定文件项
  *
  * 单个被挂载的文件信息
@@ -795,6 +820,7 @@ export interface ToolsConfig {
     crop_image?: CropImageToolConfig;
     resize_image?: ResizeImageToolConfig;
     rotate_image?: RotateImageToolConfig;
+    google_search?: GoogleSearchToolConfig;
     context_awareness?: ContextAwarenessConfig;
     pinned_files?: PinnedFilesConfig;
     system_prompt?: SystemPromptConfig;
@@ -1271,6 +1297,9 @@ export const DEFAULT_ROTATE_IMAGE_CONFIG: RotateImageToolConfig = {
 };
 
 /**
+ * 默认 Google 搜索配置
+ */
+/**
  * 默认固定文件配置
  */
 export const DEFAULT_PINNED_FILES_CONFIG: PinnedFilesConfig = {
@@ -1302,7 +1331,7 @@ Please respond using the user's language by default.`
     },
     {
         id: 'WORKSPACE_FILES',
-        name: 'Workspace Files',
+   name: 'Workspace Files',
         description: 'Lists files and directory structure in the workspace, affected by context awareness settings',
         example: `====
 
@@ -1475,6 +1504,12 @@ export const DEFAULT_CONTEXT_AWARENESS_CONFIG: ContextAwarenessConfig = {
     ignorePatterns: [...COMMON_IGNORE_PATTERNS]
 };
 
+export const DEFAULT_GOOGLE_SEARCH_CONFIG: GoogleSearchToolConfig = {
+    useDedicatedModel: false,
+    dedicatedChannelId: '',
+    dedicatedModelId: ''
+};
+
 /**
  * 默认全局设置
  */
@@ -1498,6 +1533,7 @@ export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
         crop_image: DEFAULT_CROP_IMAGE_CONFIG,
         resize_image: DEFAULT_RESIZE_IMAGE_CONFIG,
         rotate_image: DEFAULT_ROTATE_IMAGE_CONFIG,
+        google_search: DEFAULT_GOOGLE_SEARCH_CONFIG,
         context_awareness: DEFAULT_CONTEXT_AWARENESS_CONFIG,
         pinned_files: DEFAULT_PINNED_FILES_CONFIG,
         system_prompt: DEFAULT_SYSTEM_PROMPT_CONFIG,

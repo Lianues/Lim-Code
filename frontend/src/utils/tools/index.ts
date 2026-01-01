@@ -15,6 +15,7 @@ import './file/create_directory'
 // 搜索工具
 import './search/find_files'
 import './search/search_in_files'
+import './search/google_search'
 
 // 终端工具
 import './terminal/execute_command'

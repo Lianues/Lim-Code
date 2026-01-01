@@ -321,6 +321,11 @@ const ja: BackendLanguageMessages = {
         },
 
         search: {
+            google_search: {
+                errors: {
+                    unsupportedChannel: '現在のチャンネルタイプ "{channel}" は Google 検索をサポートしていません。この機能は現在 Gemini チャンネルでのみサポートされています。'
+                }
+            },
             errors: {
                 searchFailed: '検索に失敗しました: {error}',
                 invalidPattern: '無効な検索パターン: {pattern}'
@@ -440,6 +445,9 @@ const ja: BackendLanguageMessages = {
             
             getGenerateImageConfigFailed: '画像生成設定の取得に失敗しました',
             updateGenerateImageConfigFailed: '画像生成設定の更新に失敗しました',
+            
+            getGoogleSearchConfigFailed: 'Google 検索設定の取得に失敗しました',
+            updateGoogleSearchConfigFailed: 'Google 検索設定の更新に失敗しました',
             
             getContextAwarenessConfigFailed: 'コンテキスト認識設定の取得に失敗しました',
             updateContextAwarenessConfigFailed: 'コンテキスト認識設定の更新に失敗しました',

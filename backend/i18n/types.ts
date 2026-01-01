@@ -335,6 +335,11 @@ export interface BackendLanguageMessages {
 
         /** 搜索工具 */
         search: {
+            google_search: {
+                errors: {
+                    unsupportedChannel: string;
+                };
+            };
             errors: {
                 searchFailed: string;
                 invalidPattern: string;
@@ -452,7 +457,7 @@ export interface BackendLanguageMessages {
             previewAttachmentFailed: string;
             readImageFailed: string;
             openFileFailed: string;
-            saveImageFailed: string;
+        saveImageFailed: string;
             
             /** MCP 相关 */
             openMcpConfigFailed: string;
@@ -473,6 +478,10 @@ export interface BackendLanguageMessages {
             /** 图像生成配置相关 */
             getGenerateImageConfigFailed: string;
             updateGenerateImageConfigFailed: string;
+            
+            /** Google 搜索配置相关 */
+            getGoogleSearchConfigFailed: string;
+            updateGoogleSearchConfigFailed: string;
             
             /** 上下文感知相关 */
             getContextAwarenessConfigFailed: string;

@@ -1403,6 +1403,29 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     break;
                 }
                 
+                // ========== Google 搜索配置 ==========
+                
+                case 'getGoogleSearchConfig': {
+                    try {
+                        const config = this.settingsManager.getGoogleSearchConfig();
+                        this.sendResponse(requestId, config);
+                    } catch (error: any) {
+                        this.sendError(requestId, 'GET_GOOGLE_SEARCH_CONFIG_ERROR', error.message || t('webview.errors.getGoogleSearchConfigFailed'));
+                    }
+                    break;
+                }
+                
+                case 'updateGoogleSearchConfig': {
+                    try {
+                        const { config } = data;
+                        await this.settingsManager.updateGoogleSearchConfig(config);
+                        this.sendResponse(requestId, { success: true });
+                    } catch (error: any) {
+                        this.sendError(requestId, 'UPDATE_GOOGLE_SEARCH_CONFIG_ERROR', error.message || t('webview.errors.updateGoogleSearchConfigFailed'));
+                    }
+                    break;
+                }
+                
                 // ========== 上下文感知配置 ==========
                 
                 case 'getContextAwarenessConfig': {

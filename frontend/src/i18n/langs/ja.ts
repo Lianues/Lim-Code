@@ -532,6 +532,7 @@ const ja: LanguageMessages = {
                     file: 'ファイル操作',
                     search: '検索',
                     terminal: 'ターミナル',
+                    media: 'メディア',
                     mcp: 'MCP ツール',
                     other: 'その他'
                 },
@@ -862,11 +863,32 @@ const ja: LanguageMessages = {
                 usage: {
                     title: '使用方法',
                     step1: '上記の API URL、API Key、モデル名を設定',
-                    step2: 'ツールが「ツール設定」で有効になっていることを確認',
+                    step2: 'ツールが「ツール設定」で有効になっていることを确认',
                     step3: '会話で AI に generate_image ツールを呼び出して画像を生成させる',
                     step4: '生成された画像はワークスペースの generated_images ディレクトリに保存されます',
                     warning: '画像生成機能を使用する前に API Key を設定してください'
                 }
+            },
+            googleSearch: {
+                useDedicatedModel: {
+                    label: '専用検索チャンネルを使用',
+                    hint: '有効にすると、検索リクエストは以下で指定したチャンネルとモデルを使用し、そうでない場合は現在の会話チャンネルとモデルを使用します。'
+                },
+                selectChannel: {
+                    label: 'チャンネルを選択',
+                    hint: 'Gemini チャンネルのみサポート（Google Search は Gemini の grounding 機能に依存）',
+                    placeholder: '検索用の Gemini チャンネルを選択'
+                },
+                selectModel: {
+                    label: 'モデルを選択',
+                    hint: 'このチャンネルに追加されたモデルのみ表示されます。モデルを追加するには、チャンネル設定に移動してください。',
+                    placeholder: '検索用のモデルを選択'
+                },
+                currentModelHint: '現在、会話チャンネルとモデルを検索に使用しています',
+                warningHint: 'チャンネルとモデルを選択してください。そうしないと、会話チャンネルとモデルが検索に使用されます',
+                noGeminiChannelError: '利用可能な Gemini チャンネルがありません。Google Search ツールは Gemini チャンネルのみをサポートしています。まずチャンネル設定で Gemini チャンネルを追加して有効にしてください。',
+                invalidChannelError: '選択したチャンネルは Gemini タイプではありません。Gemini チャンネルを選択してください。',
+                saving: '保存中...'
             },
             mcpSettings: {
                 toolbar: {
@@ -1289,6 +1311,7 @@ const ja: LanguageMessages = {
                     file: 'ファイル操作',
                     search: '検索',
                     terminal: 'ターミナル',
+                    media: 'メディア',
                     other: 'その他'
                 },
                 dependency: {
@@ -1653,6 +1676,7 @@ const ja: LanguageMessages = {
             search: {
                 findFiles: 'ファイルを検索',
                 searchInFiles: 'ファイル内を検索',
+                googleSearch: 'Google 検索',
                 filesFound: 'ファイルが見つかりました',
                 matchesFound: '一致が見つかりました',
                 noResults: '結果なし',

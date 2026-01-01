@@ -26,6 +26,7 @@ import type {
     CropImageToolConfig,
     ResizeImageToolConfig,
     RotateImageToolConfig,
+    GoogleSearchToolConfig,
     ContextAwarenessConfig,
     DiagnosticsConfig,
     PinnedFilesConfig,
@@ -50,6 +51,7 @@ import {
     DEFAULT_CROP_IMAGE_CONFIG,
     DEFAULT_RESIZE_IMAGE_CONFIG,
     DEFAULT_ROTATE_IMAGE_CONFIG,
+    DEFAULT_GOOGLE_SEARCH_CONFIG,
     DEFAULT_CONTEXT_AWARENESS_CONFIG,
     DEFAULT_DIAGNOSTICS_CONFIG,
     DEFAULT_PINNED_FILES_CONFIG,
@@ -1049,6 +1051,40 @@ export class SettingsManager {
         this.notifyChange({
             type: 'tools',
             path: 'toolsConfig.rotate_image',
+            oldValue: oldConfig,
+            newValue: newConfig,
+            settings: this.settings
+        });
+    }
+
+    /**
+     * 获取 Google 搜索工具配置
+     */
+    getGoogleSearchConfig(): Readonly<GoogleSearchToolConfig> {
+        return this.settings.toolsConfig?.google_search || DEFAULT_GOOGLE_SEARCH_CONFIG;
+    }
+
+    /**
+     * 更新 Google 搜索工具配置
+     */
+    async updateGoogleSearchConfig(config: Partial<GoogleSearchToolConfig>): Promise<void> {
+        const oldConfig = this.getGoogleSearchConfig();
+        const newConfig = {
+            ...oldConfig,
+            ...config
+        };
+        
+        if (!this.settings.toolsConfig) {
+            this.settings.toolsConfig = {};
+        }
+        this.settings.toolsConfig.google_search = newConfig;
+        this.settings.lastUpdated = Date.now();
+        
+        await this.storage.save(this.settings);
+        
+        this.notifyChange({
+            type: 'tools',
+            path: 'toolsConfig.google_search',
             oldValue: oldConfig,
             newValue: newConfig,
             settings: this.settings
