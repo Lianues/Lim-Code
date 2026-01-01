@@ -328,7 +328,7 @@ async function markDiffAsAccepted(tool: ToolUsage): Promise<void> {
     pendingDiffMap.value.delete(path)
   }
   chatStore.markDiffToolProcessed(tool.id, 'accept')
-  await checkAndContinueConversation()
+  await checkAndContinueConversationWithFallback(tool)
 }
 
 // 检查是否所有 diff 都已处理，是则继续对话
@@ -347,6 +347,55 @@ async function checkAndContinueConversation(): Promise<void> {
     await chatStore.continueDiffWithAnnotation(annotationToSend)
   } catch (err) {
     console.error('continueDiffWithAnnotation failed:', err)
+  }
+}
+
+/**
+ * 检查是否需要继续对话（带备用逻辑）
+ *
+ * 当 pendingDiffToolIds 为空时（后端未正确发送），使用当前工具作为唯一需要处理的工具。
+ * 这解决了 write_file 等工具在某些情况下 pendingDiffToolIds 未被设置的问题。
+ *
+ * @param currentTool 当前正在处理的工具
+ */
+async function checkAndContinueConversationWithFallback(_currentTool: ToolUsage): Promise<void> {
+  // 优先使用标准逻辑
+  if (chatStore.pendingDiffToolIds.length > 0) {
+    await checkAndContinueConversation()
+    return
+  }
+
+  // 备用逻辑：pendingDiffToolIds 为空，但用户已点击按钮处理了当前工具
+  // 检查当前消息中是否还有其他未处理的 diff 工具
+  const unprocessedDiffTools = enhancedTools.value.filter(t => {
+    if (t.name !== 'apply_diff' && t.name !== 'write_file') return false
+    if (processedDiffTools.value.has(t.id)) return false
+    // 检查工具是否有待确认的 diff
+    const resultData = (t.result as any)?.data
+    if (resultData?.pendingDiffId) return true
+    if (t.name === 'write_file' && resultData?.results) {
+      return resultData.results.some((r: any) => r.pendingDiffId)
+    }
+    return false
+  })
+
+  // 如果还有其他未处理的工具，等待
+  if (unprocessedDiffTools.length > 0) {
+    return
+  }
+
+  // 所有工具都已处理，继续对话
+  if (isSendingDiffContinue.value) {
+    return
+  }
+
+  const annotationToSend = firstDiffAnnotation
+  resetDiffState()
+
+  try {
+    await chatStore.continueDiffWithAnnotation(annotationToSend)
+  } catch (err) {
+    console.error('continueDiffWithAnnotation (fallback) failed:', err)
   }
 }
 
@@ -389,7 +438,7 @@ async function markDiffAsRejected(tool: ToolUsage): Promise<void> {
     pendingDiffMap.value.delete(path)
   }
   chatStore.markDiffToolProcessed(tool.id, 'reject')
-  await checkAndContinueConversation()
+  await checkAndContinueConversationWithFallback(tool)
 }
 
 // 拒绝 diff（点击按钮触发）

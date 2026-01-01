@@ -2970,13 +2970,27 @@ export const useChatStore = defineStore('chat', () => {
     pendingAnnotation.value = ''
 
     const conv = conversations.value.find(c => c.id === currentConversationId.value)
-    const needAddUserMessage = !storedAnnotation && !!newAnnotation
     if (conv) {
       conv.updatedAt = Date.now()
-      conv.messageCount = allMessages.value.length + (needAddUserMessage ? 2 : 1)
+      conv.messageCount = allMessages.value.length + (newAnnotation ? 2 : 1)
     }
 
-    _createAnnotationMessagesAndSend(finalAnnotation, needAddUserMessage)
+    // 如果有新批注（diff 阶段输入的），先添加用户消息
+    // 注意：storedAnnotation 的用户消息已在 toolIteration 处理中添加，不需要重复添加
+    if (newAnnotation) {
+      const userMessage: Message = {
+        id: generateId(),
+        role: 'user',
+        content: newAnnotation,
+        timestamp: Date.now(),
+        parts: [{ text: newAnnotation }]
+      }
+      allMessages.value.push(userMessage)
+    }
+
+    // 发送完整的批注给 AI（包括 storedAnnotation 和 newAnnotation）
+    // 但不再添加用户消息（已在上面添加过了）
+    _createAnnotationMessagesAndSend(finalAnnotation, false)
 
     isLoading.value = false
   }
