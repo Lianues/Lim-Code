@@ -162,16 +162,9 @@ let diffPollTimer: ReturnType<typeof setInterval> | null = null
 // diff 操作加载状态
 const diffLoadingIds = ref<Set<string>>(new Set())
 
-// 已处理的 diffId 集合（用于过滤 getDiffIds 返回的结果）
-// 因为 resultData.results[].pendingDiffId 是固定的，不会因保存/拒绝而变化
-const handledDiffIds = ref<Set<string>>(new Set())
-
-// 已处理的文件路径集合（用于判断 write_file 多文件是否全部处理完）
-// 因为后端是顺序创建 pending diff，不能依赖 getDiffIds 来判断
-const handledFilePaths = ref<Set<string>>(new Set())
-
-// 批注现在由 store 级别管理（chatStore.diffAnnotation）
-// 解决了自动继续对话时无法访问组件内批注的问题
+// 已处理的 diffId 和 filePath 现在由 store 级别管理
+// 解决了组件重新渲染时状态丢失的问题
+// 批注也由 store 级别管理，解决了自动继续对话时无法访问组件内批注的问题
 
 /**
  * 需要确认的工具 ID 集合（从 store 获取，后端直接告知）
@@ -209,16 +202,6 @@ function getToolFilePaths(tool: ToolUsage): string[] {
  * - 用户正在处理（diffLoadingIds 中）
  */
 function shouldShowDiffArea(tool: ToolUsage): boolean {
-  // 已处理的工具始终显示（显示处理结果）
-  if (processedDiffTools.value.has(tool.id)) {
-    return true
-  }
-  
-  // 用户正在处理，显示按钮区域（会显示 loading 状态）
-  if (diffLoadingIds.value.has(tool.id)) {
-    return true
-  }
-
   // 非文件修改工具不显示
   if (tool.name !== 'apply_diff' && tool.name !== 'write_file') {
     return false
@@ -229,6 +212,33 @@ function shouldShowDiffArea(tool: ToolUsage): boolean {
     return false
   }
 
+  // 已处理的工具始终显示（显示处理结果）
+  if (processedDiffTools.value.has(tool.id)) {
+    return true
+  }
+  
+  // 用户正在处理，显示按钮区域（会显示 loading 状态）
+  if (diffLoadingIds.value.has(tool.id)) {
+    return true
+  }
+
+  // 【新增】检查工具的所有文件是否都已处理（store 级别）
+  // 如果所有文件都已处理但 processedDiffTools 尚未更新，也认为已处理
+  const toolPaths = getToolFilePaths(tool)
+  if (toolPaths.length > 0) {
+    const handledCount = chatStore.getHandledFilePathsCount(toolPaths)
+    if (handledCount >= toolPaths.length) {
+      return true  // 显示"已保存"状态
+    }
+  }
+
+  // 【关键修复】如果对话已完成（不在等待响应状态），不显示按钮
+  // 这解决了 complete 后 processedDiffTools 被清空导致按钮重新出现的问题
+  // 注意：这个检查要在 requiredDiffToolIds 检查之前，避免对话完成后又显示按钮
+  if (!chatStore.isWaitingForResponse && !chatStore.isStreaming) {
+    return false
+  }
+
   // 检查工具 ID 是否在后端告知的待确认列表中
   if (requiredDiffToolIds.value.has(tool.id)) {
     return true
@@ -236,12 +246,6 @@ function shouldShowDiffArea(tool: ToolUsage): boolean {
 
   // success 状态且不在待确认列表中，说明是历史记录或已完成对话
   if (tool.status === 'success') {
-    return false
-  }
-  
-  // 【关键修复】如果对话已完成（不在等待响应状态），不显示按钮
-  // 这解决了 complete 后 processedDiffTools 被清空导致按钮重新出现的问题
-  if (!chatStore.isWaitingForResponse && !chatStore.isStreaming) {
     return false
   }
 
@@ -279,21 +283,21 @@ function getDiffIds(tool: ToolUsage): string[] {
   // 从 pendingDiffMap 获取
   for (const path of paths) {
     const diffId = pendingDiffMap.value.get(path)
-    if (diffId && !diffIds.includes(diffId) && !handledDiffIds.value.has(diffId)) {
+    if (diffId && !diffIds.includes(diffId) && !chatStore.isHandledDiffId(diffId)) {
       diffIds.push(diffId)
     }
   }
 
   // 也检查 result 中的 pendingDiffId（单文件工具如 apply_diff）
   const resultData = (tool.result as any)?.data
-  if (resultData?.pendingDiffId && !diffIds.includes(resultData.pendingDiffId) && !handledDiffIds.value.has(resultData.pendingDiffId)) {
+  if (resultData?.pendingDiffId && !diffIds.includes(resultData.pendingDiffId) && !chatStore.isHandledDiffId(resultData.pendingDiffId)) {
     diffIds.push(resultData.pendingDiffId)
   }
 
   // 对于 write_file，检查 results 数组中每个文件的 pendingDiffId
   if (tool.name === 'write_file' && resultData?.results) {
     for (const r of resultData.results) {
-      if (r.pendingDiffId && !diffIds.includes(r.pendingDiffId) && !handledDiffIds.value.has(r.pendingDiffId)) {
+      if (r.pendingDiffId && !diffIds.includes(r.pendingDiffId) && !chatStore.isHandledDiffId(r.pendingDiffId)) {
         diffIds.push(r.pendingDiffId)
       }
     }
@@ -310,13 +314,33 @@ function isDiffLoading(toolId: string): boolean {
 // 检查 diff 工具是否已处理（使用 store 方法）
 // 注意：一旦用户点击保存/拒绝，就认为工具已处理，不再根据 pendingDiffMap 判断
 function isDiffProcessed(tool: ToolUsage): boolean {
-  // 使用 store 方法检查
-  return chatStore.isDiffToolProcessed(tool.id)
+  // 优先使用 store 方法检查
+  if (chatStore.isDiffToolProcessed(tool.id)) {
+    return true
+  }
+  
+  // 【关键修复】如果所有文件都已处理，也认为工具已处理
+  // 解决时序问题：handledFilePaths 已更新但 processedDiffTools 还没更新
+  const paths = getToolFilePaths(tool)
+  if (paths.length > 0) {
+    const handledCount = chatStore.getHandledFilePathsCount(paths)
+    if (handledCount >= paths.length) {
+      return true
+    }
+  }
+  
+  return false
 }
 
 // 获取 diff 工具的处理结果（使用 store 方法）
-function getDiffDecision(toolId: string): 'accept' | 'reject' | undefined {
-  return chatStore.getDiffToolDecision(toolId)
+function getDiffDecision(tool: ToolUsage): 'accept' | 'reject' | undefined {
+  // 优先从 processedDiffTools 获取
+  const decision = chatStore.getDiffToolDecision(tool.id)
+  if (decision) return decision
+  
+  // 回退：从 handledFilePaths 获取（处理时序问题）
+  const paths = getToolFilePaths(tool)
+  return chatStore.getToolDecisionFromHandledPaths(paths)
 }
 
 /**
@@ -425,7 +449,7 @@ async function handleAcceptDiff(tool: ToolUsage) {
     toolId: tool.id,
     toolName: tool.name,
     diffIds,
-    handledDiffIds: Array.from(handledDiffIds.value),
+    handledDiffIds: Array.from(chatStore.handledDiffIds),
     pendingDiffMapEntries: Array.from(pendingDiffMap.value.entries()),
     toolFilePaths: getToolFilePaths(tool),
     resultDataPendingDiffId: resultData?.pendingDiffId,
@@ -459,8 +483,8 @@ async function handleAcceptDiff(tool: ToolUsage) {
       chatStore.setDiffAnnotation(result.fullAnnotation)
     }
 
-    // 标记此 diffId 为已处理
-    handledDiffIds.value.add(currentDiffId)
+    // 标记此 diffId 为已处理（使用 store 级别状态）
+    chatStore.addHandledDiffId(currentDiffId)
 
     // 找到并标记对应的文件路径为已处理
     const allPaths = getToolFilePaths(tool)
@@ -471,7 +495,7 @@ async function handleAcceptDiff(tool: ToolUsage) {
       const diffId = pendingDiffMap.value.get(path)
       if (diffId === currentDiffId) {
         pendingDiffMap.value.delete(path)
-        handledFilePaths.value.add(path)
+        chatStore.addHandledFilePath(path, 'accept')
         foundPath = true
         break
       }
@@ -481,7 +505,7 @@ async function handleAcceptDiff(tool: ToolUsage) {
     if (!foundPath && resultData?.results) {
       for (const r of resultData.results) {
         if (r.pendingDiffId === currentDiffId && r.path) {
-          handledFilePaths.value.add(r.path)
+          chatStore.addHandledFilePath(r.path, 'accept')
           foundPath = true
           break
         }
@@ -492,7 +516,7 @@ async function handleAcceptDiff(tool: ToolUsage) {
     if (!foundPath && tool.name === 'apply_diff') {
       const argPath = tool.args?.path as string
       if (argPath) {
-        handledFilePaths.value.add(argPath)
+        chatStore.addHandledFilePath(argPath, 'accept')
         foundPath = true
       }
     }
@@ -500,12 +524,11 @@ async function handleAcceptDiff(tool: ToolUsage) {
     // 检查是否所有文件都已处理
     // 不能依赖 getDiffIds，因为后端是顺序创建 pending diff 的
     const totalFiles = allPaths.length
-    const handledFiles = allPaths.filter(p => handledFilePaths.value.has(p)).length
+    const handledFiles = chatStore.getHandledFilePathsCount(allPaths)
     console.log('[ToolMessage] handleAcceptDiff after processing:', {
       processedDiffId: currentDiffId,
       totalFiles,
-      handledFiles,
-      handledFilePaths: Array.from(handledFilePaths.value)
+      handledFiles
     })
     
     if (handledFiles >= totalFiles) {
@@ -568,8 +591,8 @@ async function handleRejectDiff(tool: ToolUsage) {
       chatStore.setDiffAnnotation(result.fullAnnotation)
     }
 
-    // 标记此 diffId 为已处理
-    handledDiffIds.value.add(currentDiffId)
+    // 标记此 diffId 为已处理（使用 store 级别状态）
+    chatStore.addHandledDiffId(currentDiffId)
 
     // 找到并标记对应的文件路径为已处理
     const allPaths = getToolFilePaths(tool)
@@ -580,7 +603,7 @@ async function handleRejectDiff(tool: ToolUsage) {
       const diffId = pendingDiffMap.value.get(path)
       if (diffId === currentDiffId) {
         pendingDiffMap.value.delete(path)
-        handledFilePaths.value.add(path)
+        chatStore.addHandledFilePath(path, 'reject')
         foundPath = true
         break
       }
@@ -591,7 +614,7 @@ async function handleRejectDiff(tool: ToolUsage) {
     if (!foundPath && rejectResultData?.results) {
       for (const r of rejectResultData.results) {
         if (r.pendingDiffId === currentDiffId && r.path) {
-          handledFilePaths.value.add(r.path)
+          chatStore.addHandledFilePath(r.path, 'reject')
           foundPath = true
           break
         }
@@ -602,7 +625,7 @@ async function handleRejectDiff(tool: ToolUsage) {
     if (!foundPath && tool.name === 'apply_diff') {
       const argPath = tool.args?.path as string
       if (argPath) {
-        handledFilePaths.value.add(argPath)
+        chatStore.addHandledFilePath(argPath, 'reject')
         foundPath = true
       }
     }
@@ -610,12 +633,11 @@ async function handleRejectDiff(tool: ToolUsage) {
     // 检查是否所有文件都已处理
     // 不能依赖 getDiffIds，因为后端是顺序创建 pending diff 的
     const totalFiles = allPaths.length
-    const handledFiles = allPaths.filter(p => handledFilePaths.value.has(p)).length
+    const handledFiles = chatStore.getHandledFilePathsCount(allPaths)
     console.log('[ToolMessage] handleRejectDiff after processing:', {
       processedDiffId: currentDiffId,
       totalFiles,
-      handledFiles,
-      handledFilePaths: Array.from(handledFilePaths.value)
+      handledFiles
     })
     
     if (handledFiles >= totalFiles) {
@@ -1204,7 +1226,7 @@ function renderToolContent(tool: ToolUsage) {
         <!-- 已处理状态：显示决定标记 + 等待提示 -->
         <template v-else>
           <span
-            v-if="getDiffDecision(tool.id) === 'accept'"
+            v-if="getDiffDecision(tool) === 'accept'"
             class="diff-decision-badge diff-accepted"
           >
             <span class="codicon codicon-check"></span>

@@ -201,6 +201,19 @@ export const useChatStore = defineStore('chat', () => {
    */
   const diffAnnotation = ref<string>('')
 
+  /**
+   * 已处理的 diffId 集合（store 级别管理）
+   * 用于过滤 getDiffIds 返回的结果，避免重复处理同一个 diff
+   */
+  const handledDiffIds = ref<Set<string>>(new Set())
+
+  /**
+   * 已处理的文件路径及其决定（store 级别管理）
+   * 用于判断 write_file 多文件是否全部处理完，并记录每个文件的决定
+   * Map<filePath, 'accept' | 'reject'>
+   */
+  const handledFilePaths = ref<Map<string, 'accept' | 'reject'>>(new Map())
+
   /** Diff 操作的第一个批注（用于 ToolMessage 组件存储用户输入的批注） */
   const diffFirstAnnotation = ref('')
 
@@ -1669,8 +1682,10 @@ export const useChatStore = defineStore('chat', () => {
       pendingDiffToolIds.value = []
       // 清空 processedDiffTools（对话完成后才清空，避免 UI 状态回退）
       processedDiffTools.value = new Map()
-      // 清空 diffAnnotation
+      // 清空 diffAnnotation 和处理状态
       diffAnnotation.value = ''
+      handledDiffIds.value = new Set()
+      handledFilePaths.value = new Map()
 
       updateConversationAfterMessage()
     } else if (chunk.type === 'checkpoints') {
@@ -1759,6 +1774,8 @@ export const useChatStore = defineStore('chat', () => {
       pendingDiffToolIds.value = []
       processedDiffTools.value = new Map()
       diffAnnotation.value = ''
+      handledDiffIds.value = new Set()
+      handledFilePaths.value = new Map()
     } else if (chunk.type === 'error') {
       error.value = chunk.error || {
         code: 'STREAM_ERROR',
@@ -1780,6 +1797,8 @@ export const useChatStore = defineStore('chat', () => {
       pendingDiffToolIds.value = []
       processedDiffTools.value = new Map()
       diffAnnotation.value = ''
+      handledDiffIds.value = new Set()
+      handledFilePaths.value = new Map()
     }
   }
 
@@ -3094,6 +3113,8 @@ export const useChatStore = defineStore('chat', () => {
     processedDiffTools.value = new Map()
     isSendingDiffContinue.value = false
     diffAnnotation.value = ''
+    handledDiffIds.value = new Set()
+    handledFilePaths.value = new Map()
   }
 
   /**
@@ -3117,6 +3138,65 @@ export const useChatStore = defineStore('chat', () => {
    */
   function getDiffAnnotation(): string {
     return diffAnnotation.value
+  }
+
+  /**
+   * 添加已处理的 diffId
+   */
+  function addHandledDiffId(diffId: string): void {
+    handledDiffIds.value.add(diffId)
+    // 触发响应式更新
+    handledDiffIds.value = new Set(handledDiffIds.value)
+  }
+
+  /**
+   * 检查 diffId 是否已处理
+   */
+  function isHandledDiffId(diffId: string): boolean {
+    return handledDiffIds.value.has(diffId)
+  }
+
+  /**
+   * 添加已处理的文件路径及其决定
+   */
+  function addHandledFilePath(filePath: string, decision: 'accept' | 'reject'): void {
+    handledFilePaths.value.set(filePath, decision)
+    // 触发响应式更新
+    handledFilePaths.value = new Map(handledFilePaths.value)
+  }
+
+  /**
+   * 检查文件路径是否已处理
+   */
+  function isHandledFilePath(filePath: string): boolean {
+    return handledFilePaths.value.has(filePath)
+  }
+
+  /**
+   * 获取已处理的文件路径数量
+   */
+  function getHandledFilePathsCount(paths: string[]): number {
+    return paths.filter(p => handledFilePaths.value.has(p)).length
+  }
+
+  /**
+   * 获取文件路径的决定类型
+   * 用于在 processedDiffTools 还没更新时获取决定
+   */
+  function getHandledFilePathDecision(filePath: string): 'accept' | 'reject' | undefined {
+    return handledFilePaths.value.get(filePath)
+  }
+
+  /**
+   * 获取工具所有文件的决定（如果都已处理）
+   * 返回第一个文件的决定（因为同一个工具的所有文件应该有相同的决定）
+   */
+  function getToolDecisionFromHandledPaths(paths: string[]): 'accept' | 'reject' | undefined {
+    if (paths.length === 0) return undefined
+    const handledCount = paths.filter(p => handledFilePaths.value.has(p)).length
+    if (handledCount < paths.length) return undefined
+    // 所有文件都已处理，返回第一个文件的决定
+    return handledFilePaths.value.get(paths[0])
   }
 
   /**
@@ -3375,6 +3455,8 @@ export const useChatStore = defineStore('chat', () => {
     processedDiffTools,
     isSendingDiffContinue,
     diffAnnotation,
+    handledDiffIds,
+    handledFilePaths,
     markDiffToolProcessed,
     isDiffToolProcessed,
     getDiffToolDecision,
@@ -3384,6 +3466,13 @@ export const useChatStore = defineStore('chat', () => {
     setIsSendingDiffContinue,
     setDiffAnnotation,
     getDiffAnnotation,
+    addHandledDiffId,
+    isHandledDiffId,
+    addHandledFilePath,
+    isHandledFilePath,
+    getHandledFilePathsCount,
+    getHandledFilePathDecision,
+    getToolDecisionFromHandledPaths,
 
     // UI 辅助方法
     addUserMessageToUI,
