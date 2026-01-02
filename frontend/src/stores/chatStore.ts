@@ -1412,6 +1412,18 @@ export const useChatStore = defineStore('chat', () => {
           pendingDiffToolIds.value = chunk.pendingDiffToolIds
           isSendingDiffContinue.value = false
           isSendingAnnotation = false
+          
+          // 【关键】设置 pendingDiffToolIds 后，检查是否所有 diff 都已处理
+          // 解决场景：用户在 toolIteration 到达之前就完成了所有 diff 处理
+          // 此时 ToolMessage.tryToContinueDiff() 因为 pendingDiffToolIds 为空而返回
+          // 现在 pendingDiffToolIds 已设置，如果所有 diff 都已处理，自动继续对话
+          if (areAllRequiredDiffsProcessed()) {
+            console.log('[chatStore] toolIteration: all diffs already processed, auto continuing')
+            // 使用 setTimeout 确保状态更新完成后再调用
+            setTimeout(() => {
+              continueDiffWithAnnotation('')
+            }, 0)
+          }
         }
 
         // 用新对象替换数组中的旧对象

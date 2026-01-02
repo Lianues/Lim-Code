@@ -3189,10 +3189,15 @@ export class ChatHandler {
                     })
             }));
             
+            // 过滤掉 parts 为空的消息
+            // 某些消息过滤后可能没有有效内容（如只包含思考内容或图片的消息）
+            // Gemini API 要求每条消息必须包含至少一个 part
+            const validCleanedMessages = cleanedMessages.filter(msg => msg.parts.length > 0);
+            
             // 构建历史（需要总结的完整消息 + 总结请求）
             // 保留完整历史，让 AI 理解上下文
             const summaryRequestHistory: Content[] = [
-                ...cleanedMessages,
+                ...validCleanedMessages,
                 {
                     role: 'user',
                     parts: [{ text: prompt }]

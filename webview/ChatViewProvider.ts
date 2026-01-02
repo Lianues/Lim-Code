@@ -2717,7 +2717,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             });
 
             for await (const chunk of stream) {
+                console.log('[handleContinueWithAnnotationStream] received chunk:', Object.keys(chunk));
                 if ('checkpointOnly' in chunk && chunk.checkpointOnly) {
+                    console.log('[handleContinueWithAnnotationStream] sending checkpoints');
                     this._view?.webview.postMessage({
                         type: 'streamChunk',
                         data: {
@@ -2748,6 +2750,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                         }
                     });
                 } else if ('chunk' in chunk && chunk.chunk) {
+                    console.log('[handleContinueWithAnnotationStream] sending chunk');
                     this._view?.webview.postMessage({
                         type: 'streamChunk',
                         data: {
@@ -2757,6 +2760,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                         }
                     });
                 } else if ('toolIteration' in chunk && chunk.toolIteration) {
+                    console.log('[handleContinueWithAnnotationStream] sending toolIteration, needAnnotation:', (chunk as any).needAnnotation, 'pendingDiffToolIds:', (chunk as any).pendingDiffToolIds);
                     this._view?.webview.postMessage({
                         type: 'streamChunk',
                         data: {
@@ -2767,10 +2771,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                             toolResults: (chunk as any).toolResults,
                             checkpoints: (chunk as any).checkpoints,
                             needAnnotation: (chunk as any).needAnnotation,
-                            pendingDiffToolIds: (chunk as any).pendingDiffToolIds
+                            pendingDiffToolIds: (chunk as any).pendingDiffToolIds,
+                            pendingAnnotation: (chunk as any).pendingAnnotation,
+                            annotationUsed: (chunk as any).annotationUsed
                         }
                     });
                 } else if ('content' in chunk && chunk.content) {
+                    console.log('[handleContinueWithAnnotationStream] sending complete');
                     this._view?.webview.postMessage({
                         type: 'streamChunk',
                         data: {
@@ -2791,6 +2798,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     });
                 } else if ('error' in chunk && chunk.error) {
                     hasError = true;
+                    console.log('[handleContinueWithAnnotationStream] ERROR:', chunk.error);
                     this._view?.webview.postMessage({
                         type: 'streamChunk',
                         data: {
