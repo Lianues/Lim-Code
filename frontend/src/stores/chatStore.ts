@@ -194,6 +194,16 @@ export const useChatStore = defineStore('chat', () => {
   /** 是否正在发送 continueDiffWithAnnotation 请求 */
   const isSendingDiffContinue = ref(false)
 
+  /**
+   * Diff 操作的批注（store 级别管理）
+   * 用户在第一次 diff 操作时输入的批注会保存在这里
+   * 后端返回 fullAnnotation 后会更新为格式化后的内容
+   */
+  const diffAnnotation = ref<string>('')
+
+  /** Diff 操作的第一个批注（用于 ToolMessage 组件存储用户输入的批注） */
+  const diffFirstAnnotation = ref('')
+
   // ============ 辅助函数 ============
   
   /**
@@ -1420,8 +1430,10 @@ export const useChatStore = defineStore('chat', () => {
           if (areAllRequiredDiffsProcessed()) {
             console.log('[chatStore] toolIteration: all diffs already processed, auto continuing')
             // 使用 setTimeout 确保状态更新完成后再调用
+            // 使用保存在 store 中的批注
+            const savedAnnotation = diffAnnotation.value
             setTimeout(() => {
-              continueDiffWithAnnotation('')
+              continueDiffWithAnnotation(savedAnnotation)
             }, 0)
           }
         }
@@ -1657,6 +1669,8 @@ export const useChatStore = defineStore('chat', () => {
       pendingDiffToolIds.value = []
       // 清空 processedDiffTools（对话完成后才清空，避免 UI 状态回退）
       processedDiffTools.value = new Map()
+      // 清空 diffAnnotation
+      diffAnnotation.value = ''
 
       updateConversationAfterMessage()
     } else if (chunk.type === 'checkpoints') {
@@ -1744,6 +1758,7 @@ export const useChatStore = defineStore('chat', () => {
       isSendingDiffContinue.value = false
       pendingDiffToolIds.value = []
       processedDiffTools.value = new Map()
+      diffAnnotation.value = ''
     } else if (chunk.type === 'error') {
       error.value = chunk.error || {
         code: 'STREAM_ERROR',
@@ -1764,6 +1779,7 @@ export const useChatStore = defineStore('chat', () => {
       isSendingDiffContinue.value = false
       pendingDiffToolIds.value = []
       processedDiffTools.value = new Map()
+      diffAnnotation.value = ''
     }
   }
 
@@ -3077,6 +3093,7 @@ export const useChatStore = defineStore('chat', () => {
   function clearDiffProcessingState(): void {
     processedDiffTools.value = new Map()
     isSendingDiffContinue.value = false
+    diffAnnotation.value = ''
   }
 
   /**
@@ -3085,6 +3102,21 @@ export const useChatStore = defineStore('chat', () => {
    */
   function setIsSendingDiffContinue(value: boolean): void {
     isSendingDiffContinue.value = value
+  }
+
+  /**
+   * 设置 diff 操作的批注
+   * 由 ToolMessage 组件在处理 diff 时调用
+   */
+  function setDiffAnnotation(annotation: string): void {
+    diffAnnotation.value = annotation
+  }
+
+  /**
+   * 获取 diff 操作的批注
+   */
+  function getDiffAnnotation(): string {
+    return diffAnnotation.value
   }
 
   /**
@@ -3342,6 +3374,7 @@ export const useChatStore = defineStore('chat', () => {
     pendingDiffToolIds,
     processedDiffTools,
     isSendingDiffContinue,
+    diffAnnotation,
     markDiffToolProcessed,
     isDiffToolProcessed,
     getDiffToolDecision,
@@ -3349,6 +3382,8 @@ export const useChatStore = defineStore('chat', () => {
     hasRemainingRequiredDiffs,
     clearDiffProcessingState,
     setIsSendingDiffContinue,
+    setDiffAnnotation,
+    getDiffAnnotation,
 
     // UI 辅助方法
     addUserMessageToUI,

@@ -170,8 +170,8 @@ const handledDiffIds = ref<Set<string>>(new Set())
 // 因为后端是顺序创建 pending diff，不能依赖 getDiffIds 来判断
 const handledFilePaths = ref<Set<string>>(new Set())
 
-// 第一个操作的批注（用于最终继续对话）
-let firstDiffAnnotation = ''
+// 批注现在由 store 级别管理（chatStore.diffAnnotation）
+// 解决了自动继续对话时无法访问组件内批注的问题
 
 /**
  * 需要确认的工具 ID 集合（从 store 获取，后端直接告知）
@@ -341,9 +341,10 @@ function hasRemainingDiffs(): boolean {
 
 /**
  * 重置组件内 diff 相关状态（在继续对话后调用）
+ * 注意：批注已移至 store 级别管理，此函数保留用于其他清理工作
  */
 function resetDiffState(): void {
-  firstDiffAnnotation = ''
+  // 批注现在由 store 管理，不需要在这里清理
 }
 
 // 【已移除 watch】
@@ -403,7 +404,9 @@ async function tryToContinueDiff(): Promise<void> {
   
   // 所有工具都已处理，继续对话
   console.log('[ToolMessage] tryToContinueDiff: all processed, calling continueDiffWithAnnotation')
-  const annotationToSend = firstDiffAnnotation
+  // 批注已保存在 store 级别（chatStore.diffAnnotation）
+  // continueDiffWithAnnotation 会自动读取并使用
+  const annotationToSend = chatStore.getDiffAnnotation()
   resetDiffState()
 
   try {
@@ -439,18 +442,21 @@ async function handleAcceptDiff(tool: ToolUsage) {
 
   diffLoadingIds.value.add(tool.id)
   try {
-    const isFirst = processedDiffTools.value.size === 0 && !firstDiffAnnotation
+    // 检查是否是第一次 diff 操作（store 级别批注为空且没有已处理的工具）
+    const isFirst = processedDiffTools.value.size === 0 && !chatStore.getDiffAnnotation()
     const annotation = isFirst ? chatStore.inputValue.trim() : ''
 
     if (isFirst && annotation) {
       chatStore.setInputValue('')
-      firstDiffAnnotation = annotation
+      // 保存批注到 store 级别
+      chatStore.setDiffAnnotation(annotation)
     }
 
     // 只处理当前这一个 diffId
     const result = await acceptDiff(currentDiffId, annotation || undefined)
     if (isFirst && result.fullAnnotation) {
-      firstDiffAnnotation = result.fullAnnotation
+      // 更新为后端返回的格式化批注
+      chatStore.setDiffAnnotation(result.fullAnnotation)
     }
 
     // 标记此 diffId 为已处理
@@ -545,18 +551,21 @@ async function handleRejectDiff(tool: ToolUsage) {
 
   diffLoadingIds.value.add(tool.id)
   try {
-    const isFirst = processedDiffTools.value.size === 0 && !firstDiffAnnotation
+    // 检查是否是第一次 diff 操作（store 级别批注为空且没有已处理的工具）
+    const isFirst = processedDiffTools.value.size === 0 && !chatStore.getDiffAnnotation()
     const annotation = isFirst ? chatStore.inputValue.trim() : ''
 
     if (isFirst && annotation) {
       chatStore.setInputValue('')
-      firstDiffAnnotation = annotation
+      // 保存批注到 store 级别
+      chatStore.setDiffAnnotation(annotation)
     }
 
     // 只处理当前这一个 diffId
     const result = await rejectDiff(currentDiffId, annotation || undefined)
     if (isFirst && result.fullAnnotation) {
-      firstDiffAnnotation = result.fullAnnotation
+      // 更新为后端返回的格式化批注
+      chatStore.setDiffAnnotation(result.fullAnnotation)
     }
 
     // 标记此 diffId 为已处理
