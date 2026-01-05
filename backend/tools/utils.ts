@@ -438,7 +438,7 @@ export function getReadFileError(filePath: string, multimodalEnabled: boolean): 
 /**
  * 渠道类型
  */
-export type ChannelType = 'gemini' | 'openai' | 'anthropic';
+export type ChannelType = 'gemini' | 'openai' | 'anthropic' | 'openai-responses';
 
 /**
  * 工具模式
@@ -516,6 +516,14 @@ export function getMultimodalCapability(
                     supportsHistoryMultimodal: true, // 历史中的图片可以作为 user 消息发送
                 };
             }
+            
+        case 'openai-responses':
+            // OpenAI Responses API 全面支持多模态（图片和文档）
+            return {
+                supportsImages: true,
+                supportsDocuments: true,
+                supportsHistoryMultimodal: true,
+            };
             
         case 'anthropic':
             // Anthropic 全面支持多模态（图片和文档）

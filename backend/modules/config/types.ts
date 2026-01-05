@@ -11,6 +11,7 @@ export type {
     GeminiConfig,
     OpenAIConfig,
     AnthropicConfig,
+    OpenAIResponsesConfig,
     ChannelConfig,
     TokenCountMethod,
     TokenCountApiConfig

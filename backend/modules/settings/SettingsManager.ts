@@ -1497,10 +1497,10 @@ export class SettingsManager {
     /**
      * 检查指定渠道的 Token 计数是否已启用
      *
-     * @param channelType 渠道类型 (gemini, openai, anthropic)
+     * @param channelType 渠道类型 (gemini, openai, anthropic, openai-responses)
      * @returns 是否启用
      */
-    isTokenCountEnabled(channelType: 'gemini' | 'openai' | 'anthropic'): boolean {
+    isTokenCountEnabled(channelType: 'gemini' | 'openai' | 'anthropic' | 'openai-responses'): boolean {
         const config = this.getTokenCountConfig();
         return config[channelType]?.enabled ?? false;
     }

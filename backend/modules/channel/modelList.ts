@@ -71,7 +71,16 @@ export async function getGeminiModels(config: ChannelConfig): Promise<ModelInfo[
  */
 export async function getOpenAIModels(config: ChannelConfig): Promise<ModelInfo[]> {
   const apiKey = (config as any).apiKey;
-  const url = (config as any).url || 'https://api.openai.com/v1';
+  let url = (config as any).url || 'https://api.openai.com/v1';
+  
+  if (url.endsWith('/')) {
+    url = url.slice(0, -1);
+  }
+  
+  // 如果是 openai-responses 且 URL 包含 /responses，移除它以获取模型列表
+  if (config.type === 'openai-responses' && url.endsWith('/responses')) {
+    url = url.slice(0, -10);
+  }
   
   if (!apiKey) {
     throw new Error(t('modules.channel.modelList.errors.apiKeyRequired'));
@@ -122,6 +131,9 @@ export async function getModels(config: ChannelConfig): Promise<ModelInfo[]> {
       return getGeminiModels(config);
     
     case 'openai':
+      return getOpenAIModels(config);
+    
+    case 'openai-responses':
       return getOpenAIModels(config);
     
     case 'anthropic':

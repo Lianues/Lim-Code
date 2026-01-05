@@ -59,7 +59,7 @@ export interface GetHistoryOptions {
     sendCurrentThoughtSignatures?: boolean;
     
     /** 渠道类型，用于选择对应格式的签名 */
-    channelType?: 'gemini' | 'openai' | 'anthropic' | 'custom';
+    channelType?: 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom';
     
     /**
      * 多模态能力（可选）
@@ -187,7 +187,7 @@ export class ConversationManager {
      */
     async addMessage(
         conversationId: string,
-        role: 'user' | 'model',
+        role: 'user' | 'model' | 'system',
         parts: ContentPart[]
     ): Promise<void> {
         const history = await this.loadHistory(conversationId);
@@ -290,7 +290,7 @@ export class ConversationManager {
     async insertMessage(
         conversationId: string,
         position: number,
-        role: 'user' | 'model',
+        role: 'user' | 'model' | 'system',
         parts: ContentPart[]
     ): Promise<void> {
         const history = await this.loadHistory(conversationId);
@@ -441,7 +441,7 @@ export class ConversationManager {
      */
     async getMessagesByRole(
         conversationId: string,
-        role: 'user' | 'model'
+        role: 'user' | 'model' | 'system'
     ): Promise<Content[]> {
         const history = await this.loadHistory(conversationId);
         return history
@@ -658,8 +658,8 @@ export class ConversationManager {
         const sendHistoryThoughts = opts.sendHistoryThoughts ?? false;
         const sendHistoryThoughtSignatures = opts.sendHistoryThoughtSignatures ?? false;
         // 当前轮次配置：如果没有传，Anthropic 默认全传，Gemini/OpenAI 默认不传文本内容
-        const sendCurrentThoughts = opts.sendCurrentThoughts ?? (opts.channelType === 'anthropic');
-        const sendCurrentThoughtSignatures = opts.sendCurrentThoughtSignatures ?? (opts.channelType === 'gemini');
+        const sendCurrentThoughts = opts.sendCurrentThoughts ?? (opts.channelType === 'anthropic' || opts.channelType === 'openai-responses');
+        const sendCurrentThoughtSignatures = opts.sendCurrentThoughtSignatures ?? (opts.channelType === 'gemini' || opts.channelType === 'openai-responses');
         const channelType = opts.channelType;
         // 历史思考回合数，默认 -1 表示全部
         const historyThinkingRounds = opts.historyThinkingRounds ?? -1;
@@ -942,7 +942,8 @@ export class ConversationManager {
             if (isHistoryMessage) {
                 // 历史消息：根据 sendHistoryThoughts 配置和 historyThinkingRounds 决定
                 if (!sendHistoryThoughts) {
-                    parts = parts.filter(part => !part.thought);
+                    // 仅过滤掉纯思考内容，保留包含签名的 Part
+                    parts = parts.filter(part => !part.thought || part.thoughtSignatures);
                 } else {
                     // 检查当前消息是否在允许的历史思考回合范围内
                     const isInHistoryThoughtRange = index >= historyThoughtMinIndex && index < historyThoughtMaxIndex;
@@ -954,7 +955,8 @@ export class ConversationManager {
                 // 当前轮次 (Latest Round)
                 // 当前轮次的思考发送由 sendCurrentThoughts 独立控制
                 if (!sendCurrentThoughts) {
-                    parts = parts.filter(part => !part.thought);
+                    // 仅过滤掉纯思考内容，保留包含签名的 Part
+                    parts = parts.filter(part => !part.thought || part.thoughtSignatures);
                 }
             }
             

@@ -8,6 +8,7 @@ import { BaseFormatter } from './base';
 import { GeminiFormatter } from './gemini';
 import { OpenAIFormatter } from './openai';
 import { AnthropicFormatter } from './anthropic';
+import { OpenAIResponsesFormatter } from './openai-responses';
 import type { ChannelType } from '../../config/types';
 
 /**
@@ -21,6 +22,7 @@ export class FormatterRegistry {
         this.register(new GeminiFormatter());
         this.register(new OpenAIFormatter());
         this.register(new AnthropicFormatter());
+        this.register(new OpenAIResponsesFormatter());
     }
     
     /**
@@ -61,3 +63,4 @@ export { BaseFormatter } from './base';
 export { GeminiFormatter } from './gemini';
 export { OpenAIFormatter } from './openai';
 export { AnthropicFormatter } from './anthropic';
+export { OpenAIResponsesFormatter } from './openai-responses';

@@ -2,7 +2,7 @@
   "name": "limcode",
   "displayName": "Lim Code",
   "description": "Lim Code 是一个AI编程助手插件，支持多模态和复杂功能。",
-  "version": "1.0.29",
+  "version": "1.0.30",
   "publisher": "Lianues",
   "icon": "resources/icon.png",
   "engines": {

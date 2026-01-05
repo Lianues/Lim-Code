@@ -24,7 +24,7 @@ import type { Content, ContentPart } from './types';
  * ```
  */
 export function buildMessage(
-    role: 'user' | 'model',
+    role: 'user' | 'model' | 'system',
     parts: ContentPart[]
 ): Content {
     return {
@@ -38,6 +38,13 @@ export function buildMessage(
  */
 export function buildUserMessage(parts: ContentPart[]): Content {
     return buildMessage('user', parts);
+}
+
+/**
+ * 创建系统消息
+ */
+export function buildSystemMessage(parts: ContentPart[]): Content {
+    return buildMessage('system', parts);
 }
 
 /**
@@ -253,7 +260,7 @@ export function countParts(message: Content): {
 /**
  * 创建纯文本消息
  */
-export function createTextMessage(role: 'user' | 'model', text: string): Content {
+export function createTextMessage(role: 'user' | 'model' | 'system', text: string): Content {
     return {
         role,
         parts: [{ text }]
@@ -273,7 +280,7 @@ export function createTextMessage(role: 'user' | 'model', text: string): Content
  * ```
  */
 export function createMultiTextMessage(
-    role: 'user' | 'model',
+    role: 'user' | 'model' | 'system',
     texts: string[]
 ): Content {
     return {

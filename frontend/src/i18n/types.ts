@@ -513,6 +513,7 @@ export interface LanguageMessages {
                     apiUrl: {
                         label: string;
                         placeholder: string;
+                        placeholderResponses: string;
                     };
                     apiKey: {
                         label: string;
@@ -530,6 +531,7 @@ export interface LanguageMessages {
                         label: string;
                         gemini: string;
                         openai: string;
+                        'openai-responses': string;
                         anthropic: string;
                     };
                     toolMode: {
@@ -573,6 +575,7 @@ export interface LanguageMessages {
                             geminiAll: string;
                             anthropicAll: string;
                             openaiXmlJson: string;
+                            openaiResponses: string;
                             openaiFunction: string;
                         };
                         legend: {
@@ -583,6 +586,7 @@ export interface LanguageMessages {
                             requireEnable: string;
                             userAttachment: string;
                             geminiAnthropic: string;
+                            openaiResponses: string;
                             openaiXmlJson: string;
                         };
                     };
@@ -1520,6 +1524,7 @@ export interface LanguageMessages {
                     effortLabel: string;
                     effortHint: string;
                     effortNone: string;
+                    effortMinimal: string;
                     effortLow: string;
                     effortMedium: string;
                     effortHigh: string;
@@ -1532,6 +1537,34 @@ export interface LanguageMessages {
                 };
                 historyThinking: {
                     sendSignaturesHint: string;
+                    sendContentHint: string;
+                };
+            };
+            
+            /** OpenAI Responses 专属 */
+            'openai-responses': {
+                maxOutputTokens: {
+                    label: string;
+                    placeholder: string;
+                    hint: string;
+                };
+                thinking: {
+                    effortLabel: string;
+                    effortHint: string;
+                    effortNone: string;
+                    effortMinimal: string;
+                    effortLow: string;
+                    effortMedium: string;
+                    effortHigh: string;
+                    effortXHigh: string;
+                    summaryLabel: string;
+                    summaryHint: string;
+                    summaryAuto: string;
+                    summaryConcise: string;
+                    summaryDetailed: string;
+                };
+                historyThinking: {
+                    sendSignaturesHint?: string;
                     sendContentHint: string;
                 };
             };
@@ -1592,6 +1625,7 @@ export interface LanguageMessages {
                     gemini: string;
                     openaiCustom: string;
                     openaiCustomDesc: string;
+                    openaiResponses: string;
                     anthropic: string;
                     local: string;
                     localDesc: string;

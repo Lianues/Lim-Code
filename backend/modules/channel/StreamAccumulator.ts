@@ -51,7 +51,7 @@ export class StreamAccumulator {
     private thoughtSignatures: ThoughtSignatures = {};
     
     /** API 提供商类型（用于确定签名格式） */
-    private providerType: 'gemini' | 'openai' | 'anthropic' | 'custom' = 'gemini';
+    private providerType: 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom' = 'gemini';
     
     /** 思考开始时间戳（毫秒） */
     private thinkingStartTime?: number;
@@ -170,14 +170,14 @@ export class StreamAccumulator {
      * 设置 API 提供商类型
      * 用于确定思考签名的存储格式
      */
-    setProviderType(type: 'gemini' | 'openai' | 'anthropic' | 'custom'): void {
+    setProviderType(type: 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom'): void {
         this.providerType = type;
     }
     
     /**
      * 获取 API 提供商类型
      */
-    getProviderType(): 'gemini' | 'openai' | 'anthropic' | 'custom' {
+    getProviderType(): 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom' {
         return this.providerType;
     }
     

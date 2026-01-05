@@ -4,7 +4,7 @@ import { CustomSelect, type SelectOption } from '../../common'
 import { t } from '@/i18n'
 
 // Token 计数方式类型
-type TokenCountMethod = 'channel_default' | 'gemini' | 'openai_custom' | 'anthropic' | 'local'
+type TokenCountMethod = 'channel_default' | 'gemini' | 'openai_custom' | 'openai_responses' | 'anthropic' | 'local'
 
 // Token 计数 API 配置
 interface TokenCountApiConfig {
@@ -53,6 +53,11 @@ const methodOptions = computed<SelectOption[]>(() => {
             description: t('components.channels.tokenCountMethod.options.openaiCustomDesc')
         },
         {
+            value: 'openai_responses',
+            label: t('components.channels.tokenCountMethod.options.openaiResponses'),
+            description: 'OpenAI Responses input_tokens API'
+        },
+        {
             value: 'anthropic',
             label: t('components.channels.tokenCountMethod.options.anthropic'),
             description: 'Anthropic count_tokens API'
@@ -83,7 +88,7 @@ function getDefaultMethodDescription(): string {
 const showApiConfig = computed(() => {
     const method = props.tokenCountMethod || 'channel_default'
     // 以下方式需要独立配置 API
-    return method === 'gemini' || method === 'openai_custom' || method === 'anthropic'
+    return method === 'gemini' || method === 'openai_custom' || method === 'openai_responses' || method === 'anthropic'
 })
 
 // 获取 URL 占位符
@@ -94,6 +99,8 @@ const urlPlaceholder = computed(() => {
             return 'https://generativelanguage.googleapis.com/v1beta/models/{model}:countTokens?key={key}'
         case 'openai_custom':
             return 'https://api.example.com/v1/count_tokens'
+        case 'openai_responses':
+            return 'https://api.openai.com/v1/responses/input_tokens'
         case 'anthropic':
             return 'https://api.anthropic.com/v1/messages/count_tokens'
         default:
@@ -109,6 +116,8 @@ const modelPlaceholder = computed(() => {
             return 'gemini-2.5-pro'
         case 'anthropic':
             return 'claude-sonnet-4-5'
+        case 'openai_responses':
+            return 'gpt-5'
         default:
             return ''
     }
@@ -196,8 +205,8 @@ function updateApiConfig(field: keyof TokenCountApiConfig, value: string) {
                     </span>
                 </div>
                 
-                <!-- 模型（仅 Gemini 和 Anthropic） -->
-                <div v-if="tokenCountMethod === 'gemini' || tokenCountMethod === 'anthropic'" class="option-item">
+                <!-- 模型（仅 Gemini、Anthropic 和 OpenAI Responses） -->
+                <div v-if="tokenCountMethod === 'gemini' || tokenCountMethod === 'anthropic' || tokenCountMethod === 'openai_responses'" class="option-item">
                     <div class="option-header">
                         <label>{{ t('components.channels.tokenCountMethod.apiConfig.model') }}</label>
                     </div>

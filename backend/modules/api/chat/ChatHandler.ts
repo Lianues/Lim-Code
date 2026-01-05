@@ -616,7 +616,7 @@ export class ChatHandler {
                     // 设置请求开始时间，用于计算 responseDuration
                     accumulator.setRequestStartTime(requestStartTime);
                     // 根据配置类型设置 providerType（用于多格式思考签名存储）
-                    accumulator.setProviderType(config.type as 'gemini' | 'openai' | 'anthropic' | 'custom');
+                    accumulator.setProviderType(config.type as 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom');
                     let cancelled = false;
                     let lastPartsLength = 0;
                     
@@ -2205,12 +2205,12 @@ export class ChatHandler {
             sendHistoryThoughts,
             // 是否发送历史思考签名
             sendHistoryThoughtSignatures,
-            // 是否发送当前思考内容 (默认: Anthropic 为 true, OAI/Gemini 为 false)
+            // 是否发送当前思考内容 (默认: Anthropic 为 true, OAI/Gemini/OAI-Responses 为 false)
             sendCurrentThoughts: config.sendCurrentThoughts ?? (config.type === 'anthropic'),
-            // 是否发送当前思考签名 (默认: OAI 为 false, Gemini 为 true)
-            sendCurrentThoughtSignatures: config.sendCurrentThoughtSignatures ?? (config.type === 'gemini'),
+            // 是否发送当前思考签名 (默认: OAI 为 false, Gemini/OAI-Responses 为 true)
+            sendCurrentThoughtSignatures: config.sendCurrentThoughtSignatures ?? (config.type === 'gemini' || config.type === 'openai-responses'),
             // 渠道类型，用于选择对应格式的签名
-            channelType: config.type as 'gemini' | 'openai' | 'anthropic' | 'custom',
+            channelType: config.type as 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom',
             // 多模态能力，用于过滤历史中的多模态数据
             multimodalCapability: capability,
             // 历史思考回合数
@@ -2675,13 +2675,14 @@ export class ChatHandler {
      *
      * 将渠道类型映射为 TokenCountService 支持的类型
      */
-    private normalizeChannelType(channelType?: string): 'gemini' | 'openai' | 'anthropic' | undefined {
+    private normalizeChannelType(channelType?: string): 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | undefined {
         if (!channelType) return undefined;
         
         const type = channelType.toLowerCase();
         if (type === 'gemini') return 'gemini';
         if (type === 'openai') return 'openai';
         if (type === 'anthropic') return 'anthropic';
+        if (type === 'openai-responses') return 'openai-responses';
         
         return undefined;
     }
@@ -3234,7 +3235,7 @@ export class ChatHandler {
             if (this.isAsyncGenerator(response)) {
                 // 流式响应：累积内容
                 const accumulator = new StreamAccumulator();
-                accumulator.setProviderType(config.type as 'gemini' | 'openai' | 'anthropic' | 'custom');
+                accumulator.setProviderType(config.type as 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom');
                 
                 for await (const chunk of response) {
                     if (request.abortSignal?.aborted) {
@@ -3568,7 +3569,7 @@ export class ChatHandler {
                     // 设置请求开始时间，用于计算 responseDuration
                     accumulator.setRequestStartTime(requestStartTime);
                     // 根据配置类型设置 providerType（用于多格式思考签名存储）
-                    accumulator.setProviderType(config.type as 'gemini' | 'openai' | 'anthropic' | 'custom');
+                    accumulator.setProviderType(config.type as 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom');
                     let cancelled = false;
                     let lastPartsLength = 0;
                     
@@ -4182,7 +4183,7 @@ export class ChatHandler {
                     // 设置请求开始时间，用于计算 responseDuration
                     accumulator.setRequestStartTime(editRequestStartTime);
                     // 根据配置类型设置 providerType（用于多格式思考签名存储）
-                    accumulator.setProviderType(config.type as 'gemini' | 'openai' | 'anthropic' | 'custom');
+                    accumulator.setProviderType(config.type as 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom');
                     let cancelled = false;
                     let lastPartsLengthEdit = 0;
                     

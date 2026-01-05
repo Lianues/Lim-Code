@@ -369,7 +369,8 @@ const en: LanguageMessages = {
                 form: {
                     apiUrl: {
                         label: 'API URL',
-                        placeholder: 'Enter API URL'
+                        placeholder: 'Enter API URL',
+                        placeholderResponses: 'Enter base API URL, e.g., https://api.openai.com/v1'
                     },
                     apiKey: {
                         label: 'API Key',
@@ -387,6 +388,7 @@ const en: LanguageMessages = {
                         label: 'Channel Type',
                         gemini: 'Gemini API',
                         openai: 'OpenAI API',
+                        'openai-responses': 'OpenAI Responses API',
                         anthropic: 'Anthropic API'
                     },
                     toolMode: {
@@ -430,6 +432,7 @@ const en: LanguageMessages = {
                             geminiAll: 'Gemini (All)',
                             anthropicAll: 'Anthropic (All)',
                             openaiXmlJson: 'OpenAI (XML/JSON)',
+                            openaiResponses: 'OpenAI (Responses)',
                             openaiFunction: 'OpenAI (Function Call)'
                         },
                         legend: {
@@ -440,6 +443,7 @@ const en: LanguageMessages = {
                             requireEnable: 'This option must be enabled to use multimodal tools like read_file for images/documents, generate_image, remove_background, crop_image, resize_image, rotate_image',
                             userAttachment: 'User-submitted attachments are not affected by this config and are always processed according to channel native capabilities',
                             geminiAnthropic: 'Gemini / Anthropic: Tools can directly return images and documents, support image generation',
+                            openaiResponses: 'OpenAI Responses: Native support for images/PDFs, supports real-time thinking display',
                             openaiXmlJson: 'OpenAI XML/JSON: Supports reading images and generating images, does not support documents'
                         }
                     },
@@ -1183,7 +1187,7 @@ const en: LanguageMessages = {
                 appInfo: {
                     title: 'Application Info',
                     name: 'Lim Code - Vibe Coding Assistant',
-                    version: 'Version: 1.0.29',
+                    version: 'Version: 1.0.30',
                     repository: 'Repository',
                     developer: 'Developer'
                 }
@@ -1416,7 +1420,7 @@ const en: LanguageMessages = {
                 currentThinking: {
                     title: 'Current Round Config',
                     sendSignatures: 'Send Current Signatures',
-                    sendSignaturesHint: 'Maintain reasoning context for current step (Recommended for Gemini)',
+                    sendSignaturesHint: 'Maintain reasoning context for current step',
                     sendContent: 'Send Current Thoughts',
                     sendContentHint: 'Send reasoning content of the current turn',
                 },
@@ -1473,8 +1477,9 @@ const en: LanguageMessages = {
                 },
                 thinking: {
                     effortLabel: 'Thinking Effort',
-                    effortHint: 'none: Not used | low: Less | medium: Moderate | high: More | xhigh: Maximum',
+                    effortHint: 'none: Not used | minimal: Minimal | low: Less | medium: Moderate | high: More | xhigh: Maximum',
                     effortNone: 'None',
+                    effortMinimal: 'Minimal',
                     effortLow: 'Low',
                     effortMedium: 'Medium',
                     effortHigh: 'High',
@@ -1488,6 +1493,32 @@ const en: LanguageMessages = {
                 historyThinking: {
                     sendSignaturesHint: 'When enabled, thought signatures from historical conversations will be sent (OpenAI not supported). Not recommended, and only signatures from non-latest turns are sent.',
                     sendContentHint: 'When enabled, reasoning_content (including summaries) from historical conversations will be sent, which may significantly increase context length'
+                }
+            },
+            'openai-responses': {
+                maxOutputTokens: {
+                    label: 'Max Output Tokens',
+                    placeholder: '8192',
+                    hint: 'Maps to API max_output_tokens parameter'
+                },
+                thinking: {
+                    effortLabel: 'Thinking Effort',
+                    effortHint: 'none: Not used | minimal: Minimal | low: Less | medium: Moderate | high: More | xhigh: Maximum',
+                    effortNone: 'None (none)',
+                    effortMinimal: 'Minimal (minimal)',
+                    effortLow: 'Low (low)',
+                    effortMedium: 'Medium (medium)',
+                    effortHigh: 'High (high)',
+                    effortXHigh: 'Maximum (xhigh)',
+                    summaryLabel: 'Output Detail (Summary)',
+                    summaryHint: 'auto: Auto select | concise: Brief output | detailed: Detailed output',
+                    summaryAuto: 'Auto',
+                    summaryConcise: 'Concise',
+                    summaryDetailed: 'Detailed'
+                },
+                historyThinking: {
+                    sendSignaturesHint: 'Maintain reasoning context across turns',
+                    sendContentHint: 'When enabled, reasoning_content from historical conversations will be sent'
                 }
             },
             customBody: {
@@ -1539,6 +1570,7 @@ const en: LanguageMessages = {
                     gemini: 'Gemini API',
                     openaiCustom: 'Custom OpenAI Format',
                     openaiCustomDesc: 'Use custom API endpoint',
+                    openaiResponses: 'OpenAI Responses API',
                     anthropic: 'Anthropic API',
                     local: 'Local Estimation',
                     localDesc: '~4 chars = 1 token'

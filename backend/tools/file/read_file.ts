@@ -303,7 +303,7 @@ async function readSingleFile(
  */
 export function createReadFileTool(
     multimodalEnabled?: boolean,
-    channelType?: 'gemini' | 'openai' | 'anthropic' | 'custom',
+    channelType?: 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom',
     toolMode?: 'function_call' | 'xml' | 'json'
 ): Tool {
     // 获取工作区信息

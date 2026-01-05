@@ -54,6 +54,9 @@ export interface ThoughtSignatures {
     /** OpenAI 格式思考签名（预留） */
     openai?: string;
     
+    /** OpenAI Responses 格式思考签名 */
+    'openai-responses'?: string;
+    
     /** 其他格式思考签名 */
     [key: string]: string | undefined;
 }
@@ -284,7 +287,7 @@ export interface UsageMetadata {
  */
 export interface Content {
     /** 角色 */
-    role: 'user' | 'model';
+    role: 'user' | 'model' | 'system';
     /** 内容片段列表 */
     parts: ContentPart[];
     
@@ -564,7 +567,7 @@ export interface MessagePosition {
     /** 消息索引 */
     index: number;
     /** 角色 */
-    role: 'user' | 'model';
+    role: 'user' | 'model' | 'system';
 }
 
 /**
@@ -572,7 +575,7 @@ export interface MessagePosition {
  */
 export interface MessageFilter {
     /** 按角色过滤 */
-    role?: 'user' | 'model';
+    role?: 'user' | 'model' | 'system';
     /** 按是否包含函数调用过滤 */
     hasFunctionCall?: boolean;
     /** 按是否包含文本过滤 */

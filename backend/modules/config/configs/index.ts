@@ -11,6 +11,7 @@ export type { ChannelType, BaseChannelConfig, ModelInfo, TokenCountMethod, Token
 export type { GeminiConfig, GeminiOptionsEnabled, ThinkingConfig, ThinkingLevel, ThinkingMode } from './gemini';
 export type { OpenAIConfig } from './openai';
 export type { AnthropicConfig } from './anthropic';
+export type { OpenAIResponsesConfig, OpenAIResponsesOptionsEnabled } from './openai-responses';
 
 /**
  * 渠道配置联合类型
@@ -20,8 +21,10 @@ export type { AnthropicConfig } from './anthropic';
 import type { GeminiConfig } from './gemini';
 import type { OpenAIConfig } from './openai';
 import type { AnthropicConfig } from './anthropic';
+import type { OpenAIResponsesConfig } from './openai-responses';
 
 export type ChannelConfig =
     | GeminiConfig
     | OpenAIConfig
-    | AnthropicConfig;
+    | AnthropicConfig
+    | OpenAIResponsesConfig;

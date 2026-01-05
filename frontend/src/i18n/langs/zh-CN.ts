@@ -369,7 +369,8 @@ const zhCN: LanguageMessages = {
                 form: {
                     apiUrl: {
                         label: 'API URL',
-                        placeholder: '输入 API URL'
+                        placeholder: '输入 API URL',
+                        placeholderResponses: '输入 API 基础地址，如 https://api.openai.com/v1'
                     },
                     apiKey: {
                         label: 'API Key',
@@ -387,6 +388,7 @@ const zhCN: LanguageMessages = {
                         label: '渠道类型',
                         gemini: 'Gemini API',
                         openai: 'OpenAI API',
+                        'openai-responses': 'OpenAI Responses API',
                         anthropic: 'Anthropic API'
                     },
                     toolMode: {
@@ -430,6 +432,7 @@ const zhCN: LanguageMessages = {
                             geminiAll: 'Gemini（全部）',
                             anthropicAll: 'Anthropic（全部）',
                             openaiXmlJson: 'OpenAI（XML/JSON）',
+                            openaiResponses: 'OpenAI（Responses）',
                             openaiFunction: 'OpenAI（Function Call）'
                         },
                         legend: {
@@ -440,6 +443,7 @@ const zhCN: LanguageMessages = {
                             requireEnable: '需要启用此选项才能使用 read_file 读取图片/文档、generate_image 生成图片、remove_background 抠图、crop_image 裁切图片、resize_image 缩放图片、rotate_image 旋转图片等多模态工具',
                             userAttachment: '用户主动发送的附件不受此配置影响，始终按渠道原生能力处理',
                             geminiAnthropic: 'Gemini / Anthropic：工具可直接返回图片和文档，支持生成图片功能',
+                            openaiResponses: 'OpenAI Responses：原生支持图片、PDF 读取，支持推理过程实时显示',
                             openaiXmlJson: 'OpenAI XML/JSON：支持读取图片和生成图片，不支持文档'
                         }
                     },
@@ -1183,7 +1187,7 @@ const zhCN: LanguageMessages = {
                 appInfo: {
                     title: '应用信息',
                     name: 'Lim Code - Vibe Coding助手',
-                    version: '版本：1.0.29',
+                    version: '版本：1.0.30',
                     repository: '项目仓库',
                     developer: '开发者'
                 }
@@ -1416,7 +1420,7 @@ const zhCN: LanguageMessages = {
                 currentThinking: {
                     title: '当前轮次回传配置',
                     sendSignatures: '发送最新思考签名',
-                    sendSignaturesHint: '保持当前步骤的思考衔接（Gemini 推荐）',
+                    sendSignaturesHint: '保持当前步骤的思考衔接',
                     sendContent: '发送最新思考内容',
                     sendContentHint: '回传当前轮次的推理过程',
                 },
@@ -1473,8 +1477,9 @@ const zhCN: LanguageMessages = {
                 },
                 thinking: {
                     effortLabel: '思考强度 (Effort)',
-                    effortHint: 'none: 不使用 | low: 较少 | medium: 中等 | high: 较多 | xhigh: 最高',
+                    effortHint: 'none: 不使用 | minimal: 极少 | low: 较少 | medium: 中等 | high: 较多 | xhigh: 最高',
                     effortNone: '无',
+                    effortMinimal: '极少',
                     effortLow: '低',
                     effortMedium: '中',
                     effortHigh: '高',
@@ -1488,6 +1493,32 @@ const zhCN: LanguageMessages = {
                 historyThinking: {
                     sendSignaturesHint: '启用后，将发送历史对话中的思考签名（OpenAI 暂不支持）。不建议开启，且发送的是非最新一轮对话的签名',
                     sendContentHint: '启用后，将发送历史对话中的 reasoning_content（包括摘要），这可能会显著增加上下文长度'
+                }
+            },
+            'openai-responses': {
+                maxOutputTokens: {
+                    label: '最大输出 Tokens',
+                    placeholder: '8192',
+                    hint: '对应 API 的 max_output_tokens 参数'
+                },
+                thinking: {
+                    effortLabel: '思考强度 (Effort)',
+                    effortHint: 'none: 不使用 | minimal: 极少 | low: 较少 | medium: 中等 | high: 较多 | xhigh: 最高',
+                    effortNone: '无 (none)',
+                    effortMinimal: '极少 (minimal)',
+                    effortLow: '低 (low)',
+                    effortMedium: '中 (medium)',
+                    effortHigh: '高 (high)',
+                    effortXHigh: '最高 (xhigh)',
+                    summaryLabel: '输出详细程度 (Summary)',
+                    summaryHint: 'auto: 自动选择 | concise: 简洁输出 | detailed: 详细输出',
+                    summaryAuto: '自动',
+                    summaryConcise: '简洁',
+                    summaryDetailed: '详细'
+                },
+                historyThinking: {
+                    sendSignaturesHint: '保持跨多轮交互的思考上下文',
+                    sendContentHint: '启用后，将发送历史对话中的 reasoning_content，这将增加上下文长度'
                 }
             },
             customBody: {
@@ -1539,6 +1570,7 @@ const zhCN: LanguageMessages = {
                     gemini: 'Gemini API',
                     openaiCustom: '自定义 OpenAI 格式',
                     openaiCustomDesc: '使用自定义 API 端点',
+                    openaiResponses: 'OpenAI Responses API',
                     anthropic: 'Anthropic API',
                     local: '本地估算',
                     localDesc: '约 4 字符 = 1 token'

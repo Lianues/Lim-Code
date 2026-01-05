@@ -369,7 +369,8 @@ const ja: LanguageMessages = {
                 form: {
                     apiUrl: {
                         label: 'API URL',
-                        placeholder: 'API URL を入力'
+                        placeholder: 'API URL を入力',
+                        placeholderResponses: 'API ベースアドレスを入力してください（例：https://api.openai.com/v1）'
                     },
                     apiKey: {
                         label: 'API Key',
@@ -387,6 +388,7 @@ const ja: LanguageMessages = {
                         label: 'チャンネルタイプ',
                         gemini: 'Gemini API',
                         openai: 'OpenAI API',
+                        'openai-responses': 'OpenAI Responses API',
                         anthropic: 'Anthropic API'
                     },
                     toolMode: {
@@ -430,6 +432,7 @@ const ja: LanguageMessages = {
                             geminiAll: 'Gemini（すべて）',
                             anthropicAll: 'Anthropic（すべて）',
                             openaiXmlJson: 'OpenAI（XML/JSON）',
+                            openaiResponses: 'OpenAI（Responses）',
                             openaiFunction: 'OpenAI（Function Call）'
                         },
                         legend: {
@@ -440,6 +443,7 @@ const ja: LanguageMessages = {
                             requireEnable: 'このオプションを有効にすると、read_file で画像/ドキュメントを読み取り、generate_image、remove_background、crop_image、resize_image、rotate_image などのマルチモーダルツールを使用できます',
                             userAttachment: 'ユーザーが送信した添付ファイルはこの設定の影響を受けず、常にチャンネルのネイティブ機能に従って処理されます',
                             geminiAnthropic: 'Gemini / Anthropic: ツールは画像とドキュメントを直接返すことができ、画像生成機能をサポートします',
+                            openaiResponses: 'OpenAI Responses：画像、PDF の読み取りをネイティブにサポートし、推論プロセスのリアルタイム表示をサポートします',
                             openaiXmlJson: 'OpenAI XML/JSON: 画像の読み取りと生成をサポートしますが、ドキュメントはサポートしていません'
                         }
                     },
@@ -1183,7 +1187,7 @@ const ja: LanguageMessages = {
                 appInfo: {
                     title: 'アプリケーション情報',
                     name: 'Lim Code - Vibe Coding アシスタント',
-                    version: 'バージョン：1.0.29',
+                    version: 'バージョン：1.0.30',
                     repository: 'リポジトリ',
                     developer: '開発者'
                 }
@@ -1416,7 +1420,7 @@ const ja: LanguageMessages = {
                 currentThinking: {
                     title: '最新ターンの思考設定',
                     sendSignatures: '最新の思考署名を送信',
-                    sendSignaturesHint: '現在のステップの思考継続性を維持（Gemini 推奨）',
+                    sendSignaturesHint: '現在のステップの思考継続性を維持',
                     sendContent: '最新の思考内容を送信',
                     sendContentHint: '最新ターンの推論プロセスを送信',
                 },
@@ -1473,8 +1477,9 @@ const ja: LanguageMessages = {
                 },
                 thinking: {
                     effortLabel: '思考強度 (Effort)',
-                    effortHint: 'none: 使用しない | low: 少ない | medium: 中程度 | high: 多い | xhigh: 最大',
+                    effortHint: 'none: 使用しない | minimal: 極小 | low: 少ない | medium: 中程度 | high: 多い | xhigh: 最大',
                     effortNone: 'なし',
+                    effortMinimal: '極小',
                     effortLow: '低',
                     effortMedium: '中',
                     effortHigh: '高',
@@ -1488,6 +1493,32 @@ const ja: LanguageMessages = {
                 historyThinking: {
                     sendSignaturesHint: '有効にすると、履歴会話の思考署名が送信されます（OpenAI 未対応）。非推奨であり、最新以外のターンの署名が送信されます。',
                     sendContentHint: '有効にすると、履歴会話の reasoning_content（要約を含む）が送信されます。これによりコンテキスト長が大幅に増加する可能性があります。'
+                }
+            },
+            'openai-responses': {
+                maxOutputTokens: {
+                    label: '最大出力トークン',
+                    placeholder: '8192',
+                    hint: 'API の max_output_tokens パラメータに対応'
+                },
+                thinking: {
+                    effortLabel: '思考強度 (Effort)',
+                    effortHint: 'none: 使用しない | minimal: 極小 | low: 少ない | medium: 中程度 | high: 多い | xhigh: 最大',
+                    effortNone: 'なし (none)',
+                    effortMinimal: '極小 (minimal)',
+                    effortLow: '低 (low)',
+                    effortMedium: '中 (medium)',
+                    effortHigh: '高 (high)',
+                    effortXHigh: '最大 (xhigh)',
+                    summaryLabel: '出力詳細度 (Summary)',
+                    summaryHint: 'auto: 自動選択 | concise: 簡潔な出力 | detailed: 詳細な出力',
+                    summaryAuto: '自動',
+                    summaryConcise: '簡潔',
+                    summaryDetailed: '詳細'
+                },
+                historyThinking: {
+                    sendSignaturesHint: '以前のターンの思考署名を送信',
+                    sendContentHint: '有効にすると、履歴会話の reasoning_content が送信されます。これによりコンテキスト長が増加します'
                 }
             },
             customBody: {
@@ -1539,6 +1570,7 @@ const ja: LanguageMessages = {
                     gemini: 'Gemini API',
                     openaiCustom: 'カスタム OpenAI フォーマット',
                     openaiCustomDesc: 'カスタム API エンドポイントを使用',
+                    openaiResponses: 'OpenAI Responses API',
                     anthropic: 'Anthropic API',
                     local: 'ローカル推定',
                     localDesc: '約4文字 = 1トークン'

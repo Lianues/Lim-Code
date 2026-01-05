@@ -5,6 +5,7 @@ import ModelManager from './ModelManager.vue'
 import {
   GeminiOptions,
   OpenAIOptions,
+  OpenAIResponsesOptions,
   AnthropicOptions,
   CustomBodySettings,
   CustomHeadersSettings,
@@ -32,7 +33,7 @@ const editInput = ref<HTMLInputElement>()
 // 新建配置对话框
 const showNewDialog = ref(false)
 const newConfigName = ref('')
-const newConfigType = ref<'gemini' | 'openai' | 'anthropic'>('gemini')
+const newConfigType = ref<'gemini' | 'openai' | 'openai-responses' | 'anthropic'>('gemini')
 
 // API Key 显示
 const showApiKey = ref(false)
@@ -129,6 +130,7 @@ const configOptions = computed<SelectOption[]>(() =>
 const typeOptions = computed<SelectOption[]>(() => [
   { value: 'gemini', label: t('components.settings.channelSettings.form.channelType.gemini'), description: 'Google Gemini' },
   { value: 'openai', label: t('components.settings.channelSettings.form.channelType.openai'), description: 'OpenAI Compatible' },
+  { value: 'openai-responses', label: t('components.settings.channelSettings.form.channelType.openai-responses'), description: 'OpenAI Responses API' },
   { value: 'anthropic', label: t('components.settings.channelSettings.form.channelType.anthropic'), description: 'Anthropic Claude' }
 ])
 
@@ -693,7 +695,9 @@ onMounted(async () => {
         <input
           :value="currentConfig.url"
           type="text"
-          :placeholder="t('components.settings.channelSettings.form.apiUrl.placeholder')"
+          :placeholder="currentConfig.type === 'openai-responses' 
+            ? t('components.settings.channelSettings.form.apiUrl.placeholderResponses') 
+            : t('components.settings.channelSettings.form.apiUrl.placeholder')"
           @input="(e: any) => updateConfigField('url', e.target.value)"
         />
       </div>
@@ -837,6 +841,13 @@ onMounted(async () => {
                 <span class="channel-feature support-yes">✓</span>
                 <span class="channel-feature support-yes">✓</span>
               </div>
+              <div class="channel-row" :class="{ current: currentConfig.type === 'openai-responses' }">
+                <span class="channel-name">{{ t('components.settings.channelSettings.form.multimodal.channels.openaiResponses') }}</span>
+                <span class="channel-feature support-yes">✓</span>
+                <span class="channel-feature support-yes">✓</span>
+                <span class="channel-feature support-no">✗</span>
+                <span class="channel-feature support-yes">✓</span>
+              </div>
               <div class="channel-row" :class="{ current: currentConfig.type === 'openai' && currentConfig.toolMode !== 'function_call' }">
                 <span class="channel-name">{{ t('components.settings.channelSettings.form.multimodal.channels.openaiXmlJson') }}</span>
                 <span class="channel-feature support-yes">✓</span>
@@ -876,6 +887,10 @@ onMounted(async () => {
               <div class="note-item">
                 <i class="codicon codicon-info note-icon"></i>
                 <span class="note-text">{{ t('components.settings.channelSettings.form.multimodal.notes.geminiAnthropic') }}</span>
+              </div>
+              <div class="note-item">
+                <i class="codicon codicon-info note-icon"></i>
+                <span class="note-text">{{ t('components.settings.channelSettings.form.multimodal.notes.openaiResponses') }}</span>
               </div>
               <div class="note-item">
                 <i class="codicon codicon-info note-icon"></i>
@@ -1044,6 +1059,15 @@ onMounted(async () => {
           <!-- OpenAI 选项 -->
           <OpenAIOptions
             v-if="currentConfig.type === 'openai'"
+            :config="currentConfig"
+            @update:option="updateOption"
+            @update:option-enabled="updateOptionEnabled"
+            @update:field="updateConfigField"
+          />
+          
+          <!-- OpenAI Responses 选项 -->
+          <OpenAIResponsesOptions
+            v-if="currentConfig.type === 'openai-responses'"
             :config="currentConfig"
             @update:option="updateOption"
             @update:option-enabled="updateOptionEnabled"

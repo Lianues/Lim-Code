@@ -7,6 +7,7 @@
 // 渠道特定选项
 export { default as GeminiOptions } from './GeminiOptions.vue'
 export { default as OpenAIOptions } from './OpenAIOptions.vue'
+export { default as OpenAIResponsesOptions } from './OpenAIResponsesOptions.vue'
 export { default as AnthropicOptions } from './AnthropicOptions.vue'
 
 // 通用配置组件

@@ -7,7 +7,7 @@
 /**
  * 支持的渠道类型
  */
-export type ChannelType = 'gemini' | 'openai' | 'anthropic';
+export type ChannelType = 'gemini' | 'openai' | 'anthropic' | 'openai-responses';
 
 /**
  * 裁切图片工具配置
@@ -45,10 +45,11 @@ export type ToolMode = 'function_call' | 'xml' | 'json';
  * - 'channel_default': 使用渠道默认方式（根据渠道类型自动选择）
  * - 'gemini': 使用 Gemini countTokens API
  * - 'openai_custom': 使用自定义 OpenAI 格式 API
+ * - 'openai_responses': 使用 OpenAI Responses input_tokens API
  * - 'anthropic': 使用 Anthropic count_tokens API
  * - 'local': 使用本地估算方式（4 字符约等于 1 token）
  */
-export type TokenCountMethod = 'channel_default' | 'gemini' | 'openai_custom' | 'anthropic' | 'local';
+export type TokenCountMethod = 'channel_default' | 'gemini' | 'openai_custom' | 'openai_responses' | 'anthropic' | 'local';
 
 /**
  * Token 计数 API 配置

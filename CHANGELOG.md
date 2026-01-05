@@ -3,6 +3,11 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.0.30] - 2026-01-05
+
+### Added
+  - 添加openai-responses格式对话和token计数支持
+
 ## [1.0.29] - 2026-01-01
 
 ### Backed

@@ -164,6 +164,29 @@ export class ConfigManager {
                     }
                 };
             
+            case 'openai-responses':
+                return {
+                    ...baseDefaults,
+                    url: 'https://api.openai.com/v1',
+                    options: {
+                        ...baseDefaults.options,
+                        temperature: 1.0,
+                        max_output_tokens: 16384,
+                        truncation: 'auto',
+                        reasoning: {
+                            effort: 'medium',
+                            summaryEnabled: false,
+                            summary: 'auto'
+                        }
+                    },
+                    optionsEnabled: {
+                        temperature: false,
+                        max_output_tokens: false,
+                        top_p: false,
+                        reasoning: false
+                    }
+                };
+            
             default:
                 return baseDefaults;
         }
@@ -364,8 +387,11 @@ export class ConfigManager {
                 break;
             
             case 'openai':
-                // TODO: 实现 OpenAI 验证
-                warnings.push(t('modules.config.validation.openaiNotImplemented'));
+                this.validateOpenAIConfig(config as any, errors, warnings);
+                break;
+            
+            case 'openai-responses':
+                this.validateOpenAIConfig(config as any, errors, warnings);
                 break;
             
             case 'anthropic':
@@ -432,6 +458,31 @@ export class ConfigManager {
     }
     
     /**
+     * 验证 OpenAI 配置
+     */
+    private validateOpenAIConfig(
+        config: any,
+        errors: string[],
+        warnings: string[]
+    ): void {
+        // URL 验证
+        if (!config.url || !this.isValidUrl(config.url)) {
+            errors.push(t('modules.config.validation.invalidUrl'));
+        }
+        
+        // API Key 验证
+        if (!config.apiKey || config.apiKey.trim().length === 0) {
+            warnings.push(t('modules.config.validation.apiKeyEmpty'));
+        }
+        
+        // 模型名称验证
+        const models = config.models || [];
+        if (models.length > 0 && (!config.model || config.model.trim().length === 0)) {
+            warnings.push(t('modules.config.validation.modelNotSelected'));
+        }
+    }
+
+    /**
      * 获取统计信息
      * 
      * @returns 统计信息
@@ -450,7 +501,8 @@ export class ConfigManager {
         const byType: Record<ChannelType, number> = {
             gemini: 0,
             openai: 0,
-            anthropic: 0
+            anthropic: 0,
+            'openai-responses': 0
         };
         
         for (const config of configs) {

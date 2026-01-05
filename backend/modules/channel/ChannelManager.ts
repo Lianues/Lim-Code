@@ -207,7 +207,7 @@ export class ChannelManager {
         // 传递配置信息以便动态生成工具描述
         const tools = request.skipTools ? undefined : this.getFilteredTools(
             (config as any).multimodalToolsEnabled,
-            config.type as 'gemini' | 'openai' | 'anthropic' | 'custom',
+            config.type as 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom',
             (config as any).toolMode
         );
         
@@ -370,7 +370,7 @@ export class ChannelManager {
         // 传递配置信息以便动态生成工具描述
         const tools = request.skipTools ? undefined : this.getFilteredTools(
             (config as any).multimodalToolsEnabled,
-            config.type as 'gemini' | 'openai' | 'anthropic' | 'custom',
+            config.type as 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom',
             (config as any).toolMode
         );
         
@@ -916,7 +916,7 @@ export class ChannelManager {
      */
     private getFilteredTools(
         multimodalEnabled?: boolean,
-        channelType?: 'gemini' | 'openai' | 'anthropic' | 'custom',
+        channelType?: 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom',
         toolMode?: 'function_call' | 'xml' | 'json'
     ) {
         const tools: any[] = [];

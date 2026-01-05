@@ -51,7 +51,7 @@ export class TokenCountService {
      * @returns Token 计数结果
      */
     async countTokens(
-        channelType: 'gemini' | 'openai' | 'anthropic',
+        channelType: 'gemini' | 'openai' | 'anthropic' | 'openai-responses',
         config: TokenCountConfig,
         contents: Content[]
     ): Promise<TokenCountResult> {
@@ -77,6 +77,8 @@ export class TokenCountService {
                     return await this.countGeminiTokens(channelConfig, contents);
                 case 'openai':
                     return await this.countOpenAITokens(channelConfig, contents);
+                case 'openai-responses':
+                    return await this.countOpenAIResponsesTokens(channelConfig, contents);
                 case 'anthropic':
                     return await this.countAnthropicTokens(channelConfig, contents);
                 default:
@@ -125,6 +127,9 @@ export class TokenCountService {
                 case 'anthropic':
                     actualMethod = 'anthropic';
                     break;
+                case 'openai-responses':
+                    actualMethod = 'openai_responses';
+                    break;
                 case 'openai':
                 default:
                     actualMethod = 'local';
@@ -138,6 +143,8 @@ export class TokenCountService {
                     return await this.countGeminiTokensWithConfig(channelConfig, apiConfig, contents);
                 case 'openai_custom':
                     return await this.countOpenAITokensWithConfig(channelConfig, apiConfig, contents);
+                case 'openai_responses':
+                    return await this.countOpenAIResponsesTokensWithConfig(channelConfig, apiConfig, contents);
                 case 'anthropic':
                     return await this.countAnthropicTokensWithConfig(channelConfig, apiConfig, contents);
                 case 'local':
@@ -362,6 +369,122 @@ export class TokenCountService {
         return {
             success: true,
             totalTokens
+        };
+    }
+    
+    /**
+     * 使用渠道配置调用 OpenAI Responses Token 计数
+     */
+    private async countOpenAIResponsesTokensWithConfig(
+        channelConfig: ChannelConfig,
+        apiConfig: TokenCountApiConfig | undefined,
+        contents: Content[]
+    ): Promise<TokenCountResult> {
+        // 使用独立配置或渠道配置
+        const url = apiConfig?.url || (channelConfig.type === 'openai-responses' ? channelConfig.url : undefined);
+        const apiKey = apiConfig?.apiKey || channelConfig.apiKey;
+        const model = apiConfig?.model || channelConfig.model;
+        
+        if (!url) {
+            return {
+                success: false,
+                error: 'OpenAI responses token count: URL not configured'
+            };
+        }
+        
+        if (!apiKey) {
+            return {
+                success: false,
+                error: 'OpenAI responses token count: API key not configured'
+            };
+        }
+
+        // 构建请求端点
+        let countUrl = url;
+        if (countUrl.endsWith('/responses')) {
+            countUrl = countUrl + '/input_tokens';
+        } else if (!countUrl.includes('/responses/input_tokens')) {
+            const baseUrl = countUrl.replace(/\/$/, '');
+            countUrl = `${baseUrl}/v1/responses/input_tokens`;
+        }
+        
+        // 转换内容格式
+        // 对于 Responses API，我们将所有内容转换为 input 数组
+        // 系统消息提取为 instructions
+        let instructions = '';
+        const inputParts: any[] = [];
+
+        for (const content of contents) {
+            const cleaned = cleanContentForAPI(content);
+            if (cleaned.role === 'system') {
+                for (const part of cleaned.parts) {
+                    if ('text' in part && part.text) {
+                        instructions += (instructions ? '\n' : '') + part.text;
+                    }
+                }
+                continue;
+            }
+
+            // user/model 消息都放入 input
+            for (const part of cleaned.parts) {
+                if ('text' in part && part.text) {
+                    inputParts.push({ type: 'text', text: part.text });
+                } else if ('inlineData' in part && part.inlineData) {
+                    inputParts.push({
+                        type: 'image_url',
+                        image_url: {
+                            url: `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`
+                        }
+                    });
+                }
+            }
+        }
+        
+        const requestBody: any = { 
+            input: inputParts 
+        };
+        if (instructions) {
+            requestBody.instructions = instructions;
+        }
+        if (model) {
+            requestBody.model = model;
+        }
+        
+        const proxyFetch = createProxyFetch(this.proxyUrl);
+        const response = await proxyFetch(countUrl, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${apiKey}`
+            },
+            body: JSON.stringify(requestBody)
+        });
+        
+        if (!response.ok) {
+            let errorBody: string;
+            try {
+                errorBody = await response.text();
+            } catch {
+                errorBody = `HTTP ${response.status}`;
+            }
+            return {
+                success: false,
+                error: `OpenAI Responses API error: ${errorBody}`
+            };
+        }
+        
+        const result = await response.json() as { input_tokens?: number };
+        
+        if (result.input_tokens === undefined) {
+            return {
+                success: false,
+                error: 'Response missing input_tokens field'
+            };
+        }
+        
+        return {
+            success: true,
+            totalTokens: result.input_tokens
         };
     }
     
@@ -616,6 +739,117 @@ export class TokenCountService {
         return {
             success: true,
             totalTokens
+        };
+    }
+    
+    /**
+     * OpenAI Responses Token 计数
+     *
+     * API: POST https://api.openai.com/v1/responses/input_tokens
+     *
+     * 请求体:
+     * {
+     *   "model": "gpt-5",
+     *   "input": [...],
+     *   "instructions": "..."
+     * }
+     *
+     * 响应:
+     * {
+     *   "object": "response.input_tokens",
+     *   "input_tokens": number
+     * }
+     */
+    private async countOpenAIResponsesTokens(
+        config: TokenCountChannelConfig,
+        contents: Content[]
+    ): Promise<TokenCountResult> {
+        if (!config.baseUrl) {
+            return {
+                success: false,
+                error: 'OpenAI responses token count API URL not configured. Use estimation instead.'
+            };
+        }
+
+        // 构建 URL
+        let url = config.baseUrl;
+        if (url.endsWith('/responses')) {
+            url = url + '/input_tokens';
+        } else if (!url.includes('/responses/input_tokens')) {
+            const baseUrl = url.replace(/\/$/, '');
+            url = `${baseUrl}/v1/responses/input_tokens`;
+        }
+        
+        // 转换内容格式
+        let instructions = '';
+        const inputParts: any[] = [];
+
+        for (const content of contents) {
+            const cleaned = cleanContentForAPI(content);
+            if (cleaned.role === 'system') {
+                for (const part of cleaned.parts) {
+                    if ('text' in part && part.text) {
+                        instructions += (instructions ? '\n' : '') + part.text;
+                    }
+                }
+                continue;
+            }
+
+            for (const part of cleaned.parts) {
+                if ('text' in part && part.text) {
+                    inputParts.push({ type: 'text', text: part.text });
+                } else if ('inlineData' in part && part.inlineData) {
+                    inputParts.push({
+                        type: 'image_url',
+                        image_url: {
+                            url: `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`
+                        }
+                    });
+                }
+            }
+        }
+        
+        const requestBody = {
+            model: config.model,
+            input: inputParts,
+            instructions: instructions || undefined
+        };
+        
+        const proxyFetch = createProxyFetch(this.proxyUrl);
+        const response = await proxyFetch(url, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${config.apiKey}`
+            },
+            body: JSON.stringify(requestBody)
+        });
+        
+        if (!response.ok) {
+            let errorBody: string;
+            try {
+                errorBody = await response.text();
+            } catch {
+                errorBody = `HTTP ${response.status}`;
+            }
+            return {
+                success: false,
+                error: `OpenAI Responses API error: ${errorBody}`
+            };
+        }
+        
+        const result = await response.json() as { input_tokens: number };
+        
+        if (result.input_tokens === undefined) {
+            return {
+                success: false,
+                error: 'Response missing input_tokens field'
+            };
+        }
+        
+        return {
+            success: true,
+            totalTokens: result.input_tokens
         };
     }
     

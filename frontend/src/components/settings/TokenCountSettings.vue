@@ -18,6 +18,7 @@ interface TokenCountConfig {
     gemini?: TokenCountChannelConfig
     openai?: TokenCountChannelConfig
     anthropic?: TokenCountChannelConfig
+    'openai-responses'?: TokenCountChannelConfig
 }
 
 // 加载状态
@@ -45,6 +46,12 @@ const config = reactive<TokenCountConfig>({
         baseUrl: 'https://api.anthropic.com/v1/messages/count_tokens',
         apiKey: '',
         model: 'claude-sonnet-4-5'
+    },
+    'openai-responses': {
+        enabled: false,
+        baseUrl: 'https://api.openai.com/v1/responses/input_tokens',
+        apiKey: '',
+        model: 'gpt-5'
     }
 })
 
@@ -52,14 +59,16 @@ const config = reactive<TokenCountConfig>({
 const showApiKey = reactive({
     gemini: false,
     openai: false,
-    anthropic: false
+    anthropic: false,
+    'openai-responses': false
 })
 
 // 当前展开的面板
 const expandedPanels = reactive({
     gemini: true,
     openai: false,
-    anthropic: false
+    anthropic: false,
+    'openai-responses': false
 })
 
 // 加载配置
@@ -78,6 +87,9 @@ async function loadConfig() {
             }
             if (savedConfig.anthropic) {
                 Object.assign(config.anthropic!, savedConfig.anthropic)
+            }
+            if (savedConfig['openai-responses']) {
+                Object.assign(config['openai-responses']!, savedConfig['openai-responses'])
             }
         }
     } catch (error) {
@@ -101,7 +113,8 @@ async function saveConfig() {
             config: {
                 gemini: rawConfig.gemini,
                 openai: rawConfig.openai,
-                anthropic: rawConfig.anthropic
+                anthropic: rawConfig.anthropic,
+                'openai-responses': rawConfig['openai-responses']
             }
         })
         saveMessage.value = t('components.settings.tokenCountSettings.saveSuccess')
@@ -120,12 +133,12 @@ async function saveConfig() {
 }
 
 // 切换面板展开状态
-function togglePanel(panel: 'gemini' | 'openai' | 'anthropic') {
+function togglePanel(panel: 'gemini' | 'openai' | 'anthropic' | 'openai-responses') {
     expandedPanels[panel] = !expandedPanels[panel]
 }
 
 // 切换 API Key 可见性
-function toggleApiKeyVisibility(channel: 'gemini' | 'openai' | 'anthropic') {
+function toggleApiKeyVisibility(channel: 'gemini' | 'openai' | 'anthropic' | 'openai-responses') {
     showApiKey[channel] = !showApiKey[channel]
 }
 
@@ -371,6 +384,67 @@ Authorization: Bearer {apiKey}
                             v-model="config.anthropic!.model"
                             :placeholder="t('components.settings.tokenCountSettings.anthropicModelPlaceholder')"
                             :disabled="!config.anthropic?.enabled"
+                        />
+                    </div>
+                </div>
+            </div>
+            
+            <!-- OpenAI Responses 配置 -->
+            <div class="channel-panel" :class="{ expanded: expandedPanels['openai-responses'] }">
+                <div class="panel-header" @click="togglePanel('openai-responses')">
+                    <div class="panel-title">
+                        <i :class="['codicon', expandedPanels['openai-responses'] ? 'codicon-chevron-down' : 'codicon-chevron-right']"></i>
+                        <span class="channel-name">OpenAI Responses</span>
+                        <span v-if="config['openai-responses']?.enabled" class="status-badge enabled">
+                            {{ t('common.enabled') }}
+                        </span>
+                    </div>
+                </div>
+                
+                <div v-if="expandedPanels['openai-responses']" class="panel-content">
+                    <div class="form-group">
+                        <CustomCheckbox
+                            v-model="config['openai-responses']!.enabled"
+                            :label="t('components.settings.tokenCountSettings.enableChannel')"
+                        />
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>{{ t('components.settings.tokenCountSettings.baseUrl') }}</label>
+                        <input
+                            type="text"
+                            v-model="config['openai-responses']!.baseUrl"
+                            placeholder="https://api.openai.com/v1/responses/input_tokens"
+                            :disabled="!config['openai-responses']?.enabled"
+                        />
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>{{ t('components.settings.tokenCountSettings.apiKey') }}</label>
+                        <div class="input-with-button">
+                            <input
+                                :type="showApiKey['openai-responses'] ? 'text' : 'password'"
+                                v-model="config['openai-responses']!.apiKey"
+                                :placeholder="t('components.settings.tokenCountSettings.apiKeyPlaceholder')"
+                                :disabled="!config['openai-responses']?.enabled"
+                            />
+                            <button
+                                class="toggle-visibility-btn"
+                                @click="toggleApiKeyVisibility('openai-responses')"
+                                type="button"
+                            >
+                                <i :class="['codicon', showApiKey['openai-responses'] ? 'codicon-eye-closed' : 'codicon-eye']"></i>
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>{{ t('components.settings.tokenCountSettings.model') }}</label>
+                        <input
+                            type="text"
+                            v-model="config['openai-responses']!.model"
+                            placeholder="gpt-5"
+                            :disabled="!config['openai-responses']?.enabled"
                         />
                     </div>
                 </div>
