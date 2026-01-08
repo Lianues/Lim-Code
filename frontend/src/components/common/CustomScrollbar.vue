@@ -466,6 +466,8 @@ defineExpose({
   width: 100%;
   height: 100%;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 /* 自适应高度模式 */
@@ -475,7 +477,8 @@ defineExpose({
 
 .scroll-container {
   width: 100%;
-  height: 100%;
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
   scrollbar-width: none;

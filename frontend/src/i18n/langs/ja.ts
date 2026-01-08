@@ -205,7 +205,7 @@ const ja: LanguageMessages = {
 
         input: {
             placeholder: 'メッセージを入力...',
-            placeholderHint: 'メッセージを入力...（Enter で送信、添付ファイルを貼り付け、Shift+ドラッグでパスを追加）',
+            placeholderHint: 'メッセージを入力...（Enter で送信、添付ファイルを貼り付け、Shift+ドラッグまたは@でパスを追加）',
             send: 'メッセージを送信',
             stopGenerating: '生成を停止',
             attachFile: 'ファイルを添付',
@@ -237,6 +237,15 @@ const ja: LanguageMessages = {
                 notExists: '存在しません',
                 dragHint: 'Shift を押しながらワークスペース内のテキストファイルをここにドラッグして追加',
                 dropHint: 'ファイルを追加するにはマウスを離してください'
+            },
+            filePicker: {
+                title: 'ファイルを選択',
+                subtitle: '@ の後に入力してパスをフィルタリング',
+                loading: '検索中...',
+                empty: '一致するファイルが見つかりません',
+                navigate: 'ナビゲート',
+                select: '選択',
+                close: '閉じる'
             },
             notifications: {
                 summarizeFailed: '要約に失敗しました: {error}',
@@ -536,6 +545,8 @@ const ja: LanguageMessages = {
                     file: 'ファイル操作',
                     search: '検索',
                     terminal: 'ターミナル',
+                    lsp: 'コードインテリジェンス',
+                    media: 'メディア処理',
                     mcp: 'MCP ツール',
                     other: 'その他'
                 },
@@ -1165,7 +1176,7 @@ const ja: LanguageMessages = {
                 appInfo: {
                     title: 'アプリケーション情報',
                     name: 'Lim Code - Vibe Coding アシスタント',
-                    version: 'バージョン：1.0.33',
+                    version: 'バージョン：1.0.38',
                     repository: 'リポジトリ',
                     developer: '開発者'
                 }
@@ -1293,6 +1304,8 @@ const ja: LanguageMessages = {
                     file: 'ファイル操作',
                     search: '検索',
                     terminal: 'ターミナル',
+                    lsp: 'コードインテリジェンス',
+                    media: 'メディア処理',
                     other: 'その他'
                 },
                 dependency: {
@@ -1739,6 +1752,39 @@ const ja: LanguageMessages = {
                     waitingOutput: '出力を待機中...',
                     noOutput: '出力なし',
                     executing: 'コマンド実行中...'
+                }
+            },
+            lsp: {
+                getSymbols: 'シンボルを取得',
+                gotoDefinition: '定義へ移動',
+                findReferences: '参照を検索',
+                getSymbolsPanel: {
+                    title: 'ファイルシンボル',
+                    totalFiles: '合計 {count} ファイル',
+                    totalSymbols: '合計 {count} シンボル',
+                    noSymbols: 'シンボルが見つかりません',
+                    symbolCount: '{count} シンボル',
+                    collapse: '折りたたむ',
+                    expandRemaining: '残り {count} 個を展開',
+                    copyAll: 'すべてコピー',
+                    copied: 'コピーしました'
+                },
+                gotoDefinitionPanel: {
+                    title: '定義',
+                    definitionFound: '定義が見つかりました',
+                    noDefinition: '定義が見つかりません',
+                    lines: '{count} 行',
+                    copyCode: 'コードをコピー',
+                    copied: 'コピーしました'
+                },
+                findReferencesPanel: {
+                    title: '参照',
+                    totalReferences: '合計 {count} 参照',
+                    totalFiles: '{count} ファイル',
+                    noReferences: '参照が見つかりません',
+                    referencesInFile: '{count} 参照',
+                    collapse: '折りたたむ',
+                    expandRemaining: '残り {count} 個を展開'
                 }
             },
             mcp: {

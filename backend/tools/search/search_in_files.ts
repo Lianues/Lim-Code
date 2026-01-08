@@ -6,6 +6,7 @@
  */
 
 import * as vscode from 'vscode';
+import * as path from 'path';
 import type { Tool, ToolResult } from '../types';
 import { getWorkspaceRoot, getAllWorkspaces, parseWorkspacePath, toRelativePath } from '../utils';
 import { getGlobalSettingsManager } from '../../core/settingsContext';
@@ -260,6 +261,59 @@ async function searchAndReplaceInDirectory(
 }
 
 /**
+ * 根据 workspace 根和相对路径，判断是目录还是单个文件，并返回合适的搜索根和文件匹配模式。
+ *
+ * 使用约定：
+ * - 目录 path 末尾应带有 "/"（例如 "src/" 或 "workspace_name/src/"）。
+ * - 文件 path 不带末尾斜杠（例如 "src/index.ts"）。
+ *
+ * 实现上仍会通过 fs.stat 精确判断文件/目录，但在工具定义中会提示 AI 使用上述约定，
+ * 以减少歧义。
+ *
+ * - 如果 relativePath 指向一个存在的文件，则：
+ *   - searchRoot 为该文件所在的目录；
+ *   - effectivePattern 为该文件名（只搜索这一文件）。
+ * - 其它情况按目录处理：
+ *   - searchRoot = rootUri + relativePath；
+ *   - effectivePattern = 原始 filePattern。
+ */
+async function getSearchRootAndPattern(
+    rootUri: vscode.Uri,
+    relativePath: string,
+    filePattern: string
+): Promise<{ searchRoot: vscode.Uri; effectivePattern: string }> {
+    // 空路径或当前目录，直接用 workspace 根目录
+    if (!relativePath || relativePath === '.' || relativePath === './') {
+        return { searchRoot: rootUri, effectivePattern: filePattern };
+    }
+
+    const fullUri = vscode.Uri.joinPath(rootUri, relativePath);
+
+    try {
+        const stat = await vscode.workspace.fs.stat(fullUri);
+        if (stat.type === vscode.FileType.File) {
+            // 是单个文件：搜索根为所在目录，pattern 为文件名
+            const fsPath = fullUri.fsPath;
+            const dirPath = path.dirname(fsPath);
+            const fileName = path.basename(fsPath);
+            return {
+                searchRoot: vscode.Uri.file(dirPath),
+                effectivePattern: fileName
+
+            };
+        }
+    } catch {
+        // stat 失败（路径不存在或权限问题），按目录处理
+    }
+
+    // 默认按目录处理
+    return {
+        searchRoot: fullUri,
+        effectivePattern: filePattern
+    };
+}
+
+/**
  * 创建搜索文件内容工具
  */
 export function createSearchInFilesTool(): Tool {
@@ -267,17 +321,17 @@ export function createSearchInFilesTool(): Tool {
     const workspaces = getAllWorkspaces();
     const isMultiRoot = workspaces.length > 1;
     
-    let pathDescription = 'Search directory (relative to workspace root), defaults to searching the entire workspace';
+    let pathDescription = 'Search path relative to workspace root. Use "dir/" (trailing slash) for directories, or "dir/file.ext" for a single file. Default "." searches the entire workspace.';
     if (isMultiRoot) {
-        pathDescription = `Search directory, use "workspace_name/path" format or "." to search all workspaces. Available workspaces: ${workspaces.map(w => w.name).join(', ')}`;
+        pathDescription = `Search path, use "workspace_name/path" format. Use "workspace_name/dir/" (trailing slash) for directories, or "workspace_name/file.ext" for a single file. Use "." to search all workspaces. Available workspaces: ${workspaces.map(w => w.name).join(', ')}`;
     }
     
     return {
         declaration: {
             name: 'search_in_files',
             description: isMultiRoot
-                ? `Search (and optionally replace) content in multiple workspace files. Supports regular expressions. Use "workspace_name/path" format to specify a workspace, or "." to search all. Available workspaces: ${workspaces.map(w => w.name).join(', ')}`
-                : 'Search (and optionally replace) content in workspace files. Supports regular expressions. Returns matching files and context. If "replace" is provided, performs replacement and saves changes.',
+                ? `Search (and optionally replace) content in multiple workspace files. Supports regular expressions. Use "workspace_name/dir/" (trailing slash) for directories, or "workspace_name/file.ext" for a single file. Use "." to search all workspaces. Available workspaces: ${workspaces.map(w => w.name).join(', ')}`
+                : 'Search (and optionally replace) content in workspace files. Supports regular expressions. Use "dir/" (trailing slash) for directories, or "dir/file.ext" for a single file. Returns matching files and context. If "replace" is provided, performs replacement and saves changes.',
             category: 'search',
             parameters: {
                 type: 'object',
@@ -368,10 +422,14 @@ export function createSearchInFilesTool(): Tool {
                     
                     if (isExplicit && targetWorkspace) {
                         // 显式指定了工作区，只搜索该工作区
-                        const searchRoot = vscode.Uri.joinPath(targetWorkspace.uri, relativePath);
+                        const { searchRoot, effectivePattern } = await getSearchRootAndPattern(
+                            targetWorkspace.uri,
+                            relativePath,
+                            filePattern
+                        );
                         const result = await searchAndReplaceInDirectory(
                             searchRoot,
-                            filePattern,
+                            effectivePattern,
                             searchRegex,
                             replacement,
                             maxFiles,
@@ -406,10 +464,14 @@ export function createSearchInFilesTool(): Tool {
                     } else {
                         // 单工作区或未指定，使用默认
                         const root = targetWorkspace?.uri || workspaces[0].uri;
-                        const searchRoot = vscode.Uri.joinPath(root, relativePath);
+                        const { searchRoot, effectivePattern } = await getSearchRootAndPattern(
+                            root,
+                            relativePath,
+                            filePattern
+                        );
                         const result = await searchAndReplaceInDirectory(
                             searchRoot,
-                            filePattern,
+                            effectivePattern,
                             searchRegex,
                             replacement,
                             maxFiles,
@@ -445,10 +507,14 @@ export function createSearchInFilesTool(): Tool {
                     
                     if (isExplicit && targetWorkspace) {
                         // 显式指定了工作区，只搜索该工作区
-                        const searchRoot = vscode.Uri.joinPath(targetWorkspace.uri, relativePath);
+                        const { searchRoot, effectivePattern } = await getSearchRootAndPattern(
+                            targetWorkspace.uri,
+                            relativePath,
+                            filePattern
+                        );
                         allResults = await searchInDirectory(
                             searchRoot,
-                            filePattern,
+                            effectivePattern,
                             searchRegex,
                             maxResults,
                             workspaces.length > 1 ? targetWorkspace.name : null,
@@ -473,10 +539,14 @@ export function createSearchInFilesTool(): Tool {
                     } else {
                         // 单工作区或未指定，使用默认
                         const root = targetWorkspace?.uri || workspaces[0].uri;
-                        const searchRoot = vscode.Uri.joinPath(root, relativePath);
+                        const { searchRoot, effectivePattern } = await getSearchRootAndPattern(
+                            root,
+                            relativePath,
+                            filePattern
+                        );
                         allResults = await searchInDirectory(
                             searchRoot,
-                            filePattern,
+                            effectivePattern,
                             searchRegex,
                             maxResults,
                             workspaces.length > 1 ? (targetWorkspace?.name || workspaces[0].name) : null,

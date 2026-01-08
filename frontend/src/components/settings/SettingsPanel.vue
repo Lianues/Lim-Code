@@ -697,6 +697,7 @@ onMounted(() => {
   flex: 1;
   display: flex;
   overflow: hidden;
+  min-height: 0;
 }
 
 /* 左侧页签（仅图标） */
@@ -771,10 +772,13 @@ onMounted(() => {
 .settings-main-scrollbar {
   flex: 1;
   min-height: 0;
+  height: 100%;
+  position: relative;
 }
 
 .settings-main {
   padding: 16px;
+  min-height: min-content;
 }
 
 .settings-section h4 {

@@ -27,6 +27,10 @@ const emit = defineEmits<{
   'composition-end': []
   paste: [files: File[]]
   'file-path-drop': [paths: string[]]
+  'trigger-at-picker': [query: string, triggerPosition: number]
+  'close-at-picker': []
+  'at-query-change': [query: string]
+  'at-picker-keydown': [key: string]  // 专门用于文件选择器的键盘事件
 }>()
 
 const textareaRef = ref<HTMLTextAreaElement>()
@@ -178,14 +182,66 @@ watch(() => props.value, () => {
   nextTick(() => adjustHeight())
 })
 
+// @ 触发状态
+const atTriggerPosition = ref<number | null>(null)
+
 // 处理输入
 function handleInput(e: Event) {
   const target = e.target as HTMLTextAreaElement
-  emit('update:value', target.value)
+  const value = target.value
+  const cursorPos = target.selectionStart
+  
+  // 检测 @ 触发
+  if (atTriggerPosition.value !== null) {
+    // 已经在 @ 模式中，更新查询
+    const query = value.substring(atTriggerPosition.value + 1, cursorPos)
+    
+    // 检查是否应该关闭（遇到空格或删除了 @）
+    if (cursorPos <= atTriggerPosition.value || query.includes(' ') || query.includes('\n')) {
+      atTriggerPosition.value = null
+      emit('close-at-picker')
+    } else {
+      emit('at-query-change', query)
+    }
+  } else {
+    // 检测是否刚输入了 @
+    const charBefore = value[cursorPos - 2] || ''
+    const currentChar = value[cursorPos - 1]
+    
+    if (currentChar === '@' && (charBefore === '' || charBefore === ' ' || charBefore === '\n')) {
+      atTriggerPosition.value = cursorPos - 1
+      emit('trigger-at-picker', '', cursorPos - 1)
+    }
+  }
+  
+  emit('update:value', value)
 }
 
 // 处理按键
 function handleKeydown(e: KeyboardEvent) {
+  // 如果在 @ 模式中，某些按键需要传递给父组件处理
+  if (atTriggerPosition.value !== null) {
+    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+      // 导航按键传递给父组件
+      e.preventDefault()
+      emit('at-picker-keydown', e.key)
+      return
+    }
+    if (e.key === 'Tab' || e.key === 'Enter') {
+      // Tab 或 Enter 选择当前文件
+      e.preventDefault()
+      emit('at-picker-keydown', 'Enter')
+      return
+    }
+    if (e.key === 'Escape') {
+      // 关闭面板
+      e.preventDefault()
+      atTriggerPosition.value = null
+      emit('close-at-picker')
+      return
+    }
+  }
+  
   // Enter 发送（Shift+Enter 换行）
   if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.altKey) {
     e.preventDefault()
@@ -360,11 +416,13 @@ async function insertFilePathsFromUris(uris: string[]) {
   for (const uri of uris) {
     try {
       // 调用后端 API 将 URI 转换为相对路径
-      const result = await sendToExtension<{ relativePath: string }>('getRelativePath', {
+      const result = await sendToExtension<{ relativePath: string; isDirectory?: boolean }>('getRelativePath', {
         absolutePath: uri.trim()
       })
       if (result.relativePath) {
-        relativePaths.push(result.relativePath)
+        // 文件夹末尾添加 /
+        const path = result.isDirectory ? `${result.relativePath}/` : result.relativePath
+        relativePaths.push(path)
       }
     } catch (err) {
       console.error('获取相对路径失败:', err)
@@ -395,11 +453,13 @@ async function insertFilePathsFromPaths(paths: string[]) {
   for (const absolutePath of paths) {
     try {
       // 调用后端 API 将绝对路径转换为相对路径
-      const result = await sendToExtension<{ relativePath: string }>('getRelativePath', {
+      const result = await sendToExtension<{ relativePath: string; isDirectory?: boolean }>('getRelativePath', {
         absolutePath
       })
       if (result.relativePath) {
-        relativePaths.push(result.relativePath)
+        // 文件夹末尾添加 /
+        const path = result.isDirectory ? `${result.relativePath}/` : result.relativePath
+        relativePaths.push(path)
       }
     } catch (err) {
       console.error('获取相对路径失败:', err)
@@ -473,9 +533,53 @@ onBeforeUnmount(() => {
   document.removeEventListener('mouseup', handleMouseUp)
 })
 
+// 关闭 @ 面板
+function closeAtPicker() {
+  atTriggerPosition.value = null
+}
+
+// 插入选中的文件路径（替换 @ 和查询文本）
+function insertFilePath(path: string) {
+  if (!textareaRef.value || atTriggerPosition.value === null) return
+  
+  const textarea = textareaRef.value
+  const value = props.value
+  const triggerPos = atTriggerPosition.value
+  const cursorPos = textarea.selectionStart
+  
+  // 构建新值：@ 之前的内容 + @path + 空格 + 原光标之后的内容
+  const beforeAt = value.substring(0, triggerPos)
+  const afterCursor = value.substring(cursorPos)
+  const insertText = `@${path} `
+  
+  const newValue = beforeAt + insertText + afterCursor
+  emit('update:value', newValue)
+  
+  // 关闭面板
+  atTriggerPosition.value = null
+  emit('close-at-picker')
+  
+  // 设置光标位置到插入内容之后
+  nextTick(() => {
+    if (textareaRef.value) {
+      const newCursorPos = triggerPos + insertText.length
+      textareaRef.value.setSelectionRange(newCursorPos, newCursorPos)
+      textareaRef.value.focus()
+    }
+  })
+}
+
+// 获取当前触发位置
+function getAtTriggerPosition(): number | null {
+  return atTriggerPosition.value
+}
+
 // 暴露方法
 defineExpose({
-  focus
+  focus,
+  closeAtPicker,
+  insertFilePath,
+  getAtTriggerPosition
 })
 </script>
 

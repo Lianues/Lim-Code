@@ -6,6 +6,7 @@
 
 import { ref, computed, onMounted, watch } from 'vue'
 import InputBox from './InputBox.vue'
+import FilePickerPanel from './FilePickerPanel.vue'
 import SendButton from './SendButton.vue'
 import ChannelSelector, { type ChannelOption } from './ChannelSelector.vue'
 import ModelSelector from './ModelSelector.vue'
@@ -210,6 +211,51 @@ const showPinnedFilesPanel = ref(false)
 const isLoadingPinnedFiles = ref(false)
 // 拖拽状态
 const isDraggingOver = ref(false)
+
+// @ 文件选择器状态
+const showFilePicker = ref(false)
+const filePickerQuery = ref('')
+const inputBoxRef = ref<InstanceType<typeof InputBox> | null>(null)
+const filePickerRef = ref<InstanceType<typeof FilePickerPanel> | null>(null)
+
+// 处理 @ 触发
+function handleTriggerAtPicker(query: string, _triggerPosition: number) {
+  filePickerQuery.value = query
+  showFilePicker.value = true
+}
+
+// 处理 @ 查询变化
+function handleAtQueryChange(query: string) {
+  filePickerQuery.value = query
+}
+
+// 处理关闭 @ 面板
+function handleCloseAtPicker() {
+  showFilePicker.value = false
+  filePickerQuery.value = ''
+}
+
+// 处理选择文件
+function handleSelectFile(path: string) {
+  if (inputBoxRef.value) {
+    inputBoxRef.value.insertFilePath(path)
+  }
+  showFilePicker.value = false
+  filePickerQuery.value = ''
+}
+
+// 处理文件选择器键盘事件
+function handleAtPickerKeydown(key: string) {
+  if (!showFilePicker.value || !filePickerRef.value) return
+  
+  if (key === 'ArrowUp') {
+    filePickerRef.value.handleKeydown({ key: 'ArrowUp', preventDefault: () => {} } as KeyboardEvent)
+  } else if (key === 'ArrowDown') {
+    filePickerRef.value.handleKeydown({ key: 'ArrowDown', preventDefault: () => {} } as KeyboardEvent)
+  } else if (key === 'Enter') {
+    filePickerRef.value.selectCurrent()
+  }
+}
 
 // 处理总结上下文
 async function handleSummarize() {
@@ -682,17 +728,35 @@ watch(() => chatStore.currentConfig, () => {
       </div>
     </div>
 
-    <!-- 输入框 -->
-    <InputBox
-      :value="inputValue"
-      :disabled="false"
-      :placeholder="placeholder"
-      @update:value="handleInput"
-      @send="handleSend"
-      @composition-start="handleCompositionStart"
-      @composition-end="handleCompositionEnd"
-      @paste="handlePasteFiles"
-    />
+    <!-- 输入框容器（包含文件选择器） -->
+    <div class="input-box-container">
+      <!-- @ 文件选择面板 -->
+      <FilePickerPanel
+        ref="filePickerRef"
+        :visible="showFilePicker"
+        :query="filePickerQuery"
+        @select="handleSelectFile"
+        @close="handleCloseAtPicker"
+        @update:query="(q) => filePickerQuery = q"
+      />
+      
+      <!-- 输入框 -->
+      <InputBox
+        ref="inputBoxRef"
+        :value="inputValue"
+        :disabled="false"
+        :placeholder="placeholder"
+        @update:value="handleInput"
+        @send="handleSend"
+        @composition-start="handleCompositionStart"
+        @composition-end="handleCompositionEnd"
+        @paste="handlePasteFiles"
+        @trigger-at-picker="handleTriggerAtPicker"
+        @close-at-picker="handleCloseAtPicker"
+        @at-query-change="handleAtQueryChange"
+        @at-picker-keydown="handleAtPickerKeydown"
+      />
+    </div>
 
     <!-- 固定文件面板（弹出） -->
     <div
@@ -899,6 +963,11 @@ watch(() => chatStore.currentConfig, () => {
   padding: var(--spacing-sm, 8px);
   background: var(--vscode-editor-background);
   border-top: 1px solid var(--vscode-panel-border);
+}
+
+/* 输入框容器 */
+.input-box-container {
+  position: relative;
 }
 
 /* 附件列表 */

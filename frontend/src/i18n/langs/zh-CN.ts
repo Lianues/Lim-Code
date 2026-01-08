@@ -205,7 +205,7 @@ const zhCN: LanguageMessages = {
 
         input: {
             placeholder: '输入消息...',
-            placeholderHint: '输入消息... (Enter 发送，可粘贴附件，Shift+拖拽添加路径)',
+            placeholderHint: '输入消息... (Enter 发送，可粘贴附件，Shift+拖拽或@添加路径)',
             send: '发送消息',
             stopGenerating: '停止生成',
             attachFile: '添加附件',
@@ -237,6 +237,15 @@ const zhCN: LanguageMessages = {
                 notExists: '不存在',
                 dragHint: '按住 Shift 拖拽工作区内的文本文件到此处添加',
                 dropHint: '释放鼠标添加文件'
+            },
+            filePicker: {
+                title: '选择文件',
+                subtitle: '在 @ 后输入文字筛选路径',
+                loading: '搜索中...',
+                empty: '未找到匹配的文件',
+                navigate: '导航',
+                select: '选择',
+                close: '关闭'
             },
             notifications: {
                 summarizeFailed: '总结失败: {error}',
@@ -536,6 +545,8 @@ const zhCN: LanguageMessages = {
                     file: '文件操作',
                     search: '搜索',
                     terminal: '终端',
+                    lsp: '代码智能',
+                    media: '媒体处理',
                     mcp: 'MCP 工具',
                     other: '其他'
                 },
@@ -1165,7 +1176,7 @@ const zhCN: LanguageMessages = {
                 appInfo: {
                     title: '应用信息',
                     name: 'Lim Code - Vibe Coding助手',
-                    version: '版本：1.0.33',
+                    version: '版本：1.0.38',
                     repository: '项目仓库',
                     developer: '开发者'
                 }
@@ -1293,6 +1304,8 @@ const zhCN: LanguageMessages = {
                     file: '文件操作',
                     search: '搜索',
                     terminal: '终端',
+                    lsp: '代码智能',
+                    media: '媒体处理',
                     other: '其他'
                 },
                 dependency: {
@@ -1670,6 +1683,39 @@ const zhCN: LanguageMessages = {
                         unchanged: '未变',
                         write: '写入'
                     }
+                }
+            },
+            lsp: {
+                getSymbols: '获取符号',
+                gotoDefinition: '跳转定义',
+                findReferences: '查找引用',
+                getSymbolsPanel: {
+                    title: '文件符号',
+                    totalFiles: '共 {count} 个文件',
+                    totalSymbols: '共 {count} 个符号',
+                    noSymbols: '未找到符号',
+                    symbolCount: '{count} 个符号',
+                    collapse: '收起',
+                    expandRemaining: '展开剩余 {count} 个',
+                    copyAll: '复制全部',
+                    copied: '已复制'
+                },
+                gotoDefinitionPanel: {
+                    title: '定义',
+                    definitionFound: '找到定义',
+                    noDefinition: '未找到定义',
+                    lines: '{count} 行',
+                    copyCode: '复制代码',
+                    copied: '已复制'
+                },
+                findReferencesPanel: {
+                    title: '引用',
+                    totalReferences: '共 {count} 个引用',
+                    totalFiles: '{count} 个文件',
+                    noReferences: '未找到引用',
+                    referencesInFile: '{count} 个引用',
+                    collapse: '收起',
+                    expandRemaining: '展开剩余 {count} 个'
                 }
             },
             mcp: {

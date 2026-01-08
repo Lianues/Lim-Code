@@ -52,7 +52,7 @@ async function handleRevealInExplorer(id: string) {
   <div class="conversation-list">
     <!-- 加载状态 -->
     <div v-if="loading" class="list-loading">
-      <div class="loading-bar"></div>
+      <i class="codicon codicon-loading codicon-modifier-spin"></i>
     </div>
 
     <!-- 空状态 -->
@@ -120,21 +120,22 @@ async function handleRevealInExplorer(id: string) {
 .list-loading {
   display: flex;
   align-items: center;
-  padding: var(--spacing-md, 16px);
+  justify-content: center;
+  padding: var(--spacing-xl, 32px) var(--spacing-md, 16px);
+  color: var(--vscode-descriptionForeground);
 }
 
-.loading-bar {
-  width: 48px;
-  height: 2px;
-  background: var(--vscode-foreground);
-  opacity: 0.3;
-  animation: loading-slide 1.2s ease-in-out infinite;
+.list-loading .codicon {
+  font-size: 18px;
 }
 
-@keyframes loading-slide {
-  0% { opacity: 0.2; width: 24px; }
-  50% { opacity: 0.6; width: 48px; }
-  100% { opacity: 0.2; width: 24px; }
+.codicon-modifier-spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 .list-empty {

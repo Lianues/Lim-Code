@@ -42,6 +42,9 @@ export class StreamRequestHandler {
         abortSignal: controller.signal
       });
       
+      // 发送响应，通知前端请求已接收并开始
+      this.deps.sendResponse(requestId, { started: true });
+      
       for await (const chunk of stream) {
         const isError = processor.processChunk(chunk);
         if (isError) break;
@@ -68,6 +71,9 @@ export class StreamRequestHandler {
         configId,
         abortSignal: controller.signal
       });
+      
+      // 发送响应，通知前端请求已接收并开始
+      this.deps.sendResponse(requestId, { started: true });
       
       for await (const chunk of stream) {
         const isError = processor.processChunk(chunk);
@@ -99,6 +105,9 @@ export class StreamRequestHandler {
         abortSignal: controller.signal
       });
       
+      // 发送响应，通知前端请求已接收并开始
+      this.deps.sendResponse(requestId, { started: true });
+      
       for await (const chunk of stream) {
         const isError = processor.processChunk(chunk);
         if (isError) break;
@@ -127,6 +136,9 @@ export class StreamRequestHandler {
         configId,
         abortSignal: controller.signal
       });
+      
+      // 发送响应，通知前端请求已接收并开始
+      this.deps.sendResponse(requestId, { started: true });
       
       for await (const chunk of stream) {
         const isError = processor.processChunk(chunk);
@@ -158,5 +170,8 @@ export class StreamRequestHandler {
     
     const errorMessage = error.message || t('webview.errors.streamFailed');
     processor.sendError('STREAM_ERROR', errorMessage);
+    
+    // 同时发送请求错误响应，确保前端 await sendToExtension 能够返回
+    this.deps.sendError(requestId, 'STREAM_ERROR', errorMessage);
   }
 }

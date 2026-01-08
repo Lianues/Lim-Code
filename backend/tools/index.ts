@@ -29,6 +29,7 @@ export * from './file';
 export * from './search';
 export * from './terminal';
 export * from './media';
+export * from './lsp';
 
 // 导出工具辅助函数
 export * from './utils';
@@ -58,12 +59,14 @@ export function getAllTools(): Tool[] {
     const { getSearchToolRegistrations } = require('./search');
     const { getTerminalToolRegistrations } = require('./terminal');
     const { getMediaToolRegistrations } = require('./media');
+    const { getLspToolRegistrations } = require('./lsp');
     
     const registrations = [
         ...getFileToolRegistrations(),
         ...getSearchToolRegistrations(),
         ...getTerminalToolRegistrations(),
         ...getMediaToolRegistrations(),
+        ...getLspToolRegistrations(),
     ];
     
     return registrations.map(reg => reg());

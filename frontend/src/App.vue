@@ -205,11 +205,7 @@ onMounted(async () => {
   // 先加载语言设置，确保 UI 语言正确
   await loadLanguageSettings()
   
-  await chatStore.initialize()
-  
-  // 默认显示聊天视图（初始状态无消息时会显示欢迎面板）
-  
-  // 监听来自扩展的命令
+  // 立即注册命令监听器，确保在初始化期间也能响应用户操作
   onMessageFromExtension((message: any) => {
     if (message.type === 'command') {
       switch (message.command) {
@@ -225,6 +221,9 @@ onMounted(async () => {
       }
     }
   })
+  
+  // 异步初始化 chatStore（加载历史对话等）
+  chatStore.initialize()
 })
 </script>
 

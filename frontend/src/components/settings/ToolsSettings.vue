@@ -131,6 +131,8 @@ function getCategoryName(category: string): string {
     'file': 'components.settings.toolsSettings.categories.file',
     'search': 'components.settings.toolsSettings.categories.search',
     'terminal': 'components.settings.toolsSettings.categories.terminal',
+    'lsp': 'components.settings.toolsSettings.categories.lsp',
+    'media': 'components.settings.toolsSettings.categories.media',
     '其他': 'components.settings.toolsSettings.categories.other'
   }
   return t(mapping[category] || mapping['其他'])
@@ -141,6 +143,8 @@ const categoryIcons: Record<string, string> = {
   'file': 'codicon-file',
   'search': 'codicon-search',
   'terminal': 'codicon-terminal',
+  'lsp': 'codicon-symbol-class',
+  'media': 'codicon-file-media',
   '其他': 'codicon-extensions'
 }
 

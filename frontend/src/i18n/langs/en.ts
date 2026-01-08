@@ -205,7 +205,7 @@ const en: LanguageMessages = {
 
         input: {
             placeholder: 'Type a message...',
-            placeholderHint: 'Type a message... (Enter to send, paste attachments, Shift+drag to add paths)',
+            placeholderHint: 'Type a message... (Enter to send, paste attachments, Shift+drag or @ to add paths)',
             send: 'Send message',
             stopGenerating: 'Stop generating',
             attachFile: 'Attach file',
@@ -237,6 +237,15 @@ const en: LanguageMessages = {
                 notExists: 'Does not exist',
                 dragHint: 'Hold Shift and drag text files from workspace here to add',
                 dropHint: 'Release to add file'
+            },
+            filePicker: {
+                title: 'Select File',
+                subtitle: 'Type after @ to filter paths',
+                loading: 'Searching...',
+                empty: 'No matching files found',
+                navigate: 'navigate',
+                select: 'select',
+                close: 'close'
             },
             notifications: {
                 summarizeFailed: 'Summarize failed: {error}',
@@ -536,6 +545,8 @@ const en: LanguageMessages = {
                     file: 'File Operations',
                     search: 'Search',
                     terminal: 'Terminal',
+                    lsp: 'Code Intelligence',
+                    media: 'Media Processing',
                     mcp: 'MCP Tools',
                     other: 'Other'
                 },
@@ -1165,7 +1176,7 @@ const en: LanguageMessages = {
                 appInfo: {
                     title: 'Application Info',
                     name: 'Lim Code - Vibe Coding Assistant',
-                    version: 'Version: 1.0.33',
+                    version: 'Version: 1.0.38',
                     repository: 'Repository',
                     developer: 'Developer'
                 }
@@ -1293,6 +1304,8 @@ const en: LanguageMessages = {
                     file: 'File Operations',
                     search: 'Search',
                     terminal: 'Terminal',
+                    lsp: 'Code Intelligence',
+                    media: 'Media Processing',
                     other: 'Other'
                 },
                 dependency: {
@@ -1739,6 +1752,39 @@ const en: LanguageMessages = {
                     waitingOutput: 'Waiting for output...',
                     noOutput: 'No output',
                     executing: 'Command executing...'
+                }
+            },
+            lsp: {
+                getSymbols: 'Get Symbols',
+                gotoDefinition: 'Go to Definition',
+                findReferences: 'Find References',
+                getSymbolsPanel: {
+                    title: 'File Symbols',
+                    totalFiles: 'Total {count} files',
+                    totalSymbols: 'Total {count} symbols',
+                    noSymbols: 'No symbols found',
+                    symbolCount: '{count} symbols',
+                    collapse: 'Collapse',
+                    expandRemaining: 'Expand remaining {count}',
+                    copyAll: 'Copy All',
+                    copied: 'Copied'
+                },
+                gotoDefinitionPanel: {
+                    title: 'Definition',
+                    definitionFound: 'Definition found',
+                    noDefinition: 'No definition found',
+                    lines: '{count} lines',
+                    copyCode: 'Copy Code',
+                    copied: 'Copied'
+                },
+                findReferencesPanel: {
+                    title: 'References',
+                    totalReferences: 'Total {count} references',
+                    totalFiles: '{count} files',
+                    noReferences: 'No references found',
+                    referencesInFile: '{count} references',
+                    collapse: 'Collapse',
+                    expandRemaining: 'Expand remaining {count}'
                 }
             },
             mcp: {

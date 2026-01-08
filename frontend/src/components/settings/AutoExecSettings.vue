@@ -66,6 +66,8 @@ const categoryIcons: Record<string, string> = {
   'file': 'codicon-file',
   'search': 'codicon-search',
   'terminal': 'codicon-terminal',
+  'lsp': 'codicon-symbol-class',
+  'media': 'codicon-file-media',
   'mcp': 'codicon-plug',
   '其他': 'codicon-extensions'
 }

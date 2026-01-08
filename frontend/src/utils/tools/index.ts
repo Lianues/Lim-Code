@@ -26,6 +26,11 @@ import './media/crop_image'
 import './media/resize_image'
 import './media/rotate_image'
 
+// LSP 工具
+import './lsp/get_symbols'
+import './lsp/goto_definition'
+import './lsp/find_references'
+
 // 导出工具注册表
 export { toolRegistry, registerTool, getToolConfig, type ToolConfig } from '../toolRegistry'
 

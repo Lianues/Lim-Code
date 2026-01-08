@@ -82,6 +82,14 @@ export interface GetHistoryOptions {
      * 仅在 sendHistoryThoughts 或 sendHistoryThoughtSignatures 为 true 时生效
      */
     historyThinkingRounds?: number;
+    
+    /**
+     * 起始索引（可选）
+     *
+     * 从指定索引开始获取历史，用于上下文裁剪。
+     * 默认为 0（从头开始）。
+     */
+    startIndex?: number;
 }
 
 /**
@@ -636,12 +644,18 @@ export class ConversationManager {
         conversationId: string,
         options: GetHistoryOptions | boolean = false
     ): Promise<ConversationHistory> {
-        const history = await this.loadHistory(conversationId);
+        let history = await this.loadHistory(conversationId);
         
         // 向后兼容：如果传入 boolean，视为 includeThoughts
         const opts: GetHistoryOptions = typeof options === 'boolean'
             ? { includeThoughts: options }
             : options;
+        
+        // 应用起始索引（用于上下文裁剪）
+        const startIndex = opts.startIndex ?? 0;
+        if (startIndex > 0 && startIndex < history.length) {
+            history = history.slice(startIndex);
+        }
         
         const includeThoughts = opts.includeThoughts ?? false;
         const sendHistoryThoughts = opts.sendHistoryThoughts ?? false;

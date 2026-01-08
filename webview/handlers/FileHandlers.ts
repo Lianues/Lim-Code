@@ -21,7 +21,22 @@ export const getRelativePath: MessageHandler = async (data, requestId, ctx) => {
   try {
     const { absolutePath } = data;
     const relativePath = getRelativePathFromAbsolute(absolutePath);
-    ctx.sendResponse(requestId, { relativePath });
+    
+    // 检查是否是目录
+    let isDirectory = false;
+    try {
+      let filePath = absolutePath;
+      if (absolutePath.startsWith('file://')) {
+        const uri = vscode.Uri.parse(absolutePath);
+        filePath = uri.fsPath;
+      }
+      const stat = await vscode.workspace.fs.stat(vscode.Uri.file(filePath));
+      isDirectory = stat.type === vscode.FileType.Directory;
+    } catch {
+      // 无法获取文件信息，默认为文件
+    }
+    
+    ctx.sendResponse(requestId, { relativePath, isDirectory });
   } catch (error: any) {
     ctx.sendError(requestId, 'GET_RELATIVE_PATH_ERROR', error.message || t('webview.errors.getRelativePathFailed'));
   }
@@ -311,6 +326,105 @@ export const summarizeContext: MessageHandler = async (data, requestId, ctx) => 
   }
 };
 
+// ========== 工作区文件搜索 ==========
+
+// 排除的目录模式
+const EXCLUDED_DIRS = new Set([
+  'node_modules', '.git', 'dist', 'build', '.next', 'out', 
+  '.vscode', '.idea', '__pycache__', '.cache', 'coverage'
+]);
+
+// 递归搜索文件夹
+async function searchDirectories(
+  baseUri: vscode.Uri, 
+  query: string, 
+  limit: number,
+  results: { path: string; name: string; isDirectory: boolean }[],
+  currentPath: string = ''
+): Promise<void> {
+  if (results.length >= limit) return;
+  
+  try {
+    const entries = await vscode.workspace.fs.readDirectory(baseUri);
+    
+    for (const [name, type] of entries) {
+      if (results.length >= limit) break;
+      
+      // 跳过排除的目录
+      if (EXCLUDED_DIRS.has(name)) continue;
+      
+      const relativePath = currentPath ? `${currentPath}/${name}` : name;
+      
+      if (type === vscode.FileType.Directory) {
+        // 检查文件夹名是否匹配查询
+        if (!query || name.toLowerCase().includes(query.toLowerCase())) {
+          results.push({
+            path: relativePath,
+            name,
+            isDirectory: true
+          });
+        }
+        
+        // 递归搜索子目录（限制深度避免性能问题）
+        const depth = relativePath.split('/').length;
+        if (depth < 5) {
+          const subUri = vscode.Uri.joinPath(baseUri, name);
+          await searchDirectories(subUri, query, limit, results, relativePath);
+        }
+      }
+    }
+  } catch {
+    // 忽略无法访问的目录
+  }
+}
+
+export const searchWorkspaceFiles: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const { query = '', limit = 50 } = data;
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    
+    if (!workspaceFolder) {
+      ctx.sendResponse(requestId, { files: [] });
+      return;
+    }
+    
+    const results: { path: string; name: string; isDirectory: boolean }[] = [];
+    
+    // 1. 搜索文件夹
+    await searchDirectories(workspaceFolder.uri, query.trim(), Math.floor(limit / 2), results);
+    
+    // 2. 搜索文件
+    const pattern = query.trim() ? `**/*${query}*` : '**/*';
+    const excludePattern = '{**/node_modules/**,**/.git/**,**/dist/**,**/build/**,**/.next/**,**/out/**,**/.vscode/**,**/.idea/**,**/__pycache__/**,**/.cache/**,**/coverage/**}';
+    const files = await vscode.workspace.findFiles(pattern, excludePattern, limit - results.length);
+    
+    // 添加文件结果
+    for (const uri of files) {
+      if (results.length >= limit) break;
+      const relativePath = vscode.workspace.asRelativePath(uri);
+      results.push({
+        path: relativePath,
+        name: path.basename(uri.fsPath),
+        isDirectory: false
+      });
+    }
+    
+    // 排序：文件夹在前，然后按路径长度排序
+    results.sort((a, b) => {
+      // 文件夹优先
+      if (a.isDirectory !== b.isDirectory) {
+        return a.isDirectory ? -1 : 1;
+      }
+      // 然后按路径长度
+      return a.path.length - b.path.length;
+    });
+    
+    ctx.sendResponse(requestId, { files: results });
+  } catch (error: any) {
+    ctx.sendError(requestId, 'SEARCH_FILES_ERROR', error.message || t('webview.errors.searchFilesFailed'));
+  }
+};
+
 // ========== 通知 ==========
 
 export const showNotification: MessageHandler = async (data, requestId, ctx) => {
@@ -364,6 +478,9 @@ export function registerFileHandlers(registry: Map<string, MessageHandler>): voi
   
   // 上下文总结
   registry.set('summarizeContext', summarizeContext);
+  
+  // 工作区文件搜索
+  registry.set('searchWorkspaceFiles', searchWorkspaceFiles);
   
   // 通知
   registry.set('showNotification', showNotification);

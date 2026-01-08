@@ -48,10 +48,10 @@ async function handleDelete(id: string) {
     </div>
     
     <!-- 历史对话区域 -->
-    <div class="history-section" v-if="chatStore.filteredConversations.length > 0">
+    <div class="history-section" v-if="chatStore.filteredConversations.length > 0 || chatStore.isLoadingConversations">
       <div class="section-header">
         <h2 class="section-title">{{ t('components.home.recentChats') }}</h2>
-        <button class="view-all-btn" @click="settingsStore.showHistory">
+        <button class="view-all-btn" @click="settingsStore.showHistory" v-if="!chatStore.isLoadingConversations">
           {{ t('components.home.viewAll') }}
           <i class="codicon codicon-chevron-right"></i>
         </button>

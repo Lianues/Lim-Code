@@ -183,6 +183,7 @@ export async function cancelStream(
       state.streamingMessageId.value = null
     }
     
+    state.isLoading.value = false
     state.isWaitingForResponse.value = false
     return
   }
@@ -223,6 +224,8 @@ export async function cancelStream(
         }
       }
     }
+    state.streamingMessageId.value = null
+    state.isLoading.value = false
     state.isStreaming.value = false
     state.isWaitingForResponse.value = false
   } catch (err) {
@@ -238,6 +241,7 @@ export async function cancelStream(
       }
       state.streamingMessageId.value = null
     }
+    state.isLoading.value = false
     state.isStreaming.value = false
     state.isWaitingForResponse.value = false
   }

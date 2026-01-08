@@ -27,15 +27,24 @@ const expandedFiles = ref<Set<string>>(new Set())
 const copiedFiles = ref<Set<string>>(new Set())
 const copyTimeouts = new Map<string, ReturnType<typeof setTimeout>>()
 
-// 获取路径列表
-const pathList = computed(() => {
-  if (props.args.paths && Array.isArray(props.args.paths)) {
-    return props.args.paths as string[]
-  }
-  if (props.args.path && typeof props.args.path === 'string') {
-    return [props.args.path]
+// 单个文件读取请求
+interface FileRequest {
+  path: string
+  startLine?: number
+  endLine?: number
+}
+
+// 获取文件请求列表
+const fileRequests = computed((): FileRequest[] => {
+  if (props.args.files && Array.isArray(props.args.files)) {
+    return props.args.files as FileRequest[]
   }
   return []
+})
+
+// 获取路径列表
+const pathList = computed(() => {
+  return fileRequests.value.map(f => f.path)
 })
 
 // 单个文件读取结果
@@ -45,6 +54,9 @@ interface ReadResult {
   type?: 'text' | 'multimodal' | 'binary'
   content?: string
   lineCount?: number
+  totalLines?: number    // 文件总行数（使用行范围时返回）
+  startLine?: number     // 起始行号（使用行范围时返回）
+  endLine?: number       // 结束行号（使用行范围时返回）
   mimeType?: string
   size?: number
   error?: string
@@ -54,30 +66,9 @@ interface ReadResult {
 const readResults = computed((): ReadResult[] => {
   const result = props.result as Record<string, any> | undefined
   
-  // 新格式：批量结果
+  // 批量结果
   if (result?.data?.results) {
     return result.data.results as ReadResult[]
-  }
-  
-  // 旧格式：单个结果
-  if (result?.data?.content !== undefined) {
-    return [{
-      path: result.data.path || pathList.value[0] || '',
-      success: true,
-      type: result.data.type || 'text',
-      content: result.data.content,
-      lineCount: result.data.lineCount
-    }]
-  }
-  
-  // 兼容直接返回 content 的情况
-  if (result?.content !== undefined) {
-    return [{
-      path: pathList.value[0] || '',
-      success: true,
-      type: 'text',
-      content: result.content as string
-    }]
   }
   
   // 如果没有结果，为每个路径创建空结果
@@ -104,6 +95,30 @@ const failCount = computed(() => {
   }
   return readResults.value.filter(r => !r.success).length
 })
+
+// 获取行范围摘要文本
+function getLineRangeSummary(result: ReadResult): string | null {
+  if (result.startLine === undefined && result.endLine === undefined) {
+    return null
+  }
+  
+  const start = result.startLine ?? 1
+  const end = result.endLine ?? result.totalLines ?? '?'
+  const total = result.totalLines ?? '?'
+  
+  return `L${start}-${end} / ${total}`
+}
+
+// 检查是否是部分读取
+function isPartialRead(result: ReadResult): boolean {
+  if (result.totalLines === undefined) return false
+  if (result.startLine === undefined && result.endLine === undefined) return false
+  
+  const start = result.startLine ?? 1
+  const end = result.endLine ?? result.totalLines
+  
+  return start > 1 || end < result.totalLines
+}
 
 // 预览行数
 const previewLineCount = 15
@@ -266,6 +281,13 @@ onBeforeUnmount(() => {
         
         <!-- 文件路径 -->
         <div class="file-path">{{ result.path }}</div>
+        
+        <!-- 行范围信息（仅当使用行范围时显示） -->
+        <div v-if="getLineRangeSummary(result)" class="line-range-info">
+          <span class="codicon codicon-list-selection"></span>
+          <span class="range-text">{{ getLineRangeSummary(result) }}</span>
+          <span v-if="isPartialRead(result)" class="partial-badge">partial</span>
+        </div>
         
         <!-- 错误信息 -->
         <div v-if="!result.success && result.error" class="file-error">
@@ -492,6 +514,36 @@ onBeforeUnmount(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* 行范围信息 */
+.line-range-info {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px var(--spacing-sm, 8px);
+  font-size: 11px;
+  background: var(--vscode-editor-inactiveSelectionBackground);
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.line-range-info .codicon {
+  font-size: 12px;
+  color: var(--vscode-charts-blue);
+}
+
+.line-range-info .range-text {
+  color: var(--vscode-foreground);
+  font-family: var(--vscode-editor-font-family);
+}
+
+.line-range-info .partial-badge {
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--vscode-charts-orange);
+  background: rgba(255, 165, 0, 0.15);
+  border-radius: 2px;
 }
 
 /* 文件错误 */

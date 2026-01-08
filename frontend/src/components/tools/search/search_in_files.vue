@@ -131,13 +131,18 @@ function toggleExpand() {
 }
 
 // 获取文件名
-function getFileName(filePath: string): string {
+function getFileName(filePath: string | undefined): string {
+  if (!filePath) return ''
   const parts = filePath.split(/[/\\]/)
   return parts[parts.length - 1] || filePath
 }
 
 // 高亮匹配文本
-function highlightMatch(context: string, match: string): string {
+function highlightMatch(context: string | undefined, match: string | undefined): string {
+  // 安全检查
+  if (!context) return ''
+  if (!match) return context
+  
   // 简单的转义处理
   const escaped = match.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   return context.replace(new RegExp(escaped, 'gi'), `<mark>${match}</mark>`)
@@ -550,17 +555,17 @@ function isDiffExpanded(path: string): boolean {
         <div class="match-items">
           <div
             v-for="(match, index) in displayResults"
-            :key="`${match.file}-${match.line}-${index}`"
+            :key="`${match?.file || ''}-${match?.line || 0}-${index}`"
             class="match-item"
           >
             <div class="match-header">
               <span class="codicon codicon-file file-icon"></span>
-              <span class="file-name">{{ getFileName(match.file) }}</span>
-              <span class="file-path">{{ match.file }}</span>
-              <span class="line-info">:{{ match.line }}:{{ match.column }}</span>
+              <span class="file-name">{{ getFileName(match?.file) }}</span>
+              <span class="file-path">{{ match?.file || '' }}</span>
+              <span class="line-info">:{{ match?.line || 0 }}:{{ match?.column || 0 }}</span>
             </div>
             <div class="match-context">
-              <pre><code v-html="highlightMatch(match.context, match.match)"></code></pre>
+              <pre><code v-html="highlightMatch(match?.context, match?.match)"></code></pre>
             </div>
           </div>
         </div>
@@ -985,6 +990,19 @@ function isDiffExpanded(path: string): boolean {
   border: 1px solid var(--vscode-panel-border);
   border-radius: var(--radius-sm, 2px);
   overflow: hidden;
+  /* 确保容器有最小高度，避免内容为空时高度坍塌 */
+  min-height: 0;
+}
+
+/* 确保滚动容器能正确显示 */
+.results-list :deep(.custom-scrollbar-wrapper) {
+  height: auto !important;
+  min-height: 0;
+}
+
+.results-list :deep(.scroll-container) {
+  height: auto !important;
+  min-height: 0;
 }
 
 .match-item {
