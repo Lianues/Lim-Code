@@ -4,6 +4,7 @@
 
 import * as vscode from 'vscode';
 import { t } from '../../backend/i18n';
+import { getDiffManager } from '../../backend/tools/file/diffManager';
 import type { HandlerContext, MessageHandler } from '../types';
 
 /**
@@ -40,6 +41,66 @@ export const loadDiffContent: MessageHandler = async (data, requestId, ctx) => {
     }
   } catch (error: any) {
     ctx.sendError(requestId, 'LOAD_DIFF_CONTENT_ERROR', error.message || t('webview.errors.loadDiffContentFailed'));
+  }
+};
+
+/**
+ * 接受 diff 修改（保存文件）
+ */
+export const acceptDiff: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const { diffId, annotation } = data as { diffId: string; annotation?: string };
+    const diffManager = getDiffManager();
+
+    // 手动保存模式：isAutoSave=false，会保留用户编辑；closeTab=true 关闭标签页
+    const success = await diffManager.acceptDiff(diffId, true, false);
+
+    const fullAnnotation = (annotation || '').trim();
+    ctx.sendResponse(requestId, {
+      success,
+      hasAnnotation: !!fullAnnotation,
+      fullAnnotation
+    });
+  } catch (error: any) {
+    ctx.sendError(requestId, 'DIFF_ACCEPT_ERROR', error.message || 'Failed to accept diff');
+  }
+};
+
+/**
+ * 拒绝 diff 修改（放弃更改）
+ */
+export const rejectDiff: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const { diffId, annotation } = data as { diffId: string; annotation?: string };
+    const diffManager = getDiffManager();
+
+    const success = await diffManager.rejectDiff(diffId);
+
+    const fullAnnotation = (annotation || '').trim();
+    ctx.sendResponse(requestId, {
+      success,
+      hasAnnotation: !!fullAnnotation,
+      fullAnnotation
+    });
+  } catch (error: any) {
+    ctx.sendError(requestId, 'DIFF_REJECT_ERROR', error.message || 'Failed to reject diff');
+  }
+};
+
+/**
+ * 获取当前 pending 的 diff 列表
+ */
+export const getPendingDiffs: MessageHandler = async (_data, requestId, ctx) => {
+  try {
+    const diffManager = getDiffManager();
+    const diffs = diffManager.getPendingDiffs().map(d => ({
+      id: d.id,
+      filePath: d.filePath
+    }));
+
+    ctx.sendResponse(requestId, { diffs });
+  } catch (error: any) {
+    ctx.sendError(requestId, 'DIFF_GET_PENDING_ERROR', error.message || 'Failed to get pending diffs');
   }
 };
 
@@ -249,4 +310,9 @@ async function openDiffView(
 export function registerDiffHandlers(registry: Map<string, MessageHandler>): void {
   registry.set('diff.openPreview', openDiffPreview);
   registry.set('diff.loadContent', loadDiffContent);
+
+  // 旧版 diff 确认流程（ToolMessage.vue）所需的 handler
+  registry.set('diff.accept', acceptDiff);
+  registry.set('diff.reject', rejectDiff);
+  registry.set('diff.getPending', getPendingDiffs);
 }

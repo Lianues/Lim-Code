@@ -294,6 +294,57 @@ export function handleToolIteration(
     state.isWaitingForResponse.value = false
     return
   }
+
+  // ============ diff 确认/批注流程（旧版兼容） ============
+
+  // 后端要求等待用户确认（保存/拒绝）并填写批注
+  if ((chunk as any).needAnnotation) {
+    const pendingIds = Array.isArray((chunk as any).pendingDiffToolIds)
+      ? ((chunk as any).pendingDiffToolIds as string[])
+      : []
+
+    state.pendingDiffToolIds.value = pendingIds
+
+    const pendingAnno = (chunk as any).pendingAnnotation as string | undefined
+    if (pendingAnno && pendingAnno.trim()) {
+      const trimmed = pendingAnno.trim()
+      state.pendingAnnotation.value = trimmed
+
+      // 清空输入框（ToolMessage 内部会保存 toolConfirmationAnnotation）
+      state.inputValue.value = ''
+
+      // 在 UI 中插入用户消息（仅展示，不发送到后端；真正发送在 continueWithAnnotation）
+      state.allMessages.value.push({
+        id: generateId(),
+        role: 'user',
+        content: trimmed,
+        timestamp: Date.now(),
+        parts: [{ text: trimmed }]
+      })
+    }
+
+    // 有 pendingDiffToolIds 代表需要等待用户确认 diff，暂停后续流式响应
+    if (state.pendingDiffToolIds.value.length > 0) {
+      state.streamingMessageId.value = null
+      state.isStreaming.value = false
+      state.isWaitingForResponse.value = false
+      return
+    }
+  }
+
+  // 后端告知批注已被使用：清空输入并在 UI 中插入用户消息
+  if (typeof (chunk as any).annotationUsed === 'string' && (chunk as any).annotationUsed.trim()) {
+    const used = (chunk as any).annotationUsed.trim() as string
+    state.inputValue.value = ''
+    state.pendingAnnotation.value = ''
+    state.allMessages.value.push({
+      id: generateId(),
+      role: 'user',
+      content: used,
+      timestamp: Date.now(),
+      parts: [{ text: used }]
+    })
+  }
   
   // 创建新的占位消息用于接收后续 AI 响应
   const newAssistantMessageId = generateId()

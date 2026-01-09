@@ -37,6 +37,7 @@ import type { MessageBuilderService } from './MessageBuilderService';
 import type { TokenEstimationService } from './TokenEstimationService';
 import type { ContextTrimService } from './ContextTrimService';
 import type { ToolExecutionService, ToolExecutionFullResult } from './ToolExecutionService';
+import { hasFileModificationToolInResults, getFileModificationToolIds } from '../utils';
 
 /**
  * 工具迭代循环配置
@@ -329,6 +330,22 @@ export class ToolIterationLoopService {
                     toolIteration: true as const,
                     toolResults: executionResult.toolResults,
                     checkpoints: executionResult.checkpoints
+                };
+                return;
+            }
+
+            // 16.5 如果包含文件修改工具（apply_diff / write_file），需要暂停等待用户确认
+            // 后续由前端调用 continueWithAnnotation 继续对话
+            if (hasFileModificationToolInResults(executionResult.toolResults)) {
+                const diffToolIds = getFileModificationToolIds(executionResult.toolResults);
+                yield {
+                    conversationId,
+                    content: finalContent,
+                    toolIteration: true as const,
+                    toolResults: executionResult.toolResults,
+                    checkpoints: executionResult.checkpoints,
+                    needAnnotation: true as const,
+                    pendingDiffToolIds: diffToolIds
                 };
                 return;
             }

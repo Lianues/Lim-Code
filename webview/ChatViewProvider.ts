@@ -35,6 +35,7 @@ import {
     setGlobalDiffStorageManager
 } from '../backend/core/settingsContext';
 import { DiffStorageManager } from '../backend/modules/conversation';
+import { getDiffManager } from '../backend/tools/file/diffManager';
 import { MessageRouter } from './MessageRouter';
 import type { HandlerContext, DiffPreviewContentProvider as IDiffPreviewContentProvider } from './types';
 
@@ -90,6 +91,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private imageGenOutputUnsubscribe?: () => void;
     private taskEventUnsubscribe?: () => void;
     private dependencyProgressUnsubscribe?: () => void;
+
+    // Diff 手动保存事件监听（用于 apply_diff / write_file 的确认按钮状态同步）
+    private diffManualSaveListener?: (diff: any) => void;
     
     // 初始化状态
     private initPromise: Promise<void>;
@@ -252,6 +256,22 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             this.sendResponse.bind(this),
             this.sendError.bind(this)
         );
+
+        // 29. 监听 diff 手动保存事件（用户在 VSCode diff 视图中 Ctrl+S）
+        // 兼容旧版 ToolMessage.vue 的 diffManualSaved 推送
+        const diffManager = getDiffManager();
+        this.diffManualSaveListener = (diff: any) => {
+            if (!this._view) return;
+            this._view.webview.postMessage({
+                type: 'diffManualSaved',
+                data: {
+                    diffId: diff.id,
+                    filePath: diff.filePath,
+                    absolutePath: diff.absolutePath
+                }
+            });
+        };
+        diffManager.addManualSaveListener(this.diffManualSaveListener);
         
         console.log('LimCode backend initialized with global context');
         console.log('Effective data path:', this.storagePathManager.getEffectiveDataPath());
@@ -495,6 +515,16 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         
         // 释放 MCP 管理器资源（断开所有连接）
         this.mcpManager?.dispose();
+
+        // 移除 diff 手动保存监听
+        if (this.diffManualSaveListener) {
+            try {
+                getDiffManager().removeManualSaveListener(this.diffManualSaveListener);
+            } catch {
+                // ignore
+            }
+            this.diffManualSaveListener = undefined;
+        }
 
         console.log('ChatViewProvider disposed');
     }

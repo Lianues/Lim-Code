@@ -81,6 +81,29 @@ export function createChatState(): ChatStoreState {
   /** 工作区筛选模式（默认当前工作区） */
   const workspaceFilter = ref<WorkspaceFilter>('current')
 
+  // ============ diff 确认/批注流程（旧版兼容） ============
+
+  /** 等待后端确认的 diff 工具 ID 列表（apply_diff / write_file） */
+  const pendingDiffToolIds = ref<string[]>([])
+
+  /** 工具确认阶段的批注（当存在 diff 工具时，会被后端作为 pendingAnnotation 返回） */
+  const pendingAnnotation = ref('')
+
+  /** 已处理（保存/拒绝）的 diff 工具决策 */
+  const processedDiffTools = ref<Map<string, 'accept' | 'reject'>>(new Map())
+
+  /** 是否正在发送 diff 的 continueWithAnnotation（防止重复触发） */
+  const isSendingDiffContinue = ref(false)
+
+  /** diff 阶段的用户批注（由 ToolMessage 捕获） */
+  const diffAnnotation = ref('')
+
+  /** 已处理的 diffId（文件级） */
+  const handledDiffIds = ref<Set<string>>(new Set())
+
+  /** 已处理的文件路径（文件级） */
+  const handledFilePaths = ref<Map<string, 'accept' | 'reject'>>(new Map())
+
   return {
     conversations,
     currentConversationId,
@@ -101,6 +124,15 @@ export function createChatState(): ChatStoreState {
     deletingConversationIds,
     currentWorkspaceUri,
     inputValue,
-    workspaceFilter
+    workspaceFilter,
+
+    // diff 确认/批注流程（旧版兼容）
+    pendingDiffToolIds,
+    pendingAnnotation,
+    processedDiffTools,
+    isSendingDiffContinue,
+    diffAnnotation,
+    handledDiffIds,
+    handledFilePaths
   }
 }

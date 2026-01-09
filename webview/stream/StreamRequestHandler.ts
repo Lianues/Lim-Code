@@ -152,6 +152,37 @@ export class StreamRequestHandler {
   }
 
   /**
+   * 处理继续对话（批注）流
+   */
+  async handleContinueWithAnnotationStream(data: any, requestId: string): Promise<void> {
+    const { conversationId, annotation, configId } = data;
+
+    const controller = this.deps.abortManager.create(conversationId);
+    const processor = new StreamChunkProcessor(this.deps.getView(), conversationId);
+
+    try {
+      const stream = this.deps.chatHandler.continueWithAnnotation({
+        conversationId,
+        configId,
+        annotation,
+        abortSignal: controller.signal
+      });
+
+      // 发送响应，通知前端请求已接收并开始
+      this.deps.sendResponse(requestId, { started: true });
+
+      for await (const chunk of stream) {
+        const isError = processor.processChunk(chunk);
+        if (isError) break;
+      }
+    } catch (error: any) {
+      this.handleStreamError(error, processor, requestId);
+    } finally {
+      this.deps.abortManager.delete(conversationId);
+    }
+  }
+
+  /**
    * 取消流
    */
   cancelStream(conversationId: string, requestId: string): void {

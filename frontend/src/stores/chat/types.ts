@@ -109,6 +109,29 @@ export interface ChatStoreState {
   inputValue: Ref<string>
   /** 工作区筛选模式 */
   workspaceFilter: Ref<WorkspaceFilter>
+
+  // ============ diff 确认/批注流程（旧版兼容） ============
+
+  /** 等待后端确认的 diff 工具 ID 列表（apply_diff / write_file） */
+  pendingDiffToolIds: Ref<string[]>
+
+  /** 工具确认阶段的批注（当存在 diff 工具时，会被后端作为 pendingAnnotation 返回） */
+  pendingAnnotation: Ref<string>
+
+  /** 已处理（保存/拒绝）的 diff 工具决策 */
+  processedDiffTools: Ref<Map<string, 'accept' | 'reject'>>
+
+  /** 是否正在发送 diff 的 continueWithAnnotation（防止重复触发） */
+  isSendingDiffContinue: Ref<boolean>
+
+  /** diff 阶段的用户批注（由 ToolMessage 捕获） */
+  diffAnnotation: Ref<string>
+
+  /** 已处理的 diffId（文件级） */
+  handledDiffIds: Ref<Set<string>>
+
+  /** 已处理的文件路径（文件级） */
+  handledFilePaths: Ref<Map<string, 'accept' | 'reject'>>
 }
 
 /**

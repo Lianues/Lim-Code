@@ -18,6 +18,7 @@ const STREAM_MESSAGE_TYPES = [
   'retryStream',
   'editAndRetryStream',
   'toolConfirmation',
+  'continueWithAnnotation',
   'cancelStream'
 ] as const;
 
@@ -101,6 +102,10 @@ export class MessageRouter {
         
       case 'toolConfirmation':
         this.streamHandler.handleToolConfirmationStream(data, requestId).catch(console.error);
+        break;
+
+      case 'continueWithAnnotation':
+        this.streamHandler.handleContinueWithAnnotationStream(data, requestId).catch(console.error);
         break;
         
       case 'cancelStream':

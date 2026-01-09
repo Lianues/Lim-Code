@@ -65,3 +65,42 @@ export interface ToolExecutionResult {
     /** 执行结果 */
     result: Record<string, unknown>;
 }
+
+/**
+ * 会触发 VSCode diff 预览、需要用户确认后才能继续对话的工具列表
+ */
+export const FILE_MODIFICATION_TOOLS = ['apply_diff', 'write_file'] as const;
+
+/**
+ * 判断工具执行结果中是否包含文件修改类工具
+ *
+ * 注意：
+ * - rejected=true 代表用户在“工具确认”阶段拒绝执行，此时工具未真正运行，不需要等待 diff
+ * - result.error 代表工具执行失败（例如 apply_diff 没有应用任何 diff），不进入确认流程
+ */
+export function hasFileModificationToolInResults(
+    toolResults: Array<{ id?: string; name: string; result: Record<string, unknown> }>
+): boolean {
+    return getFileModificationToolIds(toolResults).length > 0;
+}
+
+/**
+ * 获取需要用户确认的文件修改工具 ID 列表
+ */
+export function getFileModificationToolIds(
+    toolResults: Array<{ id?: string; name: string; result: Record<string, unknown> }>
+): string[] {
+    const toolNameSet = new Set<string>(FILE_MODIFICATION_TOOLS as unknown as string[]);
+    const ids: string[] = [];
+
+    for (const r of toolResults) {
+        const result = r.result as any;
+
+        if (result?.rejected) continue;
+        if (result?.error) continue;
+        if (!toolNameSet.has(r.name)) continue;
+        if (r.id) ids.push(r.id);
+    }
+
+    return ids;
+}

@@ -23,6 +23,7 @@ import type {
   RetryRequestData,
   EditAndRetryRequestData,
   ToolConfirmationResponseData,
+  ContinueWithAnnotationRequestData,
   DeleteToMessageRequestData,
   DeleteToMessageSuccessData,
   DeleteToMessageErrorData,
@@ -45,6 +46,7 @@ import type { DiffInterruptService } from './DiffInterruptService';
 import type { OrphanedToolCallService } from './OrphanedToolCallService';
 import type { ToolExecutionService } from './ToolExecutionService';
 import type { ToolCallParserService } from './ToolCallParserService';
+import { hasFileModificationToolInResults, getFileModificationToolIds } from '../utils';
 
 export type ChatStreamOutput =
   | ChatStreamChunkData
@@ -745,16 +747,8 @@ export class ChatFlowService {
     const allResponseParts = [...confirmedResult.responseParts, ...rejectedParts];
     const allCheckpoints = confirmedResult.checkpoints;
 
-    // 8. 发送工具执行结果
-    yield {
-      conversationId,
-      content: lastMessage,
-      toolIteration: true as const,
-      toolResults: allToolResults,
-      checkpoints: allCheckpoints,
-    } satisfies ChatStreamToolIterationData;
-
-    // 9. 将函数响应添加到历史
+    // 8. 将函数响应添加到历史（必须在 toolIteration / continueWithAnnotation 之前完成）
+    // 否则前端若过早触发 continueWithAnnotation，会导致历史缺少 tool result。
     const confirmFunctionResponseParts =
       confirmedResult.multimodalAttachments && confirmedResult.multimodalAttachments.length > 0
         ? [...confirmedResult.multimodalAttachments, ...allResponseParts]
@@ -769,16 +763,53 @@ export class ChatFlowService {
     // 计算工具响应消息的 token 数
     await this.tokenEstimationService.preCountUserMessageTokens(conversationId, config.type);
 
-    // 9.5 如果有用户批注，添加为新的用户消息
-    if (request.annotation && request.annotation.trim()) {
+    // 9. 检查是否包含文件修改工具（apply_diff / write_file）
+    const hasDiffTools = hasFileModificationToolInResults(allToolResults);
+    const diffToolIds = getFileModificationToolIds(allToolResults);
+
+    if (hasDiffTools) {
+      // 有 diff 工具：需要等待用户确认（保存/拒绝）并在确认后由前端调用 continueWithAnnotation
+      const pendingAnnotation = request.annotation && request.annotation.trim()
+        ? request.annotation.trim()
+        : undefined;
+
+      yield {
+        conversationId,
+        content: lastMessage,
+        toolIteration: true as const,
+        toolResults: allToolResults,
+        checkpoints: allCheckpoints,
+        needAnnotation: true as const,
+        pendingDiffToolIds: diffToolIds,
+        pendingAnnotation
+      } satisfies ChatStreamToolIterationData;
+
+      return;
+    }
+
+    // 10. 没有 diff 工具：如果有用户批注，直接加入历史并告知前端已使用
+    const annotation = request.annotation?.trim();
+    const hasAnnotation = !!annotation;
+
+    if (hasAnnotation) {
       await this.conversationManager.addContent(conversationId, {
         role: 'user',
-        parts: [{ text: request.annotation.trim() }],
+        parts: [{ text: annotation! }],
       });
       await this.tokenEstimationService.preCountUserMessageTokens(conversationId, config.type);
     }
 
-    // 10. 继续 AI 对话（让 AI 处理工具结果）
+    // 11. 发送工具执行结果（并告知批注是否已被使用）
+    yield {
+      conversationId,
+      content: lastMessage,
+      toolIteration: true as const,
+      toolResults: allToolResults,
+      checkpoints: allCheckpoints,
+      annotationUsed: hasAnnotation ? annotation : undefined
+    } satisfies ChatStreamToolIterationData;
+
+    // 12. 继续 AI 对话（让 AI 处理工具结果）
     const maxToolIterations = this.getMaxToolIterations();
 
     for await (const output of this.toolIterationLoopService.runToolLoop({
@@ -790,6 +821,71 @@ export class ChatFlowService {
       isFirstMessage: false,
       maxIterations: maxToolIterations,
       // 原逻辑未在确认后的循环中创建模型消息前检查点，这里保持一致
+      createBeforeModelCheckpoint: false,
+    })) {
+      yield output as ChatStreamOutput;
+    }
+  }
+
+  /**
+   * 继续对话（带批注）
+   *
+   * 用于文件修改工具执行后，等待用户确认 diff 并填写批注后继续对话。
+   */
+  async *continueWithAnnotation(
+    request: ContinueWithAnnotationRequestData,
+  ): AsyncGenerator<ChatStreamOutput> {
+    const { conversationId, configId, annotation } = request;
+
+    // 1. 确保对话存在
+    await this.ensureConversation(conversationId);
+
+    // 2. 验证配置
+    const config = await this.configManager.getConfig(configId);
+    if (!config) {
+      yield {
+        conversationId,
+        error: {
+          code: 'CONFIG_NOT_FOUND',
+          message: t('modules.api.chat.errors.configNotFound', { configId }),
+        },
+      };
+      return;
+    }
+
+    if (!config.enabled) {
+      yield {
+        conversationId,
+        error: {
+          code: 'CONFIG_DISABLED',
+          message: t('modules.api.chat.errors.configDisabled', { configId }),
+        },
+      };
+      return;
+    }
+
+    // 3. 写入批注（允许为空字符串，表示用户不想添加任何批注）
+    const trimmed = annotation?.trim();
+    if (trimmed) {
+      await this.conversationManager.addContent(conversationId, {
+        role: 'user',
+        parts: [{ text: trimmed }],
+      });
+      await this.tokenEstimationService.preCountUserMessageTokens(conversationId, config.type);
+    }
+
+    // 4. 继续工具调用循环
+    const maxToolIterations = this.getMaxToolIterations();
+
+    for await (const output of this.toolIterationLoopService.runToolLoop({
+      conversationId,
+      configId,
+      config,
+      abortSignal: request.abortSignal,
+      // continueWithAnnotation 不视为首条消息
+      isFirstMessage: false,
+      maxIterations: maxToolIterations,
+      // 保持与工具确认后继续对话一致：不创建模型消息前检查点
       createBeforeModelCheckpoint: false,
     })) {
       yield output as ChatStreamOutput;

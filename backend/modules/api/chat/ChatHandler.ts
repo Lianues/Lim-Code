@@ -35,6 +35,7 @@ import type {
     ChatStreamToolConfirmationData,
     ChatStreamToolsExecutingData,
     ToolConfirmationResponseData,
+    ContinueWithAnnotationRequestData,
     PendingToolCall,
     RetryRequestData,
     EditAndRetryRequestData,
@@ -326,6 +327,48 @@ export class ChatHandler {
             // 检查是否是用户取消错误
             if (error instanceof ChannelError && error.type === ErrorType.CANCELLED_ERROR) {
                 // 用户取消，yield cancelled 消息
+                yield {
+                    conversationId: request.conversationId,
+                    cancelled: true as const
+                } as any;
+                return;
+            }
+
+            // 检查是否是取消导致的错误（信号已中止）
+            if (request.abortSignal?.aborted) {
+                yield {
+                    conversationId: request.conversationId,
+                    cancelled: true as const
+                } as any;
+                return;
+            }
+
+            yield {
+                conversationId: request.conversationId,
+                error: this.formatError(error)
+            };
+            return;
+        }
+    }
+
+    /**
+     * 继续对话（带批注）
+     *
+     * 文件修改工具执行后，等待用户确认 diff 并填写批注后继续对话。
+     */
+    async *continueWithAnnotation(
+        request: ContinueWithAnnotationRequestData
+    ): AsyncGenerator<
+        ChatStreamChunkData | ChatStreamCompleteData | ChatStreamErrorData | ChatStreamToolIterationData | ChatStreamCheckpointsData | ChatStreamToolConfirmationData | ChatStreamToolsExecutingData
+    > {
+        try {
+            for await (const chunk of this.chatFlowService.continueWithAnnotation(request)) {
+                yield chunk as any;
+            }
+            return;
+        } catch (error) {
+            // 检查是否是用户取消错误
+            if (error instanceof ChannelError && error.type === ErrorType.CANCELLED_ERROR) {
                 yield {
                     conversationId: request.conversationId,
                     cancelled: true as const

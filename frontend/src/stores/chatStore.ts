@@ -26,8 +26,9 @@
  */
 
 import { defineStore } from 'pinia'
-import type { Attachment, StreamChunk } from '../types'
+import type { Attachment, StreamChunk, Message } from '../types'
 import { sendToExtension, onMessageFromExtension } from '../utils/vscode'
+import { generateId } from '../utils/format'
 
 // 导入模块
 import { createChatState } from './chat/state'
@@ -170,6 +171,198 @@ export const useChatStore = defineStore('chat', () => {
       addCheckpoint,
       updateConversationAfterMessage: () => updateConversationAfterMessage(state)
     })
+
+    // 流式结束/取消/错误时，重置内部发送标记（避免后续 continueWithAnnotation 被误判为重复）
+    if (chunk.type === 'complete' || chunk.type === 'cancelled' || chunk.type === 'error') {
+      isSendingAnnotation = false
+      state.isSendingDiffContinue.value = false
+    }
+
+    // diff 确认流程：当后端返回 pendingDiffToolIds 后，如果用户已提前处理完 diff，则自动继续
+    if (chunk.type === 'toolIteration' && (chunk as any).needAnnotation) {
+      // needAnnotation 的 toolIteration 代表后端已暂停当前流式请求
+      // 无论是否由 continueWithAnnotation 触发，都应解除发送锁，允许用户再次继续
+      isSendingAnnotation = false
+      state.isSendingDiffContinue.value = false
+
+      if (areAllRequiredDiffsProcessed() && !isSendingAnnotation) {
+        void continueDiffWithAnnotation(getDiffAnnotation()).catch(console.error)
+      }
+    }
+  }
+
+  // ============ diff 确认/批注流程（旧版兼容） ============
+
+  // 防止 continueWithAnnotation 重复发送（对应旧版 chatStore.ts 的竞态修复）
+  let isSendingAnnotation = false
+
+  /** 标记 diff 工具已处理 */
+  function markDiffToolProcessed(toolId: string, decision: 'accept' | 'reject'): void {
+    state.processedDiffTools.value.set(toolId, decision)
+    // 确保响应式更新
+    state.processedDiffTools.value = new Map(state.processedDiffTools.value)
+  }
+
+  /** diff 工具是否已处理 */
+  function isDiffToolProcessed(toolId: string): boolean {
+    return state.processedDiffTools.value.has(toolId)
+  }
+
+  /** 获取 diff 工具处理结果 */
+  function getDiffToolDecision(toolId: string): 'accept' | 'reject' | undefined {
+    return state.processedDiffTools.value.get(toolId)
+  }
+
+  /** 是否全部待确认的 diff 工具都已处理 */
+  function areAllRequiredDiffsProcessed(): boolean {
+    if (state.processedDiffTools.value.size === 0) return false
+    if (state.pendingDiffToolIds.value.length === 0) return false
+
+    for (const id of state.pendingDiffToolIds.value) {
+      if (!state.processedDiffTools.value.has(id)) {
+        return false
+      }
+    }
+    return true
+  }
+
+  /** 是否仍有未处理的 diff（用于 UI 提示） */
+  function hasRemainingRequiredDiffs(): boolean {
+    if (state.processedDiffTools.value.size === 0) return false
+    if (state.pendingDiffToolIds.value.length === 0) return false
+
+    for (const id of state.pendingDiffToolIds.value) {
+      if (!state.processedDiffTools.value.has(id)) {
+        return true
+      }
+    }
+    return false
+  }
+
+  function setDiffAnnotation(annotation: string): void {
+    state.diffAnnotation.value = annotation
+  }
+
+  function getDiffAnnotation(): string {
+    return state.diffAnnotation.value || ''
+  }
+
+  function addHandledDiffId(diffId: string): void {
+    state.handledDiffIds.value.add(diffId)
+    state.handledDiffIds.value = new Set(state.handledDiffIds.value)
+  }
+
+  function isHandledDiffId(diffId: string): boolean {
+    return state.handledDiffIds.value.has(diffId)
+  }
+
+  function addHandledFilePath(filePath: string, decision: 'accept' | 'reject'): void {
+    state.handledFilePaths.value.set(filePath, decision)
+    state.handledFilePaths.value = new Map(state.handledFilePaths.value)
+  }
+
+  function getHandledFilePathsCount(paths: string[]): number {
+    return paths.filter(p => state.handledFilePaths.value.has(p)).length
+  }
+
+  function getToolDecisionFromHandledPaths(paths: string[]): 'accept' | 'reject' | undefined {
+    if (paths.length === 0) return undefined
+    const handledCount = getHandledFilePathsCount(paths)
+    if (handledCount < paths.length) return undefined
+    return state.handledFilePaths.value.get(paths[0])
+  }
+
+  /**
+   * diff 确认完成后继续对话（会发送 continueWithAnnotation 流请求）
+   */
+  async function continueDiffWithAnnotation(annotation: string): Promise<void> {
+    if (isSendingAnnotation) return
+
+    const conversationId = state.currentConversationId.value
+    const configId = state.configId.value
+    if (!conversationId || !configId) return
+
+    // 同时检查 isSendingAnnotation（内部标志）
+    isSendingAnnotation = true
+    state.isSendingDiffContinue.value = true
+
+    // 不要清空 processedDiffTools：否则 UI 会回退到 pending
+    state.error.value = null
+    state.isLoading.value = true
+    state.pendingDiffToolIds.value = []
+    state.toolCallBuffer.value = ''
+    state.inToolCall.value = null
+
+    // 合并 pendingAnnotation（工具确认阶段）和 diffAnnotation（diff 阶段）
+    const storedAnnotation = state.pendingAnnotation.value
+    const newAnnotation = (annotation || '').trim()
+
+    let finalAnnotation = ''
+    if (storedAnnotation && newAnnotation) {
+      finalAnnotation = `${storedAnnotation}\n${newAnnotation}`
+    } else {
+      finalAnnotation = storedAnnotation || newAnnotation
+    }
+
+    // pendingAnnotation 已在 UI 中展示过，发送后清空
+    state.pendingAnnotation.value = ''
+
+    // 更新对话元数据（尽力而为）
+    const conv = state.conversations.value.find(c => c.id === conversationId)
+    if (conv) {
+      conv.updatedAt = Date.now()
+      // 如果 newAnnotation 存在且 storedAnnotation 不存在，则会新增一条用户消息 + 一条 assistant 占位消息
+      conv.messageCount = state.allMessages.value.length + (newAnnotation && !storedAnnotation ? 2 : 1)
+    }
+
+    // 如果这是 diff 阶段新输入的批注，需要在 UI 中追加用户消息
+    if (newAnnotation && !storedAnnotation) {
+      const userMessage: Message = {
+        id: generateId(),
+        role: 'user',
+        content: newAnnotation,
+        timestamp: Date.now(),
+        parts: [{ text: newAnnotation }]
+      }
+      state.allMessages.value.push(userMessage)
+    }
+
+    // 创建新的占位消息用于接收后续 AI 响应
+    const newAssistantMessageId = generateId()
+    const newAssistantMessage: Message = {
+      id: newAssistantMessageId,
+      role: 'assistant',
+      content: '',
+      timestamp: Date.now(),
+      streaming: true,
+      metadata: {
+        modelVersion: computed.currentModelName.value
+      }
+    }
+
+    state.allMessages.value.push(newAssistantMessage)
+    state.streamingMessageId.value = newAssistantMessageId
+    state.isStreaming.value = true
+    state.isWaitingForResponse.value = true
+
+    try {
+      await sendToExtension('continueWithAnnotation', {
+        conversationId,
+        configId,
+        annotation: finalAnnotation
+      })
+    } catch (err: any) {
+      console.error('continueWithAnnotation failed:', err)
+      state.error.value = {
+        code: 'CONTINUE_WITH_ANNOTATION_ERROR',
+        message: err?.message || String(err)
+      }
+      // 失败时解除锁，允许用户重试
+      isSendingAnnotation = false
+      state.isSendingDiffContinue.value = false
+    } finally {
+      state.isLoading.value = false
+    }
   }
 
   // ============ 初始化 ============
@@ -217,6 +410,14 @@ export const useChatStore = defineStore('chat', () => {
     isWaitingForResponse: state.isWaitingForResponse,
     retryStatus: state.retryStatus,
     error: state.error,
+
+    // diff 确认/批注流程（旧版兼容）
+    pendingDiffToolIds: state.pendingDiffToolIds,
+    pendingAnnotation: state.pendingAnnotation,
+    processedDiffTools: state.processedDiffTools,
+    isSendingDiffContinue: state.isSendingDiffContinue,
+    handledDiffIds: state.handledDiffIds,
+    handledFilePaths: state.handledFilePaths,
     
     // 计算属性
     currentConversation: computed.currentConversation,
@@ -286,6 +487,21 @@ export const useChatStore = defineStore('chat', () => {
     inputValue: state.inputValue,
     setInputValue,
     clearInputValue,
+
+    // diff 确认/批注流程（旧版兼容）
+    markDiffToolProcessed,
+    isDiffToolProcessed,
+    getDiffToolDecision,
+    areAllRequiredDiffsProcessed,
+    hasRemainingRequiredDiffs,
+    setDiffAnnotation,
+    getDiffAnnotation,
+    continueDiffWithAnnotation,
+    addHandledDiffId,
+    isHandledDiffId,
+    addHandledFilePath,
+    getHandledFilePathsCount,
+    getToolDecisionFromHandledPaths,
     
     // 上下文总结
     summarizeContext,

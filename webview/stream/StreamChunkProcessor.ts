@@ -42,7 +42,12 @@ export class StreamChunkProcessor {
         content: chunk.content,
         toolIteration: true,
         toolResults: chunk.toolResults,
-        checkpoints: chunk.checkpoints
+        checkpoints: chunk.checkpoints,
+        // diff 确认/批注流程所需字段（可选）
+        needAnnotation: chunk.needAnnotation,
+        pendingDiffToolIds: chunk.pendingDiffToolIds,
+        annotationUsed: chunk.annotationUsed,
+        pendingAnnotation: chunk.pendingAnnotation
       });
     } else if ('content' in chunk && chunk.content && !('cancelled' in chunk)) {
       this.sendMessage('complete', {
