@@ -20,6 +20,7 @@ import ApplyDiffConfig from './tools/files/apply_diff.vue'
 import ExecuteCommandConfig from './tools/terminal/execute_command.vue'
 import FindFilesConfig from './tools/search/find_files.vue'
 import SearchInFilesConfig from './tools/search/search_in_files.vue'
+import GoogleSearchConfig from './tools/search/google_search.vue'
 import GenerateImageConfig from './tools/media/generate_image.vue'
 import RemoveBackgroundConfig from './tools/media/remove_background.vue'
 import CropImageConfig from './tools/media/crop_image.vue'
@@ -63,6 +64,7 @@ function hasConfigPanel(toolName: string): boolean {
     'execute_command',
     'find_files',
     'search_in_files',
+    'google_search',
     'generate_image',
     'remove_background',
     'crop_image',
@@ -415,6 +417,9 @@ onMounted(() => {
             />
             <SearchInFilesConfig
               v-if="tool.name === 'search_in_files' && isConfigExpanded(tool.name)"
+            />
+            <GoogleSearchConfig
+              v-if="tool.name === 'google_search' && isConfigExpanded(tool.name)"
             />
             <GenerateImageConfig
               v-if="tool.name === 'generate_image' && isConfigExpanded(tool.name)"

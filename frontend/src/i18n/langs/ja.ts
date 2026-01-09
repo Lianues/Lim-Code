@@ -883,6 +883,28 @@ const ja: LanguageMessages = {
                     warning: '画像生成機能を使用する前に API Key を設定してください'
                 }
             },
+            googleSearch: {
+                title: 'Google 検索',
+                useDedicatedModel: {
+                    label: '専用検索チャネルを使用',
+                    hint: '有効にすると、検索リクエストは下で指定したチャネルとモデルを使用します。無効の場合、現在の会話のチャネルとモデルを使用します。'
+                },
+                selectChannel: {
+                    label: 'チャネルを選択',
+                    hint: 'Gemini チャネルのみ対応（Google Search は Gemini の grounding 機能に依存）',
+                    placeholder: '検索用の Gemini チャネルを選択'
+                },
+                selectModel: {
+                    label: 'モデルを選択',
+                    hint: 'このチャネルに追加されたモデルのみ表示されます。さらにモデルを追加するには、チャネル設定で構成してください。',
+                    placeholder: '検索用のモデルを選択'
+                },
+                currentModelHint: '現在は会話のチャネルとモデルを使用して検索します',
+                warningHint: 'チャネルとモデルを選択してください。未選択の場合、会話のチャネルとモデルが検索に使用されます',
+                noGeminiChannelError: '利用可能な Gemini チャネルが見つかりません。Google Search ツールは Gemini チャネルのみ対応です。先にチャネル設定で Gemini チャネルを追加して有効化してください。',
+                invalidChannelError: '選択されたチャネルは Gemini タイプではありません。Gemini チャネルを選択してください。',
+                saving: '保存中...'
+            },
             mcpSettings: {
                 toolbar: {
                     addServer: 'サーバーを追加',
@@ -1688,6 +1710,7 @@ const ja: LanguageMessages = {
             search: {
                 findFiles: 'ファイルを検索',
                 searchInFiles: 'ファイル内を検索',
+                googleSearch: 'Google 検索',
                 filesFound: 'ファイルが見つかりました',
                 matchesFound: '一致が見つかりました',
                 noResults: '結果なし',

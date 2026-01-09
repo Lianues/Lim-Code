@@ -883,6 +883,28 @@ const en: LanguageMessages = {
                     warning: 'Please configure API Key before using image generation feature'
                 }
             },
+            googleSearch: {
+                title: 'Google Search',
+                useDedicatedModel: {
+                    label: 'Use Dedicated Search Channel',
+                    hint: 'When enabled, search requests will use the channel and model specified below; otherwise, it will use the current conversation channel and model.'
+                },
+                selectChannel: {
+                    label: 'Select Channel',
+                    hint: 'Only Gemini channels are supported (Google Search relies on Gemini grounding feature)',
+                    placeholder: 'Select Gemini channel for search'
+                },
+                selectModel: {
+                    label: 'Select Model',
+                    hint: 'Only models added to this channel are shown. To add more models, please go to channel settings.',
+                    placeholder: 'Select model for search'
+                },
+                currentModelHint: 'Currently using conversation channel and model for search',
+                warningHint: 'Please select channel and model, otherwise conversation channel and model will be used for search',
+                noGeminiChannelError: 'No available Gemini channels found. Google Search tool only supports Gemini channels. Please add and enable a Gemini channel in the channel settings first.',
+                invalidChannelError: 'The selected channel is not a Gemini type. Please select a Gemini channel.',
+                saving: 'Saving...'
+            },
             mcpSettings: {
                 toolbar: {
                     addServer: 'Add Server',
@@ -1688,6 +1710,7 @@ const en: LanguageMessages = {
             search: {
                 findFiles: 'Find Files',
                 searchInFiles: 'Search in Files',
+                googleSearch: 'Google Search',
                 filesFound: 'Files found',
                 matchesFound: 'Matches found',
                 noResults: 'No results',
