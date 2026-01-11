@@ -11,6 +11,13 @@
  * - 使用累加的单条消息 token 数，而不是 API 返回的累计值，避免上下文振荡
  * - 保证历史以 user 消息开始（Gemini API 要求）
  * - 总结消息之前的历史会被过滤
+ * - 裁剪状态持久化到会话的 custom metadata 中
+ * - 每次计算时会检查是否可以恢复更多历史（思考 token 减少、设置变更时）
+ *
+ * Token 计算包含：
+ * - 系统提示词（静态模板）
+ * - 动态上下文（文件树、诊断信息、固定文件等实际填充内容）
+ * - 对话历史消息
  */
 
 import type { Content } from '../../../conversation/types';
@@ -33,6 +40,19 @@ interface RoundTokenInfo {
     cumulativeTokens: number;
 }
 
+/**
+ * 持久化的裁剪状态
+ * 
+ * 存储在会话的 custom metadata 中，key 为 'trimState'
+ */
+interface PersistedTrimState {
+    /** 裁剪起始索引 */
+    trimStartIndex: number;
+}
+
+/** 裁剪状态在 custom metadata 中的 key */
+const TRIM_STATE_KEY = 'trimState';
+
 export class ContextTrimService {
     constructor(
         private conversationManager: ConversationManager,
@@ -40,6 +60,35 @@ export class ContextTrimService {
         private tokenEstimationService: TokenEstimationService,
         private messageBuilderService: MessageBuilderService
     ) {}
+    
+    /**
+     * 获取持久化的裁剪状态
+     */
+    private async getTrimState(conversationId: string): Promise<PersistedTrimState | null> {
+        const state = await this.conversationManager.getCustomMetadata(conversationId, TRIM_STATE_KEY);
+        return state as PersistedTrimState | null;
+    }
+    
+    /**
+     * 保存裁剪状态到持久化存储
+     */
+    private async saveTrimState(conversationId: string, state: PersistedTrimState): Promise<void> {
+        await this.conversationManager.setCustomMetadata(conversationId, TRIM_STATE_KEY, state);
+    }
+    
+    /**
+     * 清除指定会话的裁剪状态
+     * 
+     * 在以下情况下应调用：
+     * - 删除消息
+     * - 回退到检查点
+     * - 编辑消息
+     * 
+     * @param conversationId 会话 ID
+     */
+    async clearTrimState(conversationId: string): Promise<void> {
+        await this.conversationManager.setCustomMetadata(conversationId, TRIM_STATE_KEY, null);
+    }
 
     /**
      * 识别对话回合
@@ -205,6 +254,8 @@ export class ContextTrimService {
      * 1. 如果有总结消息，从最后一个总结消息开始获取历史
      * 2. 在此基础上，如果 token 数仍超过阈值，继续从总结后的回合中裁剪
      * 3. 使用每条消息的 tokenCountByChannel 来累加计算，避免上下文振荡
+     * 4. 裁剪状态保存在内存中，避免重复触发裁剪
+     * 5. 每次计算时检查是否可以恢复更多历史（思考 token 减少时）
      *
      * @param conversationId 对话 ID
      * @param config 渠道配置
@@ -230,8 +281,17 @@ export class ContextTrimService {
         // 查找最后一个总结消息
         const lastSummaryIndex = this.findLastSummaryIndex(fullHistory);
         
-        // 确定有效的起始索引（如果有总结，从总结开始；否则从头开始）
-        const effectiveStartIndex = lastSummaryIndex >= 0 ? lastSummaryIndex : 0;
+        // 基础起始索引（只考虑 summary）
+        const summaryStartIndex = lastSummaryIndex >= 0 ? lastSummaryIndex : 0;
+        
+        // 从持久化存储获取裁剪状态
+        let savedState = await this.getTrimState(conversationId);
+        
+        // 检测回退：如果保存的 trimStartIndex 超出了当前历史长度，清除状态
+        if (savedState && savedState.trimStartIndex >= fullHistory.length) {
+            await this.clearTrimState(conversationId);
+            savedState = null;
+        }
         
         // 计算系统提示词的 token 数
         const systemPrompt = this.promptManager.getSystemPrompt();
@@ -240,14 +300,15 @@ export class ContextTrimService {
             systemPromptTokens = await this.tokenEstimationService.countSystemPromptTokens(systemPrompt, channelType);
         }
         
-        // 计算从 effectiveStartIndex 开始的消息 token 数
-        // 这是解决上下文振荡问题的关键：使用累加的单条消息 token 数，而不是 API 返回的累计值
-        let estimatedTotalTokens = systemPromptTokens;  // 从系统提示词开始
-        let hasEstimatedTokens = systemPromptTokens > 0;
+        // 计算动态上下文（末尾部分提示词）的 token 数
+        const dynamicContextText = this.promptManager.getDynamicContextText();
+        let dynamicContextTokens = 0;
+        if (dynamicContextText) {
+            dynamicContextTokens = await this.tokenEstimationService.countSystemPromptTokens(dynamicContextText, channelType);
+        }
         
-        // 用于记录每个回合结束时的累计 token 数（基于自计算的累加值）
-        const roundTokenInfos: RoundTokenInfo[] = [];
-        let currentRoundStartIndex = -1;
+        // 系统提示词和动态上下文的总 token 数
+        const promptTokens = systemPromptTokens + dynamicContextTokens;
         
         // 从 historyOptions 获取用户配置
         const sendHistoryThoughts = historyOptions.sendHistoryThoughts ?? false;
@@ -292,38 +353,14 @@ export class ContextTrimService {
             }
         }
         
-        // 累加 token 数（继续在下一个方法部分）
-        const tokenAccumulationResult = this.accumulateTokens(
-            fullHistory,
-            effectiveStartIndex,
-            lastNonFunctionResponseUserIndex,
-            historyThoughtMinIndex,
-            historyThoughtMaxIndex,
-            sendHistoryThoughts,
-            sendHistoryThoughtSignatures,
-            sendCurrentThoughts,
-            sendCurrentThoughtSignatures,
-            systemPromptTokens
-        );
-        
-        estimatedTotalTokens = tokenAccumulationResult.estimatedTotalTokens;
-        hasEstimatedTokens = tokenAccumulationResult.hasEstimatedTokens || hasEstimatedTokens;
-        const roundsAfterStart = tokenAccumulationResult.roundTokenInfos;
-        
-        // 如果没有任何消息，直接返回空历史
-        if (!hasEstimatedTokens) {
-            const history = await this.conversationManager.getHistoryForAPI(conversationId, historyOptions);
-            return { history, trimStartIndex: 0 };
-        }
-        
         // 检查是否启用上下文阈值检测
         if (!config.contextThresholdEnabled) {
-            // 未启用阈值检测，直接返回从起始索引开始的历史
+            // 未启用阈值检测，直接返回从 summary 开始的历史
             const history = await this.conversationManager.getHistoryForAPI(conversationId, {
                 ...historyOptions,
-                startIndex: effectiveStartIndex
+                startIndex: summaryStartIndex
             });
-            return { history, trimStartIndex: effectiveStartIndex };
+            return { history, trimStartIndex: summaryStartIndex };
         }
         
         // 获取最大上下文和阈值
@@ -331,24 +368,91 @@ export class ContextTrimService {
         const thresholdConfig = config.contextThreshold ?? '80%';
         const threshold = this.calculateThreshold(thresholdConfig, maxContextTokens);
         
-        // 如果估算总 token 未超过阈值，直接返回从起始索引开始的历史
-        if (estimatedTotalTokens <= threshold) {
+        // ========== 核心逻辑：检查是否可以恢复更多历史 ==========
+        // 首先计算从 summaryStartIndex 开始的完整 token 数
+        const fullTokenResult = this.accumulateTokens(
+            fullHistory,
+            summaryStartIndex,
+            lastNonFunctionResponseUserIndex,
+            historyThoughtMinIndex,
+            historyThoughtMaxIndex,
+            sendHistoryThoughts,
+            sendHistoryThoughtSignatures,
+            sendCurrentThoughts,
+            sendCurrentThoughtSignatures,
+            promptTokens
+        );
+        
+        // 如果完整历史不超过阈值，清除裁剪状态，返回完整历史
+        if (fullTokenResult.estimatedTotalTokens <= threshold) {
+            await this.clearTrimState(conversationId);
             const history = await this.conversationManager.getHistoryForAPI(conversationId, {
                 ...historyOptions,
-                startIndex: effectiveStartIndex
+                startIndex: summaryStartIndex
             });
-            return { history, trimStartIndex: effectiveStartIndex };
+            return { history, trimStartIndex: summaryStartIndex };
         }
         
-        // 超过阈值，需要裁剪
-        return this.performContextTrim(
+        // 完整历史超过阈值，需要裁剪
+        // 如果有保存的裁剪状态，检查使用该状态后是否仍超过阈值
+        if (savedState && savedState.trimStartIndex > summaryStartIndex) {
+            const trimmedTokenResult = this.accumulateTokens(
+                fullHistory,
+                savedState.trimStartIndex,
+                lastNonFunctionResponseUserIndex,
+                historyThoughtMinIndex,
+                historyThoughtMaxIndex,
+                sendHistoryThoughts,
+                sendHistoryThoughtSignatures,
+                sendCurrentThoughts,
+                sendCurrentThoughtSignatures,
+                promptTokens
+            );
+            
+            // 如果使用保存的状态后不超过阈值，直接使用
+            if (trimmedTokenResult.estimatedTotalTokens <= threshold) {
+                let trimmedHistory = await this.conversationManager.getHistoryForAPI(conversationId, {
+                    ...historyOptions,
+                    startIndex: savedState.trimStartIndex
+                });
+                
+                // 确保历史以 user 消息开始
+                let finalTrimStartIndex = savedState.trimStartIndex;
+                if (trimmedHistory.length > 0 && trimmedHistory[0].role !== 'user') {
+                    const firstUserIndex = trimmedHistory.findIndex(m => m.role === 'user');
+                    if (firstUserIndex > 0) {
+                        trimmedHistory = trimmedHistory.slice(firstUserIndex);
+                        finalTrimStartIndex = savedState.trimStartIndex + firstUserIndex;
+                    }
+                }
+                
+                return { history: trimmedHistory, trimStartIndex: finalTrimStartIndex };
+            }
+            
+            // 使用保存的状态后仍然超过阈值，需要进一步裁剪
+            // 使用 trimmedTokenResult 的回合信息进行裁剪
+            return await this.performContextTrim(
+                conversationId,
+                config,
+                historyOptions,
+                savedState.trimStartIndex,
+                trimmedTokenResult.estimatedTotalTokens,
+                promptTokens,
+                trimmedTokenResult.roundTokenInfos,
+                threshold,
+                maxContextTokens
+            );
+        }
+        
+        // 没有保存的状态，或者状态无效，从 summaryStartIndex 开始裁剪
+        return await this.performContextTrim(
             conversationId,
             config,
             historyOptions,
-            effectiveStartIndex,
-            estimatedTotalTokens,
-            systemPromptTokens,
-            roundsAfterStart,
+            summaryStartIndex,
+            fullTokenResult.estimatedTotalTokens,
+            promptTokens,
+            fullTokenResult.roundTokenInfos,
             threshold,
             maxContextTokens
         );
@@ -357,6 +461,7 @@ export class ContextTrimService {
     /**
      * 累加消息的 token 数
      * 
+     * @param promptTokens 系统提示词 + 动态上下文的总 token 数
      * @returns 累加结果
      */
     private accumulateTokens(
@@ -369,10 +474,10 @@ export class ContextTrimService {
         sendHistoryThoughtSignatures: boolean,
         sendCurrentThoughts: boolean,
         sendCurrentThoughtSignatures: boolean,
-        systemPromptTokens: number
+        promptTokens: number  // 系统提示词 + 动态上下文的总 token 数
     ): { estimatedTotalTokens: number; hasEstimatedTokens: boolean; roundTokenInfos: RoundTokenInfo[] } {
-        let estimatedTotalTokens = systemPromptTokens;
-        let hasEstimatedTokens = systemPromptTokens > 0;
+        let estimatedTotalTokens = promptTokens;
+        let hasEstimatedTokens = promptTokens > 0;
         const roundTokenInfos: RoundTokenInfo[] = [];
         let currentRoundStartIndex = -1;
         
@@ -447,6 +552,8 @@ export class ContextTrimService {
 
     /**
      * 执行上下文裁剪
+     * 
+     * @param promptTokens 系统提示词 + 动态上下文的总 token 数
      */
     private async performContextTrim(
         conversationId: string,
@@ -454,7 +561,7 @@ export class ContextTrimService {
         historyOptions: GetHistoryOptions,
         effectiveStartIndex: number,
         estimatedTotalTokens: number,
-        systemPromptTokens: number,
+        promptTokens: number,  // 系统提示词 + 动态上下文的总 token 数
         roundsAfterStart: RoundTokenInfo[],
         threshold: number,
         maxContextTokens: number
@@ -469,10 +576,14 @@ export class ContextTrimService {
         }
         
         // 计算额外裁剪的 token 数
+        // 额外裁剪是基于最大上下文计算的
+        // 例如：最大上下文 200k，阈值 80%（160k），额外裁剪 30%（60k）
+        // 当超过 160k 时触发裁剪，裁剪目标 = 160k - 60k = 100k
+        // 这样下次从 100k 增长到 160k 需要更多回合，避免频繁触发裁剪
         const extraCutConfig = config.contextTrimExtraCut ?? 0;
         const extraCut = this.calculateThreshold(extraCutConfig, maxContextTokens);
         
-        // 实际保留目标 = 阈值 - 额外裁剪（裁剪更多）
+        // 实际保留目标 = 阈值 - 额外裁剪
         const targetTokens = Math.max(0, threshold - extraCut);
         
         // 使用自计算的累计 token 数来计算需要跳过多少回合
@@ -480,7 +591,7 @@ export class ContextTrimService {
         
         // 从 k=1 开始尝试，k 表示要跳过的回合数（从第 k 个回合开始保留）
         for (let k = 1; k < roundsAfterStart.length; k++) {
-            const skippedTokens = roundsAfterStart[k - 1].cumulativeTokens - systemPromptTokens;
+            const skippedTokens = roundsAfterStart[k - 1].cumulativeTokens - promptTokens;
             const remainingTokens = estimatedTotalTokens - skippedTokens;
             
             if (remainingTokens <= targetTokens) {
@@ -518,10 +629,14 @@ export class ContextTrimService {
             const firstUserIndex = trimmedHistory.findIndex(m => m.role === 'user');
             if (firstUserIndex > 0) {
                 trimmedHistory = trimmedHistory.slice(firstUserIndex);
-                // 调整起始索引
                 finalTrimStartIndex = trimStartIndex + firstUserIndex;
             }
         }
+        
+        // 保存裁剪状态到持久化存储
+        await this.saveTrimState(conversationId, {
+            trimStartIndex: finalTrimStartIndex
+        });
         
         return { history: trimmedHistory, trimStartIndex: finalTrimStartIndex };
     }

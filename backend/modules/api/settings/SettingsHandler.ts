@@ -8,6 +8,7 @@ import { t } from '../../../i18n';
 import type { SettingsManager } from '../../settings/SettingsManager';
 import type { ToolRegistry } from '../../../tools/ToolRegistry';
 import { TokenCountService } from '../../channel/TokenCountService';
+import { getPromptManager } from '../../prompt/PromptManager';
 import type {
     GetSettingsRequest,
     GetSettingsResponse,
@@ -714,6 +715,261 @@ export class SettingsHandler {
                     message: err.message || 'Token count failed'
                 }
             };
+        }
+    }
+    
+    /**
+     * 分别计算静态模板和动态上下文的 token 数
+     *
+     * 静态部分：模板本身的 token 数
+     * 动态部分：实际填充后的内容（文件树、诊断等）
+     *
+     * @param request 包含静态模板文本和渠道类型
+     * @returns 分别的 token 计数结果
+     */
+    async countSystemPromptTokensSeparate(request: {
+        staticText: string;
+        channelType: 'gemini' | 'openai' | 'anthropic';
+    }): Promise<{
+        success: boolean;
+        staticTokens?: number;
+        dynamicTokens?: number;
+        error?: { code: string; message: string };
+    }> {
+        try {
+            const { channelType } = request;
+            
+            // 获取 token 计数配置
+            const tokenCountConfig = this.settingsManager.getTokenCountConfig();
+            
+            // 更新代理设置
+            const proxySettings = this.settingsManager.getProxySettings();
+            this.tokenCountService.setProxyUrl(
+                proxySettings?.enabled ? proxySettings.url : undefined
+            );
+            
+            // 使用 PromptManager 生成实际的系统提示词（替换占位符后的内容）
+            const promptManager = getPromptManager();
+            const actualSystemPrompt = promptManager.refreshAndGetPrompt();
+            
+            // 计算静态模板的 token 数
+            const staticContents = [{
+                role: 'user' as const,
+                parts: [{ text: actualSystemPrompt }]
+            }];
+            
+            const staticResult = await this.tokenCountService.countTokens(
+                channelType,
+                tokenCountConfig,
+                staticContents
+            );
+            
+            // 获取实际的动态上下文内容
+            const dynamicText = promptManager.getDynamicContextText();
+            
+            let dynamicTokens = 0;
+            if (dynamicText) {
+                const dynamicContents = [{
+                    role: 'user' as const,
+                    parts: [{ text: dynamicText }]
+                }];
+                
+                const dynamicResult = await this.tokenCountService.countTokens(
+                    channelType,
+                    tokenCountConfig,
+                    dynamicContents
+                );
+                
+                if (dynamicResult.success && dynamicResult.totalTokens !== undefined) {
+                    dynamicTokens = dynamicResult.totalTokens;
+                }
+            }
+            
+            if (staticResult.success) {
+                return {
+                    success: true,
+                    staticTokens: staticResult.totalTokens || 0,
+                    dynamicTokens
+                };
+            } else {
+                return {
+                    success: false,
+                    error: {
+                        code: 'TOKEN_COUNT_FAILED',
+                        message: staticResult.error || 'Token count failed'
+                    }
+                };
+            }
+        } catch (error) {
+            const err = error as any;
+            return {
+                success: false,
+                error: {
+                    code: err.code || 'UNKNOWN_ERROR',
+                    message: err.message || 'Token count failed'
+                }
+            };
+        }
+    }
+    
+    /**
+     * 检查是否需要显示版本更新公告
+     * 
+     * 比较当前版本与用户上次查看的版本，如果不同则返回更新内容
+     * 如果用户跨越多个版本升级，会返回所有跨越版本的 changelog
+     */
+    async checkAnnouncement(): Promise<{
+        shouldShow: boolean;
+        version: string;
+        changelog: string;
+    }> {
+        try {
+            // 获取当前版本
+            const currentVersion = this.getCurrentVersion();
+            
+            // 获取用户上次查看的版本
+            const lastReadVersion = this.settingsManager.getLastReadAnnouncementVersion();
+            
+            // 如果版本相同，不显示公告
+            if (lastReadVersion === currentVersion) {
+                return {
+                    shouldShow: false,
+                    version: currentVersion,
+                    changelog: ''
+                };
+            }
+            
+            // 读取从上次版本到当前版本的所有 changelog
+            const changelog = await this.getChangelogSinceVersion(lastReadVersion, currentVersion);
+            
+            return {
+                shouldShow: true,
+                version: currentVersion,
+                changelog
+            };
+        } catch (error) {
+            console.error('Failed to check announcement:', error);
+            return {
+                shouldShow: false,
+                version: '',
+                changelog: ''
+            };
+        }
+    }
+    
+    /**
+     * 标记公告已读
+     */
+    async markAnnouncementRead(version: string): Promise<void> {
+        this.settingsManager.setLastReadAnnouncementVersion(version);
+    }
+    
+    /**
+     * 获取当前插件版本
+     */
+    private getCurrentVersion(): string {
+        try {
+            const vscode = require('vscode');
+            const extension = vscode.extensions.getExtension('Lianues.limcode');
+            if (extension) {
+                return extension.packageJSON.version || '';
+            }
+            return '';
+        } catch {
+            return '';
+        }
+    }
+    
+    /**
+     * 比较两个版本号
+     * 返回: -1 表示 a < b, 0 表示 a == b, 1 表示 a > b
+     */
+    private compareVersions(a: string, b: string): number {
+        const aParts = a.split('.').map(n => parseInt(n, 10) || 0);
+        const bParts = b.split('.').map(n => parseInt(n, 10) || 0);
+        
+        const maxLen = Math.max(aParts.length, bParts.length);
+        for (let i = 0; i < maxLen; i++) {
+            const aNum = aParts[i] || 0;
+            const bNum = bParts[i] || 0;
+            if (aNum < bNum) return -1;
+            if (aNum > bNum) return 1;
+        }
+        return 0;
+    }
+    
+    /**
+     * 获取从指定版本到当前版本的所有 changelog
+     * 
+     * @param fromVersion 上次读取的版本（不包含），如果为空则只返回当前版本
+     * @param toVersion 当前版本（包含）
+     */
+    private async getChangelogSinceVersion(fromVersion: string | undefined, toVersion: string): Promise<string> {
+        try {
+            const vscode = require('vscode');
+            const fs = require('fs');
+            const path = require('path');
+            
+            // 获取插件路径
+            const extension = vscode.extensions.getExtension('Lianues.limcode');
+            if (!extension) {
+                return '';
+            }
+            
+            const changelogPath = path.join(extension.extensionPath, 'CHANGELOG.md');
+            
+            if (!fs.existsSync(changelogPath)) {
+                return '';
+            }
+            
+            const content = fs.readFileSync(changelogPath, 'utf-8');
+            
+            // 解析所有版本及其内容
+            const versionBlockRegex = /## \[(\d+\.\d+\.\d+)\][^\n]*\n([\s\S]*?)(?=## \[|$)/g;
+            const versions: { version: string; content: string }[] = [];
+            
+            let match;
+            while ((match = versionBlockRegex.exec(content)) !== null) {
+                versions.push({
+                    version: match[1],
+                    content: match[2].trim()
+                });
+            }
+            
+            // 筛选需要的版本（大于 fromVersion 且小于等于 toVersion）
+            const relevantVersions = versions.filter(v => {
+                // 版本必须 <= toVersion
+                if (this.compareVersions(v.version, toVersion) > 0) {
+                    return false;
+                }
+                // 如果没有 fromVersion，只返回当前版本
+                if (!fromVersion) {
+                    return v.version === toVersion;
+                }
+                // 版本必须 > fromVersion
+                return this.compareVersions(v.version, fromVersion) > 0;
+            });
+            
+            // 按版本号降序排列（新版本在前）
+            relevantVersions.sort((a, b) => this.compareVersions(b.version, a.version));
+            
+            // 组合所有版本的 changelog
+            if (relevantVersions.length === 0) {
+                return '';
+            }
+            
+            // 如果只有一个版本，直接返回内容
+            if (relevantVersions.length === 1) {
+                return relevantVersions[0].content;
+            }
+            
+            // 多个版本，每个版本加上版本号标题
+            return relevantVersions
+                .map(v => `## v${v.version}\n${v.content}`)
+                .join('\n\n');
+        } catch (error) {
+            console.error('Failed to read changelog:', error);
+            return '';
         }
     }
 }

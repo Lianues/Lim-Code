@@ -85,6 +85,10 @@ const ja: LanguageMessages = {
     },
 
     components: {
+        announcement: {
+            title: '更新情報',
+            gotIt: '了解'
+        },
         attachment: {
             preview: 'プレビュー',
             download: 'ダウンロード',
@@ -1034,19 +1038,45 @@ const ja: LanguageMessages = {
                     description: 'システムプロンプトを直接記述し、{{$VARIABLE}} 形式で変数を参照します。送信時に実際の内容に置き換えられます',
                     placeholder: 'システムプロンプトを入力、{{$ENVIRONMENT}} などの変数を使用できます...'
                 },
+                staticSection: {
+                    title: '静的システムプロンプト',
+                    description: 'システムプロンプトに含まれ、内容は比較的安定しており、APIプロバイダーによるキャッシュで応答を高速化できます。{{$VARIABLE}} 形式で静的変数を参照します。',
+                    placeholder: '静的システムプロンプトを入力、{{$ENVIRONMENT}}、{{$TOOLS}} などの変数を使用できます...'
+                },
+                dynamicSection: {
+                    title: '動的コンテキストテンプレート',
+                    description: '各リクエスト時に動的に生成されメッセージ末尾に追加されます。リアルタイム情報（時刻、ファイルツリー、タブなど）を含み、履歴には保存されません。',
+                    placeholder: '動的コンテキストテンプレートを入力、{{$WORKSPACE_FILES}}、{{$OPEN_TABS}} などの変数を使用できます...',
+                    enableTooltip: '動的コンテキストテンプレートを有効/無効にする',
+                    disabledNotice: '動的コンテキストテンプレートは無効です。AI に動的コンテキストメッセージは送信されません。'
+                },
                 saveButton: '設定を保存',
                 saveSuccess: '保存しました',
                 saveFailed: '保存に失敗しました',
                 tokenCount: {
                     label: 'トークン数',
+                    staticLabel: '静的テンプレート',
+                    dynamicLabel: '動的コンテキスト',
+                    staticTooltip: '静的テンプレート自体のトークン数（{{$TOOLS}} などのプレースホルダーの実際のコンテンツは含まれません）',
+                    dynamicTooltip: '動的コンテキストの実際のトークン数（ファイルツリー、診断などの実際のコンテンツを含む）',
                     channelTooltip: 'トークン計算に使用するチャンネルを選択',
                     refreshTooltip: 'トークン数を更新',
                     failed: 'カウント失敗',
-                    hint: 'テンプレートのみのトークン数を表示、実際のシステムプロンプトには動的に入力される変数コンテンツが含まれます'
+                    hint: '静的テンプレートはテンプレート自体、動的コンテキストは実際に入力されたコンテンツです。実際のリクエストにはツール定義なども含まれます。'
                 },
                 modulesReference: {
                     title: '利用可能な変数リファレンス',
                     insertTooltip: 'テンプレートの末尾に挿入'
+                },
+                staticModules: {
+                    title: '静的変数',
+                    badge: 'キャッシュ可能',
+                    description: 'これらの変数はシステムプロンプトに含まれ、内容は比較的安定しており、APIプロバイダーによるキャッシュで応答を高速化できます。'
+                },
+                dynamicModules: {
+                    title: '動的変数',
+                    badge: 'リアルタイム',
+                    description: 'これらの変数は最後のメッセージにコンテキストとして動的に挿入され、現在時刻やファイル状態などのリアルタイム情報を含み、会話履歴には保存されません。'
                 },
                 modules: {
                     ENVIRONMENT: {
@@ -1198,7 +1228,7 @@ const ja: LanguageMessages = {
                 appInfo: {
                     title: 'アプリケーション情報',
                     name: 'Lim Code - Vibe Coding アシスタント',
-                    version: 'バージョン：1.0.38',
+                    version: 'バージョン：1.0.41',
                     repository: 'リポジトリ',
                     developer: '開発者'
                 }

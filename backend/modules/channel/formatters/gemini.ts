@@ -38,7 +38,7 @@ export class GeminiFormatter extends BaseFormatter {
         config: GeminiConfig,
         tools?: ToolDeclaration[]
     ): HttpRequestOptions {
-        const { history } = request;
+        const { history, dynamicContextMessages } = request;
         const toolMode = config.toolMode || 'function_call';
         
         // 根据模式处理历史记录
@@ -57,6 +57,13 @@ export class GeminiFormatter extends BaseFormatter {
         // 转换思考签名格式：将 thoughtSignatures.gemini 转换为 thoughtSignature
         processedHistory = this.convertThoughtSignatures(processedHistory);
         
+        // 插入动态上下文消息（直接追加到历史末尾）
+        // 动态上下文包含时间、文件树、标签页等频繁变化的内容
+        // 这些内容不存储到后端历史，仅在发送时临时插入
+        if (dynamicContextMessages && dynamicContextMessages.length > 0) {
+            processedHistory = [...processedHistory, ...dynamicContextMessages];
+        }
+        
         // 构建请求体
         const body: any = {
             contents: processedHistory,
@@ -66,7 +73,7 @@ export class GeminiFormatter extends BaseFormatter {
         // 处理工具
         let systemInstruction = config.systemInstruction || '';
         
-        // 追加动态系统提示词（环境信息、文件树等）
+        // 追加静态系统提示词（操作系统、时区、语言、工作区路径 - 可被 API provider 缓存）
         if (request.dynamicSystemPrompt) {
             systemInstruction = systemInstruction
                 ? `${systemInstruction}\n\n${request.dynamicSystemPrompt}`

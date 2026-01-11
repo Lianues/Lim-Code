@@ -110,6 +110,20 @@ export class ToolIterationLoopService {
     setPromptManager(promptManager: PromptManager): void {
         this.promptManager = promptManager;
     }
+    
+    /**
+     * 清除指定会话的裁剪状态
+     * 
+     * 在以下情况下应调用：
+     * - 删除消息
+     * - 回退到检查点
+     * - 编辑消息
+     * 
+     * @param conversationId 会话 ID
+     */
+    async clearTrimState(conversationId: string): Promise<void> {
+        await this.contextTrimService.clearTrimState(conversationId);
+    }
 
     /**
      * 运行工具迭代循环（流式）
@@ -167,24 +181,30 @@ export class ToolIterationLoopService {
                 historyOptions
             );
 
-            // 4. 获取动态系统提示词
-            // 首条消息时使用 refreshAndGetPrompt 强制刷新缓存
+            // 4. 获取静态系统提示词（可被 API provider 缓存）
+            // 静态部分包含：操作系统、时区、用户语言、工作区路径、工具定义
             const dynamicSystemPrompt = (isFirstMessage && iteration === 1)
                 ? this.promptManager.refreshAndGetPrompt()
-                : this.promptManager.getSystemPrompt(true);  // 强制刷新以获取最新的 DIAGNOSTICS
+                : this.promptManager.getSystemPrompt();  // 静态内容不需要强制刷新
 
-            // 5. 记录请求开始时间
+            // 5. 获取动态上下文消息（每次都获取，会被合并到最后一个 user 消息中）
+            // 动态部分包含：当前时间、文件树、标签页、活动编辑器、诊断、固定文件
+            // 这些内容不存储到后端历史，仅在发送时临时插入到最后一个 user 消息的 parts 中
+            const dynamicContextMessages = this.promptManager.getDynamicContextMessages();
+
+            // 6. 记录请求开始时间
             const requestStartTime = Date.now();
 
-            // 6. 调用 AI
+            // 7. 调用 AI
             const response = await this.channelManager.generate({
                 configId,
                 history,
                 abortSignal,
-                dynamicSystemPrompt
+                dynamicSystemPrompt,
+                dynamicContextMessages
             });
 
-            // 7. 处理响应
+            // 8. 处理响应
             let finalContent: Content;
 
             if (isAsyncGenerator(response)) {
@@ -227,16 +247,16 @@ export class ToolIterationLoopService {
                 yield chunkData;
             }
 
-            // 8. 转换工具调用格式
+            // 9. 转换工具调用格式
             this.toolCallParserService.convertXMLToolCallsToFunctionCalls(finalContent);
             this.toolCallParserService.ensureFunctionCallIds(finalContent);
 
-            // 9. 保存 AI 响应到历史
+            // 10. 保存 AI 响应到历史
             if (finalContent.parts.length > 0) {
                 await this.conversationManager.addContent(conversationId, finalContent);
             }
 
-            // 10. 检查是否有工具调用
+            // 11. 检查是否有工具调用
             const functionCalls = this.toolCallParserService.extractFunctionCalls(finalContent);
 
             if (functionCalls.length === 0) {
@@ -259,7 +279,7 @@ export class ToolIterationLoopService {
                 return;
             }
 
-            // 11. 有工具调用，检查是否需要确认
+            // 12. 有工具调用，检查是否需要确认
             const toolsNeedingConfirmation = this.toolExecutionService.getToolsNeedingConfirmation(functionCalls);
 
             if (toolsNeedingConfirmation.length > 0) {

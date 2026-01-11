@@ -1445,6 +1445,13 @@ export class SettingsManager {
     }
     
     /**
+     * 获取动态上下文模板
+     */
+    getDynamicContextTemplate(): string {
+        return this.getSystemPromptConfig().dynamicTemplate || '';
+    }
+    
+    /**
      * 获取自定义前缀
      */
     getSystemPromptPrefix(): string {
@@ -1534,6 +1541,24 @@ export class SettingsManager {
             newValue: this.settings.ui,
             settings: this.settings
         });
+    }
+    
+    // ========== 公告版本管理 ==========
+    
+    /**
+     * 获取用户上次查看的公告版本
+     */
+    getLastReadAnnouncementVersion(): string | undefined {
+        return this.settings.lastReadAnnouncementVersion;
+    }
+    
+    /**
+     * 设置用户上次查看的公告版本
+     */
+    setLastReadAnnouncementVersion(version: string): void {
+        this.settings.lastReadAnnouncementVersion = version;
+        this.settings.lastUpdated = Date.now();
+        this.storage.save(this.settings);
     }
     
     // ========== 事件监听 ==========

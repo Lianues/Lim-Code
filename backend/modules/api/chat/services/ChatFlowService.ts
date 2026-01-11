@@ -276,6 +276,9 @@ export class ChatFlowService {
       await this.checkpointService.deleteCheckpointsFromIndex(conversationId, messageIndex + 1);
       await this.conversationManager.deleteToMessage(conversationId, messageIndex + 1);
     }
+    
+    // 5.5 清除裁剪状态（编辑后应重新计算裁剪）
+    await this.toolIterationLoopService.clearTrimState(conversationId);
 
     // 6. 工具调用循环（委托给 ToolIterationLoopService，非流式）
     const maxToolIterations = this.getMaxToolIterations();
@@ -573,6 +576,9 @@ export class ChatFlowService {
     if (messageIndex + 1 < historyRef.length) {
       await this.conversationManager.deleteToMessage(conversationId, messageIndex + 1);
     }
+    
+    // 8.5 清除裁剪状态（编辑后应重新计算裁剪）
+    await this.toolIterationLoopService.clearTrimState(conversationId);
 
     // 9. 为编辑后的用户消息创建存档点（执行后）
     const afterEditCheckpoint = await this.checkpointService.createUserMessageCheckpoint(
@@ -912,13 +918,16 @@ export class ChatFlowService {
 
       // 4. 删除消息
       const deletedCount = await this.conversationManager.deleteToMessage(conversationId, targetIndex);
+      
+      // 5. 清除裁剪状态（回退后应重新计算裁剪）
+      await this.toolIterationLoopService.clearTrimState(conversationId);
 
       return {
         success: true,
         deletedCount,
       };
     } finally {
-      // 5. 重置 diff 中断标记
+      // 6. 重置 diff 中断标记
       this.diffInterruptService.resetUserInterrupt();
     }
   }

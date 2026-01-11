@@ -25,10 +25,21 @@ export interface GenerateRequest {
     /**
      * 动态系统提示词（可选）
      *
-     * 由 PromptManager 生成的动态提示词，包含工作区文件树等上下文信息。
+     * 由 PromptManager 生成的静态提示词，包含操作系统、时区、用户语言、工作区路径等不经常变化的信息。
      * 如果提供，会追加到配置中的 systemInstruction 之后。
      */
     dynamicSystemPrompt?: string;
+    
+    /**
+     * 动态上下文消息（可选）
+     *
+     * 由 PromptManager.getDynamicContextMessages() 生成的动态上下文。
+     * 包含当前时间、文件树、打开标签页、诊断信息等频繁变化的内容。
+     * 
+     * 这些消息会被插入到 history 末尾（用户消息之前），
+     * 但不会存储到后端历史记录中。
+     */
+    dynamicContextMessages?: Content[];
     
     /**
      * 跳过工具注入（可选）

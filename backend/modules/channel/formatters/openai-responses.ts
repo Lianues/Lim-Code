@@ -32,20 +32,26 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
         config: OpenAIResponsesConfig,
         tools?: ToolDeclaration[]
     ): HttpRequestOptions {
-        const { history } = request;
+        const { history, dynamicContextMessages } = request;
         
         // 准备系统指令 (instructions)
         let instructions = config.systemInstruction;
         
-        // 追加动态系统提示词
+        // 追加静态系统提示词（操作系统、时区、语言、工作区路径 - 可被 API provider 缓存）
         if (request.dynamicSystemPrompt) {
             instructions = instructions
                 ? `${instructions}\n\n${request.dynamicSystemPrompt}`
                 : request.dynamicSystemPrompt;
         }
 
+        // 插入动态上下文消息（直接追加到历史末尾）
+        let processedHistory = history;
+        if (dynamicContextMessages && dynamicContextMessages.length > 0) {
+            processedHistory = [...processedHistory, ...dynamicContextMessages];
+        }
+
         // 转换历史消息为 OpenAI Responses input 格式
-        const input = this.convertToResponsesInput(history);
+        const input = this.convertToResponsesInput(processedHistory);
 
         // 构建请求体
         const body: any = {

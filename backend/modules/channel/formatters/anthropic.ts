@@ -66,13 +66,13 @@ export class AnthropicFormatter extends BaseFormatter {
         config: AnthropicConfig,
         tools?: ToolDeclaration[]
     ): HttpRequestOptions {
-        const { history } = request;
+        const { history, dynamicContextMessages } = request;
         const toolMode = (config as any).toolMode || 'function_call';
         
         // 处理系统指令
         let systemInstruction = (config as any).systemInstruction || '';
         
-        // 追加动态系统提示词（环境信息、文件树等）
+        // 追加静态系统提示词（操作系统、时区、语言、工作区路径 - 可被 API provider 缓存）
         if (request.dynamicSystemPrompt) {
             systemInstruction = systemInstruction
                 ? `${systemInstruction}\n\n${request.dynamicSystemPrompt}`
@@ -113,7 +113,14 @@ export class AnthropicFormatter extends BaseFormatter {
         }
         
         // 转换思考签名格式
-        const processedHistory = this.convertThoughtSignatures(history);
+        let processedHistory = this.convertThoughtSignatures(history);
+        
+        // 插入动态上下文消息（直接追加到历史末尾）
+        // 动态上下文包含时间、文件树、标签页等频繁变化的内容
+        // 这些内容不存储到后端历史，仅在发送时临时插入
+        if (dynamicContextMessages && dynamicContextMessages.length > 0) {
+            processedHistory = [...processedHistory, ...dynamicContextMessages];
+        }
         
         // 转换历史消息为 Anthropic 格式
         const messages = this.convertToAnthropicMessages(processedHistory, toolMode);

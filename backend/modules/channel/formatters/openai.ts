@@ -65,13 +65,13 @@ export class OpenAIFormatter extends BaseFormatter {
         config: OpenAIConfig,
         tools?: ToolDeclaration[]
     ): HttpRequestOptions {
-        const { history } = request;
+        const { history, dynamicContextMessages } = request;
         const toolMode = config.toolMode || 'function_call';
         
         // 处理工具和系统指令
         let systemInstruction = config.systemInstruction;
         
-        // 追加动态系统提示词（环境信息、文件树等）
+        // 追加静态系统提示词（操作系统、时区、语言、工作区路径 - 可被 API provider 缓存）
         if (request.dynamicSystemPrompt) {
             systemInstruction = systemInstruction
                 ? `${systemInstruction}\n\n${request.dynamicSystemPrompt}`
@@ -112,7 +112,14 @@ export class OpenAIFormatter extends BaseFormatter {
         }
         
         // 转换思考签名格式（移除，因为 OpenAI 目前不使用思考签名）
-        const processedHistory = this.convertThoughtSignatures(history);
+        let processedHistory = this.convertThoughtSignatures(history);
+        
+        // 插入动态上下文消息（直接追加到历史末尾）
+        // 动态上下文包含时间、文件树、标签页等频繁变化的内容
+        // 这些内容不存储到后端历史，仅在发送时临时插入
+        if (dynamicContextMessages && dynamicContextMessages.length > 0) {
+            processedHistory = [...processedHistory, ...dynamicContextMessages];
+        }
         
         // 转换历史消息为 OpenAI 格式（直接传入原始历史，转换时处理）
         const messages = this.convertToOpenAIMessages(processedHistory, systemInstruction, toolMode);

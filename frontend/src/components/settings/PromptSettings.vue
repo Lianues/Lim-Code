@@ -19,28 +19,59 @@ interface PromptModule {
 
 // 系统提示词配置（功能始终启用，不可关闭）
 interface SystemPromptConfig {
-  template: string
+  template: string           // 静态系统提示词模板
+  dynamicTemplateEnabled: boolean  // 是否启用动态上下文模板
+  dynamicTemplate: string    // 动态上下文模板
   customPrefix: string
   customSuffix: string
 }
 
-// 可用的提示词变量列表
-const AVAILABLE_PROMPT_MODULES: PromptModule[] = [
+// 静态变量（放入系统提示词，可被 API provider 缓存）
+const STATIC_PROMPT_MODULES: PromptModule[] = [
   {
     id: 'ENVIRONMENT',
     name: '环境信息',
-    description: '包含工作区路径、操作系统、当前时间和时区信息',
+    description: '包含工作区路径、操作系统、时区和用户语言（静态内容，可缓存）',
     example: `====
 
 ENVIRONMENT
 
 Current Workspace: /path/to/project
 Operating System: Windows 11
-Current Time: 2024-01-01T12:00:00.000Z
 Timezone: Asia/Shanghai
 User Language: zh-CN
 Please respond using the user's language by default.`
   },
+  {
+    id: 'TOOLS',
+    name: '工具定义',
+    description: '根据渠道配置生成 XML 或 Function Call 格式的工具定义（此变量由系统自动填充）',
+    example: `====
+
+TOOLS
+
+You have access to these tools:
+
+## read_file
+Description: Read file content
+...`
+  },
+  {
+    id: 'MCP_TOOLS',
+    name: 'MCP 工具',
+    description: '来自 MCP 服务器的额外工具定义（此变量由系统自动填充）',
+    example: `====
+
+MCP TOOLS
+
+Additional tools from MCP servers:
+...`,
+    requiresConfig: 'MCP 设置中需要配置并连接服务器'
+  }
+]
+
+// 动态变量（作为上下文消息临时插入，不存储到历史记录）
+const DYNAMIC_CONTEXT_MODULES: PromptModule[] = [
   {
     id: 'WORKSPACE_FILES',
     name: '工作区文件树',
@@ -110,49 +141,19 @@ The following are pinned files...
 # Project Title
 ...`,
     requiresConfig: '需要在输入框旁的固定文件按钮中添加文件'
-  },
-  {
-    id: 'TOOLS',
-    name: '工具定义',
-    description: '根据渠道配置生成 XML 或 Function Call 格式的工具定义（此变量由系统自动填充）',
-    example: `====
-
-TOOLS
-
-You have access to these tools:
-
-## read_file
-Description: Read file content
-...`
-  },
-  {
-    id: 'MCP_TOOLS',
-    name: 'MCP 工具',
-    description: '来自 MCP 服务器的额外工具定义（此变量由系统自动填充）',
-    example: `====
-
-MCP TOOLS
-
-Additional tools from MCP servers:
-...`,
-    requiresConfig: 'MCP 设置中需要配置并连接服务器'
   }
 ]
 
-// 默认模板（使用 {{$xxx}} 格式引用变量）
+// 静态变量 ID 集合
+const staticModuleIds = new Set(STATIC_PROMPT_MODULES.map(m => m.id))
+
+// 动态变量 ID 集合
+const dynamicModuleIds = new Set(DYNAMIC_CONTEXT_MODULES.map(m => m.id))
+
+// 默认静态系统提示词模板
 const DEFAULT_TEMPLATE = `You are a professional programming assistant, proficient in multiple programming languages and frameworks.
 
 {{$ENVIRONMENT}}
-
-{{$WORKSPACE_FILES}}
-
-{{$OPEN_TABS}}
-
-{{$ACTIVE_EDITOR}}
-
-{{$DIAGNOSTICS}}
-
-{{$PINNED_FILES}}
 
 {{$TOOLS}}
 
@@ -170,9 +171,24 @@ GUIDELINES
 - Always maintain code readability and maintainability.
 - Do not omit any code.`
 
+// 默认动态上下文模板
+const DEFAULT_DYNAMIC_TEMPLATE = `This is the current global variable information you can use. Ignore if not needed, and continue with the previous task.
+
+{{$WORKSPACE_FILES}}
+
+{{$OPEN_TABS}}
+
+{{$ACTIVE_EDITOR}}
+
+{{$DIAGNOSTICS}}
+
+{{$PINNED_FILES}}`
+
 // 配置状态
 const config = reactive<SystemPromptConfig>({
   template: DEFAULT_TEMPLATE,
+  dynamicTemplateEnabled: true,
+  dynamicTemplate: DEFAULT_DYNAMIC_TEMPLATE,
   customPrefix: '',
   customSuffix: ''
 })
@@ -184,6 +200,8 @@ const originalConfig = ref<SystemPromptConfig | null>(null)
 const hasChanges = computed(() => {
   if (!originalConfig.value) return false
   return config.template !== originalConfig.value.template ||
+         config.dynamicTemplateEnabled !== originalConfig.value.dynamicTemplateEnabled ||
+         config.dynamicTemplate !== originalConfig.value.dynamicTemplate ||
          config.customPrefix !== originalConfig.value.customPrefix ||
          config.customSuffix !== originalConfig.value.customSuffix
 })
@@ -194,7 +212,8 @@ const isSaving = ref(false)
 const saveMessage = ref('')
 
 // Token 计数状态
-const tokenCount = ref<number | null>(null)
+const staticTokenCount = ref<number | null>(null)
+const dynamicTokenCount = ref<number | null>(null)
 const isCountingTokens = ref(false)
 const tokenCountError = ref('')
 const selectedChannel = ref<ChannelType>('gemini')
@@ -216,6 +235,8 @@ async function loadConfig() {
     const result = await sendToExtension<SystemPromptConfig>('getSystemPromptConfig', {})
     if (result) {
       config.template = result.template || DEFAULT_TEMPLATE
+      config.dynamicTemplateEnabled = result.dynamicTemplateEnabled ?? true
+      config.dynamicTemplate = result.dynamicTemplate || DEFAULT_DYNAMIC_TEMPLATE
       config.customPrefix = result.customPrefix || ''
       config.customSuffix = result.customSuffix || ''
       originalConfig.value = { ...config }
@@ -232,13 +253,23 @@ async function saveConfig() {
   isSaving.value = true
   saveMessage.value = ''
   try {
+    // 保存前清理多余空行
+    const cleanedTemplate = cleanupEmptyLines(config.template)
+    const cleanedDynamicTemplate = cleanupEmptyLines(config.dynamicTemplate)
+    
     await sendToExtension('updateSystemPromptConfig', {
       config: {
-        template: config.template,
+        template: cleanedTemplate,
+        dynamicTemplateEnabled: config.dynamicTemplateEnabled,
+        dynamicTemplate: cleanedDynamicTemplate,
         customPrefix: config.customPrefix,
         customSuffix: config.customSuffix
       }
     })
+    
+    // 更新本地配置为清理后的版本
+    config.template = cleanedTemplate
+    config.dynamicTemplate = cleanedDynamicTemplate
     originalConfig.value = { ...config }
     saveMessage.value = t('components.settings.promptSettings.saveSuccess')
     setTimeout(() => { saveMessage.value = '' }, 2000)
@@ -253,10 +284,11 @@ async function saveConfig() {
   }
 }
 
-// 计算 token 数量
+// 计算 token 数量（分别计算静态模板和动态上下文）
 async function countTokens() {
   if (!config.template) {
-    tokenCount.value = null
+    staticTokenCount.value = null
+    dynamicTokenCount.value = null
     return
   }
   
@@ -266,22 +298,26 @@ async function countTokens() {
   try {
     const result = await sendToExtension<{
       success: boolean
-      totalTokens?: number
+      staticTokens?: number
+      dynamicTokens?: number
       error?: string
     }>('countSystemPromptTokens', {
-      text: config.template,
+      staticText: config.template,
       channelType: selectedChannel.value
     })
     
-    if (result?.success && result.totalTokens !== undefined) {
-      tokenCount.value = result.totalTokens
+    if (result?.success) {
+      staticTokenCount.value = result.staticTokens ?? null
+      dynamicTokenCount.value = result.dynamicTokens ?? null
     } else {
-      tokenCount.value = null
+      staticTokenCount.value = null
+      dynamicTokenCount.value = null
       tokenCountError.value = result?.error || 'Token count failed'
     }
   } catch (error: any) {
     console.error('Failed to count tokens:', error)
-    tokenCount.value = null
+    staticTokenCount.value = null
+    dynamicTokenCount.value = null
     tokenCountError.value = error.message || 'Token count failed'
   } finally {
     isCountingTokens.value = false
@@ -296,15 +332,39 @@ function formatTokenCount(count: number): string {
   return count.toString()
 }
 
-// 重置为默认模板
-function resetToDefault() {
+// 清理文本中的多余空行（将3个或以上连续换行压缩为2个）
+function cleanupEmptyLines(text: string): string {
+  return text.replace(/\n{3,}/g, '\n\n').trim()
+}
+
+// 重置静态模板为默认
+function resetStaticToDefault() {
   config.template = DEFAULT_TEMPLATE
 }
 
-// 插入变量占位符
-function insertModule(moduleId: string) {
+// 重置动态模板为默认
+function resetDynamicToDefault() {
+  config.dynamicTemplate = DEFAULT_DYNAMIC_TEMPLATE
+}
+
+// 插入变量到静态模板
+function insertStaticModule(moduleId: string) {
+  if (!staticModuleIds.has(moduleId)) {
+    console.warn(`Invalid static module ID: ${moduleId}`)
+    return
+  }
   const placeholder = `{{$${moduleId}}}`
   config.template += placeholder
+}
+
+// 插入变量到动态模板
+function insertDynamicModule(moduleId: string) {
+  if (!dynamicModuleIds.has(moduleId)) {
+    console.warn(`Invalid dynamic module ID: ${moduleId}`)
+    return
+  }
+  const placeholder = `{{$${moduleId}}}`
+  config.dynamicTemplate += placeholder
 }
 
 // 切换模块展开
@@ -339,28 +399,72 @@ watch(selectedChannel, () => {
     </div>
     
     <template v-else>
-      <!-- 模板编辑区 -->
+      <!-- 静态系统提示词编辑区 -->
       <div class="template-section">
         <div class="section-header">
           <label class="section-label">
             <i class="codicon codicon-file-code"></i>
-            {{ t('components.settings.promptSettings.templateSection.title') }}
+            {{ t('components.settings.promptSettings.staticSection.title') }}
+            <span class="section-badge cacheable">{{ t('components.settings.promptSettings.staticModules.badge') }}</span>
           </label>
-          <button class="reset-btn" @click="resetToDefault">
+          <button class="reset-btn" @click="resetStaticToDefault">
             <i class="codicon codicon-discard"></i>
             {{ t('components.settings.promptSettings.templateSection.resetButton') }}
           </button>
         </div>
         
         <p class="section-description">
-          {{ t('components.settings.promptSettings.templateSection.description') }}
+          {{ t('components.settings.promptSettings.staticSection.description') }}
         </p>
         
         <textarea
           v-model="config.template"
           class="template-textarea"
-          :placeholder="t('components.settings.promptSettings.templateSection.placeholder')"
-          rows="16"
+          :placeholder="t('components.settings.promptSettings.staticSection.placeholder')"
+          rows="12"
+        ></textarea>
+      </div>
+      
+      <!-- 动态上下文模板编辑区 -->
+      <div class="template-section dynamic-section">
+        <div class="section-header">
+          <label class="section-label">
+            <i class="codicon codicon-sync"></i>
+            {{ t('components.settings.promptSettings.dynamicSection.title') }}
+            <span class="section-badge realtime">{{ t('components.settings.promptSettings.dynamicModules.badge') }}</span>
+          </label>
+          <div class="section-header-actions">
+            <!-- 启用开关 -->
+            <label class="toggle-switch" :title="t('components.settings.promptSettings.dynamicSection.enableTooltip')">
+              <input 
+                type="checkbox" 
+                v-model="config.dynamicTemplateEnabled"
+              />
+              <span class="toggle-slider"></span>
+            </label>
+            <button class="reset-btn" @click="resetDynamicToDefault" :disabled="!config.dynamicTemplateEnabled">
+              <i class="codicon codicon-discard"></i>
+              {{ t('components.settings.promptSettings.templateSection.resetButton') }}
+            </button>
+          </div>
+        </div>
+        
+        <p class="section-description">
+          {{ t('components.settings.promptSettings.dynamicSection.description') }}
+        </p>
+        
+        <!-- 禁用时显示提示 -->
+        <div v-if="!config.dynamicTemplateEnabled" class="disabled-notice">
+          <i class="codicon codicon-info"></i>
+          <span>{{ t('components.settings.promptSettings.dynamicSection.disabledNotice') }}</span>
+        </div>
+        
+        <textarea
+          v-else
+          v-model="config.dynamicTemplate"
+          class="template-textarea"
+          :placeholder="t('components.settings.promptSettings.dynamicSection.placeholder')"
+          rows="10"
         ></textarea>
       </div>
       
@@ -382,7 +486,7 @@ watch(selectedChannel, () => {
         
         <!-- Token 计数显示 -->
         <div class="token-count-section">
-          <div class="token-count-row">
+          <div class="token-count-header">
             <label class="token-label">
               <i class="codicon codicon-symbol-numeric"></i>
               {{ t('components.settings.promptSettings.tokenCount.label') }}
@@ -406,24 +510,66 @@ watch(selectedChannel, () => {
             >
               <i :class="['codicon', isCountingTokens ? 'codicon-loading codicon-modifier-spin' : 'codicon-refresh']"></i>
             </button>
+          </div>
+          
+          <!-- 分别显示静态和动态 token 数 -->
+          <div class="token-count-details">
+            <!-- 静态模板 token -->
+            <div class="token-count-item">
+              <span 
+                class="token-item-label static-label" 
+                :title="t('components.settings.promptSettings.tokenCount.staticTooltip')"
+              >
+                <i class="codicon codicon-lock"></i>
+                {{ t('components.settings.promptSettings.tokenCount.staticLabel') }}
+              </span>
+              <div class="token-value">
+                <template v-if="isCountingTokens">
+                  <i class="codicon codicon-loading codicon-modifier-spin"></i>
+                </template>
+                <template v-else-if="staticTokenCount !== null">
+                  <span class="token-number static">{{ formatTokenCount(staticTokenCount) }}</span>
+                  <span class="token-unit">tokens</span>
+                </template>
+                <template v-else-if="tokenCountError">
+                  <span class="token-error" :title="tokenCountError">
+                    <i class="codicon codicon-warning"></i>
+                    {{ t('components.settings.promptSettings.tokenCount.failed') }}
+                  </span>
+                </template>
+                <template v-else>
+                  <span class="token-na">--</span>
+                </template>
+              </div>
+            </div>
             
-            <div class="token-value">
-              <template v-if="isCountingTokens">
-                <i class="codicon codicon-loading codicon-modifier-spin"></i>
-              </template>
-              <template v-else-if="tokenCount !== null">
-                <span class="token-number">{{ formatTokenCount(tokenCount) }}</span>
-                <span class="token-unit">tokens</span>
-              </template>
-              <template v-else-if="tokenCountError">
-                <span class="token-error" :title="tokenCountError">
-                  <i class="codicon codicon-warning"></i>
-                  {{ t('components.settings.promptSettings.tokenCount.failed') }}
-                </span>
-              </template>
-              <template v-else>
-                <span class="token-na">--</span>
-              </template>
+            <!-- 动态上下文 token -->
+            <div class="token-count-item">
+              <span 
+                class="token-item-label dynamic-label" 
+                :title="t('components.settings.promptSettings.tokenCount.dynamicTooltip')"
+              >
+                <i class="codicon codicon-sync"></i>
+                {{ t('components.settings.promptSettings.tokenCount.dynamicLabel') }}
+              </span>
+              <div class="token-value">
+                <template v-if="isCountingTokens">
+                  <i class="codicon codicon-loading codicon-modifier-spin"></i>
+                </template>
+                <template v-else-if="dynamicTokenCount !== null">
+                  <span class="token-number dynamic">{{ formatTokenCount(dynamicTokenCount) }}</span>
+                  <span class="token-unit">tokens</span>
+                </template>
+                <template v-else-if="tokenCountError">
+                  <span class="token-error" :title="tokenCountError">
+                    <i class="codicon codicon-warning"></i>
+                    {{ t('components.settings.promptSettings.tokenCount.failed') }}
+                  </span>
+                </template>
+                <template v-else>
+                  <span class="token-na">--</span>
+                </template>
+              </div>
             </div>
           </div>
           
@@ -440,38 +586,95 @@ watch(selectedChannel, () => {
           {{ t('components.settings.promptSettings.modulesReference.title') }}
         </h5>
         
-        <div class="modules-list">
-          <div
-            v-for="module in AVAILABLE_PROMPT_MODULES"
-            :key="module.id"
-            class="module-item"
-            :class="{ expanded: expandedModule === module.id }"
-          >
-            <div class="module-header" @click="toggleModule(module.id)">
-              <div class="module-info">
-                <code class="module-id">{{ formatModuleId(module.id) }}</code>
-                <span class="module-name">{{ t(`components.settings.promptSettings.modules.${module.id}.name`) }}</span>
+        <!-- 静态变量组 -->
+        <div class="modules-group">
+          <div class="group-header">
+            <i class="codicon codicon-lock"></i>
+            <span class="group-title">{{ t('components.settings.promptSettings.staticModules.title') }}</span>
+            <span class="group-badge static-badge">{{ t('components.settings.promptSettings.staticModules.badge') }}</span>
+          </div>
+          <p class="group-description">{{ t('components.settings.promptSettings.staticModules.description') }}</p>
+          
+          <div class="modules-list">
+            <div
+              v-for="module in STATIC_PROMPT_MODULES"
+              :key="module.id"
+              class="module-item"
+              :class="{ expanded: expandedModule === module.id }"
+            >
+              <div class="module-header" @click="toggleModule(module.id)">
+                <div class="module-info">
+                  <code class="module-id">{{ formatModuleId(module.id) }}</code>
+                  <span class="module-name">{{ t(`components.settings.promptSettings.modules.${module.id}.name`) }}</span>
+                </div>
+                <button
+                  class="insert-btn"
+                  @click.stop="insertStaticModule(module.id)"
+                  :title="t('components.settings.promptSettings.modulesReference.insertTooltip')"
+                >
+                  <i class="codicon codicon-add"></i>
+                </button>
               </div>
-              <button
-                class="insert-btn"
-                @click.stop="insertModule(module.id)"
-                :title="t('components.settings.promptSettings.modulesReference.insertTooltip')"
-              >
-                <i class="codicon codicon-add"></i>
-              </button>
+              
+              <div v-if="expandedModule === module.id" class="module-details">
+                <p class="module-description">{{ t(`components.settings.promptSettings.modules.${module.id}.description`) }}</p>
+                
+                <div v-if="module.requiresConfig" class="module-requires">
+                  <i class="codicon codicon-info"></i>
+                  <span>{{ t('components.settings.promptSettings.requiresConfigLabel') }} {{ t(`components.settings.promptSettings.modules.${module.id}.requiresConfig`) }}</span>
+                </div>
+                
+                <div v-if="module.example" class="module-example">
+                  <label>{{ t('components.settings.promptSettings.exampleOutput') }}</label>
+                  <pre>{{ module.example }}</pre>
+                </div>
+              </div>
             </div>
-            
-            <div v-if="expandedModule === module.id" class="module-details">
-              <p class="module-description">{{ t(`components.settings.promptSettings.modules.${module.id}.description`) }}</p>
-              
-              <div v-if="module.requiresConfig" class="module-requires">
-                <i class="codicon codicon-info"></i>
-                <span>{{ t('components.settings.promptSettings.requiresConfigLabel') }} {{ t(`components.settings.promptSettings.modules.${module.id}.requiresConfig`) }}</span>
+          </div>
+        </div>
+        
+        <!-- 动态变量组 -->
+        <div class="modules-group">
+          <div class="group-header">
+            <i class="codicon codicon-sync"></i>
+            <span class="group-title">{{ t('components.settings.promptSettings.dynamicModules.title') }}</span>
+            <span class="group-badge dynamic-badge">{{ t('components.settings.promptSettings.dynamicModules.badge') }}</span>
+          </div>
+          <p class="group-description">{{ t('components.settings.promptSettings.dynamicModules.description') }}</p>
+          
+          <div class="modules-list">
+            <div
+              v-for="module in DYNAMIC_CONTEXT_MODULES"
+              :key="module.id"
+              class="module-item"
+              :class="{ expanded: expandedModule === module.id }"
+            >
+              <div class="module-header" @click="toggleModule(module.id)">
+                <div class="module-info">
+                  <code class="module-id">{{ formatModuleId(module.id) }}</code>
+                  <span class="module-name">{{ t(`components.settings.promptSettings.modules.${module.id}.name`) }}</span>
+                </div>
+                <button
+                  class="insert-btn"
+                  @click.stop="insertDynamicModule(module.id)"
+                  :title="t('components.settings.promptSettings.modulesReference.insertTooltip')"
+                >
+                  <i class="codicon codicon-add"></i>
+                </button>
               </div>
               
-              <div v-if="module.example" class="module-example">
-                <label>{{ t('components.settings.promptSettings.exampleOutput') }}</label>
-                <pre>{{ module.example }}</pre>
+              <div v-if="expandedModule === module.id" class="module-details">
+                <p class="module-description">{{ t(`components.settings.promptSettings.modules.${module.id}.description`) }}</p>
+                
+                <div v-if="module.requiresConfig" class="module-requires">
+                  <i class="codicon codicon-info"></i>
+                  <span>{{ t('components.settings.promptSettings.requiresConfigLabel') }} {{ t(`components.settings.promptSettings.modules.${module.id}.requiresConfig`) }}</span>
+                </div>
+                
+                <div v-if="module.example" class="module-example">
+                  <label>{{ t('components.settings.promptSettings.exampleOutput') }}</label>
+                  <pre>{{ module.example }}</pre>
+                </div>
               </div>
             </div>
           </div>
@@ -507,10 +710,21 @@ watch(selectedChannel, () => {
   border-radius: 6px;
 }
 
+.template-section.dynamic-section {
+  border-color: var(--vscode-charts-blue);
+  border-style: dashed;
+}
+
 .section-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+
+.section-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .section-label {
@@ -519,6 +733,23 @@ watch(selectedChannel, () => {
   gap: 6px;
   font-size: 13px;
   font-weight: 500;
+}
+
+.section-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 10px;
+  font-weight: 500;
+}
+
+.section-badge.cacheable {
+  background: var(--vscode-charts-green);
+  color: var(--vscode-editor-background);
+}
+
+.section-badge.realtime {
+  background: var(--vscode-charts-blue);
+  color: var(--vscode-editor-background);
 }
 
 .section-label code {
@@ -640,18 +871,51 @@ watch(selectedChannel, () => {
 .token-count-section {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 10px 12px;
+  gap: 10px;
+  padding: 12px;
   background: var(--vscode-editor-background);
   border: 1px solid var(--vscode-panel-border);
   border-radius: 6px;
 }
 
-.token-count-row {
+.token-count-header {
   display: flex;
   align-items: center;
   gap: 10px;
   flex-wrap: wrap;
+}
+
+.token-count-details {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.token-count-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--vscode-sideBar-background);
+  border-radius: 4px;
+  min-width: 150px;
+}
+
+.token-item-label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  cursor: help;
+}
+
+.token-item-label.static-label .codicon {
+  color: var(--vscode-charts-green);
+}
+
+.token-item-label.dynamic-label .codicon {
+  color: var(--vscode-charts-blue);
 }
 
 .token-label {
@@ -705,12 +969,22 @@ watch(selectedChannel, () => {
   display: flex;
   align-items: center;
   gap: 4px;
+  font-size: 12px;
+}
+
+.token-count-header .token-value {
   margin-left: auto;
-  font-size: 13px;
 }
 
 .token-number {
   font-weight: 600;
+}
+
+.token-number.static {
+  color: var(--vscode-charts-green);
+}
+
+.token-number.dynamic {
   color: var(--vscode-charts-blue);
 }
 
@@ -882,5 +1156,130 @@ watch(selectedChannel, () => {
 @keyframes spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
+}
+
+/* 变量分组样式 */
+.modules-group {
+  margin-bottom: 16px;
+  padding: 12px;
+  background: var(--vscode-editor-background);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 6px;
+}
+
+.modules-group:last-child {
+  margin-bottom: 0;
+}
+
+.group-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.group-header .codicon {
+  font-size: 14px;
+  color: var(--vscode-foreground);
+}
+
+.group-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--vscode-foreground);
+}
+
+.group-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  border-radius: 10px;
+  font-weight: 500;
+}
+
+.static-badge {
+  background: var(--vscode-charts-green);
+  color: var(--vscode-editor-background);
+}
+
+.dynamic-badge {
+  background: var(--vscode-charts-blue);
+  color: var(--vscode-editor-background);
+}
+
+.group-description {
+  margin: 0 0 12px 0;
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+  line-height: 1.5;
+}
+
+/* 开关样式 */
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 36px;
+  height: 20px;
+  cursor: pointer;
+}
+
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-slider {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border);
+  border-radius: 10px;
+  transition: 0.2s;
+}
+
+.toggle-slider::before {
+  position: absolute;
+  content: "";
+  height: 14px;
+  width: 14px;
+  left: 2px;
+  bottom: 2px;
+  background-color: var(--vscode-foreground);
+  border-radius: 50%;
+  transition: 0.2s;
+}
+
+.toggle-switch input:checked + .toggle-slider {
+  background-color: var(--vscode-button-background);
+  border-color: var(--vscode-button-background);
+}
+
+.toggle-switch input:checked + .toggle-slider::before {
+  transform: translateX(16px);
+  background-color: var(--vscode-button-foreground);
+}
+
+.toggle-switch input:focus + .toggle-slider {
+  border-color: var(--vscode-focusBorder);
+}
+
+/* 禁用提示 */
+.disabled-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  background: var(--vscode-inputValidation-infoBackground);
+  border: 1px solid var(--vscode-inputValidation-infoBorder);
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--vscode-foreground);
+}
+
+.disabled-notice .codicon {
+  color: var(--vscode-notificationsInfoIcon-foreground);
 }
 </style>

@@ -9,7 +9,7 @@
  * 用户可以在下方输入框输入消息开始新对话
  */
 
-import { CustomScrollbar } from '../common'
+import { CustomScrollbar, AnnouncementModal } from '../common'
 import ConversationList from '../history/ConversationList.vue'
 import { useChatStore, useSettingsStore } from '@/stores'
 import { useI18n } from '@/i18n'
@@ -31,6 +31,9 @@ async function handleDelete(id: string) {
 
 <template>
   <div class="welcome-panel">
+    <!-- 版本更新公告弹窗 -->
+    <AnnouncementModal />
+    
     <!-- 欢迎区域 -->
     <div class="welcome-section">
       <div class="welcome-content">

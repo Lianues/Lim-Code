@@ -1,9 +1,13 @@
 /**
  * LimCode - 系统提示词管理器
  *
- * 负责组装和管理系统提示词，包括工作区文件树等动态内容
+ * 负责组装和管理系统提示词
+ * 
+ * 分为两部分以最大化 API 提供商的 prompt caching：
+ * 1. 静态系统提示词（可缓存）：操作系统、时区、用户语言、工作区路径、工具定义
+ * 2. 动态上下文消息（不缓存）：时间、文件树、标签页、活动编辑器、诊断、固定文件
  *
- * 支持模板化系统提示词，使用 {{MODULE_NAME}} 占位符引用模块
+ * 支持模板化系统提示词，使用 {{$MODULE_NAME}} 占位符引用模块
  */
 
 import * as vscode from 'vscode'
@@ -11,6 +15,7 @@ import * as os from 'os'
 import * as fs from 'fs'
 import * as path from 'path'
 import type { PromptConfig, PromptContext } from './types'
+import type { Content } from '../conversation/types'
 import { getWorkspaceFileTree, getWorkspaceRoot, getWorkspacesDescription, getAllWorkspaces } from './fileTree'
 import { getGlobalSettingsManager } from '../../core/settingsContext'
 
@@ -18,10 +23,25 @@ import { getGlobalSettingsManager } from '../../core/settingsContext'
  * 系统提示词管理器
  * 
  * 功能：
- * 1. 生成动态系统提示词
- * 2. 包含工作区文件树
+ * 1. 生成静态系统提示词（可缓存）
+ * 2. 生成动态上下文消息（每次请求时插入，不存储）
  * 3. 支持自定义前缀/后缀
  * 4. 缓存和更新机制
+ * 
+ * 静态部分（放入系统提示词，可被 API provider 缓存）：
+ * - 操作系统信息
+ * - 时区
+ * - 用户语言
+ * - 工作区路径
+ * - 工具定义（{{$TOOLS}}、{{$MCP_TOOLS}}）
+ * 
+ * 动态部分（作为 user 消息插入，不存储到历史记录）：
+ * - 当前时间
+ * - 工作区文件树
+ * - 打开的标签页
+ * - 当前活动编辑器
+ * - 诊断信息
+ * - 固定文件内容
  */
 export class PromptManager {
     private config: PromptConfig
@@ -104,46 +124,26 @@ export class PromptManager {
     }
     
     /**
-     * 从模板生成系统提示词
+     * 从模板生成系统提示词（静态部分）
      *
-     * 支持的占位符（使用 {{$xxx}} 格式）：
-     * - {{$ENVIRONMENT}} - 环境信息
-     * - {{$WORKSPACE_FILES}} - 工作区文件树
-     * - {{$OPEN_TABS}} - 打开的标签页
-     * - {{$ACTIVE_EDITOR}} - 当前活动编辑器
-     * - {{$DIAGNOSTICS}} - VSCode 诊断信息（错误、警告等）
-     * - {{$PINNED_FILES}} - 固定文件内容
+     * 只包含静态内容，可被 API provider 缓存：
+     * - {{$ENVIRONMENT}} - 静态环境信息（操作系统、时区、用户语言、工作区路径）
      * - {{$TOOLS}} - 工具定义（由外部填充）
      * - {{$MCP_TOOLS}} - MCP 工具定义（由外部填充）
+     * 
+     * 动态内容（时间、文件树、标签页等）由 getDynamicContextMessages() 方法生成
      */
     private generateFromTemplate(template: string, customPrefix: string, customSuffix: string): string {
-        const contextConfig = getGlobalSettingsManager()?.getContextAwarenessConfig()
-        
-        // 生成各模块内容
+        // 静态模块（不会频繁变化）
         const modules: Record<string, string> = {
-            'ENVIRONMENT': this.wrapSection('ENVIRONMENT', this.generateEnvironmentSection()),
-            'WORKSPACE_FILES': (contextConfig?.includeWorkspaceFiles ?? this.config.includeWorkspaceFiles)
-                ? this.wrapSection('WORKSPACE FILES', this.generateFileTreeSection(
-                    contextConfig?.maxFileDepth ?? this.config.maxDepth ?? 10,
-                    contextConfig?.ignorePatterns ?? []
-                ))
-                : '',
-            'OPEN_TABS': contextConfig?.includeOpenTabs
-                ? this.wrapSection('OPEN TABS', this.generateOpenTabsSection(
-                    contextConfig.maxOpenTabs,
-                    contextConfig.ignorePatterns || []
-                ))
-                : '',
-            'ACTIVE_EDITOR': contextConfig?.includeActiveEditor
-                ? this.wrapSection('ACTIVE EDITOR', this.generateActiveEditorSection(
-                    contextConfig.ignorePatterns || []
-                ))
-                : '',
-            'DIAGNOSTICS': this.wrapSection('DIAGNOSTICS', this.generateDiagnosticsSection()),
-            'PINNED_FILES': this.wrapSection(
-                getGlobalSettingsManager()?.getPinnedFilesConfig()?.sectionTitle || 'PINNED FILES CONTENT',
-                this.generatePinnedFilesSection()
-            ),
+            'ENVIRONMENT': this.wrapSection('ENVIRONMENT', this.generateStaticEnvironmentSection()),
+            // 动态内容占位符 - 这些将被移到动态上下文消息中
+            // 为了向后兼容，如果模板中包含这些占位符，替换为空字符串
+            'WORKSPACE_FILES': '',
+            'OPEN_TABS': '',
+            'ACTIVE_EDITOR': '',
+            'DIAGNOSTICS': '',
+            'PINNED_FILES': '',
             // 工具定义由外部在发送前填充，这里返回占位符
             'TOOLS': '{{$TOOLS}}',
             'MCP_TOOLS': '{{$MCP_TOOLS}}'
@@ -156,7 +156,86 @@ export class PromptManager {
             result = result.replace(regex, value)
         }
         
-        return result.trim()
+        // 清理多余的空行
+        return this.cleanupEmptyLines(result)
+    }
+    
+    /**
+     * 从动态模板生成上下文内容
+     *
+     * 支持的变量：
+     * - {{$WORKSPACE_FILES}} - 工作区文件树
+     * - {{$OPEN_TABS}} - 打开的标签页
+     * - {{$ACTIVE_EDITOR}} - 当前活动编辑器
+     * - {{$DIAGNOSTICS}} - 诊断信息
+     * - {{$PINNED_FILES}} - 固定文件内容
+     */
+    private generateDynamicFromTemplate(template: string, contextConfig: any): string {
+        const settingsManager = getGlobalSettingsManager()
+        
+        // 动态模块
+        const modules: Record<string, string> = {
+            'WORKSPACE_FILES': '',
+            'OPEN_TABS': '',
+            'ACTIVE_EDITOR': '',
+            'DIAGNOSTICS': '',
+            'PINNED_FILES': ''
+        }
+        
+        // 工作区文件树
+        if (contextConfig?.includeWorkspaceFiles ?? this.config.includeWorkspaceFiles) {
+            const fileTreeContent = this.generateFileTreeSection(
+                contextConfig?.maxFileDepth ?? this.config.maxDepth ?? 10,
+                contextConfig?.ignorePatterns ?? []
+            )
+            if (fileTreeContent) {
+                modules['WORKSPACE_FILES'] = this.wrapSection('WORKSPACE FILES', fileTreeContent)
+            }
+        }
+        
+        // 打开的标签页
+        if (contextConfig?.includeOpenTabs) {
+            const openTabsContent = this.generateOpenTabsSection(
+                contextConfig.maxOpenTabs,
+                contextConfig.ignorePatterns || []
+            )
+            if (openTabsContent) {
+                modules['OPEN_TABS'] = this.wrapSection('OPEN TABS', openTabsContent)
+            }
+        }
+        
+        // 当前活动编辑器
+        if (contextConfig?.includeActiveEditor) {
+            const activeEditorContent = this.generateActiveEditorSection(
+                contextConfig.ignorePatterns || []
+            )
+            if (activeEditorContent) {
+                modules['ACTIVE_EDITOR'] = this.wrapSection('ACTIVE EDITOR', activeEditorContent)
+            }
+        }
+        
+        // 诊断信息
+        const diagnosticsContent = this.generateDiagnosticsSection()
+        if (diagnosticsContent) {
+            modules['DIAGNOSTICS'] = this.wrapSection('DIAGNOSTICS', diagnosticsContent)
+        }
+        
+        // 固定文件内容
+        const pinnedFilesContent = this.generatePinnedFilesSection()
+        if (pinnedFilesContent) {
+            const sectionTitle = settingsManager?.getPinnedFilesConfig()?.sectionTitle || 'PINNED FILES CONTENT'
+            modules['PINNED_FILES'] = this.wrapSection(sectionTitle, pinnedFilesContent)
+        }
+        
+        // 替换模板中的占位符
+        let result = template
+        for (const [key, value] of Object.entries(modules)) {
+            const regex = new RegExp(`\\{\\{\\$${key}\\}\\}`, 'g')
+            result = result.replace(regex, value)
+        }
+        
+        // 清理多余的空行
+        return this.cleanupEmptyLines(result)
     }
     
     /**
@@ -168,9 +247,24 @@ export class PromptManager {
     }
     
     /**
-     * 生成环境信息段落
+     * 清理文本中的多余空行
+     * 
+     * 将连续 3 个或以上的换行符压缩为 2 个
      */
-    private generateEnvironmentSection(): string {
+    private cleanupEmptyLines(text: string): string {
+        return text.replace(/\n{3,}/g, '\n\n').trim()
+    }
+    
+    /**
+     * 生成静态环境信息段落（用于系统提示词，可缓存）
+     * 
+     * 包含：
+     * - 工作区路径
+     * - 操作系统信息
+     * - 时区
+     * - 用户语言
+     */
+    private generateStaticEnvironmentSection(): string {
         const context = this.getContext()
         const lines: string[] = []
         
@@ -193,10 +287,6 @@ export class PromptManager {
             lines.push(`Operating System: ${context.os}`)
         }
         
-        if (context.currentTime) {
-            lines.push(`Current Time: ${context.currentTime}`)
-        }
-        
         if (context.timezone) {
             lines.push(`Timezone: ${context.timezone}`)
         }
@@ -209,6 +299,140 @@ export class PromptManager {
         }
         
         return lines.join('\n')
+    }
+    
+    /**
+     * 获取动态上下文消息
+     * 
+     * 返回动态上下文消息（包含时间、文件树、标签页、诊断等）
+     * 
+     * **重要：** 这些消息应该只在用户主动发送消息时插入，
+     * 在 AI 连续调用工具的迭代循环中不应该重复添加。
+     * 
+     * 这样做的好处：
+     * 1. 避免重复发送相同的上下文信息，节省 token
+     * 2. 减少 AI 处理的冗余信息
+     * 3. 动态上下文反映的是用户发送消息时的状态
+     * 
+     * 输出格式：
+     * - 前缀说明："这是当前可以使用的全局变量信息，如不需要请忽略"
+     * - 中间：动态上下文内容（文件树、标签页、诊断等）
+     * 
+     * @returns 动态上下文消息数组（一条 user 消息）
+     */
+    getDynamicContextMessages(): Content[] {
+        const settingsManager = getGlobalSettingsManager()
+        const promptConfig = settingsManager?.getSystemPromptConfig()
+        const contextConfig = settingsManager?.getContextAwarenessConfig()
+        
+        // 检查是否启用动态上下文模板
+        const dynamicTemplateEnabled = promptConfig?.dynamicTemplateEnabled ?? true
+        if (!dynamicTemplateEnabled) {
+            return []
+        }
+        
+        // 如果有自定义动态模板，使用模板生成
+        const dynamicTemplate = promptConfig?.dynamicTemplate || ''
+        if (dynamicTemplate.trim()) {
+            const content = this.generateDynamicFromTemplate(dynamicTemplate, contextConfig)
+            if (content) {
+                return [{
+                    role: 'user' as const,
+                    parts: [{ text: content }]
+                }]
+            }
+            return []
+        }
+        
+        // 否则使用默认逻辑
+        const sections: string[] = []
+        
+        // 前缀说明
+        sections.push('This is the current global variable information you can use. Ignore if not needed, and continue with the previous task.')
+        
+        // 当前时间
+        const now = new Date()
+        sections.push(`Current Time: ${now.toISOString()}`)
+        
+        // 工作区文件树
+        if (contextConfig?.includeWorkspaceFiles ?? this.config.includeWorkspaceFiles) {
+            const fileTreeContent = this.generateFileTreeSection(
+                contextConfig?.maxFileDepth ?? this.config.maxDepth ?? 10,
+                contextConfig?.ignorePatterns ?? []
+            )
+            if (fileTreeContent) {
+                sections.push(this.wrapSection('WORKSPACE FILES', fileTreeContent))
+            }
+        }
+        
+        // 打开的标签页
+        if (contextConfig?.includeOpenTabs) {
+            const openTabsContent = this.generateOpenTabsSection(
+                contextConfig.maxOpenTabs,
+                contextConfig.ignorePatterns || []
+            )
+            if (openTabsContent) {
+                sections.push(this.wrapSection('OPEN TABS', openTabsContent))
+            }
+        }
+        
+        // 当前活动编辑器
+        if (contextConfig?.includeActiveEditor) {
+            const activeEditorContent = this.generateActiveEditorSection(
+                contextConfig.ignorePatterns || []
+            )
+            if (activeEditorContent) {
+                sections.push(this.wrapSection('ACTIVE EDITOR', activeEditorContent))
+            }
+        }
+        
+        // 诊断信息
+        const diagnosticsContent = this.generateDiagnosticsSection()
+        if (diagnosticsContent) {
+            sections.push(this.wrapSection('DIAGNOSTICS', diagnosticsContent))
+        }
+        
+        // 固定文件内容
+        const pinnedFilesContent = this.generatePinnedFilesSection()
+        if (pinnedFilesContent) {
+            const sectionTitle = getGlobalSettingsManager()?.getPinnedFilesConfig()?.sectionTitle || 'PINNED FILES CONTENT'
+            sections.push(this.wrapSection(sectionTitle, pinnedFilesContent))
+        }
+        
+        // 返回单个动态上下文消息（清理多余空行）
+        const content = this.cleanupEmptyLines(sections.join('\n\n'))
+        return [{
+            role: 'user' as const,
+            parts: [{ text: content }]
+        }]
+    }
+    
+    /**
+     * 获取动态上下文的纯文本内容
+     * 
+     * 用于 token 计数，返回实际填充后的动态内容
+     * （包括文件树、标签页、诊断信息等的实际内容）
+     * 
+     * @returns 动态上下文的纯文本，如果没有内容则返回空字符串
+     */
+    getDynamicContextText(): string {
+        const messages = this.getDynamicContextMessages()
+        if (messages.length === 0) {
+            return ''
+        }
+        
+        // 从 Content[] 中提取所有文本
+        return messages
+            .map(msg => msg.parts?.map(p => p.text || '').join('') || '')
+            .join('\n\n')
+    }
+    
+    /**
+     * @deprecated 使用 generateStaticEnvironmentSection 代替
+     * 保留用于向后兼容
+     */
+    private generateEnvironmentSection(): string {
+        return this.generateStaticEnvironmentSection()
     }
     
     /**

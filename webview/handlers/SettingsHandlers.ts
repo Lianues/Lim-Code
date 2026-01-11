@@ -145,14 +145,18 @@ export const updateSystemPromptConfig: MessageHandler = async (data, requestId, 
 };
 
 /**
- * 计算系统提示词 Token 数
+ * 计算系统提示词 Token 数（分别计算静态和动态部分）
  */
 export const countSystemPromptTokens: MessageHandler = async (data, requestId, ctx) => {
   try {
-    const { text, channelType } = data;
-    const result = await ctx.settingsHandler.countSystemPromptTokens({ text, channelType });
+    const { staticText, channelType } = data;
+    const result = await ctx.settingsHandler.countSystemPromptTokensSeparate({ staticText, channelType });
     if (result.success) {
-      ctx.sendResponse(requestId, { success: true, totalTokens: result.totalTokens });
+      ctx.sendResponse(requestId, { 
+        success: true, 
+        staticTokens: result.staticTokens,
+        dynamicTokens: result.dynamicTokens
+      });
     } else {
       ctx.sendResponse(requestId, { success: false, error: result.error?.message });
     }
@@ -178,4 +182,31 @@ export function registerSettingsHandlers(registry: Map<string, MessageHandler>):
   registry.set('getSystemPromptConfig', getSystemPromptConfig);
   registry.set('updateSystemPromptConfig', updateSystemPromptConfig);
   registry.set('countSystemPromptTokens', countSystemPromptTokens);
+  registry.set('checkAnnouncement', checkAnnouncement);
+  registry.set('markAnnouncementRead', markAnnouncementRead);
 }
+
+/**
+ * 检查是否需要显示版本更新公告
+ */
+export const checkAnnouncement: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const result = await ctx.settingsHandler.checkAnnouncement();
+    ctx.sendResponse(requestId, result);
+  } catch (error: any) {
+    ctx.sendError(requestId, 'CHECK_ANNOUNCEMENT_ERROR', error.message || 'Failed to check announcement');
+  }
+};
+
+/**
+ * 标记公告已读
+ */
+export const markAnnouncementRead: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const { version } = data;
+    await ctx.settingsHandler.markAnnouncementRead(version);
+    ctx.sendResponse(requestId, { success: true });
+  } catch (error: any) {
+    ctx.sendError(requestId, 'MARK_ANNOUNCEMENT_READ_ERROR', error.message || 'Failed to mark announcement as read');
+  }
+};

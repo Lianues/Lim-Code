@@ -103,6 +103,12 @@ export interface LanguageMessages {
 
     /** 组件翻译 - 按目录结构 */
     components: {
+        /** announcement 目录 - 版本更新公告 */
+        announcement: {
+            title: string;
+            gotIt: string;
+        };
+        
         /** attachment 目录 */
         attachment: {
             preview: string;
@@ -1177,11 +1183,27 @@ export interface LanguageMessages {
                     description: string;
                     placeholder: string;
                 };
+                staticSection: {
+                    title: string;
+                    description: string;
+                    placeholder: string;
+                };
+                dynamicSection: {
+                    title: string;
+                    description: string;
+                    placeholder: string;
+                    enableTooltip: string;
+                    disabledNotice: string;
+                };
                 saveButton: string;
                 saveSuccess: string;
                 saveFailed: string;
                 tokenCount: {
                     label: string;
+                    staticLabel: string;
+                    dynamicLabel: string;
+                    staticTooltip: string;
+                    dynamicTooltip: string;
                     channelTooltip: string;
                     refreshTooltip: string;
                     failed: string;
@@ -1190,6 +1212,16 @@ export interface LanguageMessages {
                 modulesReference: {
                     title: string;
                     insertTooltip: string;
+                };
+                staticModules: {
+                    title: string;
+                    badge: string;
+                    description: string;
+                };
+                dynamicModules: {
+                    title: string;
+                    badge: string;
+                    description: string;
                 };
                 modules: {
                     ENVIRONMENT: {

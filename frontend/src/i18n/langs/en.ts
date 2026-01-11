@@ -85,6 +85,10 @@ const en: LanguageMessages = {
     },
 
     components: {
+        announcement: {
+            title: 'What\'s New',
+            gotIt: 'Got it'
+        },
         attachment: {
             preview: 'Preview',
             download: 'Download',
@@ -1034,19 +1038,45 @@ const en: LanguageMessages = {
                     description: 'Write system prompts directly, use {{$VARIABLE}} format to reference variables, which will be replaced with actual content when sent',
                     placeholder: 'Enter system prompt, you can use variables like {{$ENVIRONMENT}}...'
                 },
+                staticSection: {
+                    title: 'Static System Prompt',
+                    description: 'Included in system prompt, content is relatively stable, can be cached by API providers to speed up responses. Use {{$VARIABLE}} format to reference static variables.',
+                    placeholder: 'Enter static system prompt, you can use {{$ENVIRONMENT}}, {{$TOOLS}} and other variables...'
+                },
+                dynamicSection: {
+                    title: 'Dynamic Context Template',
+                    description: 'Generated dynamically and appended to the end of messages on each request, contains real-time info (time, file tree, tabs, etc.), not stored in history.',
+                    placeholder: 'Enter dynamic context template, you can use {{$WORKSPACE_FILES}}, {{$OPEN_TABS}} and other variables...',
+                    enableTooltip: 'Enable/disable dynamic context template',
+                    disabledNotice: 'Dynamic context template is disabled. No dynamic context messages will be sent to AI.'
+                },
                 saveButton: 'Save Configuration',
                 saveSuccess: 'Saved successfully',
                 saveFailed: 'Save failed',
                 tokenCount: {
                     label: 'Token Count',
+                    staticLabel: 'Static Template',
+                    dynamicLabel: 'Dynamic Context',
+                    staticTooltip: 'Token count of static template itself (excluding actual content of placeholders like {{$TOOLS}})',
+                    dynamicTooltip: 'Actual token count of dynamic context (including filled content like file tree, diagnostics)',
                     channelTooltip: 'Select channel for token calculation',
                     refreshTooltip: 'Refresh token count',
                     failed: 'Count failed',
-                    hint: 'Shows token count for template only, actual system prompt includes dynamically filled variable content'
+                    hint: 'Static template is the template itself, dynamic context is the filled content. Actual requests also include tool definitions.'
                 },
                 modulesReference: {
                     title: 'Available Variables Reference',
                     insertTooltip: 'Insert at the end of template'
+                },
+                staticModules: {
+                    title: 'Static Variables',
+                    badge: 'Cacheable',
+                    description: 'These variables are included in the system prompt with relatively stable content, can be cached by API providers to speed up responses.'
+                },
+                dynamicModules: {
+                    title: 'Dynamic Variables',
+                    badge: 'Real-time',
+                    description: 'These variables are dynamically inserted into the last message as context, containing real-time info like current time and file status, not stored in conversation history.'
                 },
                 modules: {
                     ENVIRONMENT: {
@@ -1198,7 +1228,7 @@ const en: LanguageMessages = {
                 appInfo: {
                     title: 'Application Info',
                     name: 'Lim Code - Vibe Coding Assistant',
-                    version: 'Version: 1.0.38',
+                    version: 'Version: 1.0.41',
                     repository: 'Repository',
                     developer: 'Developer'
                 }

@@ -85,6 +85,10 @@ const zhCN: LanguageMessages = {
     },
 
     components: {
+        announcement: {
+            title: '版本更新',
+            gotIt: '知道了'
+        },
         attachment: {
             preview: '预览',
             download: '下载',
@@ -1034,6 +1038,18 @@ const zhCN: LanguageMessages = {
                     description: '直接编写系统提示词，使用 {{$VARIABLE}} 格式引用变量，变量会在发送时被替换为实际内容',
                     placeholder: '输入系统提示词，可以使用 {{$ENVIRONMENT}} 等变量...'
                 },
+                staticSection: {
+                    title: '静态系统提示词',
+                    description: '放入系统提示词中，内容相对稳定，可被 API 提供商缓存以加速响应。使用 {{$VARIABLE}} 格式引用静态变量。',
+                    placeholder: '输入静态系统提示词，可使用 {{$ENVIRONMENT}}、{{$TOOLS}} 等变量...'
+                },
+                dynamicSection: {
+                    title: '动态上下文模板',
+                    description: '每次请求时动态生成并追加到消息末尾，包含实时信息（时间、文件树、标签页等），不存储到历史记录中。',
+                    placeholder: '输入动态上下文模板，可使用 {{$WORKSPACE_FILES}}、{{$OPEN_TABS}} 等变量...',
+                    enableTooltip: '启用/禁用动态上下文模板',
+                    disabledNotice: '动态上下文模板已禁用，不会向 AI 发送动态上下文消息。'
+                },
                 saveButton: '保存配置',
                 saveSuccess: '保存成功',
                 saveFailed: '保存失败',
@@ -1041,12 +1057,26 @@ const zhCN: LanguageMessages = {
                     title: '可用变量参考',
                     insertTooltip: '插入到模板末尾'
                 },
+                staticModules: {
+                    title: '静态变量',
+                    badge: '可缓存',
+                    description: '这些变量会放入系统提示词中，内容相对稳定，可被 API 提供商缓存以加速响应。'
+                },
+                dynamicModules: {
+                    title: '动态变量',
+                    badge: '实时更新',
+                    description: '这些变量会作为上下文动态插入到最后一条消息中，包含当前时间、文件状态等实时信息，不存储到对话历史中。'
+                },
                 tokenCount: {
                     label: 'Token 数量',
+                    staticLabel: '静态模板',
+                    dynamicLabel: '动态上下文',
+                    staticTooltip: '静态模板本身的 Token 数量（不包含 {{$TOOLS}} 等占位符的实际内容）',
+                    dynamicTooltip: '动态上下文的实际 Token 数量（包含文件树、诊断等实际填充的内容）',
                     channelTooltip: '选择用于计算 token 的渠道',
                     refreshTooltip: '刷新 token 计数',
                     failed: '计数失败',
-                    hint: '显示的是仅模板本身的 token 数，实际系统提示词还包含动态填充的变量内容'
+                    hint: '静态模板为模板本身，动态上下文为实际填充后的内容。实际请求还包括工具定义等内容。'
                 },
                 modules: {
                     ENVIRONMENT: {
@@ -1198,7 +1228,7 @@ const zhCN: LanguageMessages = {
                 appInfo: {
                     title: '应用信息',
                     name: 'Lim Code - Vibe Coding助手',
-                    version: '版本：1.0.38',
+                    version: '版本：1.0.41',
                     repository: '项目仓库',
                     developer: '开发者'
                 }
