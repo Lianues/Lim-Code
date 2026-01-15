@@ -405,6 +405,19 @@ export interface Content {
     summarizedMessageCount?: number;
     
     /**
+     * 标识此消息是用户主动输入的消息
+     *
+     * 仅对 role='user' 的消息有意义
+     * - true: 用户主动发送的消息（区别于工具响应、总结等系统生成的 user 消息）
+     * - false/undefined: 非用户主动输入的消息
+     *
+     * 用途：
+     * - 确定动态提示词的插入位置（插入到连续用户输入组之前）
+     * - 区分用户主动消息和系统消息
+     */
+    isUserInput?: boolean;
+    
+    /**
      * 消息创建时间戳（毫秒）
      *
      * 用于前端显示消息发送时间

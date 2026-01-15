@@ -141,6 +141,22 @@ The following are pinned files...
 # Project Title
 ...`,
     requiresConfig: '需要在输入框旁的固定文件按钮中添加文件'
+  },
+  {
+    id: 'SKILLS',
+    name: 'Skills 内容',
+    description: '显示当前启用的 Skills 的内容。Skills 是用户自定义的知识模块，AI 可以通过 toggle_skills 工具动态启用/禁用。',
+    example: `====
+
+ACTIVE SKILLS
+
+The following skills are currently active...
+
+## pymatgen
+
+# Pymatgen - Python Materials Genomics
+...`,
+    requiresConfig: 'AI 通过 toggle_skills 工具启用 skills'
   }
 ]
 
@@ -172,7 +188,7 @@ GUIDELINES
 - Do not omit any code.`
 
 // 默认动态上下文模板
-const DEFAULT_DYNAMIC_TEMPLATE = `This is the current global variable information you can use. Ignore if not needed, and continue with the previous task.
+const DEFAULT_DYNAMIC_TEMPLATE = `This is the current global variable information you can use. Continue with the previous task if the information is not needed and ingore it.
 
 {{$WORKSPACE_FILES}}
 
@@ -182,7 +198,9 @@ const DEFAULT_DYNAMIC_TEMPLATE = `This is the current global variable informatio
 
 {{$DIAGNOSTICS}}
 
-{{$PINNED_FILES}}`
+{{$PINNED_FILES}}
+
+{{$SKILLS}}`
 
 // 配置状态
 const config = reactive<SystemPromptConfig>({

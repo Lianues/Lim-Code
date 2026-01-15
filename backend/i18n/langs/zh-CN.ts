@@ -345,6 +345,13 @@ const zhCN: BackendLanguageMessages = {
             taskNotFound: '任务 {id} 未找到或已完成',
             cancelTaskFailed: '取消任务失败: {error}',
             toolAlreadyExists: '工具已存在: {name}'
+        },
+        
+        skills: {
+            description: '开启或关闭 Skills。Skills 是用户自定义的知识模块，提供专业的上下文和指令。每个参数是一个 skill 名称 - 设为 true 启用，false 禁用。',
+            errors: {
+                managerNotInitialized: 'Skills 管理器未初始化'
+            }
         }
     },
     

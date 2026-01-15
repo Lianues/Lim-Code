@@ -82,4 +82,48 @@ export abstract class BaseFormatter {
      * @returns 转换后的工具格式
      */
     abstract convertTools(tools: ToolDeclaration[]): any;
+    
+    /**
+     * 查找动态提示词插入点的索引
+     *
+     * 查找连续的最后一组带有 isUserInput 标记的消息
+     * 返回这组消息的第一条索引，动态提示词会被插入到该消息之前
+     *
+     * @param history 处理后的历史消息
+     * @returns 插入点索引，找不到返回 -1
+     */
+    protected findLastUserMessageGroupIndex(history: Content[]): number {
+        let firstIndex = -1;
+        let foundMarkedMessage = false;
+        
+        // 从后向前查找
+        for (let i = history.length - 1; i >= 0; i--) {
+            if (history[i].isUserInput) {
+                // 找到用户输入消息，记录索引，继续向前查找连续的用户输入消息
+                firstIndex = i;
+                foundMarkedMessage = true;
+            } else if (foundMarkedMessage) {
+                // 已找到用户输入消息，但当前消息不是，说明连续组结束
+                break;
+            }
+            // 如果还没找到用户输入消息，继续向前查找
+        }
+        
+        return firstIndex;
+    }
+    
+    /**
+     * 清理历史消息中的内部字段
+     *
+     * 移除不应该发送给 API 的内部标记字段（如 isUserInput）
+     *
+     * @param history 历史消息
+     * @returns 清理后的历史消息
+     */
+    protected cleanInternalFields(history: Content[]): Content[] {
+        return history.map(content => {
+            const { isUserInput, ...rest } = content;
+            return rest;
+        });
+    }
 }

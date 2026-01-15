@@ -34,7 +34,9 @@ import type {
     SystemPromptConfig,
     StoragePathConfig,
     StorageStats,
-    TokenCountConfig
+    TokenCountConfig,
+    SkillsConfig,
+    SkillConfigItem
 } from './types';
 import {
     DEFAULT_GLOBAL_SETTINGS,
@@ -55,6 +57,7 @@ import {
     DEFAULT_CONTEXT_AWARENESS_CONFIG,
     DEFAULT_DIAGNOSTICS_CONFIG,
     DEFAULT_PINNED_FILES_CONFIG,
+    DEFAULT_SKILLS_CONFIG,
     DEFAULT_SYSTEM_PROMPT_CONFIG,
     DEFAULT_MAX_TOOL_ITERATIONS,
     DEFAULT_TOKEN_COUNT_CONFIG,
@@ -1399,6 +1402,110 @@ export class SettingsManager {
      */
     getPinnedFilesSectionTitle(): string {
         return this.getPinnedFilesConfig().sectionTitle || 'PINNED FILES CONTENT';
+    }
+    
+    // ========== Skills 配置管理 ==========
+    
+    /**
+     * 获取 Skills 配置
+     */
+    getSkillsConfig(): Readonly<SkillsConfig> {
+        return this.settings.toolsConfig?.skills || DEFAULT_SKILLS_CONFIG;
+    }
+    
+    /**
+     * 更新 Skills 配置
+     */
+    async updateSkillsConfig(config: Partial<SkillsConfig>): Promise<void> {
+        const oldConfig = this.getSkillsConfig();
+        const newConfig = {
+            ...oldConfig,
+            ...config
+        };
+        
+        if (!this.settings.toolsConfig) {
+            this.settings.toolsConfig = {};
+        }
+        this.settings.toolsConfig.skills = newConfig;
+        this.settings.lastUpdated = Date.now();
+        
+        await this.storage.save(this.settings);
+        
+        this.notifyChange({
+            type: 'tools',
+            path: 'toolsConfig.skills',
+            oldValue: oldConfig,
+            newValue: newConfig,
+            settings: this.settings
+        });
+    }
+    
+    /**
+     * 获取 Skills 列表
+     */
+    getSkills(): SkillConfigItem[] {
+        return this.getSkillsConfig().skills || [];
+    }
+    
+    /**
+     * 设置 Skill 启用状态
+     */
+    async setSkillEnabled(id: string, enabled: boolean): Promise<void> {
+        const skills = [...this.getSkills()];
+        const skill = skills.find(s => s.id === id);
+        
+        if (skill) {
+            skill.enabled = enabled;
+        } else {
+            // 如果 skill 不存在，创建新的配置项
+            skills.push({
+                id,
+                name: id,
+                description: '',
+                enabled,
+                sendContent: true
+            });
+        }
+        
+        await this.updateSkillsConfig({ skills });
+    }
+    
+    /**
+     * 设置 Skill 发送内容状态
+     */
+    async setSkillSendContent(id: string, sendContent: boolean): Promise<void> {
+        const skills = [...this.getSkills()];
+        const skill = skills.find(s => s.id === id);
+        
+        if (skill) {
+            skill.sendContent = sendContent;
+        } else {
+            // 如果 skill 不存在，创建新的配置项
+            skills.push({
+                id,
+                name: id,
+                description: '',
+                enabled: true,
+                sendContent
+            });
+        }
+        
+        await this.updateSkillsConfig({ skills });
+    }
+    
+    /**
+     * 移除 Skill 配置
+     */
+    async removeSkillConfig(id: string): Promise<void> {
+        const skills = this.getSkills().filter(s => s.id !== id);
+        await this.updateSkillsConfig({ skills });
+    }
+    
+    /**
+     * 获取启用的 Skills
+     */
+    getEnabledSkills(): SkillConfigItem[] {
+        return this.getSkills().filter(s => s.enabled);
     }
     
     // ========== 系统提示词配置管理 ==========

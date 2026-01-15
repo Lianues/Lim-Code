@@ -285,7 +285,7 @@ export class StoragePathManager {
             let copiedFiles = 0;
             
             // 要迁移的子目录
-            const subDirs = ['conversations', 'snapshots', 'checkpoints', 'mcp', 'dependencies', 'diffs'];
+            const subDirs = ['conversations', 'snapshots', 'checkpoints', 'mcp', 'dependencies', 'diffs', 'skills'];
             
             for (let i = 0; i < subDirs.length; i++) {
                 const subDir = subDirs[i];

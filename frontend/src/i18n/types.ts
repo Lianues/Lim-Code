@@ -309,6 +309,7 @@ export interface LanguageMessages {
             stopGenerating: string;
             attachFile: string;
             pinnedFiles: string;
+            skills: string;
             summarizeContext: string;
             selectChannel: string;
             selectModel: string;
@@ -336,6 +337,17 @@ export interface LanguageMessages {
                 notExists: string;
                 dragHint: string;
                 dropHint: string;
+            };
+            skillsPanel: {
+                title: string;
+                description: string;
+                loading: string;
+                empty: string;
+                notExists: string;
+                enableTooltip: string;
+                sendContentTooltip: string;
+                hint: string;
+                openDirectory: string;
             };
             filePicker: {
                 title: string;
@@ -1249,6 +1261,11 @@ export interface LanguageMessages {
                         requiresConfig: string;
                     };
                     PINNED_FILES: {
+                        name: string;
+                        description: string;
+                        requiresConfig: string;
+                    };
+                    SKILLS: {
                         name: string;
                         description: string;
                         requiresConfig: string;

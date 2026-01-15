@@ -345,6 +345,13 @@ const ja: BackendLanguageMessages = {
             taskNotFound: 'タスク {id} が見つからないか、既に完了しています',
             cancelTaskFailed: 'タスクのキャンセルに失敗しました: {error}',
             toolAlreadyExists: 'ツールは既に存在します: {name}'
+        },
+        
+        skills: {
+            description: 'Skills のオン/オフを切り替えます。Skills はユーザー定義のナレッジモジュールで、専門的なコンテキストと指示を提供します。各パラメータは skill 名です - true で有効、false で無効にします。',
+            errors: {
+                managerNotInitialized: 'Skills マネージャーが初期化されていません'
+            }
         }
     },
     

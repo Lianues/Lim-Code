@@ -114,12 +114,27 @@ export class OpenAIFormatter extends BaseFormatter {
         // 转换思考签名格式（移除，因为 OpenAI 目前不使用思考签名）
         let processedHistory = this.convertThoughtSignatures(history);
         
-        // 插入动态上下文消息（直接追加到历史末尾）
+        // 插入动态上下文消息
         // 动态上下文包含时间、文件树、标签页等频繁变化的内容
-        // 这些内容不存储到后端历史，仅在发送时临时插入
+        // 这些内容不存储到后端历史，仅在发送时临时插入到连续的最后一组用户主动发送消息之前
         if (dynamicContextMessages && dynamicContextMessages.length > 0) {
-            processedHistory = [...processedHistory, ...dynamicContextMessages];
+            // 在 processedHistory 中计算最后一组用户主动消息的第一条索引
+            const insertIndex = this.findLastUserMessageGroupIndex(processedHistory);
+            
+            if (insertIndex >= 0) {
+                processedHistory = [
+                    ...processedHistory.slice(0, insertIndex),
+                    ...dynamicContextMessages,
+                    ...processedHistory.slice(insertIndex)
+                ];
+            } else {
+                // 回退到追加到末尾的行为
+                processedHistory = [...processedHistory, ...dynamicContextMessages];
+            }
         }
+        
+        // 清理内部字段（如 isUserInput），这些字段不应该发送给 API
+        processedHistory = this.cleanInternalFields(processedHistory);
         
         // 转换历史消息为 OpenAI 格式（直接传入原始历史，转换时处理）
         const messages = this.convertToOpenAIMessages(processedHistory, systemInstruction, toolMode);
@@ -902,21 +917,28 @@ export class OpenAIFormatter extends BaseFormatter {
      * 类似于 GeminiFormatter.convertThoughtSignatures 的处理
      */
     private convertThoughtSignatures(history: Content[]): Content[] {
-        return history.map(content => ({
-            role: content.role,
-            parts: content.parts.map(part => {
-                // 移除 thoughtSignatures 字段
-                // 未来如果 OpenAI 支持签名，可以像 Gemini 一样：
-                // if (part.thoughtSignatures?.openai) {
-                //     return { ...restPart, signature: thoughtSignatures.openai };
-                // }
-                if (part.thoughtSignatures) {
-                    const { thoughtSignatures, ...restPart } = part;
-                    return restPart;
-                }
-                return part;
-            })
-        }));
+        return history.map(content => {
+            const result: Content = {
+                role: content.role,
+                parts: content.parts.map(part => {
+                    // 移除 thoughtSignatures 字段
+                    // 未来如果 OpenAI 支持签名，可以像 Gemini 一样：
+                    // if (part.thoughtSignatures?.openai) {
+                    //     return { ...restPart, signature: thoughtSignatures.openai };
+                    // }
+                    if (part.thoughtSignatures) {
+                        const { thoughtSignatures, ...restPart } = part;
+                        return restPart;
+                    }
+                    return part;
+                })
+            };
+            // 保留 isUserInput 标记
+            if (content.isUserInput) {
+                result.isUserInput = true;
+            }
+            return result;
+        });
     }
     
     /**

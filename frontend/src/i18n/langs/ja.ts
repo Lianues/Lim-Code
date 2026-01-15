@@ -214,6 +214,7 @@ const ja: LanguageMessages = {
             stopGenerating: '生成を停止',
             attachFile: 'ファイルを添付',
             pinnedFiles: 'ピン留めファイル',
+            skills: 'Skills',
             summarizeContext: 'コンテキストを要約',
             selectChannel: 'チャンネルを選択',
             selectModel: 'モデルを選択',
@@ -241,6 +242,17 @@ const ja: LanguageMessages = {
                 notExists: '存在しません',
                 dragHint: 'Shift を押しながらワークスペース内のテキストファイルをここにドラッグして追加',
                 dropHint: 'ファイルを追加するにはマウスを離してください'
+            },
+            skillsPanel: {
+                title: 'Skills',
+                description: 'Skills はユーザー定義のナレッジモジュールです。チェックボックス：会話で有効化。スイッチ：詳細内容を AI に送信。',
+                loading: '読み込み中...',
+                empty: '利用可能な Skills がありません。skills フォルダーで作成してください。',
+                notExists: '存在しません',
+                enableTooltip: '現在の会話でこの Skill を有効にする',
+                sendContentTooltip: '有効時に Skill の内容を AI に送信する',
+                hint: 'AI も toggle_skills ツールで Skill 内容を送信するかどうかを決定できます',
+                openDirectory: 'Skills ディレクトリを開く'
             },
             filePicker: {
                 title: 'ファイルを選択',
@@ -1108,6 +1120,11 @@ const ja: LanguageMessages = {
                         description: 'ユーザーがピン留めしたファイルの完全な内容を表示します',
                         requiresConfig: '入力ボックス横のピン留めファイルボタンでファイルを追加する必要があります'
                     },
+                    SKILLS: {
+                        name: 'Skills の内容',
+                        description: '現在有効な Skills の内容を表示します。Skills はユーザー定義のナレッジモジュールで、AI が toggle_skills ツールで動的に有効/無効にできます。',
+                        requiresConfig: 'AI が toggle_skills ツールで skills を有効にします'
+                    },
                     TOOLS: {
                         name: 'ツール定義',
                         description: 'チャンネル設定に基づいて XML または Function Call 形式でツール定義を生成します（この変数はシステムによって自動的に入力されます）'
@@ -1228,7 +1245,7 @@ const ja: LanguageMessages = {
                 appInfo: {
                     title: 'アプリケーション情報',
                     name: 'Lim Code - Vibe Coding アシスタント',
-                    version: 'バージョン：1.0.41',
+                    version: 'バージョン：1.0.44',
                     repository: 'リポジトリ',
                     developer: '開発者'
                 }

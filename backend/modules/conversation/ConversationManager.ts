@@ -192,17 +192,24 @@ export class ConversationManager {
 
     /**
      * 添加消息（Gemini 格式）
+     * 
+     * @param conversationId 对话 ID
+     * @param role 角色
+     * @param parts 消息内容
+     * @param metadata 可选的元数据（如 isUserInput）
      */
     async addMessage(
         conversationId: string,
         role: 'user' | 'model' | 'system',
-        parts: ContentPart[]
+        parts: ContentPart[],
+        metadata?: Partial<Pick<Content, 'isUserInput' | 'isFunctionResponse' | 'isSummary'>>
     ): Promise<void> {
         const history = await this.loadHistory(conversationId);
         history.push({
             role,
             parts: JSON.parse(JSON.stringify(parts)),
-            timestamp: Date.now()  // 自动添加时间戳
+            timestamp: Date.now(),  // 自动添加时间戳
+            ...metadata  // 合并可选元数据
         });
         await this.storage.saveHistory(conversationId, history);
     }
@@ -988,10 +995,18 @@ export class ConversationManager {
                 return null;
             }
             
-            return {
+            // 保留必要的元数据字段
+            const result: Content = {
                 role: message.role,
                 parts
             };
+            
+            // 保留 isUserInput 标记（用于确定动态提示词插入位置）
+            if (message.isUserInput) {
+                result.isUserInput = true;
+            }
+            
+            return result;
         };
         
         // 处理所有消息

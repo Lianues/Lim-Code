@@ -57,12 +57,28 @@ export class GeminiFormatter extends BaseFormatter {
         // 转换思考签名格式：将 thoughtSignatures.gemini 转换为 thoughtSignature
         processedHistory = this.convertThoughtSignatures(processedHistory);
         
-        // 插入动态上下文消息（直接追加到历史末尾）
+        // 插入动态上下文消息
         // 动态上下文包含时间、文件树、标签页等频繁变化的内容
-        // 这些内容不存储到后端历史，仅在发送时临时插入
+        // 这些内容不存储到后端历史，仅在发送时临时插入到连续的最后一组用户主动发送消息之前
         if (dynamicContextMessages && dynamicContextMessages.length > 0) {
-            processedHistory = [...processedHistory, ...dynamicContextMessages];
+            // 在 processedHistory 中计算最后一组用户主动消息的第一条索引
+            // 用户主动消息：role='user' 且不是工具响应、不是总结消息
+            const insertIndex = this.findLastUserMessageGroupIndex(processedHistory);
+            
+            if (insertIndex >= 0) {
+                processedHistory = [
+                    ...processedHistory.slice(0, insertIndex),
+                    ...dynamicContextMessages,
+                    ...processedHistory.slice(insertIndex)
+                ];
+            } else {
+                // 回退到追加到末尾的行为
+                processedHistory = [...processedHistory, ...dynamicContextMessages];
+            }
         }
+        
+        // 清理内部字段（如 isUserInput），这些字段不应该发送给 API
+        processedHistory = this.cleanInternalFields(processedHistory);
         
         // 构建请求体
         const body: any = {
@@ -583,26 +599,33 @@ export class GeminiFormatter extends BaseFormatter {
      * 转换为 Gemini API 需要的 thoughtSignature: "..." 格式
      */
     private convertThoughtSignatures(history: Content[]): Content[] {
-        return history.map(content => ({
-            role: content.role,
-            parts: content.parts.map(part => {
-                // 如果有 thoughtSignatures，提取 gemini 格式的签名
-                if (part.thoughtSignatures?.gemini) {
-                    const { thoughtSignatures, ...restPart } = part;
-                    return {
-                        ...restPart,
-                        thoughtSignature: thoughtSignatures.gemini
-                    };
-                }
-                // 如果没有 thoughtSignatures，直接返回原 part
-                // 但需要确保不发送 thoughtSignatures 字段
-                if (part.thoughtSignatures) {
-                    const { thoughtSignatures, ...restPart } = part;
-                    return restPart;
-                }
-                return part;
-            })
-        }));
+        return history.map(content => {
+            const result: Content = {
+                role: content.role,
+                parts: content.parts.map(part => {
+                    // 如果有 thoughtSignatures，提取 gemini 格式的签名
+                    if (part.thoughtSignatures?.gemini) {
+                        const { thoughtSignatures, ...restPart } = part;
+                        return {
+                            ...restPart,
+                            thoughtSignature: thoughtSignatures.gemini
+                        };
+                    }
+                    // 如果没有 thoughtSignatures，直接返回原 part
+                    // 但需要确保不发送 thoughtSignatures 字段
+                    if (part.thoughtSignatures) {
+                        const { thoughtSignatures, ...restPart } = part;
+                        return restPart;
+                    }
+                    return part;
+                })
+            };
+            // 保留 isUserInput 标记
+            if (content.isUserInput) {
+                result.isUserInput = true;
+            }
+            return result;
+        });
     }
     
     /**

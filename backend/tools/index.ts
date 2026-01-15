@@ -6,6 +6,7 @@
 
 import type { Tool } from './types';
 import { DependencyManager } from '../modules/dependencies';
+import { hasAvailableSkills, getSkillsTool } from './skills';
 
 // 导出设置上下文（从 core 模块重新导出）
 export { setGlobalSettingsManager, getGlobalSettingsManager } from '../core/settingsContext';
@@ -69,7 +70,14 @@ export function getAllTools(): Tool[] {
         ...getLspToolRegistrations(),
     ];
     
-    return registrations.map(reg => reg());
+    const tools = registrations.map(reg => reg());
+    
+    // 添加 skills 工具（如果有可用的 skills）
+    if (hasAvailableSkills()) {
+        tools.push(getSkillsTool());
+    }
+    
+    return tools;
 }
 
 /**

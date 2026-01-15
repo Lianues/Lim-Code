@@ -345,6 +345,13 @@ Requirements:
             taskNotFound: 'Task {id} not found or already completed',
             cancelTaskFailed: 'Failed to cancel task: {error}',
             toolAlreadyExists: 'Tool already exists: {name}'
+        },
+        
+        skills: {
+            description: 'Toggle skills on or off. Skills are user-defined knowledge modules that provide specialized context and instructions. Each parameter is a skill name - set to true to enable, false to disable.',
+            errors: {
+                managerNotInitialized: 'Skills manager not initialized'
+            }
         }
     },
     

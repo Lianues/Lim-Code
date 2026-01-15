@@ -18,6 +18,7 @@ import type { PromptConfig, PromptContext } from './types'
 import type { Content } from '../conversation/types'
 import { getWorkspaceFileTree, getWorkspaceRoot, getWorkspacesDescription, getAllWorkspaces } from './fileTree'
 import { getGlobalSettingsManager } from '../../core/settingsContext'
+import { getSkillsManager } from '../skills'
 
 /**
  * 系统提示词管理器
@@ -169,6 +170,7 @@ export class PromptManager {
      * - {{$ACTIVE_EDITOR}} - 当前活动编辑器
      * - {{$DIAGNOSTICS}} - 诊断信息
      * - {{$PINNED_FILES}} - 固定文件内容
+     * - {{$SKILLS}} - 启用的 Skills 内容
      */
     private generateDynamicFromTemplate(template: string, contextConfig: any): string {
         const settingsManager = getGlobalSettingsManager()
@@ -179,7 +181,8 @@ export class PromptManager {
             'OPEN_TABS': '',
             'ACTIVE_EDITOR': '',
             'DIAGNOSTICS': '',
-            'PINNED_FILES': ''
+            'PINNED_FILES': '',
+            'SKILLS': ''
         }
         
         // 工作区文件树
@@ -225,6 +228,12 @@ export class PromptManager {
         if (pinnedFilesContent) {
             const sectionTitle = settingsManager?.getPinnedFilesConfig()?.sectionTitle || 'PINNED FILES CONTENT'
             modules['PINNED_FILES'] = this.wrapSection(sectionTitle, pinnedFilesContent)
+        }
+        
+        // Skills 内容
+        const skillsContent = this.generateSkillsSection()
+        if (skillsContent) {
+            modules['SKILLS'] = this.wrapSection('ACTIVE SKILLS', skillsContent)
         }
         
         // 替换模板中的占位符
@@ -348,7 +357,7 @@ export class PromptManager {
         const sections: string[] = []
         
         // 前缀说明
-        sections.push('This is the current global variable information you can use. Ignore if not needed, and continue with the previous task.')
+        sections.push('This is the current global variable information you can use. Continue with the previous task if the information is not needed and ingore it.')
         
         // 当前时间
         const now = new Date()
@@ -397,6 +406,12 @@ export class PromptManager {
         if (pinnedFilesContent) {
             const sectionTitle = getGlobalSettingsManager()?.getPinnedFilesConfig()?.sectionTitle || 'PINNED FILES CONTENT'
             sections.push(this.wrapSection(sectionTitle, pinnedFilesContent))
+        }
+        
+        // Skills 内容
+        const skillsContent = this.generateSkillsSection()
+        if (skillsContent) {
+            sections.push(this.wrapSection('ACTIVE SKILLS', skillsContent))
         }
         
         // 返回单个动态上下文消息（清理多余空行）
@@ -724,6 +739,25 @@ export class PromptManager {
         }
         
         return `The following are pinned files that should be read and considered for every response:\n\n${results.join('\n\n')}`
+    }
+    
+    /**
+     * 生成 Skills 内容段落
+     *
+     * 获取当前启用的 skills 内容
+     */
+    private generateSkillsSection(): string {
+        const skillsManager = getSkillsManager()
+        if (!skillsManager) {
+            return ''
+        }
+        
+        const skillsContent = skillsManager.getEnabledSkillsContent()
+        if (!skillsContent) {
+            return ''
+        }
+        
+        return `The following skills are currently active and provide specialized knowledge and instructions:\n\n${skillsContent}`
     }
     
     /**

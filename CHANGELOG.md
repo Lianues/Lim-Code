@@ -3,6 +3,21 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.0.44] - 2026-01-14
+
+### Improved
+  - 优化了动态提示词的插入算法，改为插入到回合之前，避免破坏回合完整性
+
+## [1.0.43] - 2026-01-11
+
+### Improved
+  - 优化了提示词，由于提示词更新，所以尽量去前端提示词面板里**重置系统和动态提示词**
+
+## [1.0.42] - 2026-01-11
+
+### Added
+  - 初步添加了动态skills功能
+
 ## [1.0.41] - 2026-01-10
 
 ### Improved

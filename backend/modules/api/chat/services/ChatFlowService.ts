@@ -119,7 +119,9 @@ export class ChatFlowService {
 
     // 3. 添加用户消息到历史（包含附件）
     const userParts = this.messageBuilderService.buildUserMessageParts(message, request.attachments);
-    await this.conversationManager.addMessage(conversationId, 'user', userParts);
+    await this.conversationManager.addMessage(conversationId, 'user', userParts, {
+      isUserInput: true
+    });
 
     // 4. 工具调用循环（委托给 ToolIterationLoopService，非流式）
     const maxToolIterations = this.getMaxToolIterations();
@@ -257,9 +259,10 @@ export class ChatFlowService {
       };
     }
 
-    // 4. 更新消息内容
+    // 4. 更新消息内容，并标记为动态提示词插入点
     await this.conversationManager.updateMessage(conversationId, messageIndex, {
       parts: [{ text: newMessage }],
+      isUserInput: true
     });
 
     // 4.5 重新计算编辑后消息的 token 数
@@ -359,7 +362,9 @@ export class ChatFlowService {
 
     // 5. 添加用户消息到历史（包含附件）
     const userParts = this.messageBuilderService.buildUserMessageParts(message, request.attachments);
-    await this.conversationManager.addMessage(conversationId, 'user', userParts);
+    await this.conversationManager.addMessage(conversationId, 'user', userParts, {
+      isUserInput: true
+    });
 
     // 5.1 预计算用户消息 token 数
     await this.tokenEstimationService.preCountUserMessageTokens(conversationId, config.type);
@@ -557,10 +562,11 @@ export class ChatFlowService {
       } satisfies ChatStreamCheckpointsData;
     }
 
-    // 7. 更新消息内容（包含附件）
+    // 7. 更新消息内容（包含附件），并标记为动态提示词插入点
     const editParts = this.messageBuilderService.buildUserMessageParts(newMessage, request.attachments);
     await this.conversationManager.updateMessage(conversationId, messageIndex, {
       parts: editParts,
+      isUserInput: true
     });
 
     // 7.5 重新计算编辑后消息的 token 数

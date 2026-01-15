@@ -424,9 +424,17 @@ export function cleanContentForAPI(content: Content): Content {
         return cleanedPart;
     });
     
-    return {
+    // 保留必要的元数据字段
+    const result: Content = {
         role: content.role,
         parts: cleanedParts
         // 不包含 isFunctionResponse, estimatedTokenCount, tokenCountByChannel 等元数据
     };
+    
+    // 保留 isUserInput 标记（用于确定动态提示词插入位置）
+    if (content.isUserInput) {
+        result.isUserInput = true;
+    }
+    
+    return result;
 }

@@ -214,6 +214,7 @@ const en: LanguageMessages = {
             stopGenerating: 'Stop generating',
             attachFile: 'Attach file',
             pinnedFiles: 'Pinned files',
+            skills: 'Skills',
             summarizeContext: 'Summarize context',
             selectChannel: 'Select channel',
             selectModel: 'Select model',
@@ -241,6 +242,17 @@ const en: LanguageMessages = {
                 notExists: 'Does not exist',
                 dragHint: 'Hold Shift and drag text files from workspace here to add',
                 dropHint: 'Release to add file'
+            },
+            skillsPanel: {
+                title: 'Skills',
+                description: 'Skills are user-defined knowledge modules. Checkbox: enable in conversation. Switch: send detailed content to AI.',
+                loading: 'Loading...',
+                empty: 'No skills available. Create skills in the skills folder.',
+                notExists: 'Does not exist',
+                enableTooltip: 'Enable this skill in current conversation',
+                sendContentTooltip: 'Send skill content to AI when enabled',
+                hint: 'AI can also decide whether to send skill content via toggle_skills tool',
+                openDirectory: 'Open Skills Directory'
             },
             filePicker: {
                 title: 'Select File',
@@ -1108,6 +1120,11 @@ const en: LanguageMessages = {
                         description: 'Shows complete content of user-pinned files',
                         requiresConfig: 'Need to add files in the pinned files button next to input box'
                     },
+                    SKILLS: {
+                        name: 'Skills Content',
+                        description: 'Shows content of currently enabled Skills. Skills are user-defined knowledge modules that AI can dynamically enable/disable via toggle_skills tool.',
+                        requiresConfig: 'AI enables skills via toggle_skills tool'
+                    },
                     TOOLS: {
                         name: 'Tool Definitions',
                         description: 'Generate tool definitions in XML or Function Call format based on channel configuration (this variable is automatically filled by the system)'
@@ -1228,7 +1245,7 @@ const en: LanguageMessages = {
                 appInfo: {
                     title: 'Application Info',
                     name: 'Lim Code - Vibe Coding Assistant',
-                    version: 'Version: 1.0.41',
+                    version: 'Version: 1.0.44',
                     repository: 'Repository',
                     developer: 'Developer'
                 }

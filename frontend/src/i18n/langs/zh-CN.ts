@@ -214,6 +214,7 @@ const zhCN: LanguageMessages = {
             stopGenerating: '停止生成',
             attachFile: '添加附件',
             pinnedFiles: '固定文件',
+            skills: 'Skills',
             summarizeContext: '总结上下文',
             selectChannel: '选择渠道',
             selectModel: '选择模型',
@@ -241,6 +242,17 @@ const zhCN: LanguageMessages = {
                 notExists: '不存在',
                 dragHint: '按住 Shift 拖拽工作区内的文本文件到此处添加',
                 dropHint: '释放鼠标添加文件'
+            },
+            skillsPanel: {
+                title: 'Skills',
+                description: 'Skills 是用户自定义的知识模块。勾选框：在对话中启用。开关：发送详细内容给 AI。',
+                loading: '加载中...',
+                empty: '暂无可用的 Skills。请在 skills 文件夹中创建。',
+                notExists: '不存在',
+                enableTooltip: '在当前对话中启用此 Skill',
+                sendContentTooltip: '启用时发送 Skill 内容给 AI',
+                hint: 'AI 也可以通过 toggle_skills 工具来决定是否发送某个 Skill 内容',
+                openDirectory: '打开 Skills 存储目录'
             },
             filePicker: {
                 title: '选择文件',
@@ -1108,6 +1120,11 @@ const zhCN: LanguageMessages = {
                         description: '显示用户固定的文件的完整内容',
                         requiresConfig: '需要在输入框旁的固定文件按钮中添加文件'
                     },
+                    SKILLS: {
+                        name: 'Skills 内容',
+                        description: '显示当前启用的 Skills 的内容。Skills 是用户自定义的知识模块，AI 可以通过 toggle_skills 工具动态启用/禁用。',
+                        requiresConfig: 'AI 通过 toggle_skills 工具启用 skills'
+                    },
                     TOOLS: {
                         name: '工具定义',
                         description: '根据渠道配置生成 XML 或 Function Call 格式的工具定义（此变量由系统自动填充）'
@@ -1228,7 +1245,7 @@ const zhCN: LanguageMessages = {
                 appInfo: {
                     title: '应用信息',
                     name: 'Lim Code - Vibe Coding助手',
-                    version: '版本：1.0.41',
+                    version: '版本：1.0.44',
                     repository: '项目仓库',
                     developer: '开发者'
                 }

@@ -36,8 +36,10 @@ export interface GenerateRequest {
      * 由 PromptManager.getDynamicContextMessages() 生成的动态上下文。
      * 包含当前时间、文件树、打开标签页、诊断信息等频繁变化的内容。
      * 
-     * 这些消息会被插入到 history 末尾（用户消息之前），
+     * 这些消息会被插入到连续的最后一组用户输入消息（isUserInput=true）之前，
      * 但不会存储到后端历史记录中。
+     * 
+     * 插入位置由 formatter 内部通过查找 isUserInput 标记计算。
      */
     dynamicContextMessages?: Content[];
     

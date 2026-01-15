@@ -27,6 +27,7 @@ import type { CreateMcpServerInput, UpdateMcpServerInput, McpServerInfo } from '
 import { DependencyManager, type InstallProgressEvent } from '../backend/modules/dependencies';
 import { toolRegistry, registerAllTools, onTerminalOutput, onImageGenOutput, TaskManager } from '../backend/tools';
 import type { TerminalOutputEvent, ImageGenOutputEvent, TaskEvent } from '../backend/tools';
+import { createSkillsManager } from '../backend/modules/skills';
 import {
     setGlobalSettingsManager,
     setGlobalConfigManager,
@@ -159,21 +160,27 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         setGlobalConfigManager(this.configManager);
         setGlobalToolRegistry(toolRegistry);
         
-        // 11. 注册所有工具到工具注册器（必须在 ChannelManager 之前）
+        // 11. 初始化 Skills 管理器（必须在注册工具之前，因为 skills 工具需要它）
+        await createSkillsManager(this.storagePathManager.getEffectiveDataPath());
+        
+        // 11.1 从 settingsManager 同步 skills 状态到 SkillsManager
+        await this.syncSkillsState();
+        
+        // 12. 注册所有工具到工具注册器（必须在 ChannelManager 之前）
         registerAllTools(toolRegistry);
         
-        // 12. 初始化渠道管理器（传入工具注册器和设置管理器）
+        // 13. 初始化渠道管理器（传入工具注册器和设置管理器）
         this.channelManager = new ChannelManager(this.configManager, toolRegistry, this.settingsManager);
         
-        // 13. 设置重试状态回调
+        // 14. 设置重试状态回调
         this.channelManager.setRetryStatusCallback((status) => {
             this.handleRetryStatus(status);
         });
         
-        // 14. 设置全局渠道管理器引用
+        // 15. 设置全局渠道管理器引用
         setGlobalChannelManager(this.channelManager);
         
-        // 15. 初始化检查点管理器（使用自定义路径）
+        // 16. 初始化检查点管理器（使用自定义路径）
         this.checkpointManager = new CheckpointManager(
             this.settingsManager,
             this.conversationManager,
@@ -182,7 +189,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         );
         await this.checkpointManager.initialize();
         
-        // 16. 初始化聊天处理器（传入工具注册器和检查点管理器）
+        // 17. 初始化聊天处理器（传入工具注册器和检查点管理器）
         this.chatHandler = new ChatHandler(
             this.configManager,
             this.channelManager,
@@ -193,28 +200,28 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.chatHandler.setSettingsManager(this.settingsManager);
         this.chatHandler.setDiffStorageManager(this.diffStorageManager);
         
-        // 17. 初始化模型管理处理器
+        // 18. 初始化模型管理处理器
         this.modelsHandler = new ModelsHandler(this.configManager);
         
-        // 18. 初始化设置处理器（传入工具注册器）
+        // 19. 初始化设置处理器（传入工具注册器）
         this.settingsHandler = new SettingsHandler(this.settingsManager, toolRegistry);
         
-        // 19. 订阅终端输出事件
+        // 20. 订阅终端输出事件
         this.terminalOutputUnsubscribe = onTerminalOutput((event) => {
             this.handleTerminalOutputEvent(event);
         });
         
-        // 20. 订阅图像生成输出事件
+        // 21. 订阅图像生成输出事件
         this.imageGenOutputUnsubscribe = onImageGenOutput((event) => {
             this.handleImageGenOutputEvent(event);
         });
         
-        // 21. 订阅统一任务事件（用于未来扩展）
+        // 22. 订阅统一任务事件（用于未来扩展）
         this.taskEventUnsubscribe = TaskManager.onTaskEvent((event) => {
             this.handleTaskEvent(event);
         });
         
-        // 22. 初始化 MCP 管理器（使用自定义路径下的 mcp 目录）
+        // 23. 初始化 MCP 管理器（使用自定义路径下的 mcp 目录）
         const mcpConfigDir = vscode.Uri.file(this.storagePathManager.getMcpPath());
         try {
             await vscode.workspace.fs.stat(mcpConfigDir);
@@ -226,30 +233,30 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.mcpManager = new McpManager(mcpStorage);
         await this.mcpManager.initialize();
         
-        // 23. 将 MCP 管理器连接到 ChannelManager（用于工具声明）
+        // 24. 将 MCP 管理器连接到 ChannelManager（用于工具声明）
         this.channelManager.setMcpManager(this.mcpManager);
         
-        // 24. 将 MCP 管理器连接到 ChatHandler（用于工具调用）
+        // 25. 将 MCP 管理器连接到 ChatHandler（用于工具调用）
         this.chatHandler.setMcpManager(this.mcpManager);
         
-        // 25. 初始化依赖管理器（使用自定义路径）
+        // 26. 初始化依赖管理器（使用自定义路径）
         this.dependencyManager = DependencyManager.getInstance(
             this.context,
             this.storagePathManager.getDependenciesPath()
         );
         await this.dependencyManager.initialize();
         
-        // 26. 设置依赖检查器到工具注册器（用于过滤未安装依赖的工具）
+        // 27. 设置依赖检查器到工具注册器（用于过滤未安装依赖的工具）
         toolRegistry.setDependencyChecker({
             isInstalled: (name: string) => this.dependencyManager.isInstalledSync(name)
         });
         
-        // 27. 订阅依赖安装进度事件
+        // 28. 订阅依赖安装进度事件
         this.dependencyProgressUnsubscribe = this.dependencyManager.onProgress((event) => {
             this.handleDependencyProgressEvent(event);
         });
         
-        // 28. 初始化消息路由器
+        // 29. 初始化消息路由器
         this.messageRouter = new MessageRouter(
             this.chatHandler,
             () => this._view,
@@ -341,6 +348,36 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             type: 'retryStatus',
             data: status
         });
+    }
+    
+    /**
+     * 同步 skills 状态到 SkillsManager
+     * 从 settingsManager 加载已保存的启用状态
+     */
+    private async syncSkillsState(): Promise<void> {
+        try {
+            const { getSkillsManager } = await import('../backend/modules/skills');
+            const skillsManager = getSkillsManager();
+            
+            if (!skillsManager) {
+                return;
+            }
+            
+            // 从 settingsManager 获取已保存的 skills 配置
+            const savedConfig = this.settingsManager.getSkillsConfig() || { skills: [] };
+            
+            // 同步状态到 SkillsManager
+            for (const savedSkill of savedConfig.skills) {
+                if (savedSkill.enabled) {
+                    skillsManager.enableSkill(savedSkill.id);
+                } else {
+                    skillsManager.disableSkill(savedSkill.id);
+                }
+                skillsManager.setSkillSendContent(savedSkill.id, savedSkill.sendContent);
+            }
+        } catch (error) {
+            console.error('[ChatViewProvider] Failed to sync skills state:', error);
+        }
     }
     
     /**

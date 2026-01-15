@@ -187,9 +187,10 @@ export class ToolIterationLoopService {
                 ? this.promptManager.refreshAndGetPrompt()
                 : this.promptManager.getSystemPrompt();  // 静态内容不需要强制刷新
 
-            // 5. 获取动态上下文消息（每次都获取，会被合并到最后一个 user 消息中）
+            // 5. 获取动态上下文消息（每次都获取，会被插入到最后一组 user 消息之前）
             // 动态部分包含：当前时间、文件树、标签页、活动编辑器、诊断、固定文件
-            // 这些内容不存储到后端历史，仅在发送时临时插入到最后一个 user 消息的 parts 中
+            // 这些内容不存储到后端历史，仅在发送时临时插入到连续的最后一组用户主动发送消息之前
+            // 插入位置由 formatter 内部计算，确保与处理后的 history 一致
             const dynamicContextMessages = this.promptManager.getDynamicContextMessages();
 
             // 6. 记录请求开始时间
