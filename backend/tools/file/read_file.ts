@@ -23,7 +23,8 @@ import {
     canReadFileWithCapability,
     getReadFileErrorWithCapability,
     isImageFile,
-    isPdfFile
+    isPdfFile,
+    normalizeLineEndingsToLF
 } from '../utils';
 
 /**
@@ -288,7 +289,7 @@ async function readSingleFile(
         }
         
         // 文本文件：返回带行号的内容
-        const text = new TextDecoder().decode(content);
+        const text = normalizeLineEndingsToLF(new TextDecoder().decode(content));
         const allLines = text.split('\n');
         const totalLines = allLines.length;
         

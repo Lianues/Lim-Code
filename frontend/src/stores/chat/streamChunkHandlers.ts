@@ -73,31 +73,45 @@ export function handleChunkType(chunk: StreamChunk, state: ChatStoreState): void
 export function handleToolsExecuting(chunk: StreamChunk, state: ChatStoreState): void {
   // 工具即将开始执行（不需要确认的工具，或用户已确认的工具）
   // 在工具执行前先更新消息的计时信息，让前端立即显示
-  
+
   // 重要：将 isStreaming 设为 true，这样用户点击取消时会发送取消请求到后端
   // 这解决了用户确认工具后点击取消不生效的问题
   state.isStreaming.value = true
-  
+
   const messageIndex = state.allMessages.value.findIndex(m => m.id === state.streamingMessageId.value)
-  
+
   if (messageIndex !== -1 && chunk.content) {
     const message = state.allMessages.value[messageIndex]
+
     // 保存原有的 modelVersion 和 tools
     // 注意：必须保留原始 tools，因为 contentToMessage 会将工具状态设为 success
     const existingModelVersion = message.metadata?.modelVersion
     const existingTools = message.tools
-    
+
     const finalMessage = contentToMessage(chunk.content, message.id)
-    
+
+    // 合并 tools（优先保留 existingTools 的状态；缺失时用 finalMessage.tools 补齐）
+    const mergedTools = (() => {
+      const a = existingTools || []
+      const b = finalMessage.tools || []
+      if (a.length === 0) return b
+      if (b.length === 0) return a
+      const map = new Map<string, any>()
+      for (const t of a) map.set(t.id, t)
+      for (const t of b) {
+        if (!map.has(t.id)) map.set(t.id, t)
+      }
+      return Array.from(map.values())
+    })()
+
     // 创建更新后的消息对象
-    // 注意：使用 existingTools 而不是 finalMessage.tools，因为后者状态是 success
     const updatedMessage: Message = {
       ...message,
       ...finalMessage,
       streaming: false,
-      tools: existingTools  // 保留原始 tools，避免被 finalMessage 覆盖
+      tools: mergedTools.length > 0 ? mergedTools : undefined
     }
-    
+
     // 恢复原有的 modelVersion，同时保留后端返回的计时信息
     if (updatedMessage.metadata) {
       if (existingModelVersion) {
@@ -105,11 +119,11 @@ export function handleToolsExecuting(chunk: StreamChunk, state: ChatStoreState):
       }
       delete updatedMessage.metadata.thinkingStartTime
     }
-    
+
     // 标记工具为 running 状态
     if (updatedMessage.tools) {
       const pendingIds = new Set((chunk.pendingToolCalls || []).map((t: any) => t.id))
-      
+
       updatedMessage.tools = updatedMessage.tools.map(tool => {
         if (pendingIds.has(tool.id)) {
           return { ...tool, status: 'running' as const }
@@ -117,7 +131,7 @@ export function handleToolsExecuting(chunk: StreamChunk, state: ChatStoreState):
         return tool
       })
     }
-    
+
     // 用新对象替换数组中的旧对象，确保 Vue 响应式更新
     state.allMessages.value = [
       ...state.allMessages.value.slice(0, messageIndex),
@@ -138,16 +152,32 @@ export function handleAwaitingConfirmation(chunk: StreamChunk, state: ChatStoreS
     const message = state.allMessages.value[messageIndex]
     // 保存原有的 modelVersion
     const existingModelVersion = message.metadata?.modelVersion
-    
+    const existingTools = message.tools
+
     const finalMessage = contentToMessage(chunk.content, message.id)
-    
+
+    // 合并 tools（优先保留 existingTools 的状态；缺失时用 finalMessage.tools 补齐）
+    const mergedTools = (() => {
+      const a = existingTools || []
+      const b = finalMessage.tools || []
+      if (a.length === 0) return b
+      if (b.length === 0) return a
+      const map = new Map<string, any>()
+      for (const t of a) map.set(t.id, t)
+      for (const t of b) {
+        if (!map.has(t.id)) map.set(t.id, t)
+      }
+      return Array.from(map.values())
+    })()
+
     // 创建更新后的消息对象
     const updatedMessage: Message = {
       ...message,
       ...finalMessage,
-      streaming: false
+      streaming: false,
+      tools: mergedTools.length > 0 ? mergedTools : undefined
     }
-    
+
     // 恢复原有的 modelVersion，同时保留后端返回的计时信息
     if (updatedMessage.metadata) {
       // 恢复原有的 modelVersion
@@ -159,11 +189,11 @@ export function handleAwaitingConfirmation(chunk: StreamChunk, state: ChatStoreS
       // 但如果原消息有 thinkingStartTime，需要清除（因为思考已完成）
       delete updatedMessage.metadata.thinkingStartTime
     }
-    
+
     // 标记工具为等待确认状态
     if (updatedMessage.tools) {
       const pendingIds = new Set((chunk.pendingToolCalls || []).map((t: any) => t.id))
-      
+
       // 使用 map 创建新数组
       updatedMessage.tools = updatedMessage.tools.map(tool => {
         if (pendingIds.has(tool.id)) {
@@ -172,7 +202,7 @@ export function handleAwaitingConfirmation(chunk: StreamChunk, state: ChatStoreS
         return tool
       })
     }
-    
+
     // 用新对象替换数组中的旧对象，确保 Vue 响应式更新
     state.allMessages.value = [
       ...state.allMessages.value.slice(0, messageIndex),
@@ -180,7 +210,7 @@ export function handleAwaitingConfirmation(chunk: StreamChunk, state: ChatStoreS
       ...state.allMessages.value.slice(messageIndex + 1)
     ]
   }
-  
+
   // 注意：不结束 streaming 状态的等待标志，因为需要等用户确认
   // 但 isStreaming 设为 false 允许用户操作
   state.isStreaming.value = false

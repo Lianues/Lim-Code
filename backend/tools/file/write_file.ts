@@ -9,7 +9,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import type { Tool, ToolResult, ToolContext } from '../types';
-import { resolveUriWithInfo, getAllWorkspaces } from '../utils';
+import { resolveUriWithInfo, getAllWorkspaces, normalizeLineEndingsToLF } from '../utils';
 import { getDiffManager } from './diffManager';
 import { getDiffStorageManager } from '../../modules/conversation';
 
@@ -75,7 +75,7 @@ async function writeSingleFile(
             await vscode.workspace.fs.stat(uri);
             fileExists = true;
             const contentBytes = await vscode.workspace.fs.readFile(uri);
-            originalContent = new TextDecoder().decode(contentBytes);
+            originalContent = normalizeLineEndingsToLF(new TextDecoder().decode(contentBytes));
         } catch {
             // 文件不存在，原始内容为空
             fileExists = false;

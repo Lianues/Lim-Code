@@ -1307,7 +1307,7 @@ const ja: LanguageMessages = {
                 appInfo: {
                     title: 'アプリケーション情報',
                     name: 'Lim Code - Vibe Coding アシスタント',
-                    version: 'バージョン：1.0.50',
+                    version: 'バージョン：1.0.49',
                     repository: 'リポジトリ',
                     developer: '開発者'
                 }
@@ -1758,7 +1758,9 @@ const ja: LanguageMessages = {
                     copied: 'コピーしました',
                     copyNew: '新しい内容をコピー',
                     deletedLines: '削除',
-                    addedLines: '追加'
+                    addedLines: '追加',
+                    userEdited: 'ユーザー編集済み',
+                    userEditedContent: 'ユーザーが修正した内容'
                 },
                 createDirectoryPanel: {
                     title: 'ディレクトリを作成',

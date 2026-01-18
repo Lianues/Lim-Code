@@ -65,17 +65,33 @@ type IncompleteToolInfo = {
 function markIncompleteToolsAsError(state: ChatStoreState, messageId?: string | null): IncompleteToolInfo | null {
   const all = state.allMessages.value
 
+  // 只要工具调用在历史中没有对应 functionResponse，就认为它“未完成”
+  const isToolIncomplete = (toolId: string) => !hasToolResponse(state, toolId)
+
   // 1) 优先定位指定 messageId
   let targetIndex = -1
   if (messageId) {
     targetIndex = all.findIndex(m => m.id === messageId)
+
+    // 重要：有些场景 streamingMessageId 指向的是“后续占位的 assistant 消息”，
+    // 该消息本身可能没有工具调用（或没有未完成工具）。
+    // 此时需要回退到“最近一条包含未完成工具的 assistant 消息”。
+    if (targetIndex !== -1) {
+      const msg = all[targetIndex]
+      const hasIncomplete = !!msg.tools?.some(t => isToolIncomplete(t.id))
+      if (!hasIncomplete) {
+        targetIndex = -1
+      }
+    }
   }
 
-  // 2) fallback：找最后一条包含 pending/running 工具的 assistant 消息
+  // 2) fallback：找最后一条包含“未完成工具”的 assistant 消息
+  // 注意：有些场景 tool.status 可能被错误标记为 success（例如内容转换时），
+  // 但只要没有 functionResponse，就仍然应该在 cancel 时标记为 error。
   if (targetIndex === -1) {
     for (let i = all.length - 1; i >= 0; i--) {
       const msg = all[i]
-      if (msg.role === 'assistant' && msg.tools?.some(t => t.status === 'pending' || t.status === 'running')) {
+      if (msg.role === 'assistant' && msg.tools?.some(t => isToolIncomplete(t.id))) {
         targetIndex = i
         break
       }
@@ -89,11 +105,11 @@ function markIncompleteToolsAsError(state: ChatStoreState, messageId?: string | 
   const message = all[targetIndex]
 
   const toolCalls: Array<{ id: string; name: string }> = (message.tools || [])
-    .filter(tool => tool.status === 'pending' || tool.status === 'running')
+    .filter(tool => isToolIncomplete(tool.id))
     .map(tool => ({ id: tool.id, name: tool.name }))
 
   const updatedTools = message.tools?.map(tool => {
-    if (tool.status === 'pending' || tool.status === 'running') {
+    if (isToolIncomplete(tool.id)) {
       return { ...tool, status: 'error' as const }
     }
     return tool
@@ -194,9 +210,9 @@ export async function cancelStreamAndRejectTools(
     if (messageIndex !== -1) {
       const message = state.allMessages.value[messageIndex]
       
-      // 收集所有未完成的工具（pending 或 running）
+      // 收集所有未完成的工具（没有 functionResponse 的都算）
       const incompleteToolIds = message.tools
-        ?.filter(tool => tool.status === 'pending' || tool.status === 'running')
+        ?.filter(tool => !hasToolResponse(state, tool.id))
         ?.map(tool => tool.id) || []
       
       // 本地先更新工具状态（更健壮：即使 messageIndex 不准确也能 fallback）

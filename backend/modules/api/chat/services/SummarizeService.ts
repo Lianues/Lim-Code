@@ -363,15 +363,15 @@ export class SummarizeService {
                     // 清理 functionResponse.response 中的内部字段
                     if (cleanedPart.functionResponse?.response && typeof cleanedPart.functionResponse.response === 'object') {
                         let cleanedResponse = cleanedPart.functionResponse.response as Record<string, unknown>;
-                        const { diffContentId, diffId, diffs, ...rest } = cleanedResponse;
+                        const { diffContentId, diffId, diffs, pendingDiffId, ...rest } = cleanedResponse;
 
                         if (rest.data && typeof rest.data === 'object') {
-                            const { diffContentId: dataDiffContentId, diffId: dataDiffId, diffs: dataDiffs, ...dataRest } = rest.data as Record<string, unknown>;
+                            const { diffContentId: dataDiffContentId, diffId: dataDiffId, diffs: dataDiffs, pendingDiffId: dataPendingDiffId, ...dataRest } = rest.data as Record<string, unknown>;
 
                             if (Array.isArray(dataRest.results)) {
                                 dataRest.results = (dataRest.results as Array<Record<string, unknown>>).map(item => {
                       if (item && typeof item === 'object') {
-                                        const { diffContentId: itemDiffContentId, ...itemRest } = item;
+                                        const { diffContentId: itemDiffContentId, pendingDiffId: itemPendingDiffId, ...itemRest } = item;
                                         return itemRest;
                                     }
                                     return item;

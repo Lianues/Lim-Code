@@ -267,40 +267,16 @@ export const acceptDiff: MessageHandler = async (data, requestId, _ctx) => {
  */
 export const rejectDiff: MessageHandler = async (data, requestId, ctx) => {
   try {
-    const { sessionId, toolId, conversationId } = data;
+    const { sessionId } = data;
     const diffManager = getDiffManager();
     const success = await diffManager.rejectDiff(sessionId);
-    
+
+    // 注意：这里不要调用 conversationManager.rejectToolCalls。
+    // apply_diff / write_file / search_in_files(替换) 的工具执行流程会等待 diff 被 accept/reject。
+    // 用户点击“Reject”应当被视为“拒绝应用修改”，而不是“拒绝执行工具”。
+    // 让工具本身在收到 diffManager 状态变更后返回正确的 functionResponse（status=rejected, results 等）。
+
     if (success) {
-      // 添加 functionResponse 到对话历史
-      if (conversationId && toolId && ctx.conversationManager) {
-        try {
-          // 查找包含该工具调用的消息索引
-          const messages = await ctx.conversationManager.getMessages(conversationId);
-          let messageIndex = -1;
-          
-          for (let i = 0; i < messages.length; i++) {
-            const message = messages[i];
-            if (message.parts) {
-              for (const part of message.parts) {
-                if (part.functionCall && part.functionCall.id === toolId) {
-                  messageIndex = i;
-                  break;
-                }
-              }
-            }
-            if (messageIndex >= 0) break;
-          }
-          
-          if (messageIndex >= 0) {
-            // 使用 rejectToolCalls 方法来标记工具为拒绝并添加 functionResponse
-            await ctx.conversationManager.rejectToolCalls(conversationId, messageIndex, [toolId]);
-          }
-        } catch (err) {
-          console.warn('Failed to add rejected functionResponse:', err);
-        }
-      }
-      
       ctx.sendResponse(requestId, { success: true });
     } else {
       ctx.sendResponse(requestId, { success: false, error: 'Failed to reject diff' });

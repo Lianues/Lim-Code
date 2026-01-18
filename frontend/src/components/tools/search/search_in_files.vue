@@ -669,15 +669,24 @@ function isDiffExpanded(path: string): boolean {
 
 .query-text {
   font-family: var(--vscode-editor-font-family);
-  color: var(--vscode-charts-orange);
-  background: var(--vscode-textCodeBlock-background);
-  padding: 0 4px;
+  font-weight: 600;
+  color: var(--vscode-foreground);
+  background: rgba(230, 149, 0, 0.18);
+  border: 1px solid rgba(230, 149, 0, 0.35);
+  padding: 0 6px;
   border-radius: 2px;
+  opacity: 1;
 }
 
 .replace-text {
   font-family: var(--vscode-editor-font-family);
-  color: var(--vscode-testing-iconPassed);
+  font-weight: 600;
+  color: var(--vscode-foreground);
+  background: rgba(0, 200, 83, 0.16);
+  border: 1px solid rgba(0, 200, 83, 0.35);
+  padding: 0 6px;
+  border-radius: 2px;
+  opacity: 1;
   background: var(--vscode-textCodeBlock-background);
   padding: 0 4px;
   border-radius: 2px;

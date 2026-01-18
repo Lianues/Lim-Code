@@ -8,7 +8,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import type { Tool, ToolResult } from '../types';
-import { getWorkspaceRoot, getAllWorkspaces, parseWorkspacePath, toRelativePath } from '../utils';
+import { getWorkspaceRoot, getAllWorkspaces, parseWorkspacePath, toRelativePath, normalizeLineEndingsToLF } from '../utils';
 import { getGlobalSettingsManager } from '../../core/settingsContext';
 import { getDiffStorageManager } from '../../modules/conversation';
 import { getDiffManager } from '../file/diffManager';
@@ -94,7 +94,7 @@ async function searchInDirectory(
         
         try {
             const content = await vscode.workspace.fs.readFile(fileUri);
-            const text = new TextDecoder().decode(content);
+            const text = normalizeLineEndingsToLF(new TextDecoder().decode(content));
             const lines = text.split('\n');
             
             for (let i = 0; i < lines.length; i++) {
@@ -186,7 +186,7 @@ async function searchAndReplaceInDirectory(
         
         try {
             const content = await vscode.workspace.fs.readFile(fileUri);
-            const originalText = new TextDecoder().decode(content);
+            const originalText = normalizeLineEndingsToLF(new TextDecoder().decode(content));
             const lines = originalText.split('\n');
             
             // 检查是否有匹配

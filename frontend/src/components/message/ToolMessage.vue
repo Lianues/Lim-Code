@@ -46,6 +46,11 @@ const toolIdToPendingId = ref<Map<string, string>>(new Map())
 // 记录曾经出现过的 diff 工具（避免在 diff 刚开始、映射尚未同步前误判为错误）
 const seenDiffToolIds = ref<Set<string>>(new Set())
 
+// diff 工具从 pendingDiffs 列表消失到收到最终 functionResponse 之间，可能会出现短暂的空窗。
+// 为避免 UI 闪烁（先 error 再 success），这里给一个宽限期。
+const pendingDiffOrphanedAt = ref<Map<string, number>>(new Map())
+const DIFF_ORPHAN_GRACE_MS = 800
+
 // 检查是否是支持 diff 的工具且处于 pending 状态
 function isDiffToolPending(tool: ToolUsage) {
   // 检查工具是否支持 diff 确认
@@ -293,10 +298,30 @@ const enhancedTools = computed<ToolUsage[]>(() => {
         
         if (isDiffTool && isSearchReplaceMode) {
           if (!toolIdToPendingId.value.has(tool.id)) {
-            // 不在活跃列表，说明已经过期或被外部处理（接受/拒绝）
-            status = 'error' // 显示为错误/已取消状态
-            awaitingConfirmation = false
+            // 不在活跃列表：可能是“刚保存/刚接受，最终结果还没回到前端”的短暂空窗。
+            // 给一个宽限期，避免先显示 error 再变 success。
+            const now = Date.now()
+            const existed = pendingDiffOrphanedAt.value.get(tool.id)
+            const since = existed ?? now
+            if (!existed) {
+              pendingDiffOrphanedAt.value.set(tool.id, now)
+              pendingDiffOrphanedAt.value = new Map(pendingDiffOrphanedAt.value)
+            }
+
+            if (now - since < DIFF_ORPHAN_GRACE_MS) {
+              status = 'pending'
+              awaitingConfirmation = false
+            } else {
+              status = 'error' // 显示为错误/已取消状态
+              awaitingConfirmation = false
+            }
           } else {
+            // 仍在活跃列表，清理 orphan 记录
+            if (pendingDiffOrphanedAt.value.has(tool.id)) {
+              pendingDiffOrphanedAt.value.delete(tool.id)
+              pendingDiffOrphanedAt.value = new Map(pendingDiffOrphanedAt.value)
+            }
+
             status = 'pending'
             // diff 工具有专用的操作栏，不显示通用的确认按钮
             awaitingConfirmation = false
@@ -346,12 +371,31 @@ const enhancedTools = computed<ToolUsage[]>(() => {
       !toolIdToPendingId.value.has(tool.id) &&
       (effectiveStatus === 'running' || effectiveStatus === 'pending')
     ) {
+      const now = Date.now()
+      const existed = pendingDiffOrphanedAt.value.get(tool.id)
+      const since = existed ?? now
+      if (!existed) {
+        pendingDiffOrphanedAt.value.set(tool.id, now)
+        pendingDiffOrphanedAt.value = new Map(pendingDiffOrphanedAt.value)
+      }
+
+      // 宽限期内保持原状态，避免 UI 闪烁（先 error 再 success）。
+      if (now - since < DIFF_ORPHAN_GRACE_MS) {
+        return { ...tool, status: effectiveStatus, awaitingConfirmation: false }
+      }
+
       return {
         ...tool,
         status: 'error' as const,
         error: tool.error || t('components.tools.cancelled'),
         awaitingConfirmation: false
       }
+    }
+
+    // 非 pending/running 场景，清理 orphan 记录
+    if (pendingDiffOrphanedAt.value.has(tool.id) && effectiveStatus !== 'running' && effectiveStatus !== 'pending') {
+      pendingDiffOrphanedAt.value.delete(tool.id)
+      pendingDiffOrphanedAt.value = new Map(pendingDiffOrphanedAt.value)
     }
 
     return { ...tool, status: effectiveStatus, awaitingConfirmation: awaitingConfirm }

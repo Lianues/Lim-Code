@@ -63,7 +63,7 @@ const filePath = computed(() => {
 })
 
 // 获取 diff 列表
-// 优先从 args.diffs 获取原始定义，并根据 result.data.failedDiffs 标记失败状态
+// 优先从 args.diffs 获取原始定义，并根据 result.data.results（或旧格式 data.diffs / data.failedDiffs）标记失败状态
 const diffList = computed((): DiffBlock[] => {
   const argsDiffs = (props.args.diffs as DiffBlock[] | undefined) || []
   const failedDiffs = (props.result?.data as Record<string, any>)?.failedDiffs as any[] | undefined
@@ -101,6 +101,16 @@ const diffList = computed((): DiffBlock[] => {
 const resultData = computed(() => {
   const result = props.result as Record<string, any> | undefined
   return result?.data || null
+})
+
+// 获取用户编辑摘要（如果用户在保存前修改了 AI 建议）
+// 每行格式：`op | line | content`，多行用 `\n` 分隔
+// - 插入：`+ | newLine | content`
+// - 替换：`~ | newLine | content`
+// - 删除：`- | baseLine | content`
+// 空行内容为空字符串
+const userEditedContent = computed(() => {
+  return resultData.value?.userEditedContent as string | undefined
 })
 
 // 是否为全失败
@@ -395,6 +405,21 @@ onBeforeUnmount(() => {
       <span v-else-if="resultData.status === 'accepted'" class="status-badge accepted">{{ t('components.tools.file.applyDiffPanel.accepted') }}</span>
       <span v-else-if="resultData.status === 'rejected'" class="status-badge rejected">{{ t('components.tools.file.applyDiffPanel.rejected') }}</span>
     </div>
+
+    <!-- 用户编辑提示（仅展示摘要，避免完整文件内容） -->
+    <div v-if="userEditedContent" class="user-edit-section">
+      <div class="user-edit-header">
+        <span class="codicon codicon-edit user-edit-icon"></span>
+        <span class="user-edit-title" :title="t('components.tools.file.applyDiffPanel.userEditedContent')">{{
+          t('components.tools.file.applyDiffPanel.userEdited')
+        }}</span>
+      </div>
+      <div class="user-edit-content">
+        <CustomScrollbar :horizontal="true" :max-height="240">
+          <pre class="user-edit-code">{{ userEditedContent }}</pre>
+        </CustomScrollbar>
+      </div>
+    </div>
     
     <!-- 全局错误 -->
     <div v-if="error && !resultData" class="panel-error">
@@ -490,7 +515,7 @@ onBeforeUnmount(() => {
         <!-- 失败时的内容预览 -->
         <div v-if="diff.success === false" class="diff-content-failed">
           <div class="failed-section">
-            <div class="failed-label">{{ t('message.tool.parameters') }} (search):</div>
+            <div class="failed-label">{{ t('components.message.tool.parameters') }} (search):</div>
             <CustomScrollbar :horizontal="true" :max-height="150">
               <pre class="failed-code search">{{ diff.search }}</pre>
             </CustomScrollbar>
@@ -642,6 +667,102 @@ onBeforeUnmount(() => {
 .status-badge.rejected {
   background: var(--vscode-testing-iconFailed);
   color: var(--vscode-editor-background);
+}
+
+/* 用户编辑区块 */
+.user-edit-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-xs, 4px);
+  padding: var(--spacing-sm, 8px);
+  background: rgba(0, 122, 204, 0.08);
+  border: 1px solid var(--vscode-charts-blue, #007acc);
+  border-radius: var(--radius-sm, 2px);
+}
+
+.user-edit-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs, 4px);
+}
+
+.user-edit-icon {
+  color: var(--vscode-charts-blue, #007acc);
+  font-size: 12px;
+}
+
+.user-edit-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--vscode-charts-blue, #007acc);
+}
+
+.user-edit-content {
+  background: var(--vscode-editor-background);
+  border-radius: var(--radius-sm, 2px);
+  overflow: hidden;
+}
+
+.user-edit-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm, 8px);
+  padding: var(--spacing-sm, 8px);
+}
+
+.user-edit-hunk {
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: var(--radius-sm, 2px);
+  overflow: hidden;
+}
+
+.user-edit-hunk-title {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs, 4px);
+  padding: 4px 8px;
+  background: var(--vscode-editor-inactiveSelectionBackground);
+  border-bottom: 1px solid var(--vscode-panel-border);
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.user-edit-hunk-title .badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 6px;
+  height: 16px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--vscode-editor-background);
+  background: var(--vscode-charts-blue, #007acc);
+}
+
+.user-edit-hunk-title .range {
+  font-family: var(--vscode-editor-font-family);
+}
+
+.user-edit-code {
+  margin: 0;
+  padding: 6px 8px;
+  font-family: var(--vscode-editor-font-family);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--vscode-foreground);
+  white-space: pre;
+  overflow-x: auto;
+}
+
+.user-edit-code.old {
+  background: rgba(255, 82, 82, 0.08);
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.user-edit-code.new {
+  background: rgba(0, 200, 83, 0.08);
 }
 
 /* 操作页脚 */

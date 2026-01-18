@@ -8,6 +8,18 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import { t } from '../i18n';
 
+// ==================== 文本工具（换行符统一） ====================
+
+/**
+ * 统一换行符为 LF（\n）。
+ *
+ * - Windows CRLF (\r\n) -> \n
+ * - legacy CR (\r) -> \n
+ */
+export function normalizeLineEndingsToLF(text: string): string {
+    return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+}
+
 // ==================== 多工作区支持 ====================
 
 /**

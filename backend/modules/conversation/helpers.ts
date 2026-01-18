@@ -293,9 +293,9 @@ export function createMultiTextMessage(
  * 清理 functionResponse 中不应发送给 API 的内部字段
  *
  * 过滤的字段包括：
- * - 顶层：diffContentId, diffId, diffs
- * - data 字段中的：diffContentId, diffId, diffs, toolId, terminalId, multiRoot, command, cwd, shell
- * - data.results 数组中的：diffContentId
+ * - 顶层：diffContentId, diffId, diffs, pendingDiffId
+ * - data 字段中的：diffContentId, diffId, diffs, pendingDiffId, toolId, terminalId, multiRoot, command, cwd, shell
+ * - data.results 数组中的：diffContentId, pendingDiffId
  *
  * 保留的字段：killed, duration（AI 需要知道命令执行状态）
  *
@@ -310,7 +310,7 @@ export function cleanFunctionResponseForAPI(
     }
     
     // 过滤顶层内部字段
-    const { diffContentId, diffId, diffs, ...rest } = response;
+    const { diffContentId, diffId, diffs, pendingDiffId, ...rest } = response;
     
     // 检查 data 字段中是否也有这些字段
     if (rest.data && typeof rest.data === 'object') {
@@ -318,6 +318,7 @@ export function cleanFunctionResponseForAPI(
             diffContentId: dataDiffContentId,
             diffId: dataDiffId,
             diffs: dataDiffs,
+            pendingDiffId: dataPendingDiffId,
             toolId: dataToolId,
             terminalId: dataTerminalId,
             multiRoot: dataMultiRoot,
@@ -332,7 +333,7 @@ export function cleanFunctionResponseForAPI(
         if (Array.isArray(dataRest.results)) {
             dataRest.results = (dataRest.results as Array<Record<string, unknown>>).map(item => {
                 if (item && typeof item === 'object') {
-                    const { diffContentId: itemDiffContentId, ...itemRest } = item;
+                    const { diffContentId: itemDiffContentId, pendingDiffId: itemPendingDiffId, ...itemRest } = item;
                     return itemRest;
                 }
                 return item;
@@ -400,7 +401,7 @@ export function cleanContentForAPI(content: Content): Content {
             const cleanedResponse = cleanFunctionResponseForAPI(
                 part.functionResponse.response as Record<string, unknown>
             );
-            
+
             cleanedPart.functionResponse = {
                 name: part.functionResponse.name,
                 response: cleanedResponse

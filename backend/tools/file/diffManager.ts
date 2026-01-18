@@ -28,8 +28,17 @@ export interface PendingDiff {
     absolutePath: string;
     /** 原始内容 */
     originalContent: string;
-    /** 修改后的内容 */
+    /** 修改后的内容（AI 建议的内容） */
     newContent: string;
+    /**
+     * 用户新增/替换行摘要（仅当用户修改了 AI 建议时存在）。
+     *
+     * 格式（每行一条记录，多行用 `\n` 分隔；空行内容为空字符串）：
+     * - 新增：`+ | newLine | 内容`  （newLine 为用户最终保存内容中的 1-based 行号）
+     * - 替换：`~ | newLine | 内容`  （newLine 为用户最终保存内容中的 1-based 行号）
+     * - 删除：`- | baseLine | 内容` （baseLine 为系统建议保存内容中的 1-based 行号）
+     */
+    userEditedContent?: string;
     /** 创建时间 */
     timestamp: number;
     /** 状态 */
@@ -74,6 +83,154 @@ let userInterruptFlag = false;
 /**
  * Diff 管理器
  */
+type DiffOp = {
+    type: 'equal' | 'insert' | 'delete';
+    line: string;
+};
+
+function splitLines(text: string): string[] {
+    const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    const lines = normalized.split('\n');
+    // 如果文本以换行结尾，split 会产生最后一个空行，这里去掉，避免行号计算偏差
+    if (lines.length > 0 && lines[lines.length - 1] === '') {
+        lines.pop();
+    }
+    return lines;
+}
+
+/**
+ * Myers 差分（按行），返回操作序列
+ */
+function myersDiffLines(a: string[], b: string[]): DiffOp[] {
+    const n = a.length;
+    const m = b.length;
+    const max = n + m;
+
+    // v[k] = x
+    let v = new Map<number, number>();
+    v.set(1, 0);
+    const trace: Array<Map<number, number>> = [];
+
+    for (let d = 0; d <= max; d++) {
+        trace.push(new Map(v));
+
+        const vNext = new Map<number, number>();
+        for (let k = -d; k <= d; k += 2) {
+            const vKMinus = v.get(k - 1) ?? 0;
+            const vKPlus = v.get(k + 1) ?? 0;
+
+            let x: number;
+            if (k === -d || (k !== d && vKMinus < vKPlus)) {
+                x = vKPlus; // down
+            } else {
+                x = vKMinus + 1; // right
+            }
+            let y = x - k;
+
+            while (x < n && y < m && a[x] === b[y]) {
+                x++;
+                y++;
+            }
+
+            vNext.set(k, x);
+
+            if (x >= n && y >= m) {
+                // backtrack
+                const ops: DiffOp[] = [];
+                let bx = n;
+                let by = m;
+
+                for (let bd = d; bd >= 0; bd--) {
+                    const vv = trace[bd];
+                    const kk = bx - by;
+
+                    const vvKMinus2 = vv.get(kk - 1) ?? 0;
+                    const vvKPlus2 = vv.get(kk + 1) ?? 0;
+
+                    let prevK: number;
+                    if (kk === -bd || (kk !== bd && vvKMinus2 < vvKPlus2)) {
+                        prevK = kk + 1;
+                    } else {
+                        prevK = kk - 1;
+                    }
+
+                    const prevX = vv.get(prevK) ?? 0;
+                    const prevY = prevX - prevK;
+
+                    while (bx > prevX && by > prevY) {
+                        ops.push({ type: 'equal', line: a[bx - 1] });
+                        bx--;
+                        by--;
+                    }
+
+                    if (bd === 0) {
+                        break;
+                    }
+
+                    if (bx === prevX) {
+                        // insert
+                        ops.push({ type: 'insert', line: b[by - 1] });
+                        by--;
+                    } else {
+                        // delete
+                        ops.push({ type: 'delete', line: a[bx - 1] });
+                        bx--;
+                    }
+                }
+
+                ops.reverse();
+                return ops;
+            }
+        }
+
+        v = vNext;
+    }
+
+    // fallback
+    return [];
+}
+
+function computeUserEditedNewLinesSummary(baseContent: string, userContent: string): string {
+    const a = splitLines(baseContent);
+    const b = splitLines(userContent);
+    const ops = myersDiffLines(a, b);
+
+    let baseLine = 1;
+    let newLine = 1;
+
+    // replace 的判定：在上一次 equal 之后是否出现过 delete。
+    // - delete 后紧跟 insert => 视为 replace（~）
+    // - 只有 insert => insert（+）
+    let hadDeleteSinceLastEqual = false;
+
+    const result: string[] = [];
+
+    for (const op of ops) {
+        if (op.type === 'equal') {
+            hadDeleteSinceLastEqual = false;
+            baseLine++;
+            newLine++;
+            continue;
+        }
+
+        if (op.type === 'delete') {
+            // 删除行：行号使用 baseSuggestedContent（系统建议保存内容）的行号
+            result.push(`- | ${baseLine} | ${op.line}`);
+            hadDeleteSinceLastEqual = true;
+            baseLine++;
+            continue;
+        }
+
+        // insert（包含新增行，以及 replace 的新行）
+        const opType = hadDeleteSinceLastEqual ? '~' : '+';
+        // 新增/替换行：行号使用 userContent（用户最终保存内容）的行号
+        result.push(`${opType} | ${newLine} | ${op.line}`);
+        newLine++;
+    }
+
+    return result.join('\n');
+}
+
 export class DiffManager {
     private static instance: DiffManager | null = null;
     
@@ -281,9 +438,16 @@ export class DiffManager {
         const provider = getDiffCodeLensProvider();
         provider.updateBlockStatus(sessionId, blockIndex, true);
         
-        // 如果所有块都处理完了，自动接受整个 diff
+        // 如果所有块都处理完了，自动结束整个 diff
         if (provider.isSessionComplete(sessionId)) {
-            await this.acceptDiff(sessionId, true);
+            const session = provider.getSession(sessionId);
+            // 理论上 confirmBlock 一定会有 confirmed，因此不太可能 allRejected，但这里仍做保护
+            const allRejected = !!session && session.blocks.length > 0 && session.blocks.every(b => b.rejected);
+            if (allRejected) {
+                await this.rejectDiff(sessionId);
+            } else {
+                await this.acceptDiff(sessionId, true);
+            }
         }
     }
 
@@ -333,12 +497,54 @@ export class DiffManager {
             }
         }
 
-        // 如果所有块都处理完了，自动接受
+        // 如果所有块都处理完了，自动结束
         if (provider.isSessionComplete(sessionId)) {
-            await this.acceptDiff(sessionId, true);
+            const session = provider.getSession(sessionId);
+            const allRejected = !!session && session.blocks.length > 0 && session.blocks.every(b => b.rejected);
+
+            // 全部块都被拒绝：视为用户明确拒绝本次 diff（不保存任何更改）
+            if (allRejected) {
+                await this.rejectDiff(sessionId);
+            } else {
+                // 部分接受/部分拒绝：保存“剩余接受的块”
+                await this.acceptDiff(sessionId, true);
+            }
         }
     }
     
+    private computeFinalSuggestedContent(id: string, diff: PendingDiff): string {
+        // 计算最终内容（仅包含已确认的块）
+        let finalContent = diff.newContent;
+        if (diff.rawDiffs) {
+            const provider = getDiffCodeLensProvider();
+            const session = provider.getSession(id);
+            if (session) {
+                const rejectedBlocks = session.blocks.filter(b => b.rejected);
+
+                if (rejectedBlocks.length > 0) {
+                    // 有被拒绝的块，重新计算内容
+                    finalContent = diff.originalContent;
+                    for (let i = 0; i < diff.rawDiffs.length; i++) {
+                        const blockInfo = session.blocks.find(b => b.index === i);
+                        // 只有没被明确拒绝的块才应用
+                        if (blockInfo && !blockInfo.rejected) {
+                            const result = applyDiffToContent(
+                                finalContent,
+                                diff.rawDiffs[i].search,
+                                diff.rawDiffs[i].replace,
+                                diff.rawDiffs[i].start_line
+                            );
+                            if (result.success) {
+                                finalContent = result.result;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return finalContent;
+    }
+
     /**
      * 显示内联 diff 视图
      */
@@ -374,6 +580,17 @@ export class DiffManager {
         // 5. 监听文档保存事件
         const saveListener = vscode.workspace.onDidSaveTextDocument(async (savedDoc) => {
             if (savedDoc.uri.fsPath === diff.absolutePath) {
+                // 检查用户是否修改了内容（保存时的最终内容）
+                const savedContent = savedDoc.getText();
+
+                // 以“系统建议将保存的内容”为基准（考虑 CodeLens 拒绝块等）
+                const baseSuggestedContent = this.computeFinalSuggestedContent(diff.id, diff);
+
+                if (savedContent !== baseSuggestedContent && savedContent !== diff.originalContent) {
+                    // 仅保留摘要，不在工具响应里发送完整文件内容
+                    diff.userEditedContent = computeUserEditedNewLinesSummary(baseSuggestedContent, savedContent);
+                }
+
                 diff.status = 'accepted';
                 saveListener.dispose();
                 this.cleanup(diff.id);
@@ -421,7 +638,8 @@ export class DiffManager {
         
         const currentSettings = this.getSettings();
         const timer = setTimeout(async () => {
-            await this.acceptDiff(id, true);
+            // 自动保存：强制使用 AI 建议的内容（避免覆盖用户可能正在进行的手动修改）
+            await this.acceptDiff(id, true, true);
             this.autoSaveTimers.delete(id);
         }, currentSettings.autoSaveDelay);
         
@@ -430,8 +648,11 @@ export class DiffManager {
     
     /**
      * 接受 diff（保存修改）
+     * @param id diff ID
+     * @param closeTab 是否关闭标签页
+     * @param isAutoSave 是否为自动保存（自动保存时强制使用 AI 内容；手动接受时尽量保留用户编辑）
      */
-    public async acceptDiff(id: string, closeTab: boolean = false): Promise<boolean> {
+    public async acceptDiff(id: string, closeTab: boolean = false, isAutoSave: boolean = false): Promise<boolean> {
         const diff = this.pendingDiffs.get(id);
         if (!diff || diff.status !== 'pending') {
             return false;
@@ -450,30 +671,7 @@ export class DiffManager {
                 this.closeListeners.delete(id);
             }
 
-            // 计算最终内容（仅包含已确认的块）
-            let finalContent = diff.newContent;
-            if (diff.rawDiffs) {
-                const provider = getDiffCodeLensProvider();
-                const session = provider.getSession(id);
-                if (session) {
-                    const rejectedBlocks = session.blocks.filter(b => b.rejected);
-                    
-                    if (rejectedBlocks.length > 0) {
-                        // 有被拒绝的块，重新计算内容
-                        finalContent = diff.originalContent;
-                        for (let i = 0; i < diff.rawDiffs.length; i++) {
-                            const blockInfo = session.blocks.find(b => b.index === i);
-                            // 只有没被明确拒绝的块才应用
-                            if (blockInfo && !blockInfo.rejected) {
-                                const result = applyDiffToContent(finalContent, diff.rawDiffs[i].search, diff.rawDiffs[i].replace, diff.rawDiffs[i].start_line);
-                                if (result.success) {
-                                    finalContent = result.result;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            const finalContent = this.computeFinalSuggestedContent(id, diff);
             
             const uri = vscode.Uri.file(diff.absolutePath);
             let doc = vscode.workspace.textDocuments.find(d => d.uri.fsPath === diff.absolutePath);
@@ -483,17 +681,30 @@ export class DiffManager {
                 doc = await vscode.workspace.openTextDocument(uri);
             }
             
-            // 检查文档内容是否已经是新内容
             const currentContent = doc.getText();
-            if (currentContent !== finalContent) {
-                // 通过 WorkspaceEdit 更新文档内容
-                const edit = new vscode.WorkspaceEdit();
-                const fullRange = new vscode.Range(
-                    doc.positionAt(0),
-                    doc.positionAt(currentContent.length)
-                );
-                edit.replace(uri, fullRange, finalContent);
-                await vscode.workspace.applyEdit(edit);
+
+            // 自动保存：强制保存 AI 计算出来的 finalContent。
+            // 手动接受：如果用户在编辑器中改过内容，则保留当前内容，不覆盖。
+            let contentToSave = finalContent;
+
+            if (isAutoSave || currentContent === diff.originalContent) {
+                // 覆盖到 finalContent（自动保存 / 文档仍是原始内容时）
+                if (currentContent !== finalContent) {
+                    const edit = new vscode.WorkspaceEdit();
+                    const fullRange = new vscode.Range(
+                        doc.positionAt(0),
+                        doc.positionAt(currentContent.length)
+                    );
+                    edit.replace(uri, fullRange, finalContent);
+                    await vscode.workspace.applyEdit(edit);
+                }
+                contentToSave = finalContent;
+            } else {
+                // currentContent != original => 认为用户已经在 AI 建议上做了调整（包含手动编辑/拒绝部分块）
+                if (currentContent !== finalContent) {
+                    diff.userEditedContent = computeUserEditedNewLinesSummary(finalContent, currentContent);
+                }
+                contentToSave = currentContent;
             }
             
             // 保存文档
@@ -501,7 +712,7 @@ export class DiffManager {
             
             if (!saved) {
                 // 如果 VSCode API 保存失败，尝试直接写入文件
-                fs.writeFileSync(diff.absolutePath, finalContent, 'utf8');
+                fs.writeFileSync(diff.absolutePath, contentToSave, 'utf8');
             }
             
             diff.status = 'accepted';

@@ -3,6 +3,20 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.0.51] - 2026-01-19
+
+### Added
+  - 添加了diff时修改文件内容的支持，同时会告诉ai手动修改了哪些内容
+
+### Improved
+  - 优化了读取类工具的换行符读取，使用\n而不再是\r\n，会更节省token和上下文
+  - 优化了等待ai响应的动画
+
+### Fixed
+  - 修复了写入文件，搜索内容两个工具的diff中断问题，并采取了更稳健和兜底的中断机制
+  - 修复了ai使用apply diff工具没有输出行号时的兜底机制没有工作的问题
+  - 修复了diff工具文字显示问题
+
 ## [1.0.50] - 2026-01-19
 
 ### Fixed

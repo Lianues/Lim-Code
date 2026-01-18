@@ -52,12 +52,12 @@ export function applyDiffToContent(
     const normalizedContent = normalizeLineEndings(content);
     const normalizedSearch = normalizeLineEndings(search);
     const normalizedReplace = normalizeLineEndings(replace);
-    
+
     // 如果提供了起始行号，从该行开始搜索
     if (startLine !== undefined && startLine > 0) {
         const lines = normalizedContent.split('\n');
         const startIndex = startLine - 1;
-        
+
         if (startIndex >= lines.length) {
             return {
                 success: false,
@@ -66,17 +66,17 @@ export function applyDiffToContent(
                 matchCount: 0
             };
         }
-        
+
         // 计算从起始行开始的字符位置
         let charOffset = 0;
         for (let i = 0; i < startIndex; i++) {
             charOffset += lines[i].length + 1;
         }
-        
+
         // 从起始位置开始查找
         const contentFromStart = normalizedContent.substring(charOffset);
         const matchIndex = contentFromStart.indexOf(normalizedSearch);
-        
+
         if (matchIndex === -1) {
             return {
                 success: false,
@@ -85,17 +85,17 @@ export function applyDiffToContent(
                 matchCount: 0
             };
         }
-        
+
         // 计算实际匹配的行号
         const textBeforeMatch = normalizedContent.substring(0, charOffset + matchIndex);
         const actualMatchedLine = textBeforeMatch.split('\n').length;
-        
+
         // 执行替换
         const result =
             normalizedContent.substring(0, charOffset + matchIndex) +
             normalizedReplace +
             normalizedContent.substring(charOffset + matchIndex + normalizedSearch.length);
-        
+
         return {
             success: true,
             result,
@@ -103,10 +103,10 @@ export function applyDiffToContent(
             matchedLine: actualMatchedLine
         };
     }
-    
+
     // 没有提供起始行号，计算匹配次数
     const matches = normalizedContent.split(normalizedSearch).length - 1;
-    
+
     if (matches === 0) {
         return {
             success: false,
@@ -115,7 +115,7 @@ export function applyDiffToContent(
             matchCount: 0
         };
     }
-    
+
     if (matches > 1) {
         return {
             success: false,
@@ -124,15 +124,15 @@ export function applyDiffToContent(
             matchCount: matches
         };
     }
-    
+
     // 计算实际匹配的行号
     const matchIndex = normalizedContent.indexOf(normalizedSearch);
     const textBeforeMatch = normalizedContent.substring(0, matchIndex);
     const actualMatchedLine = textBeforeMatch.split('\n').length;
-    
+
     // 精确替换
     const result = normalizedContent.replace(normalizedSearch, normalizedReplace);
-    
+
     return {
         success: true,
         result,
@@ -180,6 +180,15 @@ Important:
 - If you are not sure, omit start_line and make 'search' unique by including enough surrounding context.
 - The 'search' content must match EXACTLY (including whitespace and indentation)
 - If any diff fails, the entire operation is rolled back
+
+Result (when accepted):
+- If the user manually edits the AI-suggested content before saving, the response may include \`data.userEditedContent\`.
+- \`data.userEditedContent\` is a string summarizing the user's manual edits.
+  Each line is one record, separated by \`\n\`. Empty lines are represented as an empty string.
+  Format:
+  - Inserted line: \`+ | newLine | content\` (newLine is 1-based line number in the user's final saved content)
+  - Replaced line: \`~ | newLine | content\` (newLine is 1-based line number in the user's final saved content)
+  - Deleted line: \`- | baseLine | content\` (baseLine is 1-based line number in the system-suggested content)
 
 **IMPORTANT**: The \`diffs\` parameter MUST be an array, even for a single diff. Example: \`{"path": "file.txt", "diffs": [{"search": "...", "replace": "...", "start_line": 1}]}\`${descriptionSuffix}`,
             
@@ -286,14 +295,14 @@ Important:
                 const appliedCount = diffResults.filter(r => r.success).length;
                 const failedCount = diffResults.length - appliedCount;
                 
-                // 收集失败的 diff 信息供 AI 参考
-                const failedDiffs = diffResults
-                    .filter(r => !r.success)
-                    .map(r => ({
-                        index: r.index,
-                        error: r.error
-                    }));
-                
+                // 每个 diff 的结果（用于 AI/前端理解哪些块成功/失败）
+                const results = diffResults.map(r => ({
+                    index: r.index,
+                    success: r.success,
+                    matchedLine: r.matchedLine,
+                    error: r.error
+                }));
+
                 // 如果没有任何一个 diff 成功应用，则返回失败
                 if (appliedCount === 0 && diffs.length > 0) {
                     const firstError = diffResults.find(r => !r.success)?.error || 'All diffs failed';
@@ -303,8 +312,8 @@ Important:
                         data: {
                             file: filePath,
                             message: `Failed to apply any diffs to ${filePath}.`,
-                            // 包含失败详情供 AI 修复
-                            failedDiffs,
+                            // 每个 diff 的执行结果（哪些成功/失败）
+                            results,
                             appliedCount: 0,
                             totalCount: diffs.length,
                             failedCount: diffs.length
@@ -407,6 +416,9 @@ Important:
                 const finalDiff = diffManager.getDiff(pendingDiff.id);
                 const wasAccepted = !wasInterrupted && (!finalDiff || finalDiff.status === 'accepted');
 
+                // 用户可能在保存前编辑了内容（手动保存/手动接受时）
+                const userEditedContent = finalDiff?.userEditedContent;
+
                 // 尝试将大内容保存到 DiffStorageManager
                 const diffStorageManager = getDiffStorageManager();
                 let diffContentId: string | undefined;
@@ -437,8 +449,8 @@ Important:
                             diffCount: diffs.length,
                             appliedCount: appliedCount,
                             failedCount: failedCount,
-                            // 包含失败详情供 AI 修复
-                            failedDiffs: failedDiffs.length > 0 ? failedDiffs : undefined,
+                            // 每个 diff 的执行结果（哪些成功/失败）
+                            results,
                             // 仅供前端按需加载用，不发送给 AI
                             diffContentId
                         }
@@ -446,12 +458,20 @@ Important:
                 }
                 
                 // 简化返回：AI 已经知道 diffs 内容，不需要重复返回
-                let message = wasAccepted
-                    ? `Diff applied and saved to ${filePath}`
-                    : `Diff was rejected for ${filePath}`;
-                
-                if (wasAccepted && failedCount > 0) {
-                    message = `Partially applied diffs to ${filePath}: ${appliedCount} succeeded, ${failedCount} failed. Saved successfully.`;
+                let message: string;
+
+                if (wasAccepted) {
+                    message = `Diff applied and saved to ${filePath}`;
+                    if (failedCount > 0) {
+                        message = `Partially applied diffs to ${filePath}: ${appliedCount} succeeded, ${failedCount} failed. Saved successfully.`;
+                    }
+                } else {
+                    // 明确区分：用户主动拒绝（Reject） vs. 其他未接受情况
+                    if (finalDiff?.status === 'rejected') {
+                        message = `Diff was explicitly rejected by the user for ${filePath}. No changes were saved.`;
+                    } else {
+                        message = `Diff was not accepted for ${filePath}. No changes were saved.`;
+                    }
                 }
 
                 return {
@@ -463,11 +483,13 @@ Important:
                         diffCount: diffs.length,
                         appliedCount: appliedCount,
                         failedCount: failedCount,
-                        // 包含失败详情供 AI 修复
-                        failedDiffs: failedDiffs.length > 0 ? failedDiffs : undefined,
+                        // 每个 diff 的执行结果（哪些成功/失败）
+                        results,
+                        // 用户对 AI 建议的手动编辑摘要（如果用户在保存前修改了 AI 建议）
+                        userEditedContent,
                         // 仅供前端按需加载用，不发送给 AI
                         diffContentId,
-                        // Diff 会话 ID
+                        // Diff 会话 ID（仅供前端/内部使用，发送给 AI 时会被过滤）
                         pendingDiffId: pendingDiff.id
                     }
                 };

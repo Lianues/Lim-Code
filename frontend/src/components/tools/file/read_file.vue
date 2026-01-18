@@ -540,9 +540,9 @@ onBeforeUnmount(() => {
 .line-range-info .partial-badge {
   padding: 1px 6px;
   font-size: 10px;
-  font-weight: 500;
-  color: var(--vscode-charts-orange);
-  background: rgba(255, 165, 0, 0.15);
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.95);
+  background: var(--vscode-charts-orange, #e69500);
   border-radius: 2px;
 }
 

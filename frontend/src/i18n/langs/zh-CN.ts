@@ -1307,7 +1307,7 @@ const zhCN: LanguageMessages = {
                 appInfo: {
                     title: '应用信息',
                     name: 'Lim Code - Vibe Coding助手',
-                    version: '版本：1.0.50',
+                    version: '版本：1.0.49',
                     repository: '项目仓库',
                     developer: '开发者'
                 }
@@ -1758,7 +1758,9 @@ const zhCN: LanguageMessages = {
                     copied: '已复制',
                     copyNew: '复制新内容',
                     deletedLines: '删除',
-                    addedLines: '新增'
+                    addedLines: '新增',
+                    userEdited: '用户已编辑',
+                    userEditedContent: '用户修改后的内容'
                 },
                 createDirectoryPanel: {
                     title: '创建目录',
