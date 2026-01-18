@@ -592,8 +592,32 @@ function handleRestoreAndRetry(checkpointId: string) {
           class="content-text"
         />
         
-        <!-- 流式指示器 - 简洁下划线 -->
-        <span v-if="isStreaming" class="streaming-indicator"></span>
+        <!-- 流式指示器 - Leading 逐字波动 -->
+        <span
+          v-if="isStreaming"
+          class="streaming-indicator"
+          role="status"
+          aria-label="Leading"
+          :style="{
+            '--leading-duration': '2.8s',
+            '--leading-idle-color': 'var(--vscode-descriptionForeground, #8a8a8a)',
+            '--leading-active-color': 'var(--vscode-charts-blue, #0050b3)',
+            '--leading-amp': '4px'
+          }"
+        >
+          <span
+            v-for="(ch, i) in 'Leading'.split('')"
+            :key="i"
+            class="streaming-indicator__char"
+            :class="{
+              'streaming-indicator__char--brand': i === 0 && ch === 'L',
+              'streaming-indicator__char--underline': true
+            }"
+            :style="{ '--leading-delay': `${i * 0.16}s` }"
+          >
+            {{ ch }}
+          </span>
+        </span>
 
         <!-- 消息底部信息：时间 + 响应时间 + Token 速率 + Token 统计 -->
         <div class="message-footer">
@@ -748,19 +772,90 @@ function handleRestoreAndRetry(checkpointId: string) {
 
 /* .content-text 样式由 MarkdownRenderer 组件内部处理 */
 
-/* 流式指示器 - 简洁下划线动画 */
+/* 流式指示器 - Leading 从左到右逐字波动 */
 .streaming-indicator {
-  display: inline-block;
-  width: 8px;
-  height: 2px;
-  margin-left: 2px;
-  background: var(--vscode-foreground);
-  animation: pulse 1s ease-in-out infinite;
+  display: inline-flex;
+  align-items: flex-end;
+  margin-left: 6px;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  user-select: none;
 }
 
-@keyframes pulse {
-  0%, 100% { opacity: 0.3; }
-  50% { opacity: 1; }
+.streaming-indicator__char {
+  position: relative;
+  display: inline-block;
+  padding: 0 0.5px;
+  color: var(--leading-idle-color);
+  opacity: 0.78;
+
+  /* “播完停顿”的关键：每个字母在一整轮里只在前 22% 左右动，后面都静止 */
+  animation: leading-wave var(--leading-duration) ease-in-out infinite;
+  animation-delay: var(--leading-delay);
+  will-change: transform, color, opacity;
+}
+
+/* 突出 L：放大一号 + 花体字体（仅影响 L） */
+.streaming-indicator__char--brand {
+  font-size: calc(1em + 1px);
+  font-family: 'Segoe Script', 'Brush Script MT', 'Apple Chancery', 'Snell Roundhand', cursive;
+  font-weight: 600;
+}
+
+/* 下划线胶囊：跟随每个字母的波动 */
+.streaming-indicator__char--underline::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -4px;
+  width: 10px;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--leading-active-color);
+
+  opacity: 0;
+  transform: translateX(-50%) scaleX(0.35);
+
+  animation: leading-underline var(--leading-duration) ease-in-out infinite;
+  animation-delay: var(--leading-delay);
+  will-change: transform, opacity;
+}
+
+@keyframes leading-wave {
+  /* 0~22%：完成一次“跳一下”；22%~100%：保持静止 */
+  0%, 22%, 100% {
+    transform: translateY(0) scale(1);
+    color: var(--leading-idle-color);
+    opacity: 0.78;
+  }
+  11% {
+    transform: translateY(calc(var(--leading-amp) * -1)) scale(1.06);
+    color: var(--leading-active-color);
+    opacity: 1;
+  }
+}
+
+@keyframes leading-underline {
+  0%, 22%, 100% {
+    opacity: 0;
+    transform: translateX(-50%) scaleX(0.35);
+  }
+  11% {
+    opacity: 0.9;
+    transform: translateX(-50%) scaleX(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .streaming-indicator__char,
+  .streaming-indicator__char--underline::after {
+    animation: none;
+    opacity: 1;
+  }
+
+  .streaming-indicator__char--underline::after {
+    opacity: 0;
+  }
 }
 
 /* Token 使用统计 */
