@@ -592,28 +592,28 @@ function handleRestoreAndRetry(checkpointId: string) {
           class="content-text"
         />
         
-        <!-- 流式指示器 - Leading 逐字波动 -->
+        <!-- 流式指示器 - Loading 逐字波动 -->
         <span
           v-if="isStreaming"
           class="streaming-indicator"
           role="status"
-          aria-label="Leading"
+          aria-label="Loading"
           :style="{
-            '--leading-duration': '2.8s',
-            '--leading-idle-color': 'var(--vscode-descriptionForeground, #8a8a8a)',
-            '--leading-active-color': 'var(--vscode-charts-blue, #0050b3)',
-            '--leading-amp': '4px'
+            '--loading-duration': '2.8s',
+            '--loading-idle-color': 'var(--vscode-descriptionForeground, #8a8a8a)',
+            '--loading-active-color': 'var(--vscode-charts-blue, #0050b3)',
+            '--loading-amp': '4px'
           }"
         >
           <span
-            v-for="(ch, i) in 'Leading'.split('')"
+            v-for="(ch, i) in 'Loading'.split('')"
             :key="i"
             class="streaming-indicator__char"
             :class="{
               'streaming-indicator__char--brand': i === 0 && ch === 'L',
               'streaming-indicator__char--underline': true
             }"
-            :style="{ '--leading-delay': `${i * 0.16}s` }"
+            :style="{ '--loading-delay': `${i * 0.16}s` }"
           >
             {{ ch }}
           </span>
@@ -772,7 +772,7 @@ function handleRestoreAndRetry(checkpointId: string) {
 
 /* .content-text 样式由 MarkdownRenderer 组件内部处理 */
 
-/* 流式指示器 - Leading 从左到右逐字波动 */
+/* 流式指示器 - Loading 从左到右逐字波动 */
 .streaming-indicator {
   display: inline-flex;
   align-items: flex-end;
@@ -786,12 +786,12 @@ function handleRestoreAndRetry(checkpointId: string) {
   position: relative;
   display: inline-block;
   padding: 0 0.5px;
-  color: var(--leading-idle-color);
+  color: var(--loading-idle-color);
   opacity: 0.78;
 
   /* “播完停顿”的关键：每个字母在一整轮里只在前 22% 左右动，后面都静止 */
-  animation: leading-wave var(--leading-duration) ease-in-out infinite;
-  animation-delay: var(--leading-delay);
+  animation: loading-wave var(--loading-duration) ease-in-out infinite;
+  animation-delay: var(--loading-delay);
   will-change: transform, color, opacity;
 }
 
@@ -811,31 +811,31 @@ function handleRestoreAndRetry(checkpointId: string) {
   width: 10px;
   height: 2px;
   border-radius: 999px;
-  background: var(--leading-active-color);
+  background: var(--loading-active-color);
 
   opacity: 0;
   transform: translateX(-50%) scaleX(0.35);
 
-  animation: leading-underline var(--leading-duration) ease-in-out infinite;
-  animation-delay: var(--leading-delay);
+  animation: loading-underline var(--loading-duration) ease-in-out infinite;
+  animation-delay: var(--loading-delay);
   will-change: transform, opacity;
 }
 
-@keyframes leading-wave {
+@keyframes loading-wave {
   /* 0~22%：完成一次“跳一下”；22%~100%：保持静止 */
   0%, 22%, 100% {
     transform: translateY(0) scale(1);
-    color: var(--leading-idle-color);
+    color: var(--loading-idle-color);
     opacity: 0.78;
   }
   11% {
-    transform: translateY(calc(var(--leading-amp) * -1)) scale(1.06);
-    color: var(--leading-active-color);
+    transform: translateY(calc(var(--loading-amp) * -1)) scale(1.06);
+    color: var(--loading-active-color);
     opacity: 1;
   }
 }
 
-@keyframes leading-underline {
+@keyframes loading-underline {
   0%, 22%, 100% {
     opacity: 0;
     transform: translateX(-50%) scaleX(0.35);
