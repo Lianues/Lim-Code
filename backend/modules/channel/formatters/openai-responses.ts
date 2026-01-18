@@ -502,7 +502,9 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
      * 构建生成配置
      */
     private buildGenerationConfig(config: OpenAIResponsesConfig): any {
-        const genConfig: any = {};
+        const genConfig: any = {
+            store: false
+        };
         const optionsEnabled = config.optionsEnabled || {};
         const options = config.options || {};
 
@@ -516,10 +518,6 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
         
         if (optionsEnabled.top_p && options.top_p !== undefined) {
             genConfig.top_p = options.top_p;
-        }
-
-        if (options.truncation) {
-            genConfig.truncation = options.truncation;
         }
 
         // 处理推理配置

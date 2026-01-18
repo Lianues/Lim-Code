@@ -325,6 +325,15 @@ export class ToolIterationLoopService {
                 config,
                 abortSignal
             );
+            
+            // 13.5 检查是否已取消（可能在工具执行期间被用户删除消息）
+            if (abortSignal?.aborted) {
+                yield {
+                    conversationId,
+                    cancelled: true as const
+                } as any;
+                return;
+            }
 
             // 14. 将函数响应添加到历史
             const functionResponseParts = executionResult.multimodalAttachments
@@ -336,9 +345,9 @@ export class ToolIterationLoopService {
                 parts: functionResponseParts,
                 isFunctionResponse: true
             });
-
-            // 15. 计算工具响应消息的 token 数
-            await this.tokenEstimationService.preCountUserMessageTokens(conversationId, config.type);
+            
+            // 注：工具响应消息的 token 计数将在下一次循环的 getHistoryWithContextTrimInfo 中
+            // 与系统提示词、动态上下文一起并行计算
 
             // 16. 检查是否有工具被取消
             const hasCancelled = executionResult.toolResults.some(r => (r.result as any).cancelled);
@@ -454,9 +463,9 @@ export class ToolIterationLoopService {
                 parts: functionResponses,
                 isFunctionResponse: true
             });
-
-            // 计算工具响应消息的 token 数
-            await this.tokenEstimationService.preCountUserMessageTokens(conversationId, config.type);
+            
+            // 注：工具响应消息的 token 计数将在下一次循环的 getHistoryWithContextTrimInfo 中
+            // 与系统提示词、动态上下文一起并行计算
 
             // 继续循环，让 AI 处理函数结果
         }

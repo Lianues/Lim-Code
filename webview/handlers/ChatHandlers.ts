@@ -12,6 +12,21 @@ import type { HandlerContext, MessageHandler } from '../types';
  */
 export const deleteMessage: MessageHandler = async (data, requestId, ctx) => {
   const { conversationId, targetIndex } = data;
+  
+  // 先取消该对话的流式请求（如果有）
+  // streamAbortControllers 实际上是 StreamAbortManager，但类型定义为 Map
+  const abortManager = ctx.streamAbortControllers as any;
+  if (abortManager.cancel) {
+    abortManager.cancel(conversationId);
+  } else if (abortManager.get) {
+    // 如果是纯 Map，手动取消
+    const controller = abortManager.get(conversationId);
+    if (controller) {
+      controller.abort();
+      abortManager.delete(conversationId);
+    }
+  }
+  
   const result = await ctx.chatHandler.handleDeleteToMessage({
     conversationId,
     targetIndex

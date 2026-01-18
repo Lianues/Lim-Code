@@ -15,6 +15,9 @@ export interface ToolConfig {
   /** 工具显示标签（可选，默认使用name） */
   label?: string
   
+  /** 动态标签生成器 - 根据参数生成标签文本（优先级高于 label） */
+  labelFormatter?: (args: Record<string, unknown>) => string
+  
   /** 图标 (codicon) */
   icon?: string
   

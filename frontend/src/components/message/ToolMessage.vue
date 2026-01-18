@@ -10,12 +10,12 @@
  * 5. 通过工具 ID 从 store 获取响应结果
  */
 
-import { ref, computed, Component, h, watchEffect } from 'vue'
+import { ref, computed, Component, h, watchEffect, onMounted, onBeforeUnmount } from 'vue'
 import type { ToolUsage, Message } from '../../types'
 import { getToolConfig } from '../../utils/toolRegistry'
 import { ensureMcpToolRegistered } from '../../utils/tools'
 import { useChatStore } from '../../stores'
-import { sendToExtension } from '../../utils/vscode'
+import { sendToExtension, onExtensionCommand } from '../../utils/vscode'
 import { useI18n } from '../../i18n'
 import { generateId } from '../../utils/format'
 
@@ -27,6 +27,227 @@ const props = defineProps<{
 
 const chatStore = useChatStore()
 
+
+// --- Apply Diff 确认逻辑 ---
+// 支持 apply_diff, write_file, search_in_files(替换模式) 共用 diff 确认流程
+
+// 支持 diff 确认的工具名称列表
+const DIFF_SUPPORTED_TOOLS = ['apply_diff', 'write_file', 'search_in_files']
+
+// 每个工具的自动确认配置
+const applyDiffConfigs = ref<Map<string, { autoSave: boolean; autoSaveDelay: number }>>(new Map())
+const applyDiffTimeLeft = ref<Map<string, number>>(new Map())
+const applyDiffProgress = ref<Map<string, number>>(new Map())
+const applyDiffTimers = new Map<string, ReturnType<typeof setInterval>>()
+
+// 工具 ID 到 Pending Diff ID 的映射
+const toolIdToPendingId = ref<Map<string, string>>(new Map())
+
+// 记录曾经出现过的 diff 工具（避免在 diff 刚开始、映射尚未同步前误判为错误）
+const seenDiffToolIds = ref<Set<string>>(new Set())
+
+// 检查是否是支持 diff 的工具且处于 pending 状态
+function isDiffToolPending(tool: ToolUsage) {
+  // 检查工具是否支持 diff 确认
+  if (!DIFF_SUPPORTED_TOOLS.includes(tool.name)) return false
+  
+  // 对于 search_in_files，只有替换模式才需要确认
+  if (tool.name === 'search_in_files') {
+    const args = tool.args as Record<string, unknown>
+    const mode = args?.mode as string
+    if (mode !== 'replace') return false
+  }
+  
+  // 情况 1: 检查工具是否在后端活跃的 Pending Diff 列表中
+  if (toolIdToPendingId.value.has(tool.id)) return true
+  
+  // 情况 2: 结果中已有状态 (已返回)，且后端报告它是活跃的
+  const resultData = tool.result?.data as any
+  if (resultData) {
+    // apply_diff: pendingDiffId 直接在 data 上
+    if (resultData.pendingDiffId) {
+      if (Array.from(toolIdToPendingId.value.values()).includes(resultData.pendingDiffId)) {
+        return true
+      }
+    }
+    
+    // write_file: pendingDiffId 在 data.results 数组的每个元素上
+    if (Array.isArray(resultData.results)) {
+      for (const r of resultData.results) {
+        if (r.pendingDiffId && Array.from(toolIdToPendingId.value.values()).includes(r.pendingDiffId)) {
+          return true
+        }
+      }
+    }
+    
+    // search_in_files: pendingDiffId 在 data.replacements 数组的每个元素上
+    if (Array.isArray(resultData.replacements)) {
+      for (const r of resultData.replacements) {
+        if (r.pendingDiffId && Array.from(toolIdToPendingId.value.values()).includes(r.pendingDiffId)) {
+          return true
+        }
+      }
+    }
+  }
+  
+  return false
+}
+
+// 启动自动确认计时器
+function startDiffTimer(toolId: string, delay: number) {
+  if (applyDiffTimers.has(toolId)) return
+  
+  applyDiffTimeLeft.value.set(toolId, delay)
+  applyDiffProgress.value.set(toolId, 100)
+  const startTime = Date.now()
+  
+  const timer = setInterval(() => {
+    const elapsed = Date.now() - startTime
+    const remaining = Math.max(0, delay - elapsed)
+    applyDiffTimeLeft.value.set(toolId, remaining)
+    applyDiffProgress.value.set(toolId, (remaining / delay) * 100)
+    
+    if (remaining <= 0) {
+      stopDiffTimer(toolId)
+      confirmDiff(toolId)
+    }
+  }, 50)
+  
+  applyDiffTimers.set(toolId, timer)
+}
+
+function stopDiffTimer(toolId: string) {
+  const timer = applyDiffTimers.get(toolId)
+  if (timer) {
+    clearInterval(timer)
+    applyDiffTimers.delete(toolId)
+  }
+}
+
+// 确认执行 diff
+async function confirmDiff(toolId: string) {
+  stopDiffTimer(toolId)
+  const tool = enhancedTools.value.find(t => t.id === toolId)
+  let sessionId = (tool?.result as any)?.data?.pendingDiffId
+  
+  // 如果结果中还没有，从映射中找
+  if (!sessionId) {
+    sessionId = toolIdToPendingId.value.get(toolId)
+  }
+  
+  if (!sessionId) return
+  
+  try {
+    await sendToExtension('diff.accept', { sessionId })
+  } catch (err) {
+    console.error('Failed to accept diff:', err)
+  }
+}
+
+// 拒绝执行 diff
+async function rejectDiff(toolId: string) {
+  stopDiffTimer(toolId)
+  const tool = enhancedTools.value.find(t => t.id === toolId)
+  let sessionId = (tool?.result as any)?.data?.pendingDiffId
+  
+  // 如果结果中还没有，从映射中找
+  if (!sessionId) {
+    sessionId = toolIdToPendingId.value.get(toolId)
+  }
+  
+  if (!sessionId) return
+  
+  try {
+    const result = await sendToExtension<{ success: boolean }>('diff.reject', { 
+      sessionId,
+      toolId,
+      conversationId: chatStore.currentConversationId
+    })
+    
+    // 拒绝成功后直接更新前端工具状态，而不是重新加载历史
+    if (result?.success && tool) {
+      tool.status = 'error'
+      // 从映射中移除
+      toolIdToPendingId.value.delete(toolId)
+    }
+  } catch (err) {
+    console.error('Failed to reject diff:', err)
+  }
+}
+
+onMounted(async () => {
+  // 获取 diff 工具配置（apply_diff 的配置应用到所有支持 diff 的工具）
+  try {
+    const response = await sendToExtension<{ config: { autoSave: boolean; autoSaveDelay: number } }>('tools.getToolConfig', {
+      toolName: 'apply_diff'
+    })
+    
+    if (response?.config) {
+      // 监听 enhancedTools 的变化，为新出现的 pending 工具启动计时器
+      watchEffect(() => {
+        for (const tool of enhancedTools.value) {
+          if (isDiffToolPending(tool) && !applyDiffTimers.has(tool.id)) {
+            applyDiffConfigs.value.set(tool.id, response.config)
+            if (response.config.autoSave) {
+              startDiffTimer(tool.id, response.config.autoSaveDelay)
+            }
+          }
+        }
+      })
+    }
+  } catch (err) {
+    console.error('Failed to get diff tool config:', err)
+  }
+  
+  // 监听状态变化同步
+  const unregister = onExtensionCommand('diff.statusChanged', (data: any) => {
+    // 更新工具 ID 映射
+    const newMapping = new Map<string, string>()
+    for (const d of data.pendingDiffs) {
+      if (d.toolId) {
+        newMapping.set(d.toolId, d.id)
+      }
+    }
+    toolIdToPendingId.value = newMapping
+
+    // 记录已出现过的 diff 工具 ID
+    const nextSeen = new Set(seenDiffToolIds.value)
+    for (const toolId of newMapping.keys()) {
+      nextSeen.add(toolId)
+    }
+    seenDiffToolIds.value = nextSeen
+
+    // 检查是否有新的 pending 工具需要启动计时器
+    if (applyDiffConfigs.value.size > 0) {
+      const globalConfig = Array.from(applyDiffConfigs.value.values())[0]
+      if (globalConfig?.autoSave) {
+        for (const tool of enhancedTools.value) {
+          if (isDiffToolPending(tool) && !applyDiffTimers.has(tool.id)) {
+            startDiffTimer(tool.id, globalConfig.autoSaveDelay)
+          }
+        }
+      }
+    }
+
+    // 清理已完成工具的计时器
+    for (const toolId of applyDiffTimers.keys()) {
+      const isStillPending = data.pendingDiffs.some((d: any) => d.toolId === toolId)
+      if (!isStillPending) {
+        stopDiffTimer(toolId)
+      }
+    }
+  })
+  
+  onBeforeUnmount(() => {
+    unregister()
+    for (const timer of applyDiffTimers.values()) {
+      clearInterval(timer)
+    }
+    applyDiffTimers.clear()
+  })
+})
+
+// ---------------------------
 
 // 确保 MCP 工具已注册
 watchEffect(() => {
@@ -50,10 +271,40 @@ const enhancedTools = computed<ToolUsage[]>(() => {
       const error = tool.error || (response as any).error
       let success = (response as any).success !== false && !error
       
-      // 检查是否为部分成功 (针对 apply_diff 等工具)
-      let status: 'success' | 'error' | 'warning' = success ? 'success' : 'error'
+      // 检查是否是待审阅状态
       const data = (response as any).data
-      if (success && data && data.appliedCount > 0 && data.failedCount > 0) {
+      const isPending = data?.status === 'pending'
+      
+      // 检查是否为部分成功 (针对 apply_diff 等工具)
+      let status: 'success' | 'error' | 'warning' | 'pending' = success ? 'success' : 'error'
+      let awaitingConfirmation = isPending
+
+      if (isPending) {
+        // 检查是否是支持 diff 的工具
+        const isDiffTool = DIFF_SUPPORTED_TOOLS.includes(tool.name)
+        
+        // 对于 search_in_files，只有替换模式才需要确认
+        let isSearchReplaceMode = true
+        if (tool.name === 'search_in_files') {
+          const args = tool.args as Record<string, unknown>
+          const mode = args?.mode as string
+          isSearchReplaceMode = mode === 'replace'
+        }
+        
+        if (isDiffTool && isSearchReplaceMode) {
+          if (!toolIdToPendingId.value.has(tool.id)) {
+            // 不在活跃列表，说明已经过期或被外部处理（接受/拒绝）
+            status = 'error' // 显示为错误/已取消状态
+            awaitingConfirmation = false
+          } else {
+            status = 'pending'
+            // diff 工具有专用的操作栏，不显示通用的确认按钮
+            awaitingConfirmation = false
+          }
+        } else {
+          status = 'pending'
+        }
+      } else if (success && data && data.appliedCount > 0 && data.failedCount > 0) {
         status = 'warning'
       }
       
@@ -62,7 +313,7 @@ const enhancedTools = computed<ToolUsage[]>(() => {
         result: response || undefined,
         error, 
         status, 
-        awaitingConfirmation: false 
+        awaitingConfirmation 
       }
     }
     
@@ -73,9 +324,36 @@ const enhancedTools = computed<ToolUsage[]>(() => {
     
     // 检查是否等待确认：后端发送 awaitingConfirmation 时会设置 status = 'pending'
     const awaitingConfirm = tool.status === 'pending'
-    
+
     // 没有找到响应，使用当前状态
     const effectiveStatus = tool.status || 'running'
+
+    // 重要：diff 工具在后端被 cancel/reject 后，可能不会立刻返回 functionResponse（例如流被中断）。
+    // 此时如果我们已经“见过”这个 diff 工具进入 pendingDiffs 列表，但现在列表里没有它，
+    // 则说明 diff 已结束（多半是被取消），需要将 UI 状态从 running/pending 纠正为 error。
+    const isDiffTool = DIFF_SUPPORTED_TOOLS.includes(tool.name)
+    let isDiffApplicable = true
+    if (tool.name === 'search_in_files') {
+      const args = tool.args as Record<string, unknown>
+      const mode = args?.mode as string
+      isDiffApplicable = mode === 'replace'
+    }
+
+    if (
+      isDiffTool &&
+      isDiffApplicable &&
+      seenDiffToolIds.value.has(tool.id) &&
+      !toolIdToPendingId.value.has(tool.id) &&
+      (effectiveStatus === 'running' || effectiveStatus === 'pending')
+    ) {
+      return {
+        ...tool,
+        status: 'error' as const,
+        error: tool.error || t('components.tools.cancelled'),
+        awaitingConfirmation: false
+      }
+    }
+
     return { ...tool, status: effectiveStatus, awaitingConfirmation: awaitingConfirm }
   })
 })
@@ -226,6 +504,10 @@ function isExpanded(toolId: string): boolean {
 // 获取工具显示名称
 function getToolLabel(tool: ToolUsage): string {
   const config = getToolConfig(tool.name)
+  // 优先使用动态 labelFormatter
+  if (config?.labelFormatter) {
+    return config.labelFormatter(tool.args)
+  }
   return config?.label || tool.name
 }
 
@@ -488,6 +770,26 @@ function renderToolContent(tool: ToolUsage) {
       <div v-if="isExpandable(tool) && isExpanded(tool.id)" class="tool-content">
         <component :is="() => renderToolContent(tool)" />
       </div>
+
+      <!-- Diff 工具确认操作栏 (位于外层，不随展开面板隐藏) -->
+      <div v-if="isDiffToolPending(tool)" class="diff-action-footer">
+        <div class="footer-top" v-if="applyDiffConfigs.get(tool.id)?.autoSave">
+          <div class="timer-container">
+            <div class="timer-bar" :style="{ width: (applyDiffProgress.get(tool.id) || 0) + '%' }"></div>
+          </div>
+          <span class="timer-text">{{ ((applyDiffTimeLeft.get(tool.id) || 0) / 1000).toFixed(1) }}s</span>
+        </div>
+        <div class="footer-buttons">
+          <button class="confirm-btn-primary" @click.stop="confirmDiff(tool.id)">
+            <span class="codicon codicon-check"></span>
+            {{ t('components.message.tool.saveAll') }}
+          </button>
+          <button class="reject-btn-secondary" @click.stop="rejectDiff(tool.id)">
+            <span class="codicon codicon-close"></span>
+            {{ t('components.message.tool.rejectAll') }}
+          </button>
+        </div>
+      </div>
     </div>
   </div>
 </template>
@@ -512,7 +814,7 @@ function renderToolContent(tool: ToolUsage) {
   display: flex;
   flex-direction: column;
   gap: var(--spacing-xs, 4px);
-  padding: var(--spacing-sm, 8px);
+  padding: 4px var(--spacing-sm, 8px);
   cursor: pointer;
   transition: background-color var(--transition-fast, 0.1s);
 }
@@ -770,7 +1072,7 @@ function renderToolContent(tool: ToolUsage) {
 }
 
 .tool-content {
-  padding: var(--spacing-sm, 8px);
+  padding: 4px var(--spacing-sm, 8px);
   border-top: 1px solid var(--vscode-panel-border);
   background: var(--vscode-editor-inactiveSelectionBackground);
 }
@@ -828,5 +1130,86 @@ function renderToolContent(tool: ToolUsage) {
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* Diff 工具操作栏样式 */
+.diff-action-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px;
+  background: var(--vscode-editor-inactiveSelectionBackground);
+  border-top: 1px solid var(--vscode-panel-border);
+}
+
+.footer-top {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.timer-container {
+  flex: 1;
+  position: relative;
+  height: 4px;
+  background: rgba(128, 128, 128, 0.1);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.timer-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  background: var(--vscode-charts-blue);
+  transition: width 0.05s linear;
+}
+
+.timer-text {
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+  min-width: 24px;
+  text-align: right;
+}
+
+.footer-buttons {
+  display: flex;
+  gap: 4px;
+  width: 100%;
+}
+
+.footer-buttons button {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 4px 12px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: 2px;
+  border: none;
+  transition: opacity 0.12s ease;
+}
+
+.confirm-btn-primary {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+
+.confirm-btn-primary:hover {
+  background: var(--vscode-button-hoverBackground);
+}
+
+.reject-btn-secondary {
+  background: transparent;
+  color: var(--vscode-foreground);
+  border: 1px solid var(--vscode-panel-border);
+}
+
+.reject-btn-secondary:hover {
+  background: var(--vscode-toolbar-hoverBackground);
 }
 </style>

@@ -10,8 +10,9 @@ import FilePickerPanel from './FilePickerPanel.vue'
 import SendButton from './SendButton.vue'
 import ChannelSelector, { type ChannelOption } from './ChannelSelector.vue'
 import ModelSelector from './ModelSelector.vue'
+import ModeSelector, { type PromptMode } from './ModeSelector.vue'
 import { IconButton, Tooltip, CustomScrollbar } from '../common'
-import { useChatStore } from '../../stores'
+import { useChatStore, useSettingsStore } from '../../stores'
 import { sendToExtension, showNotification } from '../../utils/vscode'
 import { formatFileSize } from '../../utils/file'
 import { formatNumber } from '../../utils/format'
@@ -19,6 +20,7 @@ import type { Attachment } from '../../types'
 import { useI18n } from '../../i18n'
 
 const { t } = useI18n()
+const settingsStore = useSettingsStore()
 
 // 固定文件项类型
 interface PinnedFileItem {
@@ -53,6 +55,10 @@ const chatStore = useChatStore()
 const configs = ref<any[]>([])
 const isLoadingConfigs = ref(false)
 
+// 模式相关状态
+const promptModes = ref<PromptMode[]>([])
+const currentModeId = ref('code')
+
 const emit = defineEmits<{
   send: [content: string, attachments: Attachment[]]
   cancel: []
@@ -81,6 +87,9 @@ const channelOptions = computed<ChannelOption[]>(() =>
     }))
 )
 
+// 模式选项（用于 ModeSelector）
+const modeOptions = computed<PromptMode[]>(() => promptModes.value)
+
 // 加载配置列表
 async function loadConfigs() {
   isLoadingConfigs.value = true
@@ -101,6 +110,34 @@ async function loadConfigs() {
   } finally {
     isLoadingConfigs.value = false
   }
+}
+
+// 加载提示词模式
+async function loadPromptModes() {
+  try {
+    const result = await sendToExtension<{ modes: PromptMode[], currentModeId: string }>('getPromptModes', {})
+    if (result) {
+      promptModes.value = result.modes
+      currentModeId.value = result.currentModeId
+    }
+  } catch (error) {
+    console.error('Failed to load prompt modes:', error)
+  }
+}
+
+// 切换模式
+async function handleModeChange(modeId: string) {
+  try {
+    await sendToExtension('setCurrentPromptMode', { modeId })
+    currentModeId.value = modeId
+  } catch (error) {
+    console.error('Failed to change mode:', error)
+  }
+}
+
+// 打开模式设置
+function openModeSettings() {
+  settingsStore.showSettings('prompt')
 }
 
 // 当前配置
@@ -479,10 +516,17 @@ async function handleDrop(e: DragEvent) {
   
   let urisToProcess: string[] = []
   
+  // 辅助函数：检查 URI 是否是有效的文件 URI（支持本地和远程）
+  const isValidFileUri = (uri: string): boolean => {
+    if (!uri || typeof uri !== 'string') return false
+    // 支持本地 file:// 和远程 vscode-remote:// 格式
+    return uri.startsWith('file://') || uri.startsWith('vscode-remote://')
+  }
+  
   // 1. 优先使用 VSCode 专用 URI 列表格式
   if (vscodeUriList) {
-    // 格式: file:///path/to/file（可能是多行）
-    urisToProcess = vscodeUriList.split('\n').filter(uri => uri.trim() && uri.startsWith('file://'))
+    // 格式: file:///path/to/file 或 vscode-remote://...（可能是多行）
+    urisToProcess = vscodeUriList.split('\n').filter(uri => uri.trim() && isValidFileUri(uri.trim()))
   }
   
   // 2. 使用 resourceurls（JSON 数组格式）
@@ -490,7 +534,7 @@ async function handleDrop(e: DragEvent) {
     try {
       const parsed = JSON.parse(resourceUrls)
       if (Array.isArray(parsed)) {
-        urisToProcess = parsed.filter((uri: string) => typeof uri === 'string' && uri.startsWith('file://'))
+        urisToProcess = parsed.filter((uri: string) => isValidFileUri(uri))
       }
     } catch {
       // 解析失败，忽略
@@ -503,8 +547,8 @@ async function handleDrop(e: DragEvent) {
       const parsed = JSON.parse(codeEditors)
       if (Array.isArray(parsed)) {
         for (const editor of parsed) {
-          // 优先使用 external URL（已编码的 file:// URI）
-          if (editor.resource?.external && typeof editor.resource.external === 'string') {
+          // 优先使用 external URL（已编码的 file:// 或 vscode-remote:// URI）
+          if (editor.resource?.external && isValidFileUri(editor.resource.external)) {
             urisToProcess.push(editor.resource.external)
           }
         }
@@ -519,9 +563,9 @@ async function handleDrop(e: DragEvent) {
     urisToProcess = textUriList.split('\n').filter(uri => uri.trim() && !uri.startsWith('#'))
   }
   
-  // 5. 备选：text/plain（如果是 file:// 开头）
-  if (urisToProcess.length === 0 && textPlain && textPlain.startsWith('file://')) {
-    urisToProcess = textPlain.split('\n').filter(uri => uri.trim() && uri.startsWith('file://'))
+  // 5. 备选：text/plain（如果是有效的文件 URI）
+  if (urisToProcess.length === 0 && textPlain && isValidFileUri(textPlain)) {
+    urisToProcess = textPlain.split('\n').filter(uri => uri.trim() && isValidFileUri(uri.trim()))
   }
   
   if (urisToProcess.length > 0) {
@@ -774,6 +818,7 @@ onMounted(() => {
   loadConfigs()
   loadPinnedFiles()
   loadSkills()
+  loadPromptModes()
 })
 
 // 监听配置变化，确保配置列表包含当前配置
@@ -789,6 +834,11 @@ watch(() => chatStore.configId, () => {
 watch(() => chatStore.currentConfig, () => {
   loadConfigs()
 }, { deep: true })
+
+// 监听模式版本变化，刷新模式列表
+watch(() => settingsStore.promptModesVersion, () => {
+  loadPromptModes()
+})
 </script>
 
 <template>
@@ -1151,8 +1201,23 @@ watch(() => chatStore.currentConfig, () => {
       </div>
     </div>
 
-    <!-- 选择器栏：渠道选择器 + 模型选择器 -->
+    <!-- 选择器栏：模式选择器 + 渠道选择器 + 模型选择器 -->
     <div class="selector-bar">
+      <!-- 模式选择器 -->
+      <div class="mode-selector-wrapper">
+        <ModeSelector
+          :model-value="currentModeId"
+          :options="modeOptions"
+          :disabled="isLoadingConfigs"
+          :drop-up="true"
+          @update:model-value="handleModeChange"
+          @open-settings="openModeSettings"
+        />
+      </div>
+      
+      <!-- 分隔线 -->
+      <span class="selector-separator"></span>
+      
       <!-- 渠道选择器 -->
       <div class="channel-selector-wrapper">
         <ChannelSelector
@@ -1411,13 +1476,19 @@ watch(() => chatStore.currentConfig, () => {
   gap: var(--spacing-sm, 8px);
   padding-top: 4px;
   border-top: 1px solid var(--vscode-panel-border);
-  max-width: 280px;
+  max-width: 420px;
+}
+
+/* 模式选择器 */
+.mode-selector-wrapper {
+  flex-shrink: 0;
 }
 
 /* 渠道选择器 */
 .channel-selector-wrapper {
   flex: 1;
   min-width: 0;
+  max-width: 140px;
 }
 
 .channel-selector-wrapper :deep(.channel-selector) {
@@ -1433,6 +1504,7 @@ watch(() => chatStore.currentConfig, () => {
 .model-selector-wrapper {
   flex: 1;
   min-width: 0;
+  max-width: 140px;
 }
 
 .model-selector-wrapper :deep(.model-selector) {
@@ -1445,6 +1517,7 @@ watch(() => chatStore.currentConfig, () => {
   height: 14px;
   background: var(--vscode-panel-border);
   opacity: 0.6;
+  flex-shrink: 0;
 }
 
 /* 固定文件按钮 */

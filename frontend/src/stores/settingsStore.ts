@@ -6,7 +6,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 
-export type SettingsTab = 'channel' | 'tools' | 'autoExec' | 'mcp' | 'checkpoint' | 'summarize' | 'imageGen' | 'dependencies' | 'context' | 'prompt' | 'tokenCount' | 'general'
+export type SettingsTab = 'channel' | 'tools' | 'autoExec' | 'mcp' | 'checkpoint' | 'summarize' | 'imageGen' | 'dependencies' | 'context' | 'prompt' | 'tokenCount' | 'subagents' | 'general'
 
 /** 应用页面视图类型 */
 export type AppView = 'chat' | 'history' | 'settings'
@@ -23,6 +23,9 @@ export const useSettingsStore = defineStore('settings', () => {
   
   // 当前语言（默认中文）
   const language = ref<Language>('zh-CN')
+  
+  // 模式刷新计数器（用于通知组件刷新模式列表）
+  const promptModesVersion = ref(0)
 
   // 计算属性：是否显示设置面板（向后兼容）
   const isVisible = computed(() => currentView.value === 'settings')
@@ -59,6 +62,11 @@ export const useSettingsStore = defineStore('settings', () => {
   function setLanguage(lang: Language) {
     language.value = lang
   }
+  
+  // 通知模式列表刷新
+  function refreshPromptModes() {
+    promptModesVersion.value++
+  }
 
   return {
     // 状态
@@ -66,6 +74,7 @@ export const useSettingsStore = defineStore('settings', () => {
     isVisible,
     activeTab,
     language,
+    promptModesVersion,
 
     // 方法
     showChat,
@@ -73,6 +82,7 @@ export const useSettingsStore = defineStore('settings', () => {
     showSettings,
     hideSettings,
     setActiveTab,
-    setLanguage
+    setLanguage,
+    refreshPromptModes
   }
 })

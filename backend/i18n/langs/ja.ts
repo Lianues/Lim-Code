@@ -301,6 +301,31 @@ const ja: BackendLanguageMessages = {
                 rejected: '変更を拒否しました: {filePath}',
                 diffTitle: '{filePath} (AI の変更 - Ctrl+S で保存)'
             },
+            diffCodeLens: {
+                accept: '承認',
+                reject: '拒否',
+                acceptAll: 'すべて承認',
+                rejectAll: 'すべて拒否'
+            },
+            diffEditorActions: {
+                noActiveDiff: '保留中の diff 変更はありません',
+                allBlocksProcessed: 'すべての diff ブロックが処理されました',
+                diffBlock: 'Diff ブロック #{index}',
+                lineRange: '{start}-{end} 行目',
+                acceptAllBlocks: 'すべてのブロックを承認',
+                rejectAllBlocks: 'すべてのブロックを拒否',
+                blocksCount: '{count} 個の保留中ブロック',
+                selectBlockToAccept: '承認する Diff ブロックを選択',
+                selectBlockToReject: '拒否する Diff ブロックを選択',
+                selectBlockPlaceholder: '複数選択可能'
+            },
+            diffInline: {
+                hoverOrLightbulb: 'ホバーまたは 💡 をクリックして適用',
+                acceptBlock: 'Diff ブロック #{index} を承認',
+                rejectBlock: 'Diff ブロック #{index} を拒否',
+                acceptAll: 'すべての変更を承認',
+                rejectAll: 'すべての変更を拒否'
+            },
             readFile: {
                 cannotReadFile: 'このファイルを読み取ることができません'
             }

@@ -109,6 +109,11 @@ const en: LanguageMessages = {
                 confirm: 'Confirm',
                 cancel: 'Cancel'
             },
+            inputDialog: {
+                title: 'Input',
+                confirm: 'OK',
+                cancel: 'Cancel'
+            },
             deleteDialog: {
                 title: 'Delete Message',
                 message: 'Are you sure you want to delete this message?',
@@ -223,6 +228,12 @@ const en: LanguageMessages = {
             tokenUsage: 'Usage',
             context: 'Context',
             fileNotExists: 'File does not exist',
+            mode: {
+                selectMode: 'Select mode',
+                manageMode: 'Manage Modes',
+                search: 'Search modes...',
+                noResults: 'No matching modes'
+            },
             channelSelector: {
                 placeholder: 'Select config',
                 searchPlaceholder: 'Search channels...',
@@ -334,6 +345,8 @@ const en: LanguageMessages = {
                 paramCount: '{count} parameters',
                 confirmExecution: 'Click to confirm execution',
                 confirm: 'Confirm Execution',
+                saveAll: 'Save All',
+                rejectAll: 'Reject All',
                 reject: 'Reject',
                 confirmed: 'Confirmed',
                 rejected: 'Rejected',
@@ -354,6 +367,7 @@ const en: LanguageMessages = {
                 tools: 'Tools',
                 autoExec: 'Auto Execute',
                 mcp: 'MCP',
+                subagents: 'Sub-Agents',
                 checkpoint: 'Checkpoint',
                 summarize: 'Summarize',
                 imageGen: 'Image Generation',
@@ -976,6 +990,60 @@ const en: LanguageMessages = {
                     cancel: 'Cancel'
                 }
             },
+            subagents: {
+                selectAgent: 'Select Sub-Agent',
+                noAgents: 'No sub-agents',
+                create: 'Create',
+                rename: 'Rename',
+                delete: 'Delete',
+                disabled: 'Disabled',
+                enabled: 'Enable this sub-agent',
+                globalConfig: 'Global Configuration',
+                maxConcurrentAgents: 'Max Concurrent Agents',
+                maxConcurrentAgentsHint: 'Maximum number of sub-agents AI can invoke at once (-1 for unlimited)',
+                basicInfo: 'Basic Info',
+                description: 'Description',
+                descriptionPlaceholder: 'Describe when the main AI should use this sub-agent',
+                maxIterations: 'Max Iterations',
+                maxIterationsHint: 'Maximum tool call rounds for this sub-agent (-1 for unlimited)',
+                maxRuntime: 'Max Runtime',
+                maxRuntimeHint: 'Maximum runtime in seconds (-1 for unlimited)',
+                systemPrompt: 'System Prompt',
+                systemPromptPlaceholder: 'Enter the sub-agent system prompt...',
+                channelModel: 'Channel & Model',
+                channel: 'Channel',
+                selectChannel: 'Select Channel',
+                model: 'Model',
+                selectModel: 'Select Model',
+                tools: 'Tool Configuration',
+                toolsDescription: 'Configure tools available to this sub-agent',
+                toolMode: {
+                    label: 'Tool Mode',
+                    all: 'All Tools',
+                    builtin: 'Built-in Only',
+                    mcp: 'MCP Only',
+                    whitelist: 'Whitelist',
+                    blacklist: 'Blacklist'
+                },
+                builtinTools: 'Built-in Tools',
+                mcpTools: 'MCP Tools',
+                noTools: 'No tools available',
+                whitelistHint: 'Checked tools will be allowed',
+                blacklistHint: 'Checked tools will be blocked',
+                emptyState: 'No sub-agents yet, click the button below to create one',
+                createFirst: 'Create Sub-Agent',
+                deleteConfirm: {
+                    title: 'Delete Sub-Agent',
+                    message: 'Are you sure you want to delete this sub-agent? This action cannot be undone.'
+                },
+                createDialog: {
+                    title: 'Create Sub-Agent',
+                    nameLabel: 'Name',
+                    namePlaceholder: 'e.g., Code Review Expert',
+                    nameRequired: 'Please enter a name for the sub-agent',
+                    nameDuplicate: 'A sub-agent with this name already exists'
+                }
+            },
             modelManager: {
                 title: 'Model List',
                 fetchModels: 'Fetch Models',
@@ -1022,6 +1090,18 @@ const en: LanguageMessages = {
                 loading: 'Loading...',
                 enable: 'Enable Custom System Prompt Template',
                 enableDescription: 'When enabled, you can customize the structure and content of system prompts using module placeholders',
+                modes: {
+                    label: 'Prompt Mode',
+                    add: 'Add Mode',
+                    rename: 'Rename',
+                    delete: 'Delete Mode',
+                    confirmDelete: 'Are you sure you want to delete this mode? This action cannot be undone.',
+                    cannotDeleteDefault: 'Cannot delete the default mode',
+                    unsavedChanges: 'The current mode has unsaved changes. Are you sure you want to discard and switch?',
+                    newModeName: 'Please enter a name for the new mode',
+                    newModeDefault: 'New Mode',
+                    renameModePrompt: 'Please enter the new mode name'
+                },
                 templateSection: {
                     title: 'System Prompt Template',
                     resetButton: 'Reset to Default',
@@ -1198,6 +1278,10 @@ const en: LanguageMessages = {
                         title: 'Token Count',
                         description: 'Configure API for counting tokens'
                     },
+                    subagents: {
+                        title: 'Sub-Agents',
+                        description: 'Configure specialized sub-agents that AI can invoke'
+                    },
                     general: {
                         title: 'General Settings',
                         description: 'Basic configuration options'
@@ -1223,7 +1307,7 @@ const en: LanguageMessages = {
                 appInfo: {
                     title: 'Application Info',
                     name: 'Lim Code - Vibe Coding Assistant',
-                    version: 'Version: 1.0.44',
+                    version: 'Version: 1.0.49',
                     repository: 'Repository',
                     developer: 'Developer'
                 }
@@ -1666,7 +1750,8 @@ const en: LanguageMessages = {
                     diffApplied: 'Diff applied',
                     pending: 'Pending review',
                     accepted: 'Accepted',
-                    line: 'Line',
+                    rejected: 'Rejected',
+                    line: 'From line',
                     diffNumber: '#',
                     collapse: 'Collapse',
                     expandRemaining: 'Expand remaining {count} lines',
@@ -1751,7 +1836,6 @@ const en: LanguageMessages = {
                     title: 'Search Content',
                     replaceTitle: 'Search and Replace',
                     regex: 'Regex',
-                    dryRun: 'Preview',
                     matchCount: '{count} matches',
                     fileCount: '{count} files',
                     truncated: 'Truncated',
@@ -1844,6 +1928,15 @@ const en: LanguageMessages = {
                     responseResult: 'Response Result',
                     waitingResponse: 'Waiting for response...'
                 }
+            },
+            subagents: {
+                title: 'Sub-Agent',
+                task: 'Task',
+                context: 'Context',
+                completed: 'Completed',
+                failed: 'Failed',
+                executing: 'Executing...',
+                partialResponse: 'Partial Response'
             },
             media: {
                 generateImage: 'Generate Image',

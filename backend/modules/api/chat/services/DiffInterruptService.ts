@@ -19,4 +19,10 @@ export class DiffInterruptService {
     const diffManager = getDiffManager();
     diffManager.resetUserInterrupt();
   }
+  
+  /** 取消所有待处理的 diff（关闭编辑器并恢复文件） */
+  async cancelAllPending(): Promise<void> {
+    const diffManager = getDiffManager();
+    await diffManager.cancelAllPending();
+  }
 }

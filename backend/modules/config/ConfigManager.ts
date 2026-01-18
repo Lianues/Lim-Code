@@ -172,7 +172,6 @@ export class ConfigManager {
                         ...baseDefaults.options,
                         temperature: 1.0,
                         max_output_tokens: 16384,
-                        truncation: 'auto',
                         reasoning: {
                             effort: 'medium',
                             summaryEnabled: false,

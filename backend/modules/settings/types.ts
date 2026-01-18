@@ -527,14 +527,64 @@ export interface PromptModule {
 }
 
 /**
+ * 提示词模式定义
+ * 
+ * 每个模式包含独立的系统提示词和动态上下文配置
+ */
+export interface PromptMode {
+    /**
+     * 模式 ID（唯一标识）
+     */
+    id: string;
+    
+    /**
+     * 模式名称（用于显示）
+     */
+    name: string;
+    
+    /**
+     * 模式图标（codicon 名称，可选）
+     */
+    icon?: string;
+    
+    /**
+     * 系统提示词模板
+     */
+    template: string;
+    
+    /**
+     * 是否启用动态上下文模板
+     */
+    dynamicTemplateEnabled: boolean;
+    
+    /**
+     * 动态上下文模板
+     */
+    dynamicTemplate: string;
+}
+
+/**
  * 系统提示词配置
  *
  * 允许用户自定义系统提示词模板
+ * 支持多模式配置，不同模式可以有不同的提示词
  * 注意：此功能始终启用，不可关闭
  */
 export interface SystemPromptConfig {
     /**
-     * 自定义提示词模板
+     * 当前激活的模式 ID
+     * 默认为 'default'
+     */
+    currentModeId: string;
+    
+    /**
+     * 所有模式配置
+     * key 为模式 ID
+     */
+    modes: Record<string, PromptMode>;
+    
+    /**
+     * 自定义提示词模板（默认模式的模板，向后兼容）
      *
      * 支持使用以下模块占位符（使用 {{$xxx}} 格式）：
      * - {{$ENVIRONMENT}} - 环境信息（工作区、操作系统、时间等）
@@ -562,7 +612,7 @@ export interface SystemPromptConfig {
     customSuffix: string;
     
     /**
-     * 是否启用动态上下文模板
+     * 是否启用动态上下文模板（默认模式，向后兼容）
      *
      * 当启用时，会将动态上下文（文件树、诊断、固定文件等）作为消息发送给 AI
      * 当禁用时，不发送动态上下文消息
@@ -572,7 +622,7 @@ export interface SystemPromptConfig {
     dynamicTemplateEnabled: boolean;
     
     /**
-     * 动态上下文模板
+     * 动态上下文模板（默认模式，向后兼容）
      *
      * 支持以下模块占位符（使用 {{$xxx}} 格式）：
      * - {{$WORKSPACE_FILES}} - 工作区文件树
@@ -858,6 +908,100 @@ export interface SummarizeConfig {
 }
 
 /**
+ * 子代理工具配置
+ */
+export interface SubAgentToolsConfig {
+    /**
+     * 工具模式
+     */
+    mode: 'all' | 'builtin' | 'mcp' | 'whitelist' | 'blacklist';
+    
+    /**
+     * 工具列表（白名单/黑名单模式下使用）
+     */
+    list?: string[];
+}
+
+/**
+ * 子代理配置项
+ */
+export interface SubAgentConfigItem {
+    /**
+     * 子代理类型 ID（唯一标识符）
+     */
+    type: string;
+    
+    /**
+     * 子代理名称（显示名称）
+     */
+    name: string;
+    
+    /**
+     * 子代理描述
+     */
+    description: string;
+    
+    /**
+     * 系统提示词
+     */
+    systemPrompt: string;
+    
+    /**
+     * 渠道配置
+     */
+    channel: {
+        channelId: string;
+        modelId?: string;
+    };
+    
+    /**
+     * 工具配置
+     */
+    tools: SubAgentToolsConfig;
+    
+    /**
+     * 最大迭代次数（-1 表示无限制）
+     * 默认: 20
+     */
+    maxIterations?: number;
+    
+    /**
+     * 最大运行时间（秒，-1 表示无限制）
+     * 默认: 300 (5分钟)
+     */
+    maxRuntime?: number;
+    
+    /**
+     * 是否启用
+     */
+    enabled: boolean;
+}
+
+/**
+ * 子代理配置
+ */
+export interface SubAgentsConfig extends Record<string, unknown> {
+    /**
+     * 子代理列表
+     */
+    agents: SubAgentConfigItem[];
+    
+    /**
+     * AI 一次性可调用的最大子代理数量
+     * 默认: 3
+     */
+    maxConcurrentAgents?: number;
+}
+
+/**
+ * 默认子代理配置
+ */
+export const DEFAULT_SUBAGENTS_CONFIG: SubAgentsConfig = {
+    agents: [],
+    maxConcurrentAgents: 3
+};
+
+/**
  * 工具特定配置
  *
  * key: 工具名称
@@ -882,6 +1026,7 @@ export interface ToolsConfig {
     skills?: SkillsConfig;
     system_prompt?: SystemPromptConfig;
     token_count?: TokenCountConfig;
+    subagents?: SubAgentsConfig;
     [toolName: string]: Record<string, unknown> | undefined;
 }
 
@@ -1550,10 +1695,125 @@ export const DEFAULT_DYNAMIC_CONTEXT_TEMPLATE = `This is the current global vari
 
 
 /**
+ * 默认模式 ID（代码模式）
+ */
+export const DEFAULT_MODE_ID = 'code';
+
+/**
+ * 设计模式 ID
+ */
+export const DESIGN_MODE_ID = 'design';
+
+/**
+ * 代码模式系统提示词模板
+ */
+export const CODE_MODE_TEMPLATE = `You are a professional programming assistant, proficient in multiple programming languages and frameworks.
+
+{{$ENVIRONMENT}}
+
+{{$TOOLS}}
+
+{{$MCP_TOOLS}}
+
+====
+
+GUIDELINES
+
+- Use the provided tools to complete tasks. Tools can help you read files, search code, execute commands, and modify files.
+- **IMPORTANT: Avoid duplicate tool calls.** Each tool should only be called once with the same parameters. Never repeat the same tool call multiple times.
+- When you need to understand the codebase, use read_file to examine specific files or search_in_files to find relevant code patterns.
+- When you need to make changes, use apply_diff for targeted modifications or write_to_file for creating new files.
+- If the task is simple and doesn't require tools, just respond directly without calling any tools.
+- Always maintain code readability and maintainability.
+- Do not omit any code.`;
+
+/**
+ * 设计模式系统提示词模板
+ */
+export const DESIGN_MODE_TEMPLATE = `You are a professional software architect and design consultant. Your primary role is to help users clarify requirements, design solutions, and plan implementation strategies.
+
+{{$ENVIRONMENT}}
+
+{{$TOOLS}}
+
+{{$MCP_TOOLS}}
+
+====
+
+GUIDELINES
+
+- Use the provided tools to complete tasks. Tools can help you read files, search code, execute commands, and modify files.
+- **IMPORTANT: Avoid duplicate tool calls.** Each tool should only be called once with the same parameters. Never repeat the same tool call multiple times.
+- When you need to understand the codebase, use read_file to examine specific files or search_in_files to find relevant code patterns.
+- When you need to make changes, use apply_diff for targeted modifications or write_to_file for creating new files.
+- If the task is simple and doesn't require tools, just respond directly without calling any tools.
+- Always maintain code readability and maintainability.
+- Do not omit any code.
+
+====
+
+DESIGN MODE BEHAVIOR
+
+**IMPORTANT: You are in DESIGN MODE. Follow these principles:**
+
+1. **Communicate First**: Before making any code changes, discuss the design with the user. Ask clarifying questions about requirements, constraints, and preferences.
+
+2. **Analyze and Plan**: When asked to implement something, first analyze the current codebase structure, identify potential approaches, and present options to the user.
+
+3. **Seek Confirmation**: Always confirm your understanding of the requirements and proposed solution before proceeding with implementation.
+
+4. **Minimal File Modifications**: Only write or modify files when:
+   - The user explicitly requests implementation
+   - You need to create design documents or diagrams
+   - The user confirms they want you to proceed with changes
+
+5. **Focus on Design Artifacts**: Prefer creating or discussing:
+   - Architecture diagrams and flowcharts (in markdown/mermaid)
+   - API specifications and interfaces
+   - Data models and schemas
+   - Implementation roadmaps and task breakdowns
+
+6. **Iterative Refinement**: Work with the user to refine the design through multiple rounds of discussion before implementation.`;
+
+/**
+ * 代码模式（默认模式）
+ */
+export const CODE_PROMPT_MODE: PromptMode = {
+    id: DEFAULT_MODE_ID,
+    name: 'Code',
+    icon: 'code',
+    template: CODE_MODE_TEMPLATE,
+    dynamicTemplateEnabled: true,
+    dynamicTemplate: DEFAULT_DYNAMIC_CONTEXT_TEMPLATE
+};
+
+/**
+ * 设计模式
+ */
+export const DESIGN_PROMPT_MODE: PromptMode = {
+    id: DESIGN_MODE_ID,
+    name: 'Design',
+    icon: 'lightbulb',
+    template: DESIGN_MODE_TEMPLATE,
+    dynamicTemplateEnabled: true,
+    dynamicTemplate: DEFAULT_DYNAMIC_CONTEXT_TEMPLATE
+};
+
+/**
+ * 默认提示词模式（向后兼容）
+ */
+export const DEFAULT_PROMPT_MODE = CODE_PROMPT_MODE;
+
+/**
  * 默认系统提示词配置
  */
 export const DEFAULT_SYSTEM_PROMPT_CONFIG: SystemPromptConfig = {
-    template: DEFAULT_SYSTEM_PROMPT_TEMPLATE,
+    currentModeId: DEFAULT_MODE_ID,
+    modes: {
+        [DEFAULT_MODE_ID]: CODE_PROMPT_MODE,
+        [DESIGN_MODE_ID]: DESIGN_PROMPT_MODE
+    },
+    template: CODE_MODE_TEMPLATE,
     dynamicTemplateEnabled: true,
     dynamicTemplate: DEFAULT_DYNAMIC_CONTEXT_TEMPLATE,
     customPrefix: '',

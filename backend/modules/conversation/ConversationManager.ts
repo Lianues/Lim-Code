@@ -239,14 +239,83 @@ export class ConversationManager {
      *
      * 返回的每条消息都包含 index 字段，用于前端在删除/重试时直接使用
      * 每次调用都从存储读取最新数据
+     * 
+     * 注意：对于没有响应的 pending 工具调用，会自动标记为 rejected 并添加 functionResponse
      */
     async getMessages(conversationId: string): Promise<Content[]> {
         const history = await this.loadHistory(conversationId);
+        
+        // 收集所有 functionResponse 的 ID
+        const respondedToolCallIds = new Set<string>();
+        for (const message of history) {
+            if (message.parts) {
+                for (const part of message.parts) {
+                    if (part.functionResponse?.id) {
+                        respondedToolCallIds.add(part.functionResponse.id);
+                    }
+                }
+            }
+        }
+        
+        // 收集未响应的工具调用，记录它们所在的消息索引
+        const unresolvedCallsByIndex: Map<number, Array<{ id: string; name: string }>> = new Map();
+        for (let i = 0; i < history.length; i++) {
+            const message = history[i];
+            if (message.parts) {
+                for (const part of message.parts) {
+                    if (part.functionCall && part.functionCall.id) {
+                        // 如果工具调用没有对应的响应，且还没有被标记为 rejected
+                        if (!respondedToolCallIds.has(part.functionCall.id) && !part.functionCall.rejected) {
+                            part.functionCall.rejected = true;
+                            const calls = unresolvedCallsByIndex.get(i) || [];
+                            calls.push({
+                                id: part.functionCall.id,
+                                name: part.functionCall.name || 'unknown'
+                            });
+                            unresolvedCallsByIndex.set(i, calls);
+                        }
+                    }
+                }
+            }
+        }
+        
+        // 如果有未响应的工具调用，在工具调用消息紧接后面插入 functionResponse
+        // 从后往前插入以避免索引偏移问题
+        if (unresolvedCallsByIndex.size > 0) {
+            const sortedIndices = Array.from(unresolvedCallsByIndex.keys()).sort((a, b) => b - a);
+            
+            for (const messageIndex of sortedIndices) {
+                const calls = unresolvedCallsByIndex.get(messageIndex)!;
+                const rejectedResponseParts: ContentPart[] = calls.map(call => ({
+                    functionResponse: {
+                        name: call.name,
+                        id: call.id,
+                        response: {
+                            success: false,
+                            error: t('modules.api.chat.errors.userRejectedTool'),
+                            rejected: true
+                        }
+                    }
+                }));
+                
+                // 在工具调用消息的紧接后面插入
+                history.splice(messageIndex + 1, 0, {
+                    role: 'user',
+                    parts: rejectedResponseParts,
+                    isFunctionResponse: true
+                });
+            }
+            
+            await this.storage.saveHistory(conversationId, history);
+        }
+        
         // 为每条消息添加 index 字段
-        return history.map((message, index) => ({
-            ...JSON.parse(JSON.stringify(message)),
-            index
-        }));
+        return history.map((message, index) => {
+            return {
+                ...JSON.parse(JSON.stringify(message)),
+                index
+            };
+        });
     }
 
     /**
@@ -1097,7 +1166,7 @@ export class ConversationManager {
      * 标记指定消息中的工具调用为拒绝状态
      *
      * 当用户在等待工具确认时点击终止按钮，需要将等待中的工具标记为拒绝
-     * 这样在重新加载对话时可以正确显示工具状态
+     * 同时添加对应的 functionResponse，这样 API 才不会报错
      *
      * @param conversationId 对话 ID
      * @param messageIndex 消息索引
@@ -1128,6 +1197,9 @@ export class ConversationManager {
             }
         }
         
+        // 收集需要拒绝的工具调用
+        const rejectedCalls: Array<{ id: string; name: string }> = [];
+        
         // 标记工具为拒绝状态
         for (const part of message.parts) {
             if (part.functionCall && part.functionCall.id) {
@@ -1139,11 +1211,117 @@ export class ConversationManager {
                 if (shouldReject && !part.functionCall.rejected) {
                     part.functionCall.rejected = true;
                     modified = true;
+                    
+                    // 收集被拒绝的工具信息
+                    rejectedCalls.push({
+                        id: part.functionCall.id,
+                        name: part.functionCall.name || 'unknown'
+                    });
                 }
             }
         }
         
+        // 为被拒绝的工具添加 functionResponse
+        if (rejectedCalls.length > 0) {
+            const rejectedResponseParts: ContentPart[] = rejectedCalls.map(call => ({
+                functionResponse: {
+                    name: call.name,
+                    id: call.id,
+                    response: {
+                        success: false,
+                        error: t('modules.api.chat.errors.userRejectedTool'),
+                        rejected: true
+                    }
+                }
+            }));
+            
+            // 在工具调用消息的紧接后面插入 functionResponse
+            history.splice(messageIndex + 1, 0, {
+                role: 'user',
+                parts: rejectedResponseParts,
+                isFunctionResponse: true
+            });
+            modified = true;
+        }
+        
         if (modified) {
+            await this.storage.saveHistory(conversationId, history);
+        }
+    }
+    
+    /**
+     * 拒绝所有未响应的工具调用
+     * 
+     * 用于用户中断操作（删除消息、切换对话等）时，将所有 pending 的工具调用标记为 rejected
+     * 并在工具调用消息紧接后面插入 functionResponse
+     * 
+     * @param conversationId 对话 ID
+     */
+    async rejectAllPendingToolCalls(conversationId: string): Promise<void> {
+        const history = await this.loadHistory(conversationId);
+        if (history.length === 0) return;
+        
+        // 收集所有 functionResponse 的 ID
+        const respondedToolCallIds = new Set<string>();
+        for (const message of history) {
+            if (message.parts) {
+                for (const part of message.parts) {
+                    if (part.functionResponse?.id) {
+                        respondedToolCallIds.add(part.functionResponse.id);
+                    }
+                }
+            }
+        }
+        
+        // 收集未响应的工具调用，记录它们所在的消息索引
+        const unresolvedCallsByIndex: Map<number, Array<{ id: string; name: string }>> = new Map();
+        for (let i = 0; i < history.length; i++) {
+            const message = history[i];
+            if (message.parts) {
+                for (const part of message.parts) {
+                    if (part.functionCall && part.functionCall.id) {
+                        // 如果工具调用没有对应的响应，且还没有被标记为 rejected
+                        if (!respondedToolCallIds.has(part.functionCall.id) && !part.functionCall.rejected) {
+                            part.functionCall.rejected = true;
+                            const calls = unresolvedCallsByIndex.get(i) || [];
+                            calls.push({
+                                id: part.functionCall.id,
+                                name: part.functionCall.name || 'unknown'
+                            });
+                            unresolvedCallsByIndex.set(i, calls);
+                        }
+                    }
+                }
+            }
+        }
+        
+        // 如果有未响应的工具调用，在工具调用消息紧接后面插入 functionResponse
+        // 从后往前插入以避免索引偏移问题
+        if (unresolvedCallsByIndex.size > 0) {
+            const sortedIndices = Array.from(unresolvedCallsByIndex.keys()).sort((a, b) => b - a);
+            
+            for (const messageIndex of sortedIndices) {
+                const calls = unresolvedCallsByIndex.get(messageIndex)!;
+                const rejectedResponseParts: ContentPart[] = calls.map(call => ({
+                    functionResponse: {
+                        name: call.name,
+                        id: call.id,
+                        response: {
+                            success: false,
+                            error: t('modules.api.chat.errors.userRejectedTool'),
+                            rejected: true
+                        }
+                    }
+                }));
+                
+                // 在工具调用消息的紧接后面插入
+                history.splice(messageIndex + 1, 0, {
+                    role: 'user',
+                    parts: rejectedResponseParts,
+                    isFunctionResponse: true
+                });
+            }
+            
             await this.storage.saveHistory(conversationId, history);
         }
     }

@@ -164,6 +164,29 @@ export class TokenCountService {
     }
     
     /**
+     * 批量并行计算多个内容的 token 数
+     * 
+     * 所有计数请求将并行执行，节省时间
+     *
+     * @param channelType 渠道类型
+     * @param config Token 计数配置
+     * @param contentsList 要计算的内容数组
+     * @returns Token 计数结果数组（与输入顺序一致）
+     */
+    async countTokensBatch(
+        channelType: 'gemini' | 'openai' | 'anthropic' | 'openai-responses',
+        config: TokenCountConfig,
+        contentsList: Content[][]
+    ): Promise<TokenCountResult[]> {
+        // 并行执行所有计数请求
+        const promises = contentsList.map(contents => 
+            this.countTokens(channelType, config, contents)
+        );
+        
+        return Promise.all(promises);
+    }
+    
+    /**
      * 本地估算 token 数
      * 约 4 个字符 = 1 个 token
      */

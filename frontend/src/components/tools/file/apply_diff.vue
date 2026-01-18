@@ -8,17 +8,38 @@
  * - 每个 diff 块独立显示
  */
 
-import { computed, ref, onBeforeUnmount } from 'vue'
+import { computed, ref, onBeforeUnmount, onMounted } from 'vue'
 import CustomScrollbar from '../../common/CustomScrollbar.vue'
 import { useI18n } from '@/composables'
+import { onExtensionCommand } from '../../../utils/vscode'
 
 const props = defineProps<{
   args: Record<string, unknown>
   result?: Record<string, unknown>
   error?: string
+  toolId?: string
 }>()
 
 const { t } = useI18n()
+
+// 加载配置
+onMounted(async () => {
+  // 监听后端状态变化
+  const unregister = onExtensionCommand('diff.statusChanged', (data: any) => {
+    const myPendingDiffId = (props.result?.data as any)?.pendingDiffId
+    if (myPendingDiffId) {
+      // 检查我的这个 diff 是否在 pending 列表中
+      const isStillPending = data.pendingDiffs.some((d: any) => d.id === myPendingDiffId)
+      
+      // 如果不在 pending 列表了，说明被处理了（接受或拒绝）
+      if (!isStillPending) {
+        // 不需要操作
+      }
+    }
+  })
+
+  onBeforeUnmount(unregister)
+})
 
 // 展开状态
 const expanded = ref<Set<number>>(new Set())
@@ -57,7 +78,8 @@ const diffList = computed((): DiffBlock[] => {
         ...diff,
         success: res.success,
         error: res.error,
-        start_line: res.matchedLine ?? res.start_line ?? diff.start_line ?? 1
+        // 不要默认填充为 1：start_line 仅在“参数中提供/后端返回匹配行号”时才展示
+        start_line: res.matchedLine ?? res.start_line ?? diff.start_line
       }
     })
   }
@@ -69,7 +91,8 @@ const diffList = computed((): DiffBlock[] => {
       ...diff,
       success: !failure,
       error: failure?.error,
-      start_line: diff.start_line ?? 1
+      // start_line 允许为空；为空时前端不显示“line xx”标记，但内部行号仍会从 1 开始计算
+      start_line: diff.start_line
     }
   })
 })
@@ -370,6 +393,7 @@ onBeforeUnmount(() => {
       </span>
       <span v-if="resultData.status === 'pending'" class="status-badge pending">{{ t('components.tools.file.applyDiffPanel.pending') }}</span>
       <span v-else-if="resultData.status === 'accepted'" class="status-badge accepted">{{ t('components.tools.file.applyDiffPanel.accepted') }}</span>
+      <span v-else-if="resultData.status === 'rejected'" class="status-badge rejected">{{ t('components.tools.file.applyDiffPanel.rejected') }}</span>
     </div>
     
     <!-- 全局错误 -->
@@ -613,6 +637,92 @@ onBeforeUnmount(() => {
 .status-badge.accepted {
   background: var(--vscode-testing-iconPassed);
   color: var(--vscode-editor-background);
+}
+
+.status-badge.rejected {
+  background: var(--vscode-testing-iconFailed);
+  color: var(--vscode-editor-background);
+}
+
+/* 操作页脚 */
+.action-footer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm, 8px);
+  margin-top: var(--spacing-xs, 4px);
+  padding: var(--spacing-sm, 8px);
+  background: var(--vscode-editor-inactiveSelectionBackground);
+  border-radius: var(--radius-sm, 2px);
+  border: 1px solid var(--vscode-panel-border);
+}
+
+.footer-top {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm, 8px);
+}
+
+.timer-container {
+  flex: 1;
+  position: relative;
+  height: 4px;
+  background: rgba(128, 128, 128, 0.1);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.timer-bar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  background: var(--vscode-charts-blue);
+  transition: width 0.05s linear;
+}
+
+.timer-text {
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+  min-width: 24px;
+  text-align: right;
+}
+
+.footer-buttons {
+  display: flex;
+  gap: var(--spacing-sm, 8px);
+  justify-content: flex-end;
+}
+
+.footer-buttons button {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 12px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: 2px;
+  border: none;
+  transition: opacity 0.12s ease;
+}
+
+.footer-buttons .confirm-btn {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+
+.footer-buttons .confirm-btn:hover {
+  background: var(--vscode-button-hoverBackground);
+}
+
+.footer-buttons .reject-btn {
+  background: transparent;
+  color: var(--vscode-foreground);
+  border: 1px solid var(--vscode-panel-border);
+}
+
+.footer-buttons .reject-btn:hover {
+  background: var(--vscode-toolbar-hoverBackground);
 }
 
 /* 全局错误 */

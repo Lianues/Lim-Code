@@ -13,6 +13,9 @@ import * as path from 'path';
 import { getGlobalSettingsManager } from '../../core/settingsContext';
 import { t } from '../../i18n';
 
+import { getDiffCodeLensProvider } from './DiffCodeLensProvider';
+import { applyDiffToContent } from './apply_diff';
+
 /**
  * 待处理的 Diff 修改
  */
@@ -31,6 +34,16 @@ export interface PendingDiff {
     timestamp: number;
     /** 状态 */
     status: 'pending' | 'accepted' | 'rejected';
+    /** 关联的 diff 块（用于 CodeLens） */
+    blocks?: Array<{
+        index: number;
+        startLine: number;
+        endLine: number;
+    }>;
+    /** 原始 diffs 列表 */
+    rawDiffs?: any[];
+    /** 关联的工具 ID */
+    toolId?: string;
 }
 
 /**
@@ -190,7 +203,10 @@ export class DiffManager {
         filePath: string,
         absolutePath: string,
         originalContent: string,
-        newContent: string
+        newContent: string,
+        blocks?: Array<{ index: number; startLine: number; endLine: number }>,
+        rawDiffs?: any[],
+        toolId?: string
     ): Promise<PendingDiff> {
         const id = `diff-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
         
@@ -201,13 +217,47 @@ export class DiffManager {
             originalContent,
             newContent,
             timestamp: Date.now(),
-            status: 'pending'
+            status: 'pending',
+            blocks,
+            rawDiffs,
+            toolId
         };
         
         this.pendingDiffs.set(id, pendingDiff);
         
         // 注册原始内容到提供者
         this.contentProvider.setContent(id, originalContent);
+        
+        // 如果有块信息，注册到 CodeLens 提供者
+        if (blocks) {
+            const provider = getDiffCodeLensProvider();
+            provider.addSession({
+                id,
+                filePath,
+                absolutePath,
+                blocks: blocks.map(b => ({ ...b, confirmed: false, rejected: false })),
+                originalContent,
+                newContent,
+                timestamp: Date.now()
+            });
+            
+            // 设置回调
+            provider.setConfirmCallback(async (sessionId, blockIndex) => {
+                if (blockIndex === undefined) {
+                    await this.acceptDiff(sessionId, true);
+                } else {
+                    await this.confirmBlock(sessionId, blockIndex);
+                }
+            });
+            
+            provider.setRejectCallback(async (sessionId, blockIndex) => {
+                if (blockIndex === undefined) {
+                    await this.rejectDiff(sessionId);
+                } else {
+                    await this.rejectBlock(sessionId, blockIndex);
+                }
+            });
+        }
         
         // 显示 diff 视图
         await this.showDiffView(pendingDiff);
@@ -222,6 +272,71 @@ export class DiffManager {
         this.notifyStatusChange();
         
         return pendingDiff;
+    }
+
+    /**
+     * 确认单个块
+     */
+    public async confirmBlock(sessionId: string, blockIndex: number): Promise<void> {
+        const provider = getDiffCodeLensProvider();
+        provider.updateBlockStatus(sessionId, blockIndex, true);
+        
+        // 如果所有块都处理完了，自动接受整个 diff
+        if (provider.isSessionComplete(sessionId)) {
+            await this.acceptDiff(sessionId, true);
+        }
+    }
+
+    /**
+     * 拒绝单个块
+     */
+    public async rejectBlock(sessionId: string, blockIndex: number): Promise<void> {
+        const provider = getDiffCodeLensProvider();
+        provider.updateBlockStatus(sessionId, blockIndex, false);
+        
+        // 实时更新编辑器内容，移除被拒绝的块
+        const diff = this.pendingDiffs.get(sessionId);
+        if (diff && diff.rawDiffs) {
+            let tempContent = diff.originalContent;
+            const session = provider.getSession(sessionId);
+            if (session) {
+                // 重新计算并更新所有块的行号
+                for (let i = 0; i < diff.rawDiffs.length; i++) {
+                    const blockInfo = session.blocks.find(b => b.index === i);
+                    if (blockInfo && !blockInfo.rejected) {
+                        const searchLines = diff.rawDiffs[i].search.split('\n').length;
+                        const replaceLines = diff.rawDiffs[i].replace.split('\n').length;
+                        
+                        const result = applyDiffToContent(tempContent, diff.rawDiffs[i].search, diff.rawDiffs[i].replace, diff.rawDiffs[i].start_line);
+                        if (result.success && result.matchedLine !== undefined) {
+                            tempContent = result.result;
+                            
+                            // 更新此块在当前内容中的范围
+                            blockInfo.startLine = result.matchedLine;
+                            blockInfo.endLine = result.matchedLine + replaceLines - 1;
+                        }
+                    }
+                }
+                
+                // 更新编辑器
+                const uri = vscode.Uri.file(diff.absolutePath);
+                const doc = vscode.workspace.textDocuments.find(d => d.uri.fsPath === diff.absolutePath);
+                if (doc) {
+                    const edit = new vscode.WorkspaceEdit();
+                    const fullRange = new vscode.Range(
+                        doc.positionAt(0),
+                        doc.positionAt(doc.getText().length)
+                    );
+                    edit.replace(uri, fullRange, tempContent);
+                    await vscode.workspace.applyEdit(edit);
+                }
+            }
+        }
+
+        // 如果所有块都处理完了，自动接受
+        if (provider.isSessionComplete(sessionId)) {
+            await this.acceptDiff(sessionId, true);
+        }
     }
     
     /**
@@ -250,10 +365,6 @@ export class DiffManager {
         // 2. 创建原始内容的虚拟 URI
         const originalUri = vscode.Uri.parse(`gemini-diff-original:${diff.id}/${path.basename(diff.filePath)}`);
         
-        // 3. 设置为内联模式
-        const config = vscode.workspace.getConfiguration('diffEditor');
-        await config.update('renderSideBySide', false, vscode.ConfigurationTarget.Global);
-        
         // 4. 打开 diff 视图
         const title = t('tools.file.diffManager.diffTitle', { filePath: diff.filePath });
         await vscode.commands.executeCommand('vscode.diff', originalUri, fileUri, title, {
@@ -268,7 +379,6 @@ export class DiffManager {
                 this.cleanup(diff.id);
                 this.notifyStatusChange();
                 this.notifySaveComplete(diff);
-                vscode.window.showInformationMessage(t('tools.file.diffManager.saved', { filePath: diff.filePath }));
 
                 // 非自动保存模式下，用户手动保存后自动关闭 diff 标签页
                 const currentSettings = this.getSettings();
@@ -339,6 +449,31 @@ export class DiffManager {
                 closeListener.dispose();
                 this.closeListeners.delete(id);
             }
+
+            // 计算最终内容（仅包含已确认的块）
+            let finalContent = diff.newContent;
+            if (diff.rawDiffs) {
+                const provider = getDiffCodeLensProvider();
+                const session = provider.getSession(id);
+                if (session) {
+                    const rejectedBlocks = session.blocks.filter(b => b.rejected);
+                    
+                    if (rejectedBlocks.length > 0) {
+                        // 有被拒绝的块，重新计算内容
+                        finalContent = diff.originalContent;
+                        for (let i = 0; i < diff.rawDiffs.length; i++) {
+                            const blockInfo = session.blocks.find(b => b.index === i);
+                            // 只有没被明确拒绝的块才应用
+                            if (blockInfo && !blockInfo.rejected) {
+                                const result = applyDiffToContent(finalContent, diff.rawDiffs[i].search, diff.rawDiffs[i].replace, diff.rawDiffs[i].start_line);
+                                if (result.success) {
+                                    finalContent = result.result;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             
             const uri = vscode.Uri.file(diff.absolutePath);
             let doc = vscode.workspace.textDocuments.find(d => d.uri.fsPath === diff.absolutePath);
@@ -350,27 +485,31 @@ export class DiffManager {
             
             // 检查文档内容是否已经是新内容
             const currentContent = doc.getText();
-            if (currentContent !== diff.newContent) {
+            if (currentContent !== finalContent) {
                 // 通过 WorkspaceEdit 更新文档内容
                 const edit = new vscode.WorkspaceEdit();
                 const fullRange = new vscode.Range(
                     doc.positionAt(0),
                     doc.positionAt(currentContent.length)
                 );
-                edit.replace(uri, fullRange, diff.newContent);
+                edit.replace(uri, fullRange, finalContent);
                 await vscode.workspace.applyEdit(edit);
             }
             
-            // 保存文档（使用 overwriteReadonly 选项强制保存）
+            // 保存文档
             const saved = await doc.save();
             
             if (!saved) {
                 // 如果 VSCode API 保存失败，尝试直接写入文件
-                fs.writeFileSync(diff.absolutePath, diff.newContent, 'utf8');
+                fs.writeFileSync(diff.absolutePath, finalContent, 'utf8');
             }
             
             diff.status = 'accepted';
             this.cleanup(id);
+            
+            // 移除 CodeLens 会话
+            getDiffCodeLensProvider().removeSession(id);
+
             this.notifyStatusChange();
             this.notifySaveComplete(diff);
             
@@ -413,13 +552,55 @@ export class DiffManager {
             return false;
         }
         
-        diff.status = 'rejected';
-        this.cleanup(id);
-        this.notifyStatusChange();
-        
-        vscode.window.showInformationMessage(t('tools.file.diffManager.rejected', { filePath: diff.filePath }));
-        
-        return true;
+        try {
+            // 1. 恢复文件内容
+            const uri = vscode.Uri.file(diff.absolutePath);
+            const doc = vscode.workspace.textDocuments.find(d => d.uri.fsPath === diff.absolutePath);
+            
+            if (doc) {
+                const edit = new vscode.WorkspaceEdit();
+                const fullRange = new vscode.Range(
+                    doc.positionAt(0),
+                    doc.positionAt(doc.getText().length)
+                );
+                edit.replace(uri, fullRange, diff.originalContent);
+                await vscode.workspace.applyEdit(edit);
+                
+                // 如果文件曾经被保存过（脏了），这里我们不强制保存，因为用户拒绝了 AI 的修改。
+                // 但如果文件在 AI 修改前就是干净的，AI 修改让它变脏了，我们现在恢复了原始内容，它应该变回干净（或者通过 undo）。
+            } else {
+                // 如果文档没打开，直接写回原始文件内容确保万无一失
+                fs.writeFileSync(diff.absolutePath, diff.originalContent, 'utf8');
+            }
+
+            // 2. 关闭 diff 标签页
+            await this.closeDiffTab(diff.absolutePath);
+
+            // 3. 移除监听器
+            const saveListener = this.saveListeners.get(id);
+            if (saveListener) {
+                saveListener.dispose();
+                this.saveListeners.delete(id);
+            }
+            const closeListener = this.closeListeners.get(id);
+            if (closeListener) {
+                closeListener.dispose();
+                this.closeListeners.delete(id);
+            }
+
+            diff.status = 'rejected';
+            this.cleanup(id);
+            
+            // 4. 移除 CodeLens 会话
+            getDiffCodeLensProvider().removeSession(id);
+
+            this.notifyStatusChange();
+            
+            return true;
+        } catch (error) {
+            console.error('Failed to reject diff:', error);
+            return false;
+        }
     }
     
     /**
@@ -482,7 +663,7 @@ export class DiffManager {
     public getPendingDiffs(): PendingDiff[] {
         return Array.from(this.pendingDiffs.values()).filter(d => d.status === 'pending');
     }
-    
+
     /**
      * 检查是否所有 diff 都已处理
      */
@@ -540,41 +721,89 @@ export class DiffManager {
     
     /**
      * 取消所有待处理的 diff（标记为已取消）
-     * 用于用户发送新消息时清理未确认的 diff
+     * 用于用户发送新消息或删除消息时清理未确认的 diff
      */
     public async cancelAllPending(): Promise<{ cancelled: PendingDiff[] }> {
         const cancelled: PendingDiff[] = [];
-        
-        for (const [id, diff] of this.pendingDiffs.entries()) {
-            if (diff.status === 'pending') {
-                diff.status = 'rejected';
-                cancelled.push({ ...diff });
-                this.cleanup(id);
-                
-                // 尝试恢复文件到原始状态
+
+        const pendingIds = Array.from(this.pendingDiffs.entries())
+            .filter(([, d]) => d.status === 'pending')
+            .map(([id]) => id);
+
+        for (const id of pendingIds) {
+            const diff = this.pendingDiffs.get(id);
+            if (!diff || diff.status !== 'pending') {
+                continue;
+            }
+
+            // 1. 标记为拒绝（从 pending 列表中移除）
+            diff.status = 'rejected';
+            cancelled.push({ ...diff });
+
+            // 2. 关闭 diff 编辑器标签页
+            try {
+                await this.closeDiffTab(diff.absolutePath);
+            } catch (err) {
+                console.warn(`[DiffManager] Failed to close diff tab for ${diff.absolutePath}:`, err);
+            }
+
+            // 3. 移除监听器
+            const saveListener = this.saveListeners.get(id);
+            if (saveListener) {
                 try {
-                    const uri = vscode.Uri.file(diff.absolutePath);
-                    const doc = vscode.workspace.textDocuments.find(d => d.uri.fsPath === diff.absolutePath);
-                    if (doc && doc.isDirty) {
-                        // 恢复到原始内容
-                        const edit = new vscode.WorkspaceEdit();
-                        const fullRange = new vscode.Range(
-                            doc.positionAt(0),
-                            doc.positionAt(doc.getText().length)
-                        );
-                        edit.replace(uri, fullRange, diff.originalContent);
-                        await vscode.workspace.applyEdit(edit);
-                    }
+                    saveListener.dispose();
                 } catch {
-                    // 忽略恢复错误
+                    // ignore
                 }
+                this.saveListeners.delete(id);
+            }
+            const closeListener = this.closeListeners.get(id);
+            if (closeListener) {
+                try {
+                    closeListener.dispose();
+                } catch {
+                    // ignore
+                }
+                this.closeListeners.delete(id);
+            }
+
+            // 4. 移除 CodeLens 会话（避免残留）
+            try {
+                getDiffCodeLensProvider().removeSession(id);
+            } catch (err) {
+                console.warn(`[DiffManager] Failed to remove CodeLens session ${id}:`, err);
+            }
+
+            // 5. 清理临时资源
+            try {
+                this.cleanup(id);
+            } catch (err) {
+                console.warn(`[DiffManager] Failed to cleanup diff ${id}:`, err);
+            }
+
+            // 6. 尝试恢复文件到原始状态
+            try {
+                const uri = vscode.Uri.file(diff.absolutePath);
+                const doc = vscode.workspace.textDocuments.find(d => d.uri.fsPath === diff.absolutePath);
+                if (doc && doc.isDirty) {
+                    // 恢复到原始内容
+                    const edit = new vscode.WorkspaceEdit();
+                    const fullRange = new vscode.Range(
+                        doc.positionAt(0),
+                        doc.positionAt(doc.getText().length)
+                    );
+                    edit.replace(uri, fullRange, diff.originalContent);
+                    await vscode.workspace.applyEdit(edit);
+                }
+            } catch (err) {
+                console.warn(`[DiffManager] Failed to restore file for cancelled diff ${id}:`, err);
             }
         }
-        
+
         if (cancelled.length > 0) {
             this.notifyStatusChange();
         }
-        
+
         return { cancelled };
     }
     
@@ -630,7 +859,9 @@ class OriginalContentProvider implements vscode.TextDocumentContentProvider {
     }
     
     public provideTextDocumentContent(uri: vscode.Uri): string {
-        const id = uri.path.split('/')[0];
+        const path = uri.path;
+        const parts = path.split('/').filter(p => p.length > 0);
+        const id = parts[0];
         return this.contents.get(id) || '';
     }
 }

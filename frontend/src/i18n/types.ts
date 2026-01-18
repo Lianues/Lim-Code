@@ -131,6 +131,11 @@ export interface LanguageMessages {
                 confirm: string;
                 cancel: string;
             };
+            inputDialog: {
+                title: string;
+                confirm: string;
+                cancel: string;
+            };
             deleteDialog: {
                 title: string;
                 message: string;
@@ -288,6 +293,8 @@ export interface LanguageMessages {
                 paramCount: string;
                 confirmExecution: string;
                 confirm: string;
+                saveAll: string;
+                rejectAll: string;
                 reject: string;
                 confirmed: string;
                 rejected: string;
@@ -318,6 +325,12 @@ export interface LanguageMessages {
             tokenUsage: string;
             context: string;
             fileNotExists: string;
+            mode: {
+                selectMode: string;
+                manageMode: string;
+                search: string;
+                noResults: string;
+            };
             channelSelector: {
                 placeholder: string;
                 searchPlaceholder: string;
@@ -382,6 +395,7 @@ export interface LanguageMessages {
                 tools: string;
                 autoExec: string;
                 mcp: string;
+                subagents: string;
                 checkpoint: string;
                 summarize: string;
                 imageGen: string;
@@ -1121,6 +1135,60 @@ export interface LanguageMessages {
                     cancel: string;
                 };
             };
+            subagents: {
+                selectAgent: string;
+                noAgents: string;
+                create: string;
+                rename: string;
+                delete: string;
+                disabled: string;
+                enabled: string;
+                globalConfig: string;
+                maxConcurrentAgents: string;
+                maxConcurrentAgentsHint: string;
+                basicInfo: string;
+                description: string;
+                descriptionPlaceholder: string;
+                maxIterations: string;
+                maxIterationsHint: string;
+                maxRuntime: string;
+                maxRuntimeHint: string;
+                systemPrompt: string;
+                systemPromptPlaceholder: string;
+                channelModel: string;
+                channel: string;
+                selectChannel: string;
+                model: string;
+                selectModel: string;
+                tools: string;
+                toolsDescription: string;
+                toolMode: {
+                    label: string;
+                    all: string;
+                    builtin: string;
+                    mcp: string;
+                    whitelist: string;
+                    blacklist: string;
+                };
+                builtinTools: string;
+                mcpTools: string;
+                noTools: string;
+                whitelistHint: string;
+                blacklistHint: string;
+                emptyState: string;
+                createFirst: string;
+                deleteConfirm: {
+                    title: string;
+                    message: string;
+                };
+                createDialog: {
+                    title: string;
+                    nameLabel: string;
+                    namePlaceholder: string;
+                    nameRequired: string;
+                    nameDuplicate: string;
+                };
+            };
             modelManager: {
                 title: string;
                 fetchModels: string;
@@ -1167,6 +1235,18 @@ export interface LanguageMessages {
                 loading: string;
                 enable: string;
                 enableDescription: string;
+                modes: {
+                    label: string;
+                    add: string;
+                    rename: string;
+                    delete: string;
+                    confirmDelete: string;
+                    cannotDeleteDefault: string;
+                    unsavedChanges: string;
+                    newModeName: string;
+                    newModeDefault: string;
+                    renameModePrompt: string;
+                };
                 templateSection: {
                     title: string;
                     resetButton: string;
@@ -1340,6 +1420,10 @@ export interface LanguageMessages {
                         description: string;
                     };
                     tokenCount: {
+                        title: string;
+                        description: string;
+                    };
+                    subagents: {
                         title: string;
                         description: string;
                     };
@@ -1726,6 +1810,7 @@ export interface LanguageMessages {
                     diffApplied: string;
                     pending: string;
                     accepted: string;
+                    rejected: string;
                     line: string;
                     diffNumber: string;
                     collapse: string;
@@ -1819,7 +1904,6 @@ export interface LanguageMessages {
                     title: string;
                     replaceTitle: string;
                     regex: string;
-                    dryRun: string;
                     matchCount: string;
                     fileCount: string;
                     truncated: string;
@@ -2114,6 +2198,16 @@ export interface LanguageMessages {
                     responseResult: string;
                     waitingResponse: string;
                 };
+            };
+            /** 子代理工具 */
+            subagents: {
+                title: string;
+                task: string;
+                context: string;
+                completed: string;
+                failed: string;
+                executing: string;
+                partialResponse: string;
             };
         };
     };

@@ -301,6 +301,31 @@ const zhCN: BackendLanguageMessages = {
                 rejected: '已拒绝修改: {filePath}',
                 diffTitle: '{filePath} (AI 修改 - Ctrl+S 保存)'
             },
+            diffCodeLens: {
+                accept: '接受',
+                reject: '拒绝',
+                acceptAll: '全部接受',
+                rejectAll: '全部拒绝'
+            },
+            diffEditorActions: {
+                noActiveDiff: '当前没有待处理的 diff 修改',
+                allBlocksProcessed: '所有 diff 块都已处理',
+                diffBlock: 'Diff 块 #{index}',
+                lineRange: '第 {start}-{end} 行',
+                acceptAllBlocks: '接受所有块',
+                rejectAllBlocks: '拒绝所有块',
+                blocksCount: '{count} 个待处理块',
+                selectBlockToAccept: '选择要接受的 Diff 块',
+                selectBlockToReject: '选择要拒绝的 Diff 块',
+                selectBlockPlaceholder: '可以多选'
+            },
+            diffInline: {
+                hoverOrLightbulb: '悬停或点击 💡 应用修改',
+                acceptBlock: '接受 Diff 块 #{index}',
+                rejectBlock: '拒绝 Diff 块 #{index}',
+                acceptAll: '接受所有修改',
+                rejectAll: '拒绝所有修改'
+            },
             readFile: {
                 cannotReadFile: '无法读取此文件'
             }

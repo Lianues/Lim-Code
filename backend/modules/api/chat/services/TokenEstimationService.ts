@@ -135,6 +135,119 @@ export class TokenEstimationService {
     }
     
     /**
+     * 批量并行预计算多条消息的 Token 数量
+     * 
+     * 所有计数请求将并行执行，节省时间。
+     * 
+     * @param conversationId 会话 ID
+     * @param channelType 渠道类型
+     * @param messageIndices 消息索引数组
+     * @param forceRecount 是否强制重新计算
+     */
+    async preCountUserMessageTokensBatch(
+        conversationId: string,
+        channelType: string | undefined,
+        messageIndices: number[],
+        forceRecount?: boolean
+    ): Promise<void> {
+        if (!this.settingsManager || messageIndices.length === 0) {
+            return;
+        }
+        
+        const history = await this.conversationManager.getHistoryRef(conversationId);
+        
+        if (history.length === 0) {
+            return;
+        }
+        
+        // 获取 Token 计数配置
+        const tokenCountConfig = this.settingsManager.getTokenCountConfig();
+        const normalizedChannelType = this.normalizeChannelType(channelType);
+        
+        // 收集需要计数的消息
+        const messagesToCount: Array<{ index: number; message: Content }> = [];
+        
+        for (const index of messageIndices) {
+            const message = history[index];
+            if (!message || message.role !== 'user') {
+                continue;
+            }
+            
+            // 检查是否已经有 token 数（除非强制重新计算）
+            if (!forceRecount && message.tokenCountByChannel?.[channelType || ''] !== undefined) {
+                continue;
+            }
+            
+            messagesToCount.push({ index, message });
+        }
+        
+        if (messagesToCount.length === 0) {
+            return;
+        }
+        
+        // 更新代理设置
+        this.tokenCountService.setProxyUrl(this.settingsManager.getEffectiveProxyUrl());
+        
+        // 检查是否启用 API 计数
+        const useApiCount = normalizedChannelType && tokenCountConfig[normalizedChannelType]?.enabled;
+        
+        if (useApiCount) {
+            // 并行调用 API 计数
+            const countPromises = messagesToCount.map(({ message }) =>
+                this.tokenCountService.countTokens(
+                    normalizedChannelType!,
+                    tokenCountConfig,
+                    [message]
+                )
+            );
+            
+            const results = await Promise.all(countPromises);
+            
+            // 并行更新消息
+            const updatePromises = messagesToCount.map(async ({ index, message }, i) => {
+                const result = results[i];
+                let tokenCount: number;
+                
+                if (result.success && result.totalTokens !== undefined) {
+                    tokenCount = result.totalTokens;
+                } else {
+                    // API 失败，使用估算
+                    tokenCount = this.estimateMessageTokens(message);
+                }
+                
+                const tokenCountByChannel: ChannelTokenCounts = message.tokenCountByChannel || {};
+                if (channelType) {
+                    tokenCountByChannel[channelType] = tokenCount;
+                }
+                
+                await this.conversationManager.updateMessage(conversationId, index, {
+                    tokenCountByChannel,
+                    estimatedTokenCount: tokenCount
+                });
+            });
+            
+            await Promise.all(updatePromises);
+        } else {
+            // 不使用 API，直接估算并并行更新
+            const updatePromises = messagesToCount.map(async ({ index, message }) => {
+                const tokenCount = this.estimateMessageTokens(message);
+                
+                const tokenCountByChannel: ChannelTokenCounts = message.tokenCountByChannel || {};
+                if (channelType) {
+                    tokenCountByChannel[channelType] = tokenCount;
+                }
+                
+                await this.conversationManager.updateMessage(conversationId, index, {
+                    tokenCountByChannel,
+                    estimatedTokenCount: tokenCount
+                });
+            });
+            
+            await Promise.all(updatePromises);
+        }
+    }
+    
+    /**
      * 计算系统提示词的 token 数
      *
      * 尝试使用 API 计算精确值，失败时使用估算。
@@ -179,6 +292,81 @@ export class TokenEstimationService {
         
         // 回退到估算
         return Math.ceil(systemPrompt.length / 4);
+    }
+    
+    /**
+     * 批量并行计算多个文本的 token 数
+     *
+     * 所有计数请求将并行执行，节省时间。
+     *
+     * @param texts 要计算的文本数组
+     * @param channelType 渠道类型
+     * @returns token 数量数组（与输入顺序一致）
+     */
+    async countTextTokensBatch(
+        texts: (string | null | undefined)[],
+        channelType?: string
+    ): Promise<number[]> {
+        if (!this.settingsManager) {
+            // 没有设置管理器，直接估算
+            return texts.map(text => text ? Math.ceil(text.length / 4) : 0);
+        }
+        
+        const tokenCountConfig = this.settingsManager.getTokenCountConfig();
+        const normalizedChannelType = this.normalizeChannelType(channelType);
+        
+        // 检查是否启用 API 计数
+        const useApiCount = normalizedChannelType && tokenCountConfig[normalizedChannelType]?.enabled;
+        
+        if (!useApiCount) {
+            // 不使用 API，直接估算
+            return texts.map(text => text ? Math.ceil(text.length / 4) : 0);
+        }
+        
+        // 更新代理设置
+        this.tokenCountService.setProxyUrl(this.settingsManager.getEffectiveProxyUrl());
+        
+        // 筛选出需要计数的文本及其索引
+        const textsToCount: Array<{ index: number; text: string }> = [];
+        for (let i = 0; i < texts.length; i++) {
+            if (texts[i]) {
+                textsToCount.push({ index: i, text: texts[i]! });
+            }
+        }
+        
+        if (textsToCount.length === 0) {
+            return texts.map(() => 0);
+        }
+        
+        // 并行调用 API 计数
+        const countPromises = textsToCount.map(({ text }) => {
+            const message: Content = {
+                role: 'user',
+                parts: [{ text }]
+            };
+            return this.tokenCountService.countTokens(
+                normalizedChannelType!,
+                tokenCountConfig,
+                [message]
+            );
+        });
+        
+        const results = await Promise.all(countPromises);
+        
+        // 构建结果数组
+        const tokenCounts: number[] = texts.map(text => text ? Math.ceil(text.length / 4) : 0);
+        
+        // 填入 API 结果
+        for (let i = 0; i < textsToCount.length; i++) {
+            const { index } = textsToCount[i];
+            const result = results[i];
+            if (result.success && result.totalTokens !== undefined) {
+                tokenCounts[index] = result.totalTokens;
+            }
+            // API 失败时保留估算值
+        }
+        
+        return tokenCounts;
     }
     
     /**

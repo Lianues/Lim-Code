@@ -31,6 +31,7 @@ export * from './search';
 export * from './terminal';
 export * from './media';
 export * from './lsp';
+export * from './subagents';
 
 // 导出工具辅助函数
 export * from './utils';
@@ -61,6 +62,7 @@ export function getAllTools(): Tool[] {
     const { getTerminalToolRegistrations } = require('./terminal');
     const { getMediaToolRegistrations } = require('./media');
     const { getLspToolRegistrations } = require('./lsp');
+    const { getSubAgentsToolRegistrations } = require('./subagents');
     
     const registrations = [
         ...getFileToolRegistrations(),
@@ -76,6 +78,10 @@ export function getAllTools(): Tool[] {
     if (hasAvailableSkills()) {
         tools.push(getSkillsTool());
     }
+    
+    // 始终添加 subagents 工具（工具内部会动态判断是否有可用的子代理）
+    const subAgentRegistrations = getSubAgentsToolRegistrations();
+    tools.push(...subAgentRegistrations.map((reg: () => Tool) => reg()));
     
     return tools;
 }

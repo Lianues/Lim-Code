@@ -145,6 +145,58 @@ export const updateSystemPromptConfig: MessageHandler = async (data, requestId, 
 };
 
 /**
+ * 获取所有提示词模式
+ */
+export const getPromptModes: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const modes = ctx.settingsManager.getAllPromptModes();
+    const currentModeId = ctx.settingsManager.getCurrentPromptModeId();
+    ctx.sendResponse(requestId, { modes, currentModeId });
+  } catch (error: any) {
+    ctx.sendError(requestId, 'GET_PROMPT_MODES_ERROR', error.message || 'Failed to get prompt modes');
+  }
+};
+
+/**
+ * 切换当前提示词模式
+ */
+export const setCurrentPromptMode: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const { modeId } = data;
+    await ctx.settingsManager.setCurrentPromptMode(modeId);
+    ctx.sendResponse(requestId, { success: true });
+  } catch (error: any) {
+    ctx.sendError(requestId, 'SET_CURRENT_PROMPT_MODE_ERROR', error.message || 'Failed to set current prompt mode');
+  }
+};
+
+/**
+ * 保存提示词模式
+ */
+export const savePromptMode: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const { mode } = data;
+    await ctx.settingsManager.savePromptMode(mode);
+    ctx.sendResponse(requestId, { success: true });
+  } catch (error: any) {
+    ctx.sendError(requestId, 'SAVE_PROMPT_MODE_ERROR', error.message || 'Failed to save prompt mode');
+  }
+};
+
+/**
+ * 删除提示词模式
+ */
+export const deletePromptMode: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const { modeId } = data;
+    await ctx.settingsManager.deletePromptMode(modeId);
+    ctx.sendResponse(requestId, { success: true });
+  } catch (error: any) {
+    ctx.sendError(requestId, 'DELETE_PROMPT_MODE_ERROR', error.message || 'Failed to delete prompt mode');
+  }
+};
+
+/**
  * 计算系统提示词 Token 数（分别计算静态和动态部分）
  */
 export const countSystemPromptTokens: MessageHandler = async (data, requestId, ctx) => {
@@ -181,6 +233,11 @@ export function registerSettingsHandlers(registry: Map<string, MessageHandler>):
   registry.set('updateGenerateImageConfig', updateGenerateImageConfig);
   registry.set('getSystemPromptConfig', getSystemPromptConfig);
   registry.set('updateSystemPromptConfig', updateSystemPromptConfig);
+  // 模式管理
+  registry.set('getPromptModes', getPromptModes);
+  registry.set('setCurrentPromptMode', setCurrentPromptMode);
+  registry.set('savePromptMode', savePromptMode);
+  registry.set('deletePromptMode', deletePromptMode);
   registry.set('countSystemPromptTokens', countSystemPromptTokens);
   registry.set('checkAnnouncement', checkAnnouncement);
   registry.set('markAnnouncementRead', markAnnouncementRead);

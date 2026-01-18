@@ -105,6 +105,9 @@ export class StdioMcpClient extends EventEmitter {
     private resources: McpResource[] = [];
     private prompts: McpPrompt[] = [];
     
+    // stderr 输出（用于错误诊断）
+    private stderrOutput: string = '';
+    
     constructor(
         private command: string,
         private args: string[] = [],
@@ -124,13 +127,17 @@ export class StdioMcpClient extends EventEmitter {
             ...this.env
         };
         
+        // 收集 stderr 输出用于错误诊断
+        this.stderrOutput = '';
+        
         this.process = cp.spawn(this.command, this.args, {
             env: processEnv,
             cwd: this.cwd,
-            stdio: ['pipe', 'pipe', 'pipe']
+            stdio: ['pipe', 'pipe', 'pipe'],
+            shell: process.platform === 'win32'  // Windows 需要 shell 来执行 .cmd/.bat 文件（如 npx）
         });
         
-        // 错误处理
+        // 设置错误处理
         this.process.on('error', (err) => {
             this.emit('error', err);
         });
@@ -140,9 +147,9 @@ export class StdioMcpClient extends EventEmitter {
             this.cleanup();
         });
         
-        // 读取 stderr（忽略）
-        this.process.stderr?.on('data', () => {
-            // 忽略 stderr 输出
+        // 收集 stderr
+        this.process.stderr?.on('data', (data) => {
+            this.stderrOutput += data.toString();
         });
         
         // 读取 stdout
@@ -150,7 +157,7 @@ export class StdioMcpClient extends EventEmitter {
             this.handleData(data.toString());
         });
         
-        // 发送初始化请求
+        // 发送初始化请求（带超时和进程退出检测）
         const initResult = await this.sendRequest<InitializeResult>('initialize', {
             protocolVersion: '2024-11-05',
             capabilities: {
@@ -277,12 +284,13 @@ export class StdioMcpClient extends EventEmitter {
     }
     
     /**
-     * 发送 JSON-RPC 请求
+     * 发送 JSON-RPC 请求（带超时和进程退出检测）
      */
-    private sendRequest<T>(method: string, params?: any): Promise<T> {
+    private sendRequest<T>(method: string, params?: any, timeout: number = 30000): Promise<T> {
         return new Promise((resolve, reject) => {
             if (!this.process || !this.process.stdin) {
-                reject(new Error('Process not started'));
+                const errorInfo = this.stderrOutput ? `\nStderr: ${this.stderrOutput.trim()}` : '';
+                reject(new Error(`Process not started${errorInfo}`));
                 return;
             }
             
@@ -294,7 +302,49 @@ export class StdioMcpClient extends EventEmitter {
                 params
             };
             
-            this.pendingRequests.set(id, { resolve, reject });
+            let resolved = false;
+            
+            // 超时处理
+            const timeoutId = setTimeout(() => {
+                if (!resolved) {
+                    resolved = true;
+                    this.pendingRequests.delete(id);
+                    const errorInfo = this.stderrOutput ? `\nStderr: ${this.stderrOutput.trim()}` : '';
+                    reject(new Error(`Request "${method}" timeout (${timeout / 1000}s)${errorInfo}`));
+                }
+            }, timeout);
+            
+            // 进程退出检测
+            const onExit = () => {
+                if (!resolved) {
+                    resolved = true;
+                    clearTimeout(timeoutId);
+                    this.pendingRequests.delete(id);
+                    const errorInfo = this.stderrOutput ? `\nStderr: ${this.stderrOutput.trim()}` : '';
+                    reject(new Error(`Process exited while waiting for "${method}" response${errorInfo}`));
+                }
+            };
+            
+            this.process.once('exit', onExit);
+            
+            this.pendingRequests.set(id, {
+                resolve: (result) => {
+                    if (!resolved) {
+                        resolved = true;
+                        clearTimeout(timeoutId);
+                        this.process?.removeListener('exit', onExit);
+                        resolve(result);
+                    }
+                },
+                reject: (error) => {
+                    if (!resolved) {
+                        resolved = true;
+                        clearTimeout(timeoutId);
+                        this.process?.removeListener('exit', onExit);
+                        reject(error);
+                    }
+                }
+            });
             
             const message = JSON.stringify(request) + '\n';
             this.process.stdin.write(message);
@@ -371,14 +421,16 @@ export class StdioMcpClient extends EventEmitter {
     private cleanup(): void {
         this.process = null;
         
-        // 拒绝所有等待中的请求
+        // 拒绝所有等待中的请求（包含 stderr 信息）
+        const errorInfo = this.stderrOutput ? `\nStderr: ${this.stderrOutput.trim()}` : '';
         for (const [id, pending] of this.pendingRequests) {
-            pending.reject(new Error('Connection closed'));
+            pending.reject(new Error(`Connection closed${errorInfo}`));
         }
         this.pendingRequests.clear();
         
         this.tools = [];
         this.resources = [];
         this.prompts = [];
+        this.stderrOutput = '';
     }
 }

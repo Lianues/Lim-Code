@@ -2,8 +2,11 @@
 import { ref, reactive, onMounted, computed, watch } from 'vue'
 import { sendToExtension } from '@/utils/vscode'
 import { useI18n } from '@/i18n'
+import { useSettingsStore } from '@/stores'
+import { CustomSelect, InputDialog, ConfirmDialog, type SelectOption } from '../common'
 
 const { t } = useI18n()
+const settingsStore = useSettingsStore()
 
 // 渠道类型
 type ChannelType = 'gemini' | 'openai' | 'anthropic'
@@ -17,11 +20,23 @@ interface PromptModule {
   requiresConfig?: string
 }
 
-// 系统提示词配置（功能始终启用，不可关闭）
+// 提示词模式
+interface PromptMode {
+  id: string
+  name: string
+  icon?: string
+  template: string
+  dynamicTemplateEnabled: boolean
+  dynamicTemplate: string
+}
+
+// 系统提示词配置（支持多模式）
 interface SystemPromptConfig {
-  template: string           // 静态系统提示词模板
-  dynamicTemplateEnabled: boolean  // 是否启用动态上下文模板
-  dynamicTemplate: string    // 动态上下文模板
+  currentModeId: string
+  modes: Record<string, PromptMode>
+  template: string
+  dynamicTemplateEnabled: boolean
+  dynamicTemplate: string
   customPrefix: string
   customSuffix: string
 }
@@ -166,7 +181,7 @@ const staticModuleIds = new Set(STATIC_PROMPT_MODULES.map(m => m.id))
 // 动态变量 ID 集合
 const dynamicModuleIds = new Set(DYNAMIC_CONTEXT_MODULES.map(m => m.id))
 
-// 默认静态系统提示词模板
+// 默认静态系统提示词模板（代码模式）
 const DEFAULT_TEMPLATE = `You are a professional programming assistant, proficient in multiple programming languages and frameworks.
 
 {{$ENVIRONMENT}}
@@ -202,32 +217,56 @@ const DEFAULT_DYNAMIC_TEMPLATE = `This is the current global variable informatio
 
 {{$SKILLS}}`
 
-// 配置状态
-const config = reactive<SystemPromptConfig>({
+// 默认模式 ID
+const DEFAULT_MODE_ID = 'code'
+
+// 模式列表
+const modes = ref<PromptMode[]>([])
+const currentModeId = ref(DEFAULT_MODE_ID)
+const selectedModeId = ref(DEFAULT_MODE_ID)  // 当前编辑的模式
+
+// 对话框状态
+const showAddModeDialog = ref(false)
+const showRenameModeDialog = ref(false)
+const showDeleteConfirm = ref(false)
+const renamingModeId = ref('')
+const renamingModeName = ref('')
+
+// 模式选项（用于 CustomSelect）
+const modeOptions = computed<SelectOption[]>(() => {
+  return modes.value.map(m => ({
+    value: m.id,
+    label: m.name
+  }))
+})
+
+// 配置状态（当前编辑中的模式配置）
+const config = reactive<{
+  template: string
+  dynamicTemplateEnabled: boolean
+  dynamicTemplate: string
+}>({
   template: DEFAULT_TEMPLATE,
   dynamicTemplateEnabled: true,
-  dynamicTemplate: DEFAULT_DYNAMIC_TEMPLATE,
-  customPrefix: '',
-  customSuffix: ''
+  dynamicTemplate: DEFAULT_DYNAMIC_TEMPLATE
 })
 
 // 原始配置（用于检测变化）
-const originalConfig = ref<SystemPromptConfig | null>(null)
+const originalConfig = ref<typeof config | null>(null)
 
 // 是否有未保存的变化
 const hasChanges = computed(() => {
   if (!originalConfig.value) return false
   return config.template !== originalConfig.value.template ||
          config.dynamicTemplateEnabled !== originalConfig.value.dynamicTemplateEnabled ||
-         config.dynamicTemplate !== originalConfig.value.dynamicTemplate ||
-         config.customPrefix !== originalConfig.value.customPrefix ||
-         config.customSuffix !== originalConfig.value.customSuffix
+         config.dynamicTemplate !== originalConfig.value.dynamicTemplate
 })
 
 // 加载状态
 const isLoading = ref(true)
 const isSaving = ref(false)
 const saveMessage = ref('')
+const isFirstLoad = ref(true)  // 标记是否首次加载
 
 // Token 计数状态
 const staticTokenCount = ref<number | null>(null)
@@ -252,18 +291,47 @@ async function loadConfig() {
   try {
     const result = await sendToExtension<SystemPromptConfig>('getSystemPromptConfig', {})
     if (result) {
-      config.template = result.template || DEFAULT_TEMPLATE
-      config.dynamicTemplateEnabled = result.dynamicTemplateEnabled ?? true
-      config.dynamicTemplate = result.dynamicTemplate || DEFAULT_DYNAMIC_TEMPLATE
-      config.customPrefix = result.customPrefix || ''
-      config.customSuffix = result.customSuffix || ''
-      originalConfig.value = { ...config }
+      // 加载模式列表
+      modes.value = Object.values(result.modes || {})
+      currentModeId.value = result.currentModeId || 'default'
+      
+      // 只在首次加载时设置 selectedModeId 为当前使用的模式
+      // 切换页签时保持上次编辑的模式
+      if (isFirstLoad.value) {
+        selectedModeId.value = currentModeId.value
+        isFirstLoad.value = false
+      }
+      
+      // 加载当前编辑模式的配置
+      loadModeConfig(selectedModeId.value)
     }
   } catch (error) {
     console.error('Failed to load system prompt config:', error)
   } finally {
     isLoading.value = false
   }
+}
+
+// 加载指定模式的配置
+function loadModeConfig(modeId: string) {
+  const mode = modes.value.find(m => m.id === modeId)
+  if (mode) {
+    config.template = mode.template || DEFAULT_TEMPLATE
+    config.dynamicTemplateEnabled = mode.dynamicTemplateEnabled ?? true
+    config.dynamicTemplate = mode.dynamicTemplate || DEFAULT_DYNAMIC_TEMPLATE
+    originalConfig.value = { ...config }
+  }
+}
+
+// 切换编辑的模式
+async function handleModeChange(modeId: string) {
+  // 如果有未保存的更改，提示用户
+  if (hasChanges.value) {
+    const confirmed = confirm(t('components.settings.promptSettings.modes.unsavedChanges'))
+    if (!confirmed) return
+  }
+  selectedModeId.value = modeId
+  loadModeConfig(modeId)
 }
 
 // 保存配置
@@ -275,20 +343,29 @@ async function saveConfig() {
     const cleanedTemplate = cleanupEmptyLines(config.template)
     const cleanedDynamicTemplate = cleanupEmptyLines(config.dynamicTemplate)
     
-    await sendToExtension('updateSystemPromptConfig', {
-      config: {
-        template: cleanedTemplate,
-        dynamicTemplateEnabled: config.dynamicTemplateEnabled,
-        dynamicTemplate: cleanedDynamicTemplate,
-        customPrefix: config.customPrefix,
-        customSuffix: config.customSuffix
-      }
-    })
+    // 更新当前模式的配置
+    const updatedMode: PromptMode = {
+      id: selectedModeId.value,
+      name: modes.value.find(m => m.id === selectedModeId.value)?.name || '默认模式',
+      icon: modes.value.find(m => m.id === selectedModeId.value)?.icon || 'symbol-method',
+      template: cleanedTemplate,
+      dynamicTemplateEnabled: config.dynamicTemplateEnabled,
+      dynamicTemplate: cleanedDynamicTemplate
+    }
+    
+    await sendToExtension('savePromptMode', { mode: updatedMode })
     
     // 更新本地配置为清理后的版本
     config.template = cleanedTemplate
     config.dynamicTemplate = cleanedDynamicTemplate
     originalConfig.value = { ...config }
+    
+    // 更新模式列表中的配置
+    const modeIndex = modes.value.findIndex(m => m.id === selectedModeId.value)
+    if (modeIndex >= 0) {
+      modes.value[modeIndex] = updatedMode
+    }
+    
     saveMessage.value = t('components.settings.promptSettings.saveSuccess')
     setTimeout(() => { saveMessage.value = '' }, 2000)
     
@@ -395,6 +472,94 @@ function formatModuleId(id: string): string {
   return `\{\{$${id}\}\}`
 }
 
+// 打开添加模式对话框
+function openAddModeDialog() {
+  showAddModeDialog.value = true
+}
+
+// 确认添加新模式
+async function confirmAddMode(name: string) {
+  const id = `mode_${Date.now()}`
+  const newMode: PromptMode = {
+    id,
+    name,
+    icon: 'symbol-method',
+    template: DEFAULT_TEMPLATE,
+    dynamicTemplateEnabled: true,
+    dynamicTemplate: DEFAULT_DYNAMIC_TEMPLATE
+  }
+  
+  try {
+    await sendToExtension('savePromptMode', { mode: newMode })
+    modes.value.push(newMode)
+    selectedModeId.value = id
+    loadModeConfig(id)
+    // 通知 InputArea 刷新模式列表
+    settingsStore.refreshPromptModes()
+  } catch (error) {
+    console.error('Failed to add mode:', error)
+  }
+}
+
+// 打开重命名模式对话框
+function openRenameModeDialog(modeId: string) {
+  const mode = modes.value.find(m => m.id === modeId)
+  if (!mode) return
+  
+  renamingModeId.value = modeId
+  renamingModeName.value = mode.name
+  showRenameModeDialog.value = true
+}
+
+// 确认重命名模式
+async function confirmRenameMode(newName: string) {
+  const mode = modes.value.find(m => m.id === renamingModeId.value)
+  if (!mode || newName === mode.name) return
+  
+  const updatedMode = { ...mode, name: newName }
+  
+  try {
+    await sendToExtension('savePromptMode', { mode: updatedMode })
+    const index = modes.value.findIndex(m => m.id === renamingModeId.value)
+    if (index >= 0) {
+      modes.value[index] = updatedMode
+    }
+    // 通知 InputArea 刷新模式列表
+    settingsStore.refreshPromptModes()
+  } catch (error) {
+    console.error('Failed to rename mode:', error)
+  }
+}
+
+// 打开删除确认对话框
+function openDeleteConfirm() {
+  // 至少保留一个模式
+  if (modes.value.length <= 1) return
+  showDeleteConfirm.value = true
+}
+
+// 确认删除模式
+async function confirmDeleteMode() {
+  const modeId = selectedModeId.value
+  // 至少保留一个模式
+  if (modes.value.length <= 1) return
+  
+  try {
+    await sendToExtension('deletePromptMode', { modeId })
+    modes.value = modes.value.filter(m => m.id !== modeId)
+    // 切换到第一个可用的模式
+    const firstMode = modes.value[0]
+    if (firstMode) {
+      selectedModeId.value = firstMode.id
+      loadModeConfig(firstMode.id)
+    }
+    // 通知 InputArea 刷新模式列表
+    settingsStore.refreshPromptModes()
+  } catch (error) {
+    console.error('Failed to delete mode:', error)
+  }
+}
+
 // 初始化
 onMounted(async () => {
   await loadConfig()
@@ -417,6 +582,44 @@ watch(selectedChannel, () => {
     </div>
     
     <template v-else>
+      <!-- 模式选择栏 -->
+      <div class="mode-selector-bar">
+        <div class="mode-selector-left">
+          <label class="mode-label">
+            <i class="codicon codicon-symbol-method"></i>
+            <span class="mode-label-text">{{ t('components.settings.promptSettings.modes.label') }}</span>
+          </label>
+          <CustomSelect
+            :model-value="selectedModeId"
+            :options="modeOptions"
+            :placeholder="t('components.settings.promptSettings.modes.label')"
+            :searchable="true"
+            class="mode-select-dropdown"
+            @update:model-value="handleModeChange"
+          />
+        </div>
+        <div class="mode-actions">
+          <button class="mode-action-btn" @click="openAddModeDialog" :title="t('components.settings.promptSettings.modes.add')">
+            <i class="codicon codicon-add"></i>
+          </button>
+          <button 
+            class="mode-action-btn" 
+            @click="openRenameModeDialog(selectedModeId)" 
+            :title="t('components.settings.promptSettings.modes.rename')"
+          >
+            <i class="codicon codicon-edit"></i>
+          </button>
+          <button 
+            class="mode-action-btn danger" 
+            @click="openDeleteConfirm()" 
+            :title="t('components.settings.promptSettings.modes.delete')"
+            :disabled="modes.length <= 1"
+          >
+            <i class="codicon codicon-trash"></i>
+          </button>
+        </div>
+      </div>
+      
       <!-- 静态系统提示词编辑区 -->
       <div class="template-section">
         <div class="section-header">
@@ -492,7 +695,7 @@ watch(selectedChannel, () => {
           <button
             class="save-btn"
             @click="saveConfig"
-            :disabled="isSaving || !hasChanges"
+            :disabled="isSaving"
           >
             <i v-if="isSaving" class="codicon codicon-loading codicon-modifier-spin"></i>
             <span v-else>{{ t('components.settings.promptSettings.saveButton') }}</span>
@@ -699,6 +902,33 @@ watch(selectedChannel, () => {
         </div>
       </div>
     </template>
+    
+    <!-- 添加模式对话框 -->
+    <InputDialog
+      v-model="showAddModeDialog"
+      :title="t('components.settings.promptSettings.modes.add')"
+      :placeholder="t('components.settings.promptSettings.modes.newModeDefault')"
+      :default-value="t('components.settings.promptSettings.modes.newModeDefault')"
+      @confirm="confirmAddMode"
+    />
+    
+    <!-- 重命名模式对话框 -->
+    <InputDialog
+      v-model="showRenameModeDialog"
+      :title="t('components.settings.promptSettings.modes.rename')"
+      :placeholder="renamingModeName"
+      :default-value="renamingModeName"
+      @confirm="confirmRenameMode"
+    />
+    
+    <!-- 删除确认对话框 -->
+    <ConfirmDialog
+      v-model="showDeleteConfirm"
+      :title="t('components.settings.promptSettings.modes.delete')"
+      :message="t('components.settings.promptSettings.modes.confirmDelete')"
+      :is-danger="true"
+      @confirm="confirmDeleteMode"
+    />
   </div>
 </template>
 
@@ -716,6 +946,109 @@ watch(selectedChannel, () => {
   gap: 8px;
   padding: 32px;
   color: var(--vscode-descriptionForeground);
+}
+
+/* 模式选择栏 */
+.mode-selector-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  background: var(--vscode-editor-background);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 6px;
+  flex-wrap: nowrap;
+  gap: 12px;
+}
+
+.mode-selector-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+}
+
+.mode-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--vscode-foreground);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.mode-label-text {
+  white-space: nowrap;
+}
+
+/* 模式选择下拉框固定宽度 */
+.mode-select-dropdown {
+  width: 160px;
+  min-width: 160px;
+  max-width: 160px;
+  flex-shrink: 0;
+}
+
+.mode-select-dropdown :deep(.select-trigger) {
+  width: 100%;
+}
+
+.mode-select-dropdown :deep(.selected-label) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 展开时列表项自动换行 */
+.mode-select-dropdown :deep(.select-dropdown) {
+  min-width: 200px;
+  width: auto;
+  max-width: 300px;
+}
+
+.mode-select-dropdown :deep(.option-label) {
+  white-space: normal;
+  word-break: break-word;
+}
+
+.mode-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.mode-action-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--vscode-foreground);
+  cursor: pointer;
+  transition: background 0.1s ease;
+}
+
+.mode-action-btn:hover:not(:disabled) {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.mode-action-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.mode-action-btn.danger:hover:not(:disabled) {
+  color: var(--vscode-errorForeground);
+}
+
+.mode-action-btn .codicon {
+  font-size: 14px;
 }
 
 .template-section {

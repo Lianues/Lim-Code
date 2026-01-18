@@ -25,7 +25,7 @@ import { CheckpointManager } from '../backend/modules/checkpoint';
 import { McpManager, VSCodeFileSystemMcpStorageAdapter } from '../backend/modules/mcp';
 import type { CreateMcpServerInput, UpdateMcpServerInput, McpServerInfo } from '../backend/modules/mcp';
 import { DependencyManager, type InstallProgressEvent } from '../backend/modules/dependencies';
-import { toolRegistry, registerAllTools, onTerminalOutput, onImageGenOutput, TaskManager } from '../backend/tools';
+import { toolRegistry, registerAllTools, onTerminalOutput, onImageGenOutput, TaskManager, setSubAgentExecutorContext } from '../backend/tools';
 import type { TerminalOutputEvent, ImageGenOutputEvent, TaskEvent } from '../backend/tools';
 import { createSkillsManager } from '../backend/modules/skills';
 import {
@@ -33,10 +33,13 @@ import {
     setGlobalConfigManager,
     setGlobalChannelManager,
     setGlobalToolRegistry,
-    setGlobalDiffStorageManager
+    setGlobalDiffStorageManager,
+    setGlobalMcpManager
 } from '../backend/core/settingsContext';
 import { DiffStorageManager } from '../backend/modules/conversation';
+import { getDiffManager } from '../backend/tools/file/diffManager';
 import { MessageRouter } from './MessageRouter';
+import { initializeSubAgentsFromSettings } from './handlers/SubAgentsHandlers';
 import type { HandlerContext, DiffPreviewContentProvider as IDiffPreviewContentProvider } from './types';
 
 /**
@@ -103,6 +106,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             this.diffPreviewProvider
         );
         context.subscriptions.push(this.diffPreviewProviderDisposable);
+        
+        // 初始时拒绝所有之前的 diff（例如重载窗口）
+        getDiffManager().rejectAll().catch(() => {});
         
         // 异步初始化后端
         this.initPromise = this.initializeBackend().catch(err => {
@@ -235,6 +241,17 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         // 25. 将 MCP 管理器连接到 ChatHandler（用于工具调用）
         this.chatHandler.setMcpManager(this.mcpManager);
         
+        // 25.5. 设置全局 MCP 管理器（用于 subagents 工具描述）
+        setGlobalMcpManager(this.mcpManager);
+        
+        // 25.6. 设置 SubAgent 执行器上下文
+        setSubAgentExecutorContext({
+            channelManager: this.channelManager,
+            toolRegistry: toolRegistry,
+            mcpManager: this.mcpManager,
+            settingsManager: this.settingsManager
+        });
+        
         // 26. 初始化依赖管理器（使用自定义路径）
         this.dependencyManager = DependencyManager.getInstance(
             this.context,
@@ -255,10 +272,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         // 29. 初始化消息路由器
         this.messageRouter = new MessageRouter(
             this.chatHandler,
+            this.conversationManager,
             () => this._view,
             this.sendResponse.bind(this),
             this.sendError.bind(this)
         );
+        
+        // 30. 初始化子代理（从持久化存储加载）
+        this.initializeSubAgents();
         
         console.log('LimCode backend initialized with global context');
         console.log('Effective data path:', this.storagePathManager.getEffectiveDataPath());
@@ -310,6 +331,33 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             type: 'dependencyProgress',
             data: event
         });
+    }
+    
+    /**
+     * 初始化子代理（从持久化存储加载到内存 registry）
+     */
+    private initializeSubAgents(): void {
+        const ctx: HandlerContext = {
+            settingsManager: this.settingsManager,
+            configManager: this.configManager,
+            channelManager: this.channelManager,
+            toolRegistry: toolRegistry,
+            settingsHandler: this.settingsHandler,
+            conversationManager: this.conversationManager,
+            mcpManager: this.mcpManager,
+            dependencyManager: this.dependencyManager,
+            storagePathManager: this.storagePathManager,
+            diffStorageManager: this.diffStorageManager,
+            streamAbortControllers: this.messageRouter.getAbortManager() as any,
+            diffPreviewProvider: this.diffPreviewProvider,
+            sendResponse: this.sendResponse.bind(this),
+            sendError: this.sendError.bind(this),
+            postMessage: (message: any) => {
+                this._view?.webview.postMessage(message);
+            }
+        };
+        
+        initializeSubAgentsFromSettings(ctx);
     }
     
     /**
@@ -415,6 +463,33 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             undefined,
             this.context.subscriptions
         );
+
+        // 监听 Diff 状态变化并同步到前端
+        const diffManager = getDiffManager();
+        const diffStatusListener = (pending: any[], allProcessed: boolean) => {
+            // 我们只同步最近一次状态变化
+            // 如果所有都处理完了，可能意味着有接受/拒绝发生
+            // 找出所有已处理但还未通知前端的 diff 可能比较复杂，
+            // 简单的办法是发送所有 pending 的 ID 及其状态，或者直接通知整个列表。
+            
+            // 发送 diff 状态变化消息
+            this.sendCommand('diff.statusChanged', {
+                pendingDiffs: pending.map(d => ({
+                    id: d.id,
+                    status: d.status,
+                    filePath: d.filePath,
+                    toolId: d.toolId
+                })),
+                allProcessed
+            });
+        };
+        diffManager.addStatusListener(diffStatusListener);
+        this.context.subscriptions.push({
+            dispose: () => diffManager.removeStatusListener(diffStatusListener)
+        });
+
+        // 立即发送一次当前状态
+        diffStatusListener(diffManager.getPendingDiffs(), diffManager.areAllProcessed());
     }
 
     /**
@@ -566,10 +641,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     /**
      * 发送命令到 Webview
      */
-    public sendCommand(command: string): void {
+    public sendCommand(command: string, data?: any): void {
         this._view?.webview.postMessage({
             type: 'command',
-            command
+            command,
+            data
         });
     }
 

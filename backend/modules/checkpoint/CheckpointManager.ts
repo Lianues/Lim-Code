@@ -714,6 +714,13 @@ export class CheckpointManager {
                 console.warn('[CheckpointManager] Failed to cancel pending diffs:', err);
             }
             
+            // 拒绝所有未响应的工具调用并持久化
+            try {
+                await this.conversationManager.rejectAllPendingToolCalls(conversationId);
+            } catch (err) {
+                console.warn('[CheckpointManager] Failed to reject pending tool calls:', err);
+            }
+            
             // 获取目标检查点的文件哈希映射（这是最终目标状态）
             const targetHashes = checkpoint.fileHashes;
             

@@ -4,6 +4,7 @@
 
 import * as vscode from 'vscode';
 import { t } from '../../backend/i18n';
+import { getDiffManager } from '../../backend/tools/file/diffManager';
 import type { HandlerContext, MessageHandler } from '../types';
 
 /**
@@ -244,9 +245,77 @@ async function openDiffView(
 }
 
 /**
+ * 接受 Diff 修改
+ */
+export const acceptDiff: MessageHandler = async (data, requestId, _ctx) => {
+  try {
+    const { sessionId } = data;
+    const diffManager = getDiffManager();
+    const success = await diffManager.acceptDiff(sessionId, true);
+    if (success) {
+      _ctx.sendResponse(requestId, { success: true });
+    } else {
+      _ctx.sendResponse(requestId, { success: false, error: 'Failed to accept diff' });
+    }
+  } catch (error: any) {
+    _ctx.sendError(requestId, 'ACCEPT_DIFF_ERROR', error.message || 'Failed to accept diff');
+  }
+};
+
+/**
+ * 拒绝 Diff 修改
+ */
+export const rejectDiff: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const { sessionId, toolId, conversationId } = data;
+    const diffManager = getDiffManager();
+    const success = await diffManager.rejectDiff(sessionId);
+    
+    if (success) {
+      // 添加 functionResponse 到对话历史
+      if (conversationId && toolId && ctx.conversationManager) {
+        try {
+          // 查找包含该工具调用的消息索引
+          const messages = await ctx.conversationManager.getMessages(conversationId);
+          let messageIndex = -1;
+          
+          for (let i = 0; i < messages.length; i++) {
+            const message = messages[i];
+            if (message.parts) {
+              for (const part of message.parts) {
+                if (part.functionCall && part.functionCall.id === toolId) {
+                  messageIndex = i;
+                  break;
+                }
+              }
+            }
+            if (messageIndex >= 0) break;
+          }
+          
+          if (messageIndex >= 0) {
+            // 使用 rejectToolCalls 方法来标记工具为拒绝并添加 functionResponse
+            await ctx.conversationManager.rejectToolCalls(conversationId, messageIndex, [toolId]);
+          }
+        } catch (err) {
+          console.warn('Failed to add rejected functionResponse:', err);
+        }
+      }
+      
+      ctx.sendResponse(requestId, { success: true });
+    } else {
+      ctx.sendResponse(requestId, { success: false, error: 'Failed to reject diff' });
+    }
+  } catch (error: any) {
+    ctx.sendError(requestId, 'REJECT_DIFF_ERROR', error.message || 'Failed to reject diff');
+  }
+};
+
+/**
  * 注册 Diff 处理器
  */
 export function registerDiffHandlers(registry: Map<string, MessageHandler>): void {
   registry.set('diff.openPreview', openDiffPreview);
   registry.set('diff.loadContent', loadDiffContent);
+  registry.set('diff.accept', acceptDiff);
+  registry.set('diff.reject', rejectDiff);
 }

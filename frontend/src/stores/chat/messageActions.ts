@@ -4,17 +4,32 @@
  * 包含消息发送、重试、编辑、删除等操作
  */
 
-import type { Message, Attachment } from '../../types'
+import type { Message, Attachment, Content } from '../../types'
 import type { ChatStoreState, ChatStoreComputed, AttachmentData } from './types'
 import { sendToExtension } from '../../utils/vscode'
 import { generateId } from '../../utils/format'
 import { createAndPersistConversation } from './conversationActions'
 import { clearCheckpointsFromIndex } from './checkpointActions'
+import { contentToMessageEnhanced } from './parsers'
 
 /**
  * 取消流式的回调类型
  */
 export type CancelStreamCallback = () => Promise<void>
+
+/**
+ * 计算后端消息索引
+ *
+ * 当前实现：前端的 allMessages 会存储所有消息（包括 functionResponse 消息），
+ * 并且通过 loadHistory() 从后端加载时保持与后端历史索引一一对应。
+ *
+ * 因此这里直接返回 frontendIndex。
+ *
+ * 注意：如果未来再次调整为“前端不存 functionResponse”，才需要在这里做映射。
+ */
+export function calculateBackendIndex(_messages: Message[], frontendIndex: number): number {
+  return frontendIndex
+}
 
 /**
  * 发送消息
@@ -142,7 +157,8 @@ export async function retryFromMessage(
   if (!state.currentConversationId.value || state.allMessages.value.length === 0) return
   if (messageIndex < 0 || messageIndex >= state.allMessages.value.length) return
   
-  if (state.isStreaming.value) {
+  // 如果正在流式响应或等待工具确认，先取消
+  if (state.isStreaming.value || state.isWaitingForResponse.value) {
     await cancelStream()
   }
   
@@ -151,14 +167,42 @@ export async function retryFromMessage(
   state.isStreaming.value = true
   state.isWaitingForResponse.value = true
   
+  // 计算后端索引（在修改数组之前）
+  const backendIndex = calculateBackendIndex(state.allMessages.value, messageIndex)
+  
   state.allMessages.value = state.allMessages.value.slice(0, messageIndex)
   clearCheckpointsFromIndex(state, messageIndex)
   
   try {
-    await sendToExtension('deleteMessage', {
+    const resp = await sendToExtension<any>('deleteMessage', {
       conversationId: state.currentConversationId.value,
-      targetIndex: messageIndex
+      targetIndex: backendIndex
     })
+
+    if (!resp?.success) {
+      console.error('[messageActions] retryFromMessage: backend deleteMessage returned error:', resp)
+      const err = resp?.error
+      state.error.value = {
+        code: err?.code || 'DELETE_ERROR',
+        message: err?.message || 'Failed to delete messages in backend'
+      }
+
+      // 尝试回滚：重新从后端拉取历史，避免前端与后端状态错位
+      try {
+        const history = await sendToExtension<Content[]>('conversation.getMessages', {
+          conversationId: state.currentConversationId.value
+        })
+        state.allMessages.value = history.map(content => contentToMessageEnhanced(content))
+      } catch (reloadErr) {
+        console.error('[messageActions] retryFromMessage: failed to reload history after delete failure:', reloadErr)
+      }
+
+      state.streamingMessageId.value = null
+      state.isStreaming.value = false
+      state.isWaitingForResponse.value = false
+      state.isLoading.value = false
+      return
+    }
   } catch (err) {
     console.error('Failed to delete messages from backend:', err)
   }
@@ -266,7 +310,8 @@ export async function editAndRetry(
   if ((!newMessage.trim() && (!attachments || attachments.length === 0)) || !state.currentConversationId.value) return
   if (messageIndex < 0 || messageIndex >= state.allMessages.value.length) return
   
-  if (state.isStreaming.value) {
+  // 如果正在流式响应或等待工具确认，先取消
+  if (state.isStreaming.value || state.isWaitingForResponse.value) {
     await cancelStream()
   }
   
@@ -274,6 +319,9 @@ export async function editAndRetry(
   state.isLoading.value = true
   state.isStreaming.value = true
   state.isWaitingForResponse.value = true
+  
+  // 计算后端索引（在修改数组之前）
+  const backendMessageIndex = calculateBackendIndex(state.allMessages.value, messageIndex)
   
   const targetMessage = state.allMessages.value[messageIndex]
   targetMessage.content = newMessage
@@ -315,7 +363,7 @@ export async function editAndRetry(
   try {
     await sendToExtension('editAndRetryStream', {
       conversationId: state.currentConversationId.value,
-      messageIndex,
+      messageIndex: backendMessageIndex,
       newMessage,
       attachments: attachmentData,
       configId: state.configId.value
@@ -346,19 +394,30 @@ export async function deleteMessage(
   if (!state.currentConversationId.value) return
   if (targetIndex < 0 || targetIndex >= state.allMessages.value.length) return
   
-  if (state.isStreaming.value) {
+  // 如果正在流式响应或等待工具确认，先取消
+  if (state.isStreaming.value || state.isWaitingForResponse.value) {
     await cancelStream()
   }
   
+  // 计算后端实际索引
+  const backendIndex = calculateBackendIndex(state.allMessages.value, targetIndex)
+  
   try {
-    const response = await sendToExtension<{ success: boolean; deletedCount: number }>('deleteMessage', {
+    const response = await sendToExtension<any>('deleteMessage', {
       conversationId: state.currentConversationId.value,
-      targetIndex
+      targetIndex: backendIndex
     })
-    
-    if (response.success) {
+
+    if (response?.success) {
       state.allMessages.value = state.allMessages.value.slice(0, targetIndex)
       clearCheckpointsFromIndex(state, targetIndex)
+    } else {
+      const err = response?.error
+      state.error.value = {
+        code: err?.code || 'DELETE_ERROR',
+        message: err?.message || 'Delete failed'
+      }
+      console.error('[messageActions] deleteMessage failed:', response)
     }
   } catch (err: any) {
     state.error.value = {
@@ -379,7 +438,8 @@ export async function deleteSingleMessage(
   if (!state.currentConversationId.value) return
   if (targetIndex < 0 || targetIndex >= state.allMessages.value.length) return
   
-  if (state.isStreaming.value) {
+  // 如果正在流式响应或等待工具确认，先取消
+  if (state.isStreaming.value || state.isWaitingForResponse.value) {
     await cancelStream()
   }
   

@@ -246,6 +246,39 @@ export class ContextTrimService {
         
         return startIndex;
     }
+    
+    /**
+     * 并行计算并更新消息的 token 数
+     * 
+     * @param conversationId 对话 ID
+     * @param channelType 渠道类型
+     * @param messages 需要计算的消息列表
+     * @returns token 数数组
+     */
+    private async countAndUpdateMessageTokens(
+        conversationId: string,
+        channelType: string,
+        messages: Array<{ index: number; message: Content }>
+    ): Promise<number[]> {
+        if (messages.length === 0) {
+            return [];
+        }
+        
+        // 使用 TokenEstimationService 的批量方法
+        const messageIndices = messages.map(m => m.index);
+        await this.tokenEstimationService.preCountUserMessageTokensBatch(
+            conversationId,
+            channelType,
+            messageIndices
+        );
+        
+        // 返回计算后的 token 数（从更新后的消息中获取）
+        const updatedHistory = await this.conversationManager.getHistoryRef(conversationId);
+        return messages.map(({ index }) => {
+            const msg = updatedHistory[index];
+            return msg?.tokenCountByChannel?.[channelType] ?? this.tokenEstimationService.estimateMessageTokens(msg);
+        });
+    }
 
     /**
      * 获取用于 API 调用的历史，应用总结过滤和上下文阈值裁剪
@@ -293,19 +326,32 @@ export class ContextTrimService {
             savedState = null;
         }
         
-        // 计算系统提示词的 token 数
+        // 收集需要计算 token 的内容：系统提示词、动态上下文、缺失 token 数的用户消息
         const systemPrompt = this.promptManager.getSystemPrompt();
-        let systemPromptTokens = 0;
-        if (systemPrompt) {
-            systemPromptTokens = await this.tokenEstimationService.countSystemPromptTokens(systemPrompt, channelType);
+        const dynamicContextText = this.promptManager.getDynamicContextText();
+        
+        // 查找缺失 token 数的用户消息
+        const missingTokenMessages: Array<{ index: number; message: Content }> = [];
+        for (let i = 0; i < fullHistory.length; i++) {
+            const message = fullHistory[i];
+            if (message.role === 'user' && message.tokenCountByChannel?.[channelType] === undefined) {
+                missingTokenMessages.push({ index: i, message });
+            }
         }
         
-        // 计算动态上下文（末尾部分提示词）的 token 数
-        const dynamicContextText = this.promptManager.getDynamicContextText();
-        let dynamicContextTokens = 0;
-        if (dynamicContextText) {
-            dynamicContextTokens = await this.tokenEstimationService.countSystemPromptTokens(dynamicContextText, channelType);
-        }
+        // 并行计算所有需要的 token 数
+        const textsToCount = [systemPrompt, dynamicContextText];
+        const messagesToCount = missingTokenMessages.map(m => m.message);
+        
+        // 并行执行文本计数和消息计数
+        const [textTokenResults, messageTokenResults] = await Promise.all([
+            this.tokenEstimationService.countTextTokensBatch(textsToCount, channelType),
+            missingTokenMessages.length > 0
+                ? this.countAndUpdateMessageTokens(conversationId, channelType, missingTokenMessages)
+                : Promise.resolve([])
+        ]);
+        
+        const [systemPromptTokens, dynamicContextTokens] = textTokenResults;
         
         // 系统提示词和动态上下文的总 token 数
         const promptTokens = systemPromptTokens + dynamicContextTokens;

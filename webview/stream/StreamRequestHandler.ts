@@ -6,13 +6,16 @@
 
 import type * as vscode from 'vscode';
 import type { ChatHandler } from '../../backend/modules/api/chat';
+import type { ConversationManager } from '../../backend/modules/conversation/ConversationManager';
 import { StreamAbortManager } from './StreamAbortManager';
 import { StreamChunkProcessor } from './StreamChunkProcessor';
 import { t } from '../../backend/i18n';
+import { getDiffManager } from '../../backend/tools/file/diffManager';
 
 export interface StreamHandlerDeps {
   chatHandler: ChatHandler;
   abortManager: StreamAbortManager;
+  conversationManager: ConversationManager;
   getView: () => vscode.WebviewView | undefined;
   sendResponse: (requestId: string, data: any) => void;
   sendError: (requestId: string, code: string, message: string) => void;
@@ -154,8 +157,25 @@ export class StreamRequestHandler {
   /**
    * 取消流
    */
-  cancelStream(conversationId: string, requestId: string): void {
+  async cancelStream(conversationId: string, requestId: string): Promise<void> {
+    // 1. 取消流式请求
     this.deps.abortManager.cancel(conversationId);
+    
+    // 2. 取消所有待处理的 diff（关闭编辑器并恢复文件）
+    try {
+      const diffManager = getDiffManager();
+      await diffManager.cancelAllPending();
+    } catch (err) {
+      console.error('Failed to cancel pending diffs:', err);
+    }
+    
+    // 3. 拒绝所有未响应的工具调用
+    try {
+      await this.deps.conversationManager.rejectAllPendingToolCalls(conversationId);
+    } catch (err) {
+      console.error('Failed to reject pending tool calls:', err);
+    }
+    
     this.deps.sendResponse(requestId, { cancelled: true });
   }
 

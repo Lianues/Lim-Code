@@ -8,6 +8,7 @@ import type { Message, Attachment, CheckpointRecord } from '../../types'
 import type { ChatStoreState, AttachmentData } from './types'
 import { sendToExtension } from '../../utils/vscode'
 import { generateId } from '../../utils/format'
+import { calculateBackendIndex } from './messageActions'
 
 /**
  * 根据消息索引获取关联的检查点
@@ -83,8 +84,8 @@ export async function restoreAndRetry(
     return
   }
   
-  // 如果正在流式响应，先取消
-  if (state.isStreaming.value) {
+  // 如果正在流式响应或等待工具确认，先取消
+  if (state.isStreaming.value || state.isWaitingForResponse.value) {
     await cancelStream()
   }
   
@@ -103,16 +104,22 @@ export async function restoreAndRetry(
       return
     }
     
-    // 2. 删除该消息及后续的本地消息和检查点
+    // 2. 计算后端索引（在删除本地消息之前）
+    const backendIndex = calculateBackendIndex(state.allMessages.value, messageIndex)
+    
+    // 3. 删除该消息及后续的本地消息和检查点
     state.allMessages.value = state.allMessages.value.slice(0, messageIndex)
     clearCheckpointsFromIndex(state, messageIndex)
     
-    // 3. 删除后端的消息
+    // 4. 删除后端的消息
     try {
-      await sendToExtension('deleteMessage', {
+      const resp = await sendToExtension<any>('deleteMessage', {
         conversationId: state.currentConversationId.value,
-        targetIndex: messageIndex
+        targetIndex: backendIndex
       })
+      if (!resp?.success) {
+        console.error('[checkpointActions] restoreAndRetry: backend deleteMessage returned error:', resp)
+      }
     } catch (err) {
       console.error('Failed to delete messages from backend:', err)
     }
@@ -178,8 +185,8 @@ export async function restoreAndDelete(
     return
   }
   
-  // 如果正在流式响应，先取消
-  if (state.isStreaming.value) {
+  // 如果正在流式响应或等待工具确认，先取消
+  if (state.isStreaming.value || state.isWaitingForResponse.value) {
     await cancelStream()
   }
   
@@ -198,16 +205,22 @@ export async function restoreAndDelete(
       return
     }
     
-    // 2. 删除该消息及后续的本地消息和检查点
+    // 2. 计算后端索引（在删除本地消息之前）
+    const backendIndex = calculateBackendIndex(state.allMessages.value, messageIndex)
+    
+    // 3. 删除该消息及后续的本地消息和检查点
     state.allMessages.value = state.allMessages.value.slice(0, messageIndex)
     clearCheckpointsFromIndex(state, messageIndex)
     
-    // 3. 删除后端的消息
+    // 4. 删除后端的消息
     try {
-      await sendToExtension('deleteMessage', {
+      const resp = await sendToExtension<any>('deleteMessage', {
         conversationId: state.currentConversationId.value,
-        targetIndex: messageIndex
+        targetIndex: backendIndex
       })
+      if (!resp?.success) {
+        console.error('[checkpointActions] restoreAndDelete: backend deleteMessage returned error:', resp)
+      }
     } catch (err) {
       console.error('Failed to delete messages from backend:', err)
     }
@@ -250,13 +263,16 @@ export async function restoreAndEdit(
     return
   }
   
-  // 如果正在流式响应，先取消
-  if (state.isStreaming.value) {
+  // 如果正在流式响应或等待工具确认，先取消
+  if (state.isStreaming.value || state.isWaitingForResponse.value) {
     await cancelStream()
   }
   
   state.error.value = null
   state.isLoading.value = true
+  
+  // 计算后端索引（在修改数组之前）
+  const backendMessageIndex = calculateBackendIndex(state.allMessages.value, messageIndex)
   
   try {
     // 1. 先恢复检查点
@@ -318,7 +334,7 @@ export async function restoreAndEdit(
     // 7. 调用后端编辑并重试
     await sendToExtension('editAndRetryStream', {
       conversationId: state.currentConversationId.value,
-      messageIndex,
+      messageIndex: backendMessageIndex,
       newMessage: newContent,
       attachments: attachmentData,
       configId: state.configId.value

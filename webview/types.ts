@@ -14,6 +14,7 @@ import type { CheckpointManager } from '../backend/modules/checkpoint';
 import type { McpManager } from '../backend/modules/mcp';
 import type { DependencyManager } from '../backend/modules/dependencies';
 import type { DiffStorageManager } from '../backend/modules/conversation';
+import type { ToolRegistry } from '../backend/tools';
 
 /**
  * 消息处理器上下文
@@ -21,22 +22,23 @@ import type { DiffStorageManager } from '../backend/modules/conversation';
  */
 export interface HandlerContext {
   // VSCode 上下文
-  context: vscode.ExtensionContext;
-  view: vscode.WebviewView | undefined;
+  context?: vscode.ExtensionContext;
+  view?: vscode.WebviewView | undefined;
   
   // 后端模块
   configManager: ConfigManager;
   channelManager: ChannelManager;
   conversationManager: ConversationManager;
-  chatHandler: ChatHandler;
-  modelsHandler: ModelsHandler;
+  chatHandler?: ChatHandler;
+  modelsHandler?: ModelsHandler;
   settingsManager: SettingsManager;
   settingsHandler: SettingsHandler;
-  checkpointManager: CheckpointManager;
+  checkpointManager?: CheckpointManager;
   mcpManager: McpManager;
   dependencyManager: DependencyManager;
   storagePathManager: StoragePathManager;
   diffStorageManager: DiffStorageManager;
+  toolRegistry?: ToolRegistry;
   
   // 流式请求控制
   streamAbortControllers: Map<string, AbortController>;
@@ -47,10 +49,11 @@ export interface HandlerContext {
   // 响应函数
   sendResponse: (requestId: string, data: any) => void;
   sendError: (requestId: string, code: string, message: string) => void;
+  postMessage?: (message: any) => void;
   
   // 工具函数
-  getCurrentWorkspaceUri: () => string | null;
-  syncLanguageToBackend: () => void;
+  getCurrentWorkspaceUri?: () => string | null;
+  syncLanguageToBackend?: () => void;
 }
 
 /**

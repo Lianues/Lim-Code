@@ -31,10 +31,9 @@ const searchPath = computed(() => props.args.path as string || '.')
 const filePattern = computed(() => props.args.pattern as string || '**/*')
 const isRegex = computed(() => props.args.isRegex as boolean || false)
 const replacement = computed(() => props.args.replace as string | undefined)
-const dryRun = computed(() => props.args.dryRun as boolean || false)
 
-// 是否是替换模式
-const isReplaceMode = computed(() => !!props.args.replace)
+// 是否是替换模式（严格根据 mode 字段判断，支持 replace="" 这类情况）
+const isReplaceMode = computed(() => (props.args.mode as string) === 'replace')
 
 // 搜索结果
 interface SearchMatch {
@@ -402,7 +401,6 @@ function isDiffExpanded(path: string): boolean {
         <span :class="['codicon', isReplaceMode ? 'codicon-replace-all' : 'codicon-search', 'search-icon']"></span>
         <span class="title">{{ isReplaceMode ? t('components.tools.search.searchInFilesPanel.replaceTitle') : t('components.tools.search.searchInFilesPanel.title') }}</span>
         <span v-if="isRegex" class="regex-badge">{{ t('components.tools.search.searchInFilesPanel.regex') }}</span>
-        <span v-if="isReplaceMode && dryRun" class="dryrun-badge">{{ t('components.tools.search.searchInFilesPanel.dryRun') }}</span>
       </div>
       <div class="header-stats">
         <span v-if="isReplaceMode" class="stat success">
@@ -614,18 +612,12 @@ function isDiffExpanded(path: string): boolean {
   color: var(--vscode-foreground);
 }
 
-.regex-badge,
-.dryrun-badge {
+.regex-badge {
   font-size: 9px;
   padding: 1px 4px;
   background: var(--vscode-badge-background);
   color: var(--vscode-badge-foreground);
   border-radius: 2px;
-}
-
-.dryrun-badge {
-  background: var(--vscode-charts-yellow);
-  color: var(--vscode-editor-background);
 }
 
 .header-stats {

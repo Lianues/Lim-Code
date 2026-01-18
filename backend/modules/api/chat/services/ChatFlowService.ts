@@ -260,16 +260,13 @@ export class ChatFlowService {
     // 4. 更新消息内容，并标记为动态提示词插入点
     await this.conversationManager.updateMessage(conversationId, messageIndex, {
       parts: [{ text: newMessage }],
-      isUserInput: true
+      isUserInput: true,
+      // 清除旧的 token 计数，强制重新计算
+      tokenCountByChannel: {}
     });
-
-    // 4.5 重新计算编辑后消息的 token 数
-    await this.tokenEstimationService.preCountUserMessageTokens(
-      conversationId,
-      config.type,
-      messageIndex,
-      true,
-    );
+    
+    // 注：编辑后消息的 token 计数将在 getHistoryWithContextTrimInfo 中
+    // 与系统提示词、动态上下文一起并行计算
 
     // 5. 删除后续所有消息（messageIndex+1 及之后）和关联的检查点
     const historyRef = await this.conversationManager.getHistoryRef(conversationId);
@@ -341,8 +338,13 @@ export class ChatFlowService {
       return;
     }
 
-    // 3. 中断之前未完成的 diff 等待
+    // 3. 中断之前未完成的 diff 等待并关闭编辑器
     this.diffInterruptService.markUserInterrupt();
+    await this.diffInterruptService.cancelAllPending();
+    
+    // 3.5 拒绝所有未响应的工具调用（在添加用户消息之前）
+    // 这确保 functionResponse 会被插入到工具调用消息之后，用户消息之前
+    await this.conversationManager.rejectAllPendingToolCalls(conversationId);
 
     // 4. 为用户消息创建存档点（如果配置了执行前）
     const beforeUserCheckpoint = await this.checkpointService.createUserMessageCheckpoint(
@@ -363,9 +365,9 @@ export class ChatFlowService {
     await this.conversationManager.addMessage(conversationId, 'user', userParts, {
       isUserInput: true
     });
-
-    // 5.1 预计算用户消息 token 数
-    await this.tokenEstimationService.preCountUserMessageTokens(conversationId, config.type);
+    
+    // 注：用户消息的 token 计数将在 ContextTrimService.getHistoryWithContextTrimInfo 中
+    // 与系统提示词、动态上下文一起并行计算，节省时间
 
     // 6. 为用户消息创建存档点（如果配置了执行后）
     const afterUserCheckpoint = await this.checkpointService.createUserMessageCheckpoint(
@@ -437,16 +439,19 @@ export class ChatFlowService {
       return;
     }
 
-    // 3. 中断之前未完成的 diff 等待
+    // 3. 中断之前未完成的 diff 等待并关闭编辑器
     this.diffInterruptService.markUserInterrupt();
+    await this.diffInterruptService.cancelAllPending();
+    
+    // 3.5 拒绝所有未响应的工具调用
+    await this.conversationManager.rejectAllPendingToolCalls(conversationId);
 
     // 4. 检查并处理孤立的函数调用
     const orphanedFunctionCalls =
       await this.orphanedToolCallService.checkAndExecuteOrphanedFunctionCalls(conversationId);
     if (orphanedFunctionCalls) {
-      // 计算工具响应消息的 token 数
-      await this.tokenEstimationService.preCountUserMessageTokens(conversationId, config.type);
-
+      // 注：工具响应消息的 token 计数将在 getHistoryWithContextTrimInfo 中并行计算
+      
       // 发送孤立函数调用的执行结果到前端
       yield {
         conversationId,
@@ -540,8 +545,12 @@ export class ChatFlowService {
       return;
     }
 
-    // 4. 中断之前未完成的 diff 等待
+    // 4. 中断之前未完成的 diff 等待并关闭编辑器
     this.diffInterruptService.markUserInterrupt();
+    await this.diffInterruptService.cancelAllPending();
+    
+    // 4.5 拒绝所有未响应的工具调用
+    await this.conversationManager.rejectAllPendingToolCalls(conversationId);
 
     // 5. 删除该消息及后续所有消息的检查点
     await this.checkpointService.deleteCheckpointsFromIndex(conversationId, messageIndex);
@@ -564,16 +573,13 @@ export class ChatFlowService {
     const editParts = this.messageBuilderService.buildUserMessageParts(newMessage, request.attachments);
     await this.conversationManager.updateMessage(conversationId, messageIndex, {
       parts: editParts,
-      isUserInput: true
+      isUserInput: true,
+      // 清除旧的 token 计数，强制重新计算
+      tokenCountByChannel: {}
     });
-
-    // 7.5 重新计算编辑后消息的 token 数
-    await this.tokenEstimationService.preCountUserMessageTokens(
-      conversationId,
-      config.type,
-      messageIndex,
-      true,
-    );
+    
+    // 注：编辑后消息的 token 计数将在 getHistoryWithContextTrimInfo 中
+    // 与系统提示词、动态上下文一起并行计算
 
     // 8. 删除后续所有消息
     const historyRef = await this.conversationManager.getHistoryRef(conversationId);
@@ -726,35 +732,30 @@ export class ChatFlowService {
       );
     }
 
-    // 6. 处理拒绝的工具调用
-    const rejectedParts: ContentPart[] = [];
+    // 6. 处理拒绝的工具调用（标记 rejected 并添加 functionResponse）
     const rejectedResults: Array<{ id: string; name: string; result: Record<string, unknown> }> = [];
 
-    for (const call of rejectedCalls) {
-      const rejectionResponse = {
-        success: false,
-        error: t('modules.api.chat.errors.userRejectedTool'),
-        rejected: true,
-      };
-
-      rejectedResults.push({
-        id: call.id,
-        name: call.name,
-        result: rejectionResponse,
-      });
-
-      rejectedParts.push({
-        functionResponse: {
-          name: call.name,
-          response: rejectionResponse,
+    if (rejectedCalls.length > 0) {
+      // 使用 rejectToolCalls 标记 rejected 并添加 functionResponse
+      const rejectedIds = rejectedCalls.map(call => call.id);
+      await this.conversationManager.rejectToolCalls(conversationId, messageIndex, rejectedIds);
+      
+      // 构建拒绝结果用于前端显示
+      for (const call of rejectedCalls) {
+        rejectedResults.push({
           id: call.id,
-        },
-      });
+          name: call.name,
+          result: {
+            success: false,
+            error: t('modules.api.chat.errors.userRejectedTool'),
+            rejected: true,
+          },
+        });
+      }
     }
 
     // 7. 合并结果
     const allToolResults = [...confirmedResult.toolResults, ...rejectedResults];
-    const allResponseParts = [...confirmedResult.responseParts, ...rejectedParts];
     const allCheckpoints = confirmedResult.checkpoints;
 
     // 8. 发送工具执行结果
@@ -766,20 +767,19 @@ export class ChatFlowService {
       checkpoints: allCheckpoints,
     } satisfies ChatStreamToolIterationData;
 
-    // 9. 将函数响应添加到历史
-    const confirmFunctionResponseParts =
-      confirmedResult.multimodalAttachments && confirmedResult.multimodalAttachments.length > 0
-        ? [...confirmedResult.multimodalAttachments, ...allResponseParts]
-        : allResponseParts;
+    // 9. 将确认的函数响应添加到历史（拒绝的已由 rejectToolCalls 添加）
+    if (confirmedResult.responseParts.length > 0) {
+      const confirmFunctionResponseParts =
+        confirmedResult.multimodalAttachments && confirmedResult.multimodalAttachments.length > 0
+          ? [...confirmedResult.multimodalAttachments, ...confirmedResult.responseParts]
+          : confirmedResult.responseParts;
 
-    await this.conversationManager.addContent(conversationId, {
-      role: 'user',
-      parts: confirmFunctionResponseParts,
-      isFunctionResponse: true,
-    });
-
-    // 计算工具响应消息的 token 数
-    await this.tokenEstimationService.preCountUserMessageTokens(conversationId, config.type);
+      await this.conversationManager.addContent(conversationId, {
+        role: 'user',
+        parts: confirmFunctionResponseParts,
+        isFunctionResponse: true,
+      });
+    }
 
     // 9.5 如果有用户批注，添加为新的用户消息
     if (request.annotation && request.annotation.trim()) {
@@ -787,8 +787,10 @@ export class ChatFlowService {
         role: 'user',
         parts: [{ text: request.annotation.trim() }],
       });
-      await this.tokenEstimationService.preCountUserMessageTokens(conversationId, config.type);
     }
+    
+    // 注：工具响应和批注消息的 token 计数将在 getHistoryWithContextTrimInfo 中
+    // 与系统提示词、动态上下文一起并行计算
 
     // 10. 继续 AI 对话（让 AI 处理工具结果）
     const maxToolIterations = this.getMaxToolIterations();
@@ -821,15 +823,21 @@ export class ChatFlowService {
 
     // 2. 中断之前未完成的 diff 等待
     this.diffInterruptService.markUserInterrupt();
+    
+    // 3. 取消所有待处理的 diff（关闭编辑器并恢复文件）
+    await this.diffInterruptService.cancelAllPending();
+    
+    // 4. 拒绝所有未响应的工具调用并持久化
+    await this.conversationManager.rejectAllPendingToolCalls(conversationId);
 
     try {
-      // 3. 删除关联的检查点
+      // 5. 删除关联的检查点
       await this.checkpointService.deleteCheckpointsFromIndex(conversationId, targetIndex);
 
-      // 4. 删除消息
+      // 6. 删除消息
       const deletedCount = await this.conversationManager.deleteToMessage(conversationId, targetIndex);
       
-      // 5. 清除裁剪状态（回退后应重新计算裁剪）
+      // 7. 清除裁剪状态（回退后应重新计算裁剪）
       await this.toolIterationLoopService.clearTrimState(conversationId);
 
       return {
@@ -837,7 +845,7 @@ export class ChatFlowService {
         deletedCount,
       };
     } finally {
-      // 6. 重置 diff 中断标记
+      // 8. 重置 diff 中断标记
       this.diffInterruptService.resetUserInterrupt();
     }
   }

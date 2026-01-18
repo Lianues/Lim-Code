@@ -114,13 +114,14 @@ export class PromptManager {
      *
      * 始终使用模板模式生成提示词
      * 用户可以通过设置自定义模板内容
+     * 根据当前模式使用对应的模板
      */
     private generatePrompt(): string {
         const settingsManager = getGlobalSettingsManager()
         const promptConfig = settingsManager?.getSystemPromptConfig()
         
-        // 始终使用模板化生成
-        const template = promptConfig?.template || ''
+        // 获取当前模式的模板（SettingsManager 会根据 currentModeId 返回正确的模板）
+        const template = settingsManager?.getSystemPromptTemplate() || promptConfig?.template || ''
         return this.generateFromTemplate(template, promptConfig?.customPrefix || '', promptConfig?.customSuffix || '')
     }
     
@@ -334,14 +335,14 @@ export class PromptManager {
         const promptConfig = settingsManager?.getSystemPromptConfig()
         const contextConfig = settingsManager?.getContextAwarenessConfig()
         
-        // 检查是否启用动态上下文模板
-        const dynamicTemplateEnabled = promptConfig?.dynamicTemplateEnabled ?? true
+        // 检查是否启用动态上下文模板（使用当前模式的配置）
+        const dynamicTemplateEnabled = settingsManager?.isDynamicTemplateEnabled() ?? promptConfig?.dynamicTemplateEnabled ?? true
         if (!dynamicTemplateEnabled) {
             return []
         }
         
-        // 如果有自定义动态模板，使用模板生成
-        const dynamicTemplate = promptConfig?.dynamicTemplate || ''
+        // 获取当前模式的动态模板
+        const dynamicTemplate = settingsManager?.getDynamicContextTemplate() || promptConfig?.dynamicTemplate || ''
         if (dynamicTemplate.trim()) {
             const content = this.generateDynamicFromTemplate(dynamicTemplate, contextConfig)
             if (content) {

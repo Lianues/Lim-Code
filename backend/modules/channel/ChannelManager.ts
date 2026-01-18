@@ -12,6 +12,7 @@ import type { McpManager } from '../mcp/McpManager';
 import { formatterRegistry } from './formatters';
 import { createReadFileTool } from '../../tools/file/read_file';
 import { createGenerateImageTool, createRemoveBackgroundTool, createCropImageTool, createResizeImageTool, createRotateImageTool } from '../../tools/media';
+import { subAgentRegistry } from '../../tools/subagents';
 import type {
     GenerateRequest,
     GenerateResponse,
@@ -1052,6 +1053,14 @@ export class ChannelManager {
                         const maxBatchTasks = imageConfig?.maxBatchTasks || 10;
                         const dynamicTool = createRotateImageTool(maxBatchTasks);
                         declaration = { ...declaration, description: dynamicTool.declaration.description };
+                    }
+                    
+                    // 对 subagents 工具：
+                    // 只有当有启用的子代理时才包含此工具
+                    if (tool.name === 'subagents') {
+                        if (subAgentRegistry.countEnabled() === 0) {
+                            continue;  // 跳过此工具
+                        }
                     }
                     
                     tools.push({

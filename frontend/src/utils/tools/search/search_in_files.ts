@@ -8,30 +8,42 @@ import SearchInFilesComponent from '../../../components/tools/search/search_in_f
 // 注册 search_in_files 工具
 registerTool('search_in_files', {
   name: 'search_in_files',
-  label: '搜索/替换',
+  label: '搜索内容',
   icon: 'codicon-search',
+  
+  // 动态标签 - 严格根据 mode 显示不同的标题
+  labelFormatter: (args: Record<string, unknown>) => {
+    const mode = args.mode as string || 'search'
+    return mode === 'replace' ? '搜索替换' : '搜索内容'
+  },
   
   // 描述生成器 - 显示搜索关键词和替换信息
   descriptionFormatter: (args: Record<string, unknown>) => {
     const query = args.query as string || ''
     const path = args.path as string || '.'
     const pattern = args.pattern as string || '**/*'
-    const replace = args.replace as string | undefined
-    const dryRun = args.dryRun as boolean || false
+    const mode = args.mode as string || 'search'
     
-    let desc = query
-    if (replace !== undefined) {
-      desc += ` → ${replace || '(空)'}`
-      if (dryRun) {
-        desc += ' [预览]'
-      }
+    let desc = `"${query}"`
+    
+    // 替换模式显示替换内容
+    if (mode === 'replace') {
+      const replace = args.replace as string || ''
+      desc += ` → "${replace}"`
     }
+    
+    // 显示路径和模式
+    const extras: string[] = []
     if (path !== '.') {
-      desc += `\n路径: ${path}`
+      extras.push(path)
     }
     if (pattern !== '**/*') {
-      desc += `\n模式: ${pattern}`
+      extras.push(pattern)
     }
+    if (extras.length > 0) {
+      desc += ` in ${extras.join(', ')}`
+    }
+    
     return desc
   },
   
@@ -44,8 +56,8 @@ registerTool('search_in_files', {
   // 获取所有替换的文件路径
   getDiffFilePath: (args: Record<string, unknown>, result?: Record<string, unknown>) => {
     // 只有替换模式才支持 diff 预览
-    const replace = args.replace as string | undefined
-    if (replace === undefined) {
+    const mode = args.mode as string || 'search'
+    if (mode !== 'replace') {
       return []
     }
     

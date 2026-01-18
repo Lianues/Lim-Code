@@ -8,6 +8,7 @@ import type { HandlerContext, MessageHandler, MessageHandlerRegistry } from './t
 import { createMessageHandlerRegistry } from './handlers';
 import { StreamRequestHandler, StreamAbortManager } from './stream';
 import type { ChatHandler } from '../backend/modules/api/chat';
+import type { ConversationManager } from '../backend/modules/conversation/ConversationManager';
 import type * as vscode from 'vscode';
 
 /**
@@ -33,6 +34,7 @@ export class MessageRouter {
 
   constructor(
     private chatHandler: ChatHandler,
+    private conversationManager: ConversationManager,
     private getView: () => vscode.WebviewView | undefined,
     private sendResponse: (requestId: string, data: any) => void,
     private sendError: (requestId: string, code: string, message: string) => void
@@ -45,6 +47,7 @@ export class MessageRouter {
     this.streamHandler = new StreamRequestHandler({
       chatHandler: this.chatHandler,
       abortManager: this.abortManager,
+      conversationManager: this.conversationManager,
       getView: this.getView,
       sendResponse: this.sendResponse,
       sendError: this.sendError
@@ -105,7 +108,7 @@ export class MessageRouter {
         
       case 'cancelStream':
         const { conversationId } = data;
-        this.streamHandler.cancelStream(conversationId, requestId);
+        this.streamHandler.cancelStream(conversationId, requestId).catch(console.error);
         break;
     }
   }

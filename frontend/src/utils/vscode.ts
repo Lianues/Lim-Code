@@ -96,6 +96,24 @@ export function onMessageFromExtension(
   }
 }
 
+/**
+ * 监听来自插件的命令推送
+ * 
+ * @param command 命令名称
+ * @param handler 处理器
+ * @returns 取消监听函数
+ */
+export function onExtensionCommand<T = any>(
+  command: string,
+  handler: (data: T) => void
+): () => void {
+  return onMessageFromExtension((message: any) => {
+    if (message.type === 'command' && message.command === command) {
+      handler(message.data)
+    }
+  })
+}
+
 // 状态持久化
 export function saveState(key: string, value: any) {
   const vscode = getVSCodeAPI()

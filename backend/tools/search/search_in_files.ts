@@ -11,6 +11,7 @@ import type { Tool, ToolResult } from '../types';
 import { getWorkspaceRoot, getAllWorkspaces, parseWorkspacePath, toRelativePath } from '../utils';
 import { getGlobalSettingsManager } from '../../core/settingsContext';
 import { getDiffStorageManager } from '../../modules/conversation';
+import { getDiffManager } from '../file/diffManager';
 
 /**
  * 默认排除模式
@@ -64,7 +65,10 @@ interface ReplaceResult {
     file: string;
     workspace?: string;
     replacements: number;
+    status?: 'accepted' | 'rejected' | 'pending';
     diffContentId?: string;
+    /** Pending diff ID，用于确认/拒绝 */
+    pendingDiffId?: string;
 }
 
 /**
@@ -140,6 +144,7 @@ async function searchInDirectory(
 
 /**
  * 在单个目录中搜索并替换
+ * 使用 DiffManager 创建待审阅的 diff
  */
 async function searchAndReplaceInDirectory(
     searchRoot: vscode.Uri,
@@ -149,22 +154,32 @@ async function searchAndReplaceInDirectory(
     maxFiles: number,
     workspaceName: string | null,
     excludePattern: string,
-    dryRun: boolean
+    toolId?: string,
+    abortSignal?: AbortSignal
 ): Promise<{
     matches: SearchMatch[];
     replacements: ReplaceResult[];
     totalReplacements: number;
+    cancelled: boolean;
 }> {
     const matches: SearchMatch[] = [];
     const replacements: ReplaceResult[] = [];
     let totalReplacements = 0;
+    let cancelledBySignal = false;
     
     const pattern = new vscode.RelativePattern(searchRoot, filePattern);
     const files = await vscode.workspace.findFiles(pattern, excludePattern, 1000);
     
     let processedFiles = 0;
+    const diffManager = getDiffManager();
     
     for (const fileUri of files) {
+        // 检查是否已取消
+        if (abortSignal?.aborted) {
+            cancelledBySignal = true;
+            break;
+        }
+
         if (processedFiles >= maxFiles) {
             break;
         }
@@ -224,24 +239,100 @@ async function searchAndReplaceInDirectory(
                 totalReplacements += fileReplacementCount;
                 
                 let diffContentId: string | undefined;
-                
-                if (!dryRun) {
-                    // 保存文件
-                    await vscode.workspace.fs.writeFile(fileUri, new TextEncoder().encode(newText));
-                    
-                    // 保存 diff 内容用于查看差异
-                    const diffStorageManager = getDiffStorageManager();
-                    if (diffStorageManager) {
-                        try {
-                            const diffRef = await diffStorageManager.saveGlobalDiff({
-                                originalContent: originalText,
-                                newContent: newText,
-                                filePath: relativePath
-                            });
-                            diffContentId = diffRef.diffId;
-                        } catch (e) {
-                            console.warn('Failed to save diff content:', e);
+                let status: 'accepted' | 'rejected' | 'pending' = 'pending';
+                let pendingDiffId: string | undefined;
+
+                // 使用 DiffManager 创建待审阅的 diff
+                const newContentLines = newText.split('\n').length;
+                const blocks = [{
+                    index: 0,
+                    startLine: 1,
+                    endLine: newContentLines
+                }];
+
+                const pendingDiff = await diffManager.createPendingDiff(
+                    relativePath,
+                    fileUri.fsPath,
+                    originalText,
+                    newText,
+                    blocks,
+                    undefined,
+                    toolId
+                );
+
+                // 等待 diff 被处理（保存或拒绝）或用户中断/取消
+                const interruptReason = await new Promise<'none' | 'abort' | 'user'>((resolve) => {
+                    let resolved = false;
+                    let abortHandler: (() => void) | undefined;
+
+                    const finish = (reason: 'none' | 'abort' | 'user') => {
+                        if (resolved) return;
+                        resolved = true;
+                        if (abortHandler && abortSignal) {
+                            try {
+                                abortSignal.removeEventListener('abort', abortHandler);
+                            } catch {
+                                // ignore
+                            }
                         }
+                        resolve(reason);
+                    };
+
+                    abortHandler = () => {
+                        diffManager.rejectDiff(pendingDiff.id).catch(() => {});
+                        finish('abort');
+                    };
+
+                    if (abortSignal) {
+                        if (abortSignal.aborted) {
+                            abortHandler();
+                            return;
+                        }
+                        abortSignal.addEventListener('abort', abortHandler, { once: true } as any);
+                    }
+
+                    const checkStatus = () => {
+                        // 检查用户中断
+                        if (diffManager.isUserInterrupted()) {
+                            diffManager.rejectDiff(pendingDiff.id).catch(() => {});
+                            finish('user');
+                            return;
+                        }
+
+                        const diff = diffManager.getDiff(pendingDiff.id);
+                        if (!diff || diff.status !== 'pending') {
+                            finish('none');
+                        } else {
+                            setTimeout(checkStatus, 100);
+                        }
+                    };
+                    checkStatus();
+                });
+
+                const wasInterrupted = interruptReason !== 'none';
+                if (wasInterrupted) {
+                    cancelledBySignal = true;
+                }
+
+                const finalDiff = diffManager.getDiff(pendingDiff.id);
+                const wasAccepted = !wasInterrupted && (!finalDiff || finalDiff.status === 'accepted');
+
+                // 取消/中断视为 rejected，避免前端继续显示 waiting
+                status = wasAccepted ? 'accepted' : 'rejected';
+                pendingDiffId = undefined;
+
+                // 保存 diff 内容用于前端显示
+                const diffStorageManager = getDiffStorageManager();
+                if (diffStorageManager) {
+                    try {
+                        const diffRef = await diffStorageManager.saveGlobalDiff({
+                            originalContent: originalText,
+                            newContent: newText,
+                            filePath: relativePath
+                        });
+                        diffContentId = diffRef.diffId;
+                    } catch (e) {
+                        console.warn('Failed to save diff content:', e);
                     }
                 }
                 
@@ -249,7 +340,9 @@ async function searchAndReplaceInDirectory(
                     file: relativePath,
                     workspace: workspaceName || undefined,
                     replacements: fileReplacementCount,
-                    diffContentId
+                    status,
+                    diffContentId,
+                    pendingDiffId
                 });
             }
         } catch {
@@ -257,7 +350,7 @@ async function searchAndReplaceInDirectory(
         }
     }
     
-    return { matches, replacements, totalReplacements };
+    return { matches, replacements, totalReplacements, cancelled: cancelledBySignal };
 }
 
 /**
@@ -330,12 +423,18 @@ export function createSearchInFilesTool(): Tool {
         declaration: {
             name: 'search_in_files',
             description: isMultiRoot
-                ? `Search (and optionally replace) content in multiple workspace files. Supports regular expressions. Use "workspace_name/dir/" (trailing slash) for directories, or "workspace_name/file.ext" for a single file. Use "." to search all workspaces. Available workspaces: ${workspaces.map(w => w.name).join(', ')}`
-                : 'Search (and optionally replace) content in workspace files. Supports regular expressions. Use "dir/" (trailing slash) for directories, or "dir/file.ext" for a single file. Returns matching files and context. If "replace" is provided, performs replacement and saves changes.',
+                ? `Search or search-and-replace content in multiple workspace files. Supports regular expressions. Use "workspace_name/dir/" (trailing slash) for directories, or "workspace_name/file.ext" for a single file. Use "." to search all workspaces. Available workspaces: ${workspaces.map(w => w.name).join(', ')}.`
+                : 'Search or search-and-replace content in workspace files. Supports regular expressions. Use "dir/" (trailing slash) for directories, or "dir/file.ext" for a single file. Returns matching files and context.',
             category: 'search',
             parameters: {
                 type: 'object',
                 properties: {
+                    mode: {
+                        type: 'string',
+                        enum: ['search', 'replace'],
+                        description: 'Operation mode. Use "search" for finding content only, use "replace" for search and replace.',
+                        default: 'search'
+                    },
                     query: {
                         type: 'string',
                         description: 'Search keyword or regular expression'
@@ -355,38 +454,40 @@ export function createSearchInFilesTool(): Tool {
                         description: 'Whether to treat query as a regular expression',
                         default: false
                     },
-                    replace: {
-                        type: 'string',
-                        description: 'Replacement string. If provided, matching content will be replaced. Supports regex capture groups like $1, $2 when isRegex is true.'
-                    },
-                    dryRun: {
-                        type: 'boolean',
-                        description: 'If true, only preview replacements without actually modifying files',
-                        default: false
-                    },
                     maxResults: {
                         type: 'number',
-                        description: 'Maximum number of match results (for search only mode)',
+                        description: '[Search mode] Maximum number of match results',
                         default: 100
+                    },
+                    replace: {
+                        type: 'string',
+                        description: '[Replace mode] Replacement string. Supports regex capture groups like $1, $2 when isRegex is true.'
                     },
                     maxFiles: {
                         type: 'number',
-                        description: 'Maximum number of files to process (for replace mode)',
+                        description: '[Replace mode] Maximum number of files to process',
                         default: 50
                     }
                 },
                 required: ['query']
             }
         },
-        handler: async (args): Promise<ToolResult> => {
+        handler: async (args, context?: import('../types').ToolContext): Promise<ToolResult> => {
             const query = args.query as string;
             const searchPath = (args.path as string) || '.';
             const filePattern = (args.pattern as string) || '**/*';
             const isRegex = (args.isRegex as boolean) || false;
-            const replacement = args.replace as string | undefined;
-            const dryRun = (args.dryRun as boolean) || false;
+            
+            // 严格按照 mode 字段决定模式，忽略其他不相关的参数
+            const mode = (args.mode as string) || 'search';
+            const isReplaceMode = mode === 'replace';
+            
+            // 搜索模式参数
             const maxResults = (args.maxResults as number) || 100;
-            const maxFiles = (args.maxFiles as number) || 50;
+            
+            // 替换模式参数（仅在替换模式下使用）
+            const replacement = isReplaceMode ? (args.replace as string || '') : undefined;
+            const maxFiles = isReplaceMode ? ((args.maxFiles as number) || 50) : 50;
 
             if (!query) {
                 return { success: false, error: 'query is required' };
@@ -396,8 +497,6 @@ export function createSearchInFilesTool(): Tool {
             if (workspaces.length === 0) {
                 return { success: false, error: 'No workspace folder open' };
             }
-
-            const isReplaceMode = replacement !== undefined;
 
             try {
                 // 创建搜索正则表达式
@@ -419,6 +518,7 @@ export function createSearchInFilesTool(): Tool {
                     let allMatches: SearchMatch[] = [];
                     let allReplacements: ReplaceResult[] = [];
                     let totalReplacements = 0;
+                    let anyCancelled = false;
                     
                     if (isExplicit && targetWorkspace) {
                         // 显式指定了工作区，只搜索该工作区
@@ -435,11 +535,13 @@ export function createSearchInFilesTool(): Tool {
                             maxFiles,
                             workspaces.length > 1 ? targetWorkspace.name : null,
                             excludePattern,
-                            dryRun
+                            context?.toolId,
+                            context?.abortSignal
                         );
                         allMatches = result.matches;
                         allReplacements = result.replacements;
                         totalReplacements = result.totalReplacements;
+                        anyCancelled = result.cancelled;
                     } else if (searchPath === '.' && workspaces.length > 1) {
                         // 搜索所有工作区
                         let remainingFiles = maxFiles;
@@ -454,12 +556,18 @@ export function createSearchInFilesTool(): Tool {
                                 remainingFiles,
                                 ws.name,
                                 excludePattern,
-                                dryRun
+                                context?.toolId,
+                                context?.abortSignal
                             );
                             allMatches.push(...result.matches);
                             allReplacements.push(...result.replacements);
                             totalReplacements += result.totalReplacements;
                             remainingFiles -= result.replacements.length;
+
+                            anyCancelled = anyCancelled || result.cancelled;
+                            if (anyCancelled) {
+                                break;
+                            }
                         }
                     } else {
                         // 单工作区或未指定，使用默认
@@ -477,15 +585,18 @@ export function createSearchInFilesTool(): Tool {
                             maxFiles,
                             workspaces.length > 1 ? (targetWorkspace?.name || workspaces[0].name) : null,
                             excludePattern,
-                            dryRun
+                            context?.toolId,
+                            context?.abortSignal
                         );
                         allMatches = result.matches;
                         allReplacements = result.replacements;
                         totalReplacements = result.totalReplacements;
+                        anyCancelled = result.cancelled;
                     }
                     
                     return {
-                        success: true,
+                        success: !anyCancelled,
+                        cancelled: anyCancelled,
                         data: {
                             matches: allMatches.map(m => ({
                                 file: m.file,
@@ -499,7 +610,8 @@ export function createSearchInFilesTool(): Tool {
                             filesModified: allReplacements.length,
                             totalReplacements,
                             multiRoot: workspaces.length > 1
-                        }
+                        },
+                        error: anyCancelled ? 'Search/replace was cancelled by user' : undefined
                     };
                 } else {
                     // 仅搜索模式

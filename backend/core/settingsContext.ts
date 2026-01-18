@@ -8,6 +8,7 @@
  * - ConfigManager: 渠道配置管理器
  * - ChannelManager: 渠道调用管理器
  * - ToolRegistry: 工具注册器
+ * - McpManager: MCP 管理器
  */
 
 import type { SettingsManager } from '../modules/settings';
@@ -15,6 +16,7 @@ import type { ConfigManager } from '../modules/config';
 import type { ChannelManager } from '../modules/channel';
 import type { ToolRegistry } from '../tools/ToolRegistry';
 import type { DiffStorageManager } from '../modules/conversation/DiffStorageManager';
+import type { McpManager } from '../modules/mcp';
 
 /**
  * 全局上下文接口
@@ -25,6 +27,7 @@ export interface GlobalContext {
     channelManager: ChannelManager | null;
     toolRegistry: ToolRegistry | null;
     diffStorageManager: DiffStorageManager | null;
+    mcpManager: McpManager | null;
 }
 
 /**
@@ -35,7 +38,8 @@ const globalContext: GlobalContext = {
     configManager: null,
     channelManager: null,
     toolRegistry: null,
-    diffStorageManager: null
+    diffStorageManager: null,
+    mcpManager: null
 };
 
 // ========== 设置管理器 ==========
@@ -118,6 +122,22 @@ export function getGlobalDiffStorageManager(): DiffStorageManager | null {
     return globalContext.diffStorageManager;
 }
 
+// ========== MCP 管理器 ==========
+
+/**
+ * 设置全局 MCP 管理器引用
+ */
+export function setGlobalMcpManager(manager: McpManager): void {
+    globalContext.mcpManager = manager;
+}
+
+/**
+ * 获取全局 MCP 管理器
+ */
+export function getGlobalMcpManager(): McpManager | null {
+    return globalContext.mcpManager;
+}
+
 // ========== 便捷方法 ==========
 
 /**
@@ -146,6 +166,9 @@ export function initGlobalContext(context: Partial<GlobalContext>): void {
     if (context.diffStorageManager) {
         globalContext.diffStorageManager = context.diffStorageManager;
     }
+    if (context.mcpManager) {
+        globalContext.mcpManager = context.mcpManager;
+    }
 }
 
 /**
@@ -157,4 +180,5 @@ export function clearGlobalContext(): void {
     globalContext.channelManager = null;
     globalContext.toolRegistry = null;
     globalContext.diffStorageManager = null;
+    globalContext.mcpManager = null;
 }

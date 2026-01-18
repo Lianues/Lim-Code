@@ -752,37 +752,42 @@ export class SettingsHandler {
             const promptManager = getPromptManager();
             const actualSystemPrompt = promptManager.refreshAndGetPrompt();
             
-            // 计算静态模板的 token 数
+            // 获取实际的动态上下文内容
+            const dynamicText = promptManager.getDynamicContextText();
+            
+            // 准备静态模板的 token 计数请求
             const staticContents = [{
                 role: 'user' as const,
                 parts: [{ text: actualSystemPrompt }]
             }];
             
-            const staticResult = await this.tokenCountService.countTokens(
-                channelType,
-                tokenCountConfig,
-                staticContents
-            );
+            // 准备动态内容的 token 计数请求（如果有）
+            const dynamicContents = dynamicText ? [{
+                role: 'user' as const,
+                parts: [{ text: dynamicText }]
+            }] : null;
             
-            // 获取实际的动态上下文内容
-            const dynamicText = promptManager.getDynamicContextText();
+            // 并行调用 token 计数 API
+            const countPromises: Promise<{ success: boolean; totalTokens?: number; error?: string }>[] = [
+                this.tokenCountService.countTokens(channelType, tokenCountConfig, staticContents)
+            ];
             
-            let dynamicTokens = 0;
-            if (dynamicText) {
-                const dynamicContents = [{
-                    role: 'user' as const,
-                    parts: [{ text: dynamicText }]
-                }];
-                
-                const dynamicResult = await this.tokenCountService.countTokens(
-                    channelType,
-                    tokenCountConfig,
-                    dynamicContents
+            if (dynamicContents) {
+                countPromises.push(
+                    this.tokenCountService.countTokens(channelType, tokenCountConfig, dynamicContents)
                 );
-                
-                if (dynamicResult.success && dynamicResult.totalTokens !== undefined) {
-                    dynamicTokens = dynamicResult.totalTokens;
-                }
+            }
+            
+            // 等待所有计数完成
+            const results = await Promise.all(countPromises);
+            
+            const staticResult = results[0];
+            const dynamicResult = results[1];
+            
+            // 处理结果
+            let dynamicTokens = 0;
+            if (dynamicResult?.success && dynamicResult.totalTokens !== undefined) {
+                dynamicTokens = dynamicResult.totalTokens;
             }
             
             if (staticResult.success) {

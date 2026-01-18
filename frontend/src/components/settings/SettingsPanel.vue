@@ -12,6 +12,7 @@ import DependencySettings from './DependencySettings.vue'
 import ContextSettings from './ContextSettings.vue'
 import PromptSettings from './PromptSettings.vue'
 import TokenCountSettings from './TokenCountSettings.vue'
+import SubAgentsSettings from './SubAgentsSettings.vue'
 import { CustomScrollbar, CustomCheckbox, CustomSelect, Modal, type SelectOption } from '../common'
 import { sendToExtension } from '@/utils/vscode'
 import { useI18n, SUPPORTED_LANGUAGES } from '@/i18n'
@@ -38,6 +39,7 @@ const tabs = computed<TabItem[]>(() => [
   { id: 'tools', label: t('components.settings.tabs.tools'), icon: 'codicon-tools' },
   { id: 'autoExec', label: t('components.settings.tabs.autoExec'), icon: 'codicon-shield' },
   { id: 'mcp', label: t('components.settings.tabs.mcp'), icon: 'codicon-plug' },
+  { id: 'subagents', label: t('components.settings.tabs.subagents'), icon: 'codicon-hubot' },
   { id: 'checkpoint', label: t('components.settings.tabs.checkpoint'), icon: 'codicon-history' },
   { id: 'summarize', label: t('components.settings.tabs.summarize'), icon: 'codicon-fold' },
   { id: 'imageGen', label: t('components.settings.tabs.imageGen'), icon: 'codicon-symbol-color' },
@@ -420,6 +422,14 @@ onMounted(() => {
             <p class="settings-description">{{ t('components.settings.settingsPanel.sections.tokenCount.description') }}</p>
             
             <TokenCountSettings />
+          </div>
+          
+          <!-- 子代理设置 -->
+          <div v-if="settingsStore.activeTab === 'subagents'" class="settings-section">
+            <h4>{{ t('components.settings.settingsPanel.sections.subagents.title') }}</h4>
+            <p class="settings-description">{{ t('components.settings.settingsPanel.sections.subagents.description') }}</p>
+            
+            <SubAgentsSettings />
           </div>
           
           <!-- 通用设置 -->

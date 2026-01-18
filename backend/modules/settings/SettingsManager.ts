@@ -31,11 +31,14 @@ import type {
     PinnedFilesConfig,
     PinnedFileItem,
     SystemPromptConfig,
+    PromptMode,
     StoragePathConfig,
     StorageStats,
     TokenCountConfig,
     SkillsConfig,
-    SkillConfigItem
+    SkillConfigItem,
+    SubAgentsConfig,
+    SubAgentConfigItem
 } from './types';
 import {
     DEFAULT_GLOBAL_SETTINGS,
@@ -57,8 +60,13 @@ import {
     DEFAULT_PINNED_FILES_CONFIG,
     DEFAULT_SKILLS_CONFIG,
     DEFAULT_SYSTEM_PROMPT_CONFIG,
+    DEFAULT_MODE_ID,
+    DESIGN_MODE_ID,
+    CODE_PROMPT_MODE,
+    DESIGN_PROMPT_MODE,
     DEFAULT_MAX_TOOL_ITERATIONS,
     DEFAULT_TOKEN_COUNT_CONFIG,
+    DEFAULT_SUBAGENTS_CONFIG,
     getDefaultExecuteCommandConfig
 } from './types';
 
@@ -1476,9 +1484,44 @@ export class SettingsManager {
     
     /**
      * 获取系统提示词配置
+     * 
+     * 版本迁移：
+     * - 老版本：没有 modes 字段 -> 迁移为代码模式 + 设计模式
+     * - 新版本：已有 modes 但没有设计模式 -> 添加设计模式
      */
     getSystemPromptConfig(): Readonly<SystemPromptConfig> {
-        return this.settings.toolsConfig?.system_prompt || DEFAULT_SYSTEM_PROMPT_CONFIG;
+        const config = this.settings.toolsConfig?.system_prompt || DEFAULT_SYSTEM_PROMPT_CONFIG;
+        
+        // 情况1：没有 modes 字段（老版本）
+        if (!config.modes) {
+            return {
+                ...config,
+                currentModeId: DEFAULT_MODE_ID,
+                modes: {
+                    [DEFAULT_MODE_ID]: {
+                        ...CODE_PROMPT_MODE,
+                        // 保留用户原有的模板配置
+                        template: config.template || CODE_PROMPT_MODE.template,
+                        dynamicTemplateEnabled: config.dynamicTemplateEnabled ?? CODE_PROMPT_MODE.dynamicTemplateEnabled,
+                        dynamicTemplate: config.dynamicTemplate || CODE_PROMPT_MODE.dynamicTemplate
+                    },
+                    [DESIGN_MODE_ID]: DESIGN_PROMPT_MODE
+                }
+            };
+        }
+        
+        // 情况2：已有 modes 但没有设计模式 -> 添加设计模式
+        if (!config.modes[DESIGN_MODE_ID]) {
+            return {
+                ...config,
+                modes: {
+                    ...config.modes,
+                    [DESIGN_MODE_ID]: DESIGN_PROMPT_MODE
+                }
+            };
+        }
+        
+        return config;
     }
     
     /**
@@ -1509,17 +1552,94 @@ export class SettingsManager {
     }
     
     /**
-     * 获取系统提示词模板
+     * 获取当前激活的模式 ID
      */
-    getSystemPromptTemplate(): string {
-        return this.getSystemPromptConfig().template;
+    getCurrentPromptModeId(): string {
+        return this.getSystemPromptConfig().currentModeId || DEFAULT_MODE_ID;
     }
     
     /**
-     * 获取动态上下文模板
+     * 获取当前激活的模式
+     */
+    getCurrentPromptMode(): PromptMode | null {
+        const config = this.getSystemPromptConfig();
+        const modeId = config.currentModeId || DEFAULT_MODE_ID;
+        return config.modes?.[modeId] || null;
+    }
+    
+    /**
+     * 获取所有模式
+     */
+    getAllPromptModes(): PromptMode[] {
+        const config = this.getSystemPromptConfig();
+        return Object.values(config.modes || {});
+    }
+    
+    /**
+     * 切换当前模式
+     */
+    async setCurrentPromptMode(modeId: string): Promise<void> {
+        const config = this.getSystemPromptConfig();
+        if (!config.modes?.[modeId]) {
+            throw new Error(`Mode not found: ${modeId}`);
+        }
+        await this.updateSystemPromptConfig({ currentModeId: modeId });
+    }
+    
+    /**
+     * 添加或更新模式
+     */
+    async savePromptMode(mode: PromptMode): Promise<void> {
+        const config = this.getSystemPromptConfig();
+        const modes = { ...config.modes, [mode.id]: mode };
+        await this.updateSystemPromptConfig({ modes });
+    }
+    
+    /**
+     * 删除模式
+     */
+    async deletePromptMode(modeId: string): Promise<void> {
+        const config = this.getSystemPromptConfig();
+        const modes = { ...config.modes };
+        
+        // 至少保留一个模式
+        if (Object.keys(modes).length <= 1) {
+            throw new Error('Cannot delete the last mode');
+        }
+        
+        delete modes[modeId];
+        
+        // 如果删除的是当前模式，切换到第一个可用的模式
+        let currentModeId = config.currentModeId;
+        if (currentModeId === modeId) {
+            const remainingModes = Object.keys(modes);
+            currentModeId = remainingModes[0] || DEFAULT_MODE_ID;
+        }
+        await this.updateSystemPromptConfig({ modes, currentModeId });
+    }
+    
+    /**
+     * 获取系统提示词模板（根据当前模式）
+     */
+    getSystemPromptTemplate(): string {
+        const mode = this.getCurrentPromptMode();
+        return mode?.template || this.getSystemPromptConfig().template;
+    }
+    
+    /**
+     * 获取动态上下文模板（根据当前模式）
      */
     getDynamicContextTemplate(): string {
-        return this.getSystemPromptConfig().dynamicTemplate || '';
+        const mode = this.getCurrentPromptMode();
+        return mode?.dynamicTemplate || this.getSystemPromptConfig().dynamicTemplate || '';
+    }
+    
+    /**
+     * 检查动态上下文是否启用（根据当前模式）
+     */
+    isDynamicTemplateEnabled(): boolean {
+        const mode = this.getCurrentPromptMode();
+        return mode?.dynamicTemplateEnabled ?? this.getSystemPromptConfig().dynamicTemplateEnabled;
     }
     
     /**
@@ -1760,6 +1880,101 @@ export class SettingsManager {
             type: 'full',
             oldValue: oldSettings,
             newValue: this.settings,
+            settings: this.settings
+        });
+    }
+    
+    // ========== 子代理管理 ==========
+    
+    /**
+     * 获取子代理配置
+     */
+    getSubAgentsConfig(): SubAgentsConfig {
+        return this.settings.toolsConfig?.subagents || DEFAULT_SUBAGENTS_CONFIG;
+    }
+    
+    /**
+     * 获取所有子代理
+     */
+    getSubAgents(): SubAgentConfigItem[] {
+        return this.getSubAgentsConfig().agents || [];
+    }
+    
+    /**
+     * 获取单个子代理
+     */
+    getSubAgent(type: string): SubAgentConfigItem | undefined {
+        return this.getSubAgents().find(a => a.type === type);
+    }
+    
+    /**
+     * 添加子代理
+     */
+    async addSubAgent(agent: SubAgentConfigItem): Promise<void> {
+        const config = this.getSubAgentsConfig();
+        const agents = [...config.agents, agent];
+        
+        await this.updateSubAgentsConfig({ agents });
+    }
+    
+    /**
+     * 更新子代理
+     */
+    async updateSubAgent(type: string, updates: Partial<SubAgentConfigItem>): Promise<boolean> {
+        const config = this.getSubAgentsConfig();
+        const index = config.agents.findIndex(a => a.type === type);
+        
+        if (index === -1) {
+            return false;
+        }
+        
+        const agents = [...config.agents];
+        agents[index] = { ...agents[index], ...updates };
+        
+        await this.updateSubAgentsConfig({ agents });
+        return true;
+    }
+    
+    /**
+     * 删除子代理
+     */
+    async deleteSubAgent(type: string): Promise<boolean> {
+        const config = this.getSubAgentsConfig();
+        const agents = config.agents.filter(a => a.type !== type);
+        
+        if (agents.length === config.agents.length) {
+            return false;
+        }
+        
+        await this.updateSubAgentsConfig({ agents });
+        return true;
+    }
+    
+    /**
+     * 更新子代理配置
+     */
+    async updateSubAgentsConfig(config: Partial<SubAgentsConfig>): Promise<void> {
+        const oldConfig = this.getSubAgentsConfig();
+        const newConfig = {
+            ...oldConfig,
+            ...config
+        };
+        
+        this.settings = {
+            ...this.settings,
+            toolsConfig: {
+                ...this.settings.toolsConfig,
+                subagents: newConfig
+            }
+        };
+        
+        await this.storage.save(this.settings);
+        
+        this.notifyChange({
+            type: 'tools',
+            path: 'toolsConfig.subagents',
+            oldValue: oldConfig,
+            newValue: newConfig,
             settings: this.settings
         });
     }

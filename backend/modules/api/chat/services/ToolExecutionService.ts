@@ -131,10 +131,13 @@ export class ToolExecutionService {
         const toolMode = config?.toolMode || 'function_call';
         const isPromptMode = toolMode === 'xml' || toolMode === 'json';
 
+        // 处理 subagents 调用数量限制
+        const processedCalls = this.applySubagentsLimit(calls);
+
         // 确定检查点的工具名称
         // 如果只有一个工具调用，使用该工具名称
         // 如果有多个工具调用，使用 'tool_batch'
-        const toolNameForCheckpoint = calls.length === 1 ? calls[0].name : 'tool_batch';
+        const toolNameForCheckpoint = processedCalls.allowed.length === 1 ? processedCalls.allowed[0].name : 'tool_batch';
 
         // 在所有工具执行前创建一个检查点
         if (this.checkpointService && conversationId !== undefined && messageIndex !== undefined) {
@@ -149,8 +152,32 @@ export class ToolExecutionService {
             }
         }
 
-        // 执行所有工具
-        for (const call of calls) {
+        // 处理被限制的 subagents 调用（直接返回拒绝结果）
+        for (const call of processedCalls.rejected) {
+            const maxConcurrent = this.settingsManager?.getSubAgentsConfig()?.maxConcurrentAgents ?? 3;
+            const response: Record<string, unknown> = {
+                success: false,
+                error: `Exceeded maximum concurrent sub-agents limit (${maxConcurrent}). This call was automatically rejected.`,
+                rejected: true
+            };
+
+            toolResults.push({
+                id: call.id,
+                name: call.name,
+                result: response
+            });
+
+            responseParts.push({
+                functionResponse: {
+                    id: call.id,
+                    name: call.name,
+                    response
+                }
+            });
+        }
+
+        // 执行允许的工具
+        for (const call of processedCalls.allowed) {
             // 检查是否已取消
             if (abortSignal?.aborted) {
                 break;
@@ -479,5 +506,50 @@ export class ToolExecutionService {
      */
     getToolsNeedingConfirmation(calls: FunctionCallInfo[]): FunctionCallInfo[] {
         return calls.filter(call => this.toolNeedsConfirmation(call.name));
+    }
+
+    /**
+     * 应用 subagents 数量限制
+     * 
+     * 检查工具调用列表中的 subagents 调用数量，
+     * 如果超过 maxConcurrentAgents 限制，将超出的调用标记为拒绝
+     * 
+     * @param calls 工具调用列表
+     * @returns 分离后的允许和拒绝调用列表
+     */
+    private applySubagentsLimit(calls: FunctionCallInfo[]): {
+        allowed: FunctionCallInfo[];
+        rejected: FunctionCallInfo[];
+    } {
+        // 获取配置
+        const maxConcurrent = this.settingsManager?.getSubAgentsConfig()?.maxConcurrentAgents ?? 3;
+        
+        // -1 表示无限制
+        if (maxConcurrent === -1) {
+            return { allowed: calls, rejected: [] };
+        }
+        
+        const allowed: FunctionCallInfo[] = [];
+        const rejected: FunctionCallInfo[] = [];
+        let subagentsCount = 0;
+        
+        for (const call of calls) {
+            if (call.name === 'subagents') {
+                if (subagentsCount < maxConcurrent) {
+                    allowed.push(call);
+                    subagentsCount++;
+                } else {
+                    rejected.push(call);
+                }
+            } else {
+                allowed.push(call);
+            }
+        }
+        
+        if (rejected.length > 0) {
+            console.log(`[ToolExecution] Rejected ${rejected.length} subagents calls due to maxConcurrentAgents limit (${maxConcurrent})`);
+        }
+        
+        return { allowed, rejected };
     }
 }

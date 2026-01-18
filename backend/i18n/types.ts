@@ -313,6 +313,31 @@ export interface BackendLanguageMessages {
                 rejected: string;
                 diffTitle: string;
             };
+            diffCodeLens: {
+                accept: string;
+                reject: string;
+                acceptAll: string;
+                rejectAll: string;
+            };
+            diffEditorActions: {
+                noActiveDiff: string;
+                allBlocksProcessed: string;
+                diffBlock: string;
+                lineRange: string;
+                acceptAllBlocks: string;
+                rejectAllBlocks: string;
+                blocksCount: string;
+                selectBlockToAccept: string;
+                selectBlockToReject: string;
+                selectBlockPlaceholder: string;
+            };
+            diffInline: {
+                hoverOrLightbulb: string;
+                acceptBlock: string;
+                rejectBlock: string;
+                acceptAll: string;
+                rejectAll: string;
+            };
             readFile: {
                 cannotReadFile: string;
             };

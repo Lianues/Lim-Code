@@ -109,6 +109,11 @@ const ja: LanguageMessages = {
                 confirm: '確認',
                 cancel: 'キャンセル'
             },
+            inputDialog: {
+                title: '入力',
+                confirm: 'OK',
+                cancel: 'キャンセル'
+            },
             deleteDialog: {
                 title: 'メッセージを削除',
                 message: 'このメッセージを削除してもよろしいですか？',
@@ -223,6 +228,12 @@ const ja: LanguageMessages = {
             tokenUsage: '使用量',
             context: 'コンテキスト',
             fileNotExists: 'ファイルが存在しません',
+            mode: {
+                selectMode: 'モードを選択',
+                manageMode: 'モードを管理',
+                search: 'モードを検索...',
+                noResults: '一致するモードがありません'
+            },
             channelSelector: {
                 placeholder: '設定を選択',
                 searchPlaceholder: 'チャンネルを検索...',
@@ -334,6 +345,8 @@ const ja: LanguageMessages = {
                 paramCount: '{count} 個のパラメータ',
                 confirmExecution: 'クリックして実行を確認',
                 confirm: '実行を確認',
+                saveAll: 'すべて保存',
+                rejectAll: 'すべて拒否',
                 reject: '拒否',
                 confirmed: '確認済み',
                 rejected: '拒否済み',
@@ -354,6 +367,7 @@ const ja: LanguageMessages = {
                 tools: 'ツール',
                 autoExec: '自動実行',
                 mcp: 'MCP',
+                subagents: 'サブエージェント',
                 checkpoint: 'チェックポイント',
                 summarize: '要約',
                 imageGen: '画像生成',
@@ -976,6 +990,60 @@ const ja: LanguageMessages = {
                     cancel: 'キャンセル'
                 }
             },
+            subagents: {
+                selectAgent: 'サブエージェントを選択',
+                noAgents: 'サブエージェントなし',
+                create: '作成',
+                rename: '名前を変更',
+                delete: '削除',
+                disabled: '無効',
+                enabled: 'このサブエージェントを有効化',
+                globalConfig: 'グローバル設定',
+                maxConcurrentAgents: '最大同時実行数',
+                maxConcurrentAgentsHint: 'AI が一度に呼び出せるサブエージェントの最大数（-1 で無制限）',
+                basicInfo: '基本情報',
+                description: '説明',
+                descriptionPlaceholder: 'メイン AI がこのサブエージェントを使用すべき状況を説明',
+                maxIterations: '最大イテレーション数',
+                maxIterationsHint: 'このサブエージェントの最大ツール呼び出し回数（-1 で無制限）',
+                maxRuntime: '最大実行時間',
+                maxRuntimeHint: '最大実行時間（秒、-1 で無制限）',
+                systemPrompt: 'システムプロンプト',
+                systemPromptPlaceholder: 'サブエージェントのシステムプロンプトを入力...',
+                channelModel: 'チャンネルとモデル',
+                channel: 'チャンネル',
+                selectChannel: 'チャンネルを選択',
+                model: 'モデル',
+                selectModel: 'モデルを選択',
+                tools: 'ツール設定',
+                toolsDescription: 'このサブエージェントが使用できるツールを設定',
+                toolMode: {
+                    label: 'ツールモード',
+                    all: 'すべてのツール',
+                    builtin: '組み込みのみ',
+                    mcp: 'MCP のみ',
+                    whitelist: 'ホワイトリスト',
+                    blacklist: 'ブラックリスト'
+                },
+                builtinTools: '組み込みツール',
+                mcpTools: 'MCP ツール',
+                noTools: '利用可能なツールなし',
+                whitelistHint: 'チェックされたツールのみ使用可能',
+                blacklistHint: 'チェックされたツールはブロックされます',
+                emptyState: 'サブエージェントがまだありません。下のボタンをクリックして作成してください',
+                createFirst: 'サブエージェントを作成',
+                deleteConfirm: {
+                    title: 'サブエージェントを削除',
+                    message: 'このサブエージェントを削除してもよろしいですか？この操作は元に戻せません。'
+                },
+                createDialog: {
+                    title: 'サブエージェントを作成',
+                    nameLabel: '名前',
+                    namePlaceholder: '例：コードレビューエキスパート',
+                    nameRequired: 'サブエージェントの名前を入力してください',
+                    nameDuplicate: '同じ名前のサブエージェントが既に存在します'
+                }
+            },
             modelManager: {
                 title: 'モデルリスト',
                 fetchModels: 'モデルを取得',
@@ -1022,6 +1090,18 @@ const ja: LanguageMessages = {
                 loading: '読み込み中...',
                 enable: 'カスタムシステムプロンプトテンプレートを有効化',
                 enableDescription: '有効にすると、モジュールプレースホルダーを使用してシステムプロンプトの構造と内容をカスタマイズできます',
+                modes: {
+                    label: 'プロンプトモード',
+                    add: 'モードを追加',
+                    rename: '名前変更',
+                    delete: 'モードを削除',
+                    confirmDelete: 'このモードを削除してもよろしいですか？この操作は取り消しできません。',
+                    cannotDeleteDefault: 'デフォルトモードは削除できません',
+                    unsavedChanges: '現在のモードには未保存の変更があります。破棄して切り替えてもよろしいですか？',
+                    newModeName: '新しいモードの名前を入力してください',
+                    newModeDefault: '新しいモード',
+                    renameModePrompt: '新しいモード名を入力してください'
+                },
                 templateSection: {
                     title: 'システムプロンプトテンプレート',
                     resetButton: 'デフォルトにリセット',
@@ -1198,6 +1278,10 @@ const ja: LanguageMessages = {
                         title: 'トークンカウント',
                         description: 'トークン数を計算するための API を設定'
                     },
+                    subagents: {
+                        title: 'サブエージェント',
+                        description: 'AI が呼び出せる専門サブエージェントを設定'
+                    },
                     general: {
                         title: '一般設定',
                         description: '基本的な設定オプション'
@@ -1223,7 +1307,7 @@ const ja: LanguageMessages = {
                 appInfo: {
                     title: 'アプリケーション情報',
                     name: 'Lim Code - Vibe Coding アシスタント',
-                    version: 'バージョン：1.0.44',
+                    version: 'バージョン：1.0.49',
                     repository: 'リポジトリ',
                     developer: '開発者'
                 }
@@ -1666,7 +1750,8 @@ const ja: LanguageMessages = {
                     diffApplied: '差分が適用されました',
                     pending: 'レビュー待ち',
                     accepted: '承認済み',
-                    line: '行',
+                    rejected: '拒否済み',
+                    line: '開始行',
                     diffNumber: '#',
                     collapse: '折りたたむ',
                     expandRemaining: '残り {count} 行を展開',
@@ -1751,7 +1836,6 @@ const ja: LanguageMessages = {
                     title: 'コンテンツを検索',
                     replaceTitle: '検索と置換',
                     regex: '正規表現',
-                    dryRun: 'プレビュー',
                     matchCount: '{count} 一致',
                     fileCount: '{count} ファイル',
                     truncated: '切り捨て',
@@ -1844,6 +1928,15 @@ const ja: LanguageMessages = {
                     responseResult: 'レスポンス結果',
                     waitingResponse: 'レスポンスを待機中...'
                 }
+            },
+            subagents: {
+                title: 'サブエージェント',
+                task: 'タスク',
+                context: 'コンテキスト',
+                completed: '完了',
+                failed: '失敗',
+                executing: '実行中...',
+                partialResponse: '部分レスポンス'
             },
             media: {
                 generateImage: '画像を生成',

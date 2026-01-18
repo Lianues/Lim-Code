@@ -8,7 +8,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
-import type { Tool, ToolResult } from '../types';
+import type { Tool, ToolResult, ToolContext } from '../types';
 import { resolveUriWithInfo, getAllWorkspaces } from '../utils';
 import { getDiffManager } from './diffManager';
 import { getDiffStorageManager } from '../../modules/conversation';
@@ -31,17 +31,27 @@ interface WriteResult {
     action?: 'created' | 'modified' | 'unchanged';
     status?: 'accepted' | 'rejected' | 'pending';
     error?: string;
+    /** 是否被用户取消（终止/中断） */
+    cancelled?: boolean;
     /** 前端按需加载 diff 内容用 */
     diffContentId?: string;
+    /** Pending diff ID，用于确认/拒绝（历史字段，尽量避免再依赖） */
+    pendingDiffId?: string;
 }
 
 /**
  * 写入单个文件
  * @param entry 文件条目
  * @param isMultiRoot 是否是多工作区模式
+ * @param toolId 工具调用 ID
  * 始终等待 diff 被处理（保存或拒绝）
  */
-async function writeSingleFile(entry: WriteFileEntry, isMultiRoot: boolean): Promise<WriteResult> {
+async function writeSingleFile(
+    entry: WriteFileEntry,
+    isMultiRoot: boolean,
+    toolId?: string,
+    abortSignal?: AbortSignal
+): Promise<WriteResult> {
     const { path: filePath, content } = entry;
     
     const { uri, workspace } = resolveUriWithInfo(filePath);
@@ -93,35 +103,78 @@ async function writeSingleFile(entry: WriteFileEntry, isMultiRoot: boolean): Pro
 
         // 使用 DiffManager 创建待审阅的 diff
         const diffManager = getDiffManager();
+        
+        // 计算新内容的行数，作为一个完整的 block
+        const newContentLines = content.split('\n').length;
+        const blocks = [{
+            index: 0,
+            startLine: 1,
+            endLine: newContentLines
+        }];
+        
         const pendingDiff = await diffManager.createPendingDiff(
             filePath,
             absolutePath,
             originalContent,
-            content
+            content,
+            blocks,  // 传递 blocks 信息以启用 CodeLens 和 inline decorations
+            undefined,  // diffs
+            toolId  // 传递 toolId 以便前端跟踪
         );
 
-        // 等待 diff 被处理（保存或拒绝）或用户中断
-        const wasInterrupted = await new Promise<boolean>((resolve) => {
+        // 等待 diff 被处理（保存或拒绝）或用户中断/取消
+        const interruptReason = await new Promise<'none' | 'abort' | 'user'>((resolve) => {
+            let resolved = false;
+
+            const finish = (reason: 'none' | 'abort' | 'user') => {
+                if (resolved) return;
+                resolved = true;
+                if (abortHandler && abortSignal) {
+                    try {
+                        abortSignal.removeEventListener('abort', abortHandler);
+                    } catch {
+                        // ignore
+                    }
+                }
+                resolve(reason);
+            };
+
+            const abortHandler = () => {
+                diffManager.rejectDiff(pendingDiff.id).catch(() => {});
+                finish('abort');
+            };
+
+            if (abortSignal) {
+                if (abortSignal.aborted) {
+                    abortHandler();
+                    return;
+                }
+                abortSignal.addEventListener('abort', abortHandler, { once: true } as any);
+            }
+
             const checkStatus = () => {
                 // 检查用户中断
                 if (diffManager.isUserInterrupted()) {
-                    resolve(true);
+                    diffManager.rejectDiff(pendingDiff.id).catch(() => {});
+                    finish('user');
                     return;
                 }
-                
+
                 const diff = diffManager.getDiff(pendingDiff.id);
                 if (!diff || diff.status !== 'pending') {
-                    resolve(false);
+                    finish('none');
                 } else {
                     setTimeout(checkStatus, 100);
                 }
             };
             checkStatus();
         });
+
+        const wasInterrupted = interruptReason !== 'none';
         
         const finalDiff = diffManager.getDiff(pendingDiff.id);
         const wasAccepted = !wasInterrupted && (!finalDiff || finalDiff.status === 'accepted');
-        
+
         // 尝试将内容保存到 DiffStorageManager，供前端按需加载
         const diffStorageManager = getDiffStorageManager();
         let diffContentId: string | undefined;
@@ -140,12 +193,16 @@ async function writeSingleFile(entry: WriteFileEntry, isMultiRoot: boolean): Pro
         }
         
         if (wasInterrupted) {
-            // 简化返回：AI 已经知道写入的内容，不需要重复返回
+            // 用户终止/中断，视为取消
             return {
                 path: filePath,
-                success: true,  // 用户主动中断，不算失败
+                success: false,
+                cancelled: true,
                 action: fileExists ? 'modified' : 'created',
-                status: 'pending',
+                status: 'rejected',
+                error: interruptReason === 'abort'
+                    ? 'Write was cancelled by user'
+                    : 'Write was interrupted by user',
                 diffContentId
             };
         }
@@ -219,7 +276,7 @@ export function createWriteFileTool(): Tool {
                 required: ['files']
             }
         },
-        handler: async (args): Promise<ToolResult> => {
+        handler: async (args, context?: ToolContext): Promise<ToolResult> => {
             const fileList = args.files as WriteFileEntry[] | undefined;
             
             if (!fileList || !Array.isArray(fileList) || fileList.length === 0) {
@@ -241,7 +298,7 @@ export function createWriteFileTool(): Tool {
             let unchangedCount = 0;
 
             for (const entry of fileList) {
-                const result = await writeSingleFile(entry, isMultiRoot);
+                const result = await writeSingleFile(entry, isMultiRoot, context?.toolId, context?.abortSignal);
                 results.push(result);
                 
                 if (result.success) {
@@ -254,18 +311,22 @@ export function createWriteFileTool(): Tool {
                 }
             }
 
-            const allSuccess = failCount === 0;
+            const anyCancelled = results.some(r => r.cancelled);
+            const allSuccess = failCount === 0 && !anyCancelled;
             
             // 简化返回：AI 已经知道写入的内容，只需要知道结果
             return {
                 success: allSuccess,
+                cancelled: anyCancelled,
                 data: {
                     results,
                     successCount,
                     failCount,
                     totalCount: fileList.length
                 },
-                error: allSuccess ? undefined : `${failCount} files failed to write`
+                error: anyCancelled
+                    ? 'Write was cancelled by user'
+                    : (allSuccess ? undefined : `${failCount} files failed to write`)
             };
         }
     };

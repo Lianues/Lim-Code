@@ -301,6 +301,31 @@ Requirements:
                 rejected: 'Rejected changes: {filePath}',
                 diffTitle: '{filePath} (AI changes - Ctrl+S to save)'
             },
+            diffCodeLens: {
+                accept: 'Accept',
+                reject: 'Reject',
+                acceptAll: 'Accept All',
+                rejectAll: 'Reject All'
+            },
+            diffEditorActions: {
+                noActiveDiff: 'No pending diff changes',
+                allBlocksProcessed: 'All diff blocks have been processed',
+                diffBlock: 'Diff Block #{index}',
+                lineRange: 'Lines {start}-{end}',
+                acceptAllBlocks: 'Accept All Blocks',
+                rejectAllBlocks: 'Reject All Blocks',
+                blocksCount: '{count} pending block(s)',
+                selectBlockToAccept: 'Select Diff Block to Accept',
+                selectBlockToReject: 'Select Diff Block to Reject',
+                selectBlockPlaceholder: 'You can select multiple'
+            },
+            diffInline: {
+                hoverOrLightbulb: 'Hover or click 💡 to apply',
+                acceptBlock: 'Accept Diff Block #{index}',
+                rejectBlock: 'Reject Diff Block #{index}',
+                acceptAll: 'Accept All Changes',
+                rejectAll: 'Reject All Changes'
+            },
             readFile: {
                 cannotReadFile: 'Cannot read this file'
             }

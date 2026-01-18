@@ -2,7 +2,7 @@
   "name": "limcode",
   "displayName": "Lim Code",
   "description": "Lim Code 是一个AI编程助手插件，支持多模态和复杂功能。",
-  "version": "1.0.44",
+  "version": "1.0.49",
   "publisher": "Lianues",
   "icon": "resources/icon.png",
   "engines": {
@@ -40,6 +40,50 @@
         "command": "limcode.showSettings",
         "title": "设置",
         "icon": "$(settings-gear)"
+      },
+      {
+        "command": "limcode.diff.acceptAll",
+        "title": "Accept All Changes",
+        "icon": "$(check-all)",
+        "category": "LimCode"
+      },
+      {
+        "command": "limcode.diff.rejectAll",
+        "title": "Reject All Changes",
+        "icon": "$(close-all)",
+        "category": "LimCode"
+      },
+      {
+        "command": "limcode.diff.acceptBlock",
+        "title": "Accept Diff Block...",
+        "icon": "$(check)",
+        "category": "LimCode"
+      },
+      {
+        "command": "limcode.diff.rejectBlock",
+        "title": "Reject Diff Block...",
+        "icon": "$(close)",
+        "category": "LimCode"
+      },
+      {
+        "command": "limcode.diff.acceptCurrentBlock",
+        "title": "Accept Current Diff Block",
+        "category": "LimCode"
+      },
+      {
+        "command": "limcode.diff.rejectCurrentBlock",
+        "title": "Reject Current Diff Block",
+        "category": "LimCode"
+      },
+      {
+        "command": "limcode.diff.nextBlock",
+        "title": "Go to Next Diff Block",
+        "category": "LimCode"
+      },
+      {
+        "command": "limcode.diff.prevBlock",
+        "title": "Go to Previous Diff Block",
+        "category": "LimCode"
       }
     ],
     "menus": {
@@ -59,8 +103,56 @@
           "when": "view == limcode.chatView",
           "group": "navigation@3"
         }
+      ],
+      "editor/title": [
+        {
+          "command": "limcode.diff.acceptAll",
+          "when": "limcode.hasPendingDiff",
+          "group": "navigation@1"
+        },
+        {
+          "command": "limcode.diff.rejectAll",
+          "when": "limcode.hasPendingDiff",
+          "group": "navigation@2"
+        },
+        {
+          "command": "limcode.diff.acceptBlock",
+          "when": "limcode.hasPendingDiff",
+          "group": "navigation@3"
+        },
+        {
+          "command": "limcode.diff.rejectBlock",
+          "when": "limcode.hasPendingDiff",
+          "group": "navigation@4"
+        }
       ]
     },
+    "keybindings": [
+      {
+        "command": "limcode.diff.acceptCurrentBlock",
+        "key": "ctrl+shift+y",
+        "mac": "cmd+shift+y",
+        "when": "limcode.hasPendingDiff && editorTextFocus"
+      },
+      {
+        "command": "limcode.diff.rejectCurrentBlock",
+        "key": "ctrl+shift+n",
+        "mac": "cmd+shift+n",
+        "when": "limcode.hasPendingDiff && editorTextFocus"
+      },
+      {
+        "command": "limcode.diff.nextBlock",
+        "key": "alt+]",
+        "mac": "alt+]",
+        "when": "limcode.hasPendingDiff && editorTextFocus"
+      },
+      {
+        "command": "limcode.diff.prevBlock",
+        "key": "alt+[",
+        "mac": "alt+[",
+        "when": "limcode.hasPendingDiff && editorTextFocus"
+      }
+    ],
     "viewsContainers": {
       "activitybar": [
         {

@@ -109,6 +109,11 @@ const zhCN: LanguageMessages = {
                 confirm: '确定',
                 cancel: '取消'
             },
+            inputDialog: {
+                title: '请输入',
+                confirm: '确定',
+                cancel: '取消'
+            },
             deleteDialog: {
                 title: '删除消息',
                 message: '确定要删除这条消息吗？',
@@ -223,6 +228,12 @@ const zhCN: LanguageMessages = {
             tokenUsage: '使用量',
             context: '上下文',
             fileNotExists: '文件不存在',
+            mode: {
+                selectMode: '选择模式',
+                manageMode: '管理模式',
+                search: '搜索模式...',
+                noResults: '没有匹配的模式'
+            },
             channelSelector: {
                 placeholder: '选择配置',
                 searchPlaceholder: '搜索渠道...',
@@ -334,6 +345,8 @@ const zhCN: LanguageMessages = {
                 paramCount: '{count} 个参数',
                 confirmExecution: '点击确认执行',
                 confirm: '确认执行',
+                saveAll: '全部保存',
+                rejectAll: '全部拒绝',
                 reject: '拒绝',
                 confirmed: '已确认',
                 rejected: '已拒绝',
@@ -354,6 +367,7 @@ const zhCN: LanguageMessages = {
                 tools: '工具',
                 autoExec: '自动执行',
                 mcp: 'MCP',
+                subagents: '子代理',
                 checkpoint: '存档点',
                 summarize: '总结',
                 imageGen: '图像生成',
@@ -976,6 +990,60 @@ const zhCN: LanguageMessages = {
                     cancel: '取消'
                 }
             },
+            subagents: {
+                selectAgent: '选择子代理',
+                noAgents: '暂无子代理',
+                create: '新建',
+                rename: '重命名',
+                delete: '删除',
+                disabled: '已禁用',
+                enabled: '启用此子代理',
+                globalConfig: '全局配置',
+                maxConcurrentAgents: '最大并发数',
+                maxConcurrentAgentsHint: 'AI 一次性可调用的最大子代理数量（-1 表示无限制）',
+                basicInfo: '基本信息',
+                description: '描述',
+                descriptionPlaceholder: '向主 AI 说明何时使用此子代理',
+                maxIterations: '最大迭代次数',
+                maxIterationsHint: '子代理内部最大工具调用轮数（-1 表示无限制）',
+                maxRuntime: '最大运行时间',
+                maxRuntimeHint: '子代理最大运行时间（秒，-1 表示无限制）',
+                systemPrompt: '系统提示词',
+                systemPromptPlaceholder: '输入子代理的系统提示词...',
+                channelModel: '渠道与模型',
+                channel: '渠道',
+                selectChannel: '选择渠道',
+                model: '模型',
+                selectModel: '选择模型',
+                tools: '工具配置',
+                toolsDescription: '配置子代理可使用的工具',
+                toolMode: {
+                    label: '工具模式',
+                    all: '全部工具',
+                    builtin: '仅内置工具',
+                    mcp: '仅 MCP 工具',
+                    whitelist: '白名单',
+                    blacklist: '黑名单'
+                },
+                builtinTools: '内置工具',
+                mcpTools: 'MCP 工具',
+                noTools: '暂无可用工具',
+                whitelistHint: '勾选的工具将被允许使用',
+                blacklistHint: '勾选的工具将被禁止使用',
+                emptyState: '暂无子代理，点击下方按钮创建第一个',
+                createFirst: '创建子代理',
+                deleteConfirm: {
+                    title: '删除子代理',
+                    message: '确定要删除此子代理吗？此操作不可恢复。'
+                },
+                createDialog: {
+                    title: '新建子代理',
+                    nameLabel: '名称',
+                    namePlaceholder: '例如：代码审查专家',
+                    nameRequired: '请输入子代理名称',
+                    nameDuplicate: '已存在同名的子代理'
+                }
+            },
             modelManager: {
                 title: '模型列表',
                 fetchModels: '获取模型',
@@ -1022,6 +1090,18 @@ const zhCN: LanguageMessages = {
                 loading: '加载中...',
                 enable: '启用自定义系统提示词模板',
                 enableDescription: '启用后可以自定义系统提示词的结构和内容，使用模块占位符组装提示词',
+                modes: {
+                    label: '提示词模式',
+                    add: '添加模式',
+                    rename: '重命名',
+                    delete: '删除模式',
+                    confirmDelete: '确定要删除这个模式吗？此操作不可撤销。',
+                    cannotDeleteDefault: '无法删除默认模式',
+                    unsavedChanges: '当前模式有未保存的更改，确定要放弃并切换吗？',
+                    newModeName: '请输入新模式的名称',
+                    newModeDefault: '新模式',
+                    renameModePrompt: '请输入新的模式名称'
+                },
                 templateSection: {
                     title: '系统提示词模板',
                     resetButton: '重置为默认',
@@ -1198,6 +1278,10 @@ const zhCN: LanguageMessages = {
                         title: 'Token 计数',
                         description: '配置用于计算 Token 数量的 API'
                     },
+                    subagents: {
+                        title: '子代理',
+                        description: '配置可由 AI 调用的专业子代理'
+                    },
                     general: {
                         title: '通用设置',
                         description: '基本配置选项'
@@ -1223,7 +1307,7 @@ const zhCN: LanguageMessages = {
                 appInfo: {
                     title: '应用信息',
                     name: 'Lim Code - Vibe Coding助手',
-                    version: '版本：1.0.44',
+                    version: '版本：1.0.49',
                     repository: '项目仓库',
                     developer: '开发者'
                 }
@@ -1666,7 +1750,8 @@ const zhCN: LanguageMessages = {
                     diffApplied: '差异已应用',
                     pending: '待审阅',
                     accepted: '已接受',
-                    line: '行',
+                    rejected: '已拒绝',
+                    line: '起始行',
                     diffNumber: '#',
                     collapse: '收起',
                     expandRemaining: '展开剩余 {count} 行',
@@ -1983,7 +2068,6 @@ const zhCN: LanguageMessages = {
                     title: '搜索内容',
                     replaceTitle: '搜索替换',
                     regex: '正则',
-                    dryRun: '预览',
                     matchCount: '{count} 个匹配',
                     fileCount: '{count} 个文件',
                     truncated: '已截断',
@@ -2032,6 +2116,15 @@ const zhCN: LanguageMessages = {
                     noOutput: '没有输出',
                     executing: '命令执行中...'
                 }
+            },
+            subagents: {
+                title: '子代理',
+                task: '任务',
+                context: '上下文',
+                completed: '执行完成',
+                failed: '执行失败',
+                executing: '正在执行...',
+                partialResponse: '部分响应'
             }
         }
     },

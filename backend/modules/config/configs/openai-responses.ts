@@ -105,12 +105,6 @@ export interface OpenAIResponsesConfig extends BaseChannelConfig {
             summary?: 'auto' | 'concise' | 'detailed';
         };
         
-        /**
-         * 截断策略
-         * - auto: 自动截断以适应上下文窗口
-         * - disabled: 不截断，如果超出上下文窗口则返回错误
-         */
-        truncation?: 'auto' | 'disabled';
     };
     
     /**
