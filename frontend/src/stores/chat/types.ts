@@ -69,8 +69,22 @@ export interface ConfigInfo {
  * Chat Store 状态类型
  */
 export interface ChatStoreState {
-  /** 所有对话列表 */
+  /**
+   * 已加载的对话摘要列表（仅元数据）
+   *
+   * 注意：为了提升大量历史对话时的启动速度，这里会分页加载。
+   */
   conversations: Ref<Conversation[]>
+
+  /** 所有已持久化对话 ID（用于分页加载） */
+  persistedConversationIds: Ref<string[]>
+
+  /** 已加载的持久化对话数量（游标/已加载条数） */
+  persistedConversationsLoaded: Ref<number>
+
+  /** 是否正在加载更多对话（滚动分页） */
+  isLoadingMoreConversations: Ref<boolean>
+
   /** 当前对话ID */
   currentConversationId: Ref<string | null>
   /** 当前对话的所有消息列表（包括 functionResponse 消息） */

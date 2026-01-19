@@ -188,6 +188,11 @@ async function loadLanguageSettings() {
       settingsStore.setLanguage(response.settings.ui.language)
       setLanguage(response.settings.ui.language)
     }
+
+    // 加载外观设置
+    if (response?.settings?.ui?.appearance) {
+      settingsStore.setAppearanceLoadingText(response.settings.ui.appearance.loadingText || '')
+    }
   } catch (error) {
     console.error('Failed to load language settings:', error)
   } finally {

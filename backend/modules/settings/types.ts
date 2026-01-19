@@ -1183,6 +1183,18 @@ export interface GlobalSettings {
         
         /** 语言设置 */
         language?: string;
+
+        /**
+         * 外观设置
+         */
+        appearance?: {
+            /**
+             * 流式输出指示器文本（例如：Loading / 思考中…）
+             *
+             * - 为空或未设置时：前端使用默认值
+             */
+            loadingText?: string;
+        };
     };
     
     /**
@@ -1875,7 +1887,11 @@ export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
     },
     ui: {
         theme: 'auto',
-        language: 'zh-CN'
+        language: 'zh-CN',
+        appearance: {
+            // 为空表示前端使用默认值（通常来自 i18n）
+            loadingText: ''
+        }
     },
     lastUpdated: Date.now()
 };

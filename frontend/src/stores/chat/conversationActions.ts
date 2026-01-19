@@ -9,6 +9,56 @@ import { sendToExtension } from '../../utils/vscode'
 import { contentToMessageEnhanced } from './parsers'
 import type { Content } from '../../types'
 
+// ============ 对话列表分页加载配置 ============
+
+/** 每次分页加载的对话数量 */
+export const CONVERSATIONS_PAGE_SIZE = 30
+
+/** 拉取元数据时的并发数（避免一次性打爆 IPC / IO） */
+const METADATA_FETCH_CONCURRENCY = 30
+
+function parseConversationIdTimestamp(id: string): number | null {
+  // 默认创建 ID: conv_${Date.now()}_${random}
+  const m = /^conv_(\d+)_/.exec(id)
+  if (!m) return null
+  const n = Number(m[1])
+  return Number.isFinite(n) ? n : null
+}
+
+function sortConversationIds(ids: string[]): string[] {
+  // 尽量把“看起来较新的”对话排在前面：
+  // 1) conv_{timestamp}_xxx 按 timestamp 倒序
+  // 2) 其他按字符串倒序（尽量稳定）
+  return [...ids].sort((a, b) => {
+    const ta = parseConversationIdTimestamp(a)
+    const tb = parseConversationIdTimestamp(b)
+    if (ta != null && tb != null) return tb - ta
+    if (ta != null) return -1
+    if (tb != null) return 1
+    return b.localeCompare(a)
+  })
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = new Array(items.length)
+  let nextIndex = 0
+
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (true) {
+      const index = nextIndex++
+      if (index >= items.length) break
+      results[index] = await fn(items[index], index)
+    }
+  })
+
+  await Promise.all(workers)
+  return results
+}
+
 /**
  * 取消流式并拒绝工具的回调类型
  */
@@ -73,6 +123,12 @@ export async function createAndPersistConversation(
     
     state.conversations.value.unshift(newConversation)
     state.currentConversationId.value = id
+
+    // 同步分页列表（避免后续滚动加载重复 / 丢失）
+    if (!state.persistedConversationIds.value.includes(id)) {
+      state.persistedConversationIds.value.unshift(id)
+      state.persistedConversationsLoaded.value += 1
+    }
     
     return id
   } catch (err) {
@@ -89,42 +145,21 @@ export async function createAndPersistConversation(
  */
 export async function loadConversations(state: ChatStoreState): Promise<void> {
   state.isLoadingConversations.value = true
-  
+
   try {
+    // 仅获取全部 ID（一次请求），实际元数据采用分页加载
     const ids = await sendToExtension<string[]>('conversation.listConversations', {})
-    
-    const summaries: Conversation[] = []
-    for (const id of ids) {
-      try {
-        // 只获取元信息，不获取消息内容
-        const metadata = await sendToExtension<any>('conversation.getConversationMetadata', { conversationId: id })
-        
-        summaries.push({
-          id,
-          title: metadata?.title || `Chat ${id.slice(0, 8)}`,
-          createdAt: metadata?.createdAt || Date.now(),
-          updatedAt: metadata?.updatedAt || metadata?.custom?.updatedAt || Date.now(),
-          // 消息数量从元信息获取（如果有），否则显示为 0，切换时再更新
-          messageCount: metadata?.custom?.messageCount || 0,
-          preview: metadata?.custom?.preview,
-          isPersisted: true,  // 从后端加载的都是已持久化的
-          workspaceUri: metadata?.workspaceUri
-        })
-      } catch {
-        summaries.push({
-          id,
-          title: `Chat ${id.slice(0, 8)}`,
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-          messageCount: 0,
-          isPersisted: true
-        })
-      }
-    }
-    
+
+    // 重置分页游标
+    state.persistedConversationIds.value = sortConversationIds(ids)
+    state.persistedConversationsLoaded.value = 0
+
     // 保留未持久化的对话
     const unpersistedConvs = state.conversations.value.filter(c => !c.isPersisted)
-    state.conversations.value = [...unpersistedConvs, ...summaries]
+    state.conversations.value = [...unpersistedConvs]
+
+    // 加载第一页
+    await loadMoreConversations(state, { initial: true })
   } catch (err: any) {
     state.error.value = {
       code: err.code || 'LOAD_ERROR',
@@ -132,6 +167,78 @@ export async function loadConversations(state: ChatStoreState): Promise<void> {
     }
   } finally {
     state.isLoadingConversations.value = false
+  }
+}
+
+/**
+ * 分页加载更多对话（只加载元数据）
+ *
+ * - 初始加载：由 loadConversations 调用（initial=true），不占用底部加载状态
+ * - 滚动加载：initial=false，会设置 isLoadingMoreConversations
+ */
+export async function loadMoreConversations(
+  state: ChatStoreState,
+  options: { pageSize?: number; initial?: boolean } = {}
+): Promise<void> {
+  const pageSize = options.pageSize ?? CONVERSATIONS_PAGE_SIZE
+  const initial = options.initial ?? false
+
+  if (!initial && state.isLoadingMoreConversations.value) return
+
+  const allIds = state.persistedConversationIds.value
+  const cursor = state.persistedConversationsLoaded.value
+  if (cursor >= allIds.length) return
+
+  const idsToLoad = allIds.slice(cursor, cursor + pageSize)
+  if (idsToLoad.length === 0) return
+
+  if (!initial) state.isLoadingMoreConversations.value = true
+
+  try {
+    const summaries = await mapWithConcurrency(
+      idsToLoad,
+      METADATA_FETCH_CONCURRENCY,
+      async (id) => {
+        try {
+          // 只获取元信息，不获取消息内容
+          const metadata = await sendToExtension<any>('conversation.getConversationMetadata', { conversationId: id })
+
+          return {
+            id,
+            title: metadata?.title || `Chat ${id.slice(0, 8)}`,
+            createdAt: metadata?.createdAt || Date.now(),
+            updatedAt: metadata?.updatedAt || metadata?.custom?.updatedAt || Date.now(),
+            // 消息数量从元信息获取（如果有），否则显示为 0，切换时再更新
+            messageCount: metadata?.custom?.messageCount || 0,
+            preview: metadata?.custom?.preview,
+            isPersisted: true,
+            workspaceUri: metadata?.workspaceUri
+          } as Conversation
+        } catch {
+          return {
+            id,
+            title: `Chat ${id.slice(0, 8)}`,
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            messageCount: 0,
+            isPersisted: true
+          } as Conversation
+        }
+      }
+    )
+
+    state.persistedConversationsLoaded.value = cursor + idsToLoad.length
+
+    // 合并到现有列表（避免重复）
+    const unpersisted = state.conversations.value.filter(c => !c.isPersisted)
+    const persistedExisting = state.conversations.value.filter(c => c.isPersisted)
+    const map = new Map<string, Conversation>()
+    for (const c of persistedExisting) map.set(c.id, c)
+    for (const c of summaries) map.set(c.id, c)
+
+    state.conversations.value = [...unpersisted, ...Array.from(map.values())]
+  } finally {
+    if (!initial) state.isLoadingMoreConversations.value = false
   }
 }
 
@@ -264,6 +371,17 @@ export async function deleteConversation(
     
     // 后端删除成功后，再从前端移除
     state.conversations.value = state.conversations.value.filter(c => c.id !== id)
+
+    // 同步分页列表游标
+    if (conv.isPersisted) {
+      const idx = state.persistedConversationIds.value.indexOf(id)
+      if (idx >= 0) {
+        state.persistedConversationIds.value.splice(idx, 1)
+        if (idx < state.persistedConversationsLoaded.value) {
+          state.persistedConversationsLoaded.value = Math.max(0, state.persistedConversationsLoaded.value - 1)
+        }
+      }
+    }
     
     // 如果删除的是当前对话，切换或创建新对话
     if (state.currentConversationId.value === id) {

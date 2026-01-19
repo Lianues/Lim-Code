@@ -3,6 +3,17 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.0.52] - 2026-01-19
+
+### Added
+  - 添加了外观设置面板，添加了等待的文字配置项，可以自己配置显示文字，而不使用Loading
+
+### Improved
+  - 优化了历史对话加载方式，改为分页加载，减少等待时间
+
+### Fixed
+  - 修复了前端中断消息时，流式动画未消失的问题
+
 ## [1.0.51] - 2026-01-19
 
 ### Added

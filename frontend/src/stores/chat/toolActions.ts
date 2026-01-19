@@ -62,6 +62,44 @@ type IncompleteToolInfo = {
   toolCalls: Array<{ id: string; name: string }>
 }
 
+/**
+ * 将当前流式 assistant 消息的 streaming 标记置为 false，以便前端 Loading 动画立即消失。
+ *
+ * 注意：取消请求时不一定存在工具调用，因此不能依赖 markIncompleteToolsAsError。
+ */
+function stopStreamingMessage(state: ChatStoreState, messageId?: string | null): void {
+  const all = state.allMessages.value
+
+  // 1) 优先使用传入的 messageId
+  let targetIndex = -1
+  if (messageId) {
+    const idx = all.findIndex(m => m.id === messageId)
+    if (idx !== -1 && all[idx].role === 'assistant' && all[idx].streaming === true) {
+      targetIndex = idx
+    }
+  }
+
+  // 2) fallback：从后往前找最后一条 streaming 的 assistant 消息
+  if (targetIndex === -1) {
+    for (let i = all.length - 1; i >= 0; i--) {
+      const msg = all[i]
+      if (msg.role === 'assistant' && msg.streaming === true) {
+        targetIndex = i
+        break
+      }
+    }
+  }
+
+  if (targetIndex === -1) return
+
+  const msg = all[targetIndex]
+  state.allMessages.value = [
+    ...all.slice(0, targetIndex),
+    { ...msg, streaming: false },
+    ...all.slice(targetIndex + 1)
+  ]
+}
+
 function markIncompleteToolsAsError(state: ChatStoreState, messageId?: string | null): IncompleteToolInfo | null {
   const all = state.allMessages.value
 
@@ -200,6 +238,9 @@ export async function cancelStreamAndRejectTools(
   _computed: ChatStoreComputed
 ): Promise<void> {
   if (!state.currentConversationId.value) return
+
+  // 先让前端流式指示器立即消失（无论是否存在工具调用）
+  stopStreamingMessage(state, state.streamingMessageId.value)
   
   if (state.retryStatus.value) {
     state.retryStatus.value = null
@@ -261,10 +302,16 @@ export async function cancelStream(
   if (state.retryStatus.value) {
     state.retryStatus.value = null
   }
-  
+
   if (!state.isWaitingForResponse.value || !state.currentConversationId.value) {
     return
   }
+
+  // 先保存当前 streaming 消息 ID，因为后续 await / 事件可能会改变它
+  const currentStreamingId = state.streamingMessageId.value
+
+  // 先让前端流式指示器立即消失（无论是否存在工具调用）
+  stopStreamingMessage(state, currentStreamingId)
   
   // 等待工具确认状态（包括 diff 工具等待用户操作）
   if (!state.isStreaming.value) {
@@ -289,9 +336,6 @@ export async function cancelStream(
   }
   
   // 正在流式响应
-  // 先保存当前 streaming 消息 ID，因为 await 期间可能被其他事件清除
-  const currentStreamingId = state.streamingMessageId.value
-
   try {
     await sendToExtension('cancelStream', {
       conversationId: state.currentConversationId.value

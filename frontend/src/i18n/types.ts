@@ -403,6 +403,7 @@ export interface LanguageMessages {
                 context: string;
                 prompt: string;
                 tokenCount: string;
+                appearance: string;
                 general: string;
             };
             
@@ -1427,6 +1428,10 @@ export interface LanguageMessages {
                         title: string;
                         description: string;
                     };
+                    appearance: {
+                        title: string;
+                        description: string;
+                    };
                     general: {
                         title: string;
                         description: string;
@@ -1512,6 +1517,16 @@ export interface LanguageMessages {
                 requestBody: string;
                 responseFormat: string;
                 openaiDocNote: string;
+                saveSuccess: string;
+                saveFailed: string;
+            };
+            appearanceSettings: {
+                loadingText: {
+                    title: string;
+                    description: string;
+                    placeholder: string;
+                    defaultHint: string;
+                };
                 saveSuccess: string;
                 saveFailed: string;
             };

@@ -375,6 +375,7 @@ const zhCN: LanguageMessages = {
                 context: '上下文',
                 prompt: '提示词',
                 tokenCount: 'Token 计数',
+                appearance: '外观',
                 general: '通用'
             },
             channelSettings: {
@@ -1282,6 +1283,10 @@ const zhCN: LanguageMessages = {
                         title: '子代理',
                         description: '配置可由 AI 调用的专业子代理'
                     },
+                    appearance: {
+                        title: '外观设置',
+                        description: '配置界面外观相关选项'
+                    },
                     general: {
                         title: '通用设置',
                         description: '基本配置选项'
@@ -1307,7 +1312,7 @@ const zhCN: LanguageMessages = {
                 appInfo: {
                     title: '应用信息',
                     name: 'Lim Code - Vibe Coding助手',
-                    version: '版本：1.0.51',
+                    version: '版本：1.0.52',
                     repository: '项目仓库',
                     developer: '开发者'
                 }
@@ -1474,6 +1479,16 @@ const zhCN: LanguageMessages = {
                 responseFormat: '// 响应格式',
                 openaiDocNote: '您的 API 需要返回包含 total_tokens 字段的 JSON 响应。请求体使用 OpenAI Messages 格式。',
                 saveSuccess: '配置已保存',
+                saveFailed: '保存失败'
+            },
+            appearanceSettings: {
+                loadingText: {
+                    title: '流式 Loading 文本',
+                    description: '在 AI 流式输出时，消息底部的逐字波动指示器显示的文本。',
+                    placeholder: '例如：思考中…',
+                    defaultHint: '留空使用默认值：{text}'
+                },
+                saveSuccess: '保存成功',
                 saveFailed: '保存失败'
             },
             storageSettings: {

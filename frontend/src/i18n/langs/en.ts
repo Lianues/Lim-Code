@@ -375,6 +375,7 @@ const en: LanguageMessages = {
                 context: 'Context',
                 prompt: 'Prompt',
                 tokenCount: 'Token Count',
+                appearance: 'Appearance',
                 general: 'General'
             },
             channelSettings: {
@@ -1282,6 +1283,10 @@ const en: LanguageMessages = {
                         title: 'Sub-Agents',
                         description: 'Configure specialized sub-agents that AI can invoke'
                     },
+                    appearance: {
+                        title: 'Appearance',
+                        description: 'Configure UI appearance options'
+                    },
                     general: {
                         title: 'General Settings',
                         description: 'Basic configuration options'
@@ -1307,7 +1312,7 @@ const en: LanguageMessages = {
                 appInfo: {
                     title: 'Application Info',
                     name: 'Lim Code - Vibe Coding Assistant',
-                    version: 'Version: 1.0.51',
+                    version: 'Version: 1.0.52',
                     repository: 'Repository',
                     developer: 'Developer'
                 }
@@ -1474,6 +1479,16 @@ const en: LanguageMessages = {
                 responseFormat: '// Response Format',
                 openaiDocNote: 'Your API should return a JSON response with a total_tokens field. The request body uses OpenAI Messages format.',
                 saveSuccess: 'Configuration saved',
+                saveFailed: 'Save failed'
+            },
+            appearanceSettings: {
+                loadingText: {
+                    title: 'Streaming Loading Text',
+                    description: 'Text displayed in the animated indicator at the bottom of a message while the AI is streaming output.',
+                    placeholder: 'e.g. Thinking...',
+                    defaultHint: 'Leave empty to use default: {text}'
+                },
+                saveSuccess: 'Saved successfully',
                 saveFailed: 'Save failed'
             },
             storageSettings: {

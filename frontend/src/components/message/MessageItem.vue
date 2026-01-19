@@ -13,6 +13,7 @@ import { MarkdownRenderer, RetryDialog, EditDialog } from '../common'
 import type { Message, ToolUsage, CheckpointRecord, Attachment } from '../../types'
 import { formatTime } from '../../utils/format'
 import { useChatStore } from '../../stores/chatStore'
+import { useSettingsStore } from '../../stores/settingsStore'
 import { useI18n } from '../../i18n'
 
 const { t } = useI18n()
@@ -32,6 +33,16 @@ const emit = defineEmits<{
 }>()
 
 const chatStore = useChatStore()
+const settingsStore = useSettingsStore()
+
+// 流式输出指示器文本：支持用户自定义（外观设置），为空时使用 i18n 默认值
+const streamingIndicatorText = computed(() => {
+  const custom = (settingsStore.appearanceLoadingText || '').trim()
+  return custom || t('common.loading') || 'Loading'
+})
+
+// 使用 Array.from 以更好地支持中文等多字节字符
+const streamingIndicatorChars = computed(() => Array.from(streamingIndicatorText.value))
 
 const showActions = ref(false)
 const showRetryDialog = ref(false)
@@ -597,7 +608,7 @@ function handleRestoreAndRetry(checkpointId: string) {
           v-if="isStreaming"
           class="streaming-indicator"
           role="status"
-          aria-label="Loading"
+          :aria-label="streamingIndicatorText"
           :style="{
             '--loading-duration': '2.8s',
             '--loading-idle-color': 'var(--vscode-descriptionForeground, #8a8a8a)',
@@ -606,11 +617,11 @@ function handleRestoreAndRetry(checkpointId: string) {
           }"
         >
           <span
-            v-for="(ch, i) in 'Loading'.split('')"
+            v-for="(ch, i) in streamingIndicatorChars"
             :key="i"
             class="streaming-indicator__char"
             :class="{
-              'streaming-indicator__char--brand': i === 0 && ch === 'L',
+              'streaming-indicator__char--brand': i === 0,
               'streaming-indicator__char--underline': true
             }"
             :style="{ '--loading-delay': `${i * 0.16}s` }"

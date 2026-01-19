@@ -375,6 +375,7 @@ const ja: LanguageMessages = {
                 context: 'コンテキスト',
                 prompt: 'プロンプト',
                 tokenCount: 'トークンカウント',
+                appearance: '外観',
                 general: '一般'
             },
             channelSettings: {
@@ -1282,6 +1283,10 @@ const ja: LanguageMessages = {
                         title: 'サブエージェント',
                         description: 'AI が呼び出せる専門サブエージェントを設定'
                     },
+                    appearance: {
+                        title: '外観',
+                        description: 'UI の外観に関する設定'
+                    },
                     general: {
                         title: '一般設定',
                         description: '基本的な設定オプション'
@@ -1307,7 +1312,7 @@ const ja: LanguageMessages = {
                 appInfo: {
                     title: 'アプリケーション情報',
                     name: 'Lim Code - Vibe Coding アシスタント',
-                    version: 'バージョン：1.0.51',
+                    version: 'バージョン：1.0.52',
                     repository: 'リポジトリ',
                     developer: '開発者'
                 }
@@ -1474,6 +1479,16 @@ const ja: LanguageMessages = {
                 responseFormat: '// レスポンス形式',
                 openaiDocNote: 'API は total_tokens フィールドを含む JSON レスポンスを返す必要があります。リクエストボディは OpenAI Messages 形式を使用します。',
                 saveSuccess: '設定を保存しました',
+                saveFailed: '保存に失敗しました'
+            },
+            appearanceSettings: {
+                loadingText: {
+                    title: 'ストリーミング Loading テキスト',
+                    description: 'AI がストリーミング出力中に、メッセージ下部のアニメーション指示器に表示されるテキストです。',
+                    placeholder: '例：考え中…',
+                    defaultHint: '空欄の場合は既定値を使用：{text}'
+                },
+                saveSuccess: '保存しました',
                 saveFailed: '保存に失敗しました'
             },
             storageSettings: {

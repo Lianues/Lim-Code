@@ -14,7 +14,12 @@ import { t } from '../../i18n'
 const props = defineProps<{
   conversations: Conversation[]
   currentId: string | null
+  /** 初始加载（整页 loading） */
   loading?: boolean
+  /** 滚动分页加载（底部 loading） */
+  loadingMore?: boolean
+  /** 是否还有更多可加载 */
+  hasMore?: boolean
   formatTime: (timestamp: number) => string
 }>()
 
@@ -106,6 +111,11 @@ async function handleRevealInExplorer(id: string) {
           </template>
         </div>
       </div>
+
+      <!-- 底部滚动加载指示（无感加载：仅展示轻量 loading） -->
+      <div v-if="loadingMore" class="list-loading-more">
+        <i class="codicon codicon-loading codicon-modifier-spin"></i>
+      </div>
     </div>
   </div>
 </template>
@@ -153,6 +163,18 @@ async function handleRevealInExplorer(id: string) {
 .list-items {
   display: flex;
   flex-direction: column;
+}
+
+.list-loading-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--spacing-sm, 8px) 0;
+  color: var(--vscode-descriptionForeground);
+}
+
+.list-loading-more .codicon {
+  font-size: 14px;
 }
 
 .conversation-item {

@@ -26,6 +26,7 @@
  */
 
 import { defineStore } from 'pinia'
+import { computed as vueComputed } from 'vue'
 import type { Attachment, StreamChunk } from '../types'
 import { sendToExtension, onMessageFromExtension } from '../utils/vscode'
 
@@ -38,6 +39,7 @@ import { formatTime } from './chat/utils'
 import {
   createNewConversation as createNewConvAction,
   loadConversations as loadConvsAction,
+  loadMoreConversations as loadMoreConvsAction,
   loadHistory,
   loadCheckpoints,
   switchConversation as switchConvAction,
@@ -99,6 +101,11 @@ export const useChatStore = defineStore('chat', () => {
   
   // ============ 计算属性 ============
   const computed = createChatComputed(state)
+
+  /** 是否还有更多历史对话可加载（分页） */
+  const hasMoreConversations = vueComputed(
+    () => state.persistedConversationsLoaded.value < state.persistedConversationIds.value.length
+  )
   
   // ============ 工具操作 ============
   
@@ -132,6 +139,7 @@ export const useChatStore = defineStore('chat', () => {
   
   const createNewConversation = () => createNewConvAction(state, cancelStreamAndRejectTools)
   const loadConversations = () => loadConvsAction(state)
+  const loadMoreConversations = () => loadMoreConvsAction(state)
   const switchConversation = (id: string) => switchConvAction(state, id, cancelStreamAndRejectTools)
   const deleteConversation = (id: string) => deleteConvAction(
     state,
@@ -214,6 +222,8 @@ export const useChatStore = defineStore('chat', () => {
     isLoading: state.isLoading,
     isStreaming: state.isStreaming,
     isLoadingConversations: state.isLoadingConversations,
+    isLoadingMoreConversations: state.isLoadingMoreConversations,
+    hasMoreConversations,
     isWaitingForResponse: state.isWaitingForResponse,
     retryStatus: state.retryStatus,
     error: state.error,
@@ -235,6 +245,7 @@ export const useChatStore = defineStore('chat', () => {
     // 对话管理
     createNewConversation,
     loadConversations,
+    loadMoreConversations,
     switchConversation,
     deleteConversation,
     isDeletingConversation: (id: string) => isDeletingConversation(state, id),

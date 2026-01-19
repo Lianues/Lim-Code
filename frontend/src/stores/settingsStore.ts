@@ -6,7 +6,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 
-export type SettingsTab = 'channel' | 'tools' | 'autoExec' | 'mcp' | 'checkpoint' | 'summarize' | 'imageGen' | 'dependencies' | 'context' | 'prompt' | 'tokenCount' | 'subagents' | 'general'
+export type SettingsTab = 'channel' | 'tools' | 'autoExec' | 'mcp' | 'checkpoint' | 'summarize' | 'imageGen' | 'dependencies' | 'context' | 'prompt' | 'tokenCount' | 'subagents' | 'appearance' | 'general'
 
 /** 应用页面视图类型 */
 export type AppView = 'chat' | 'history' | 'settings'
@@ -23,6 +23,9 @@ export const useSettingsStore = defineStore('settings', () => {
   
   // 当前语言（默认中文）
   const language = ref<Language>('zh-CN')
+
+  // 外观设置：流式 Loading 文本（为空表示使用默认值）
+  const appearanceLoadingText = ref<string>('')
   
   // 模式刷新计数器（用于通知组件刷新模式列表）
   const promptModesVersion = ref(0)
@@ -62,6 +65,11 @@ export const useSettingsStore = defineStore('settings', () => {
   function setLanguage(lang: Language) {
     language.value = lang
   }
+
+  // 设置外观：流式 Loading 文本
+  function setAppearanceLoadingText(text: string) {
+    appearanceLoadingText.value = text
+  }
   
   // 通知模式列表刷新
   function refreshPromptModes() {
@@ -74,6 +82,7 @@ export const useSettingsStore = defineStore('settings', () => {
     isVisible,
     activeTab,
     language,
+    appearanceLoadingText,
     promptModesVersion,
 
     // 方法
@@ -83,6 +92,7 @@ export const useSettingsStore = defineStore('settings', () => {
     hideSettings,
     setActiveTab,
     setLanguage,
+    setAppearanceLoadingText,
     refreshPromptModes
   }
 })

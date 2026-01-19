@@ -4,7 +4,7 @@
  * 作为独立页面展示
  */
 
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import { CustomScrollbar, CustomSelect, type SelectOption } from '../common'
 import ConversationList from './ConversationList.vue'
 import { useChatStore, useSettingsStore } from '@/stores'
@@ -13,6 +13,51 @@ import { t } from '../../i18n'
 
 const chatStore = useChatStore()
 const settingsStore = useSettingsStore()
+
+// 滚动容器（用于分页加载）
+const scrollbarRef = ref<any>(null)
+let scrollEl: HTMLElement | null = null
+let scrollTicking = false
+
+function checkShouldLoadMore() {
+  if (!scrollEl) return
+  if (!chatStore.hasMoreConversations || chatStore.isLoadingMoreConversations) return
+
+  const remaining = scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight
+  // 提前 400px 触发预加载，做到无感
+  if (remaining <= 400) {
+    chatStore.loadMoreConversations().then(() => {
+      // 如果加载后仍然不足以产生滚动条，继续补齐下一页（直到有足够内容或没有更多）
+      requestAnimationFrame(() => checkShouldLoadMore())
+    })
+  }
+}
+
+function handleScroll() {
+  if (scrollTicking) return
+  scrollTicking = true
+  requestAnimationFrame(() => {
+    scrollTicking = false
+    checkShouldLoadMore()
+  })
+}
+
+onMounted(async () => {
+  await nextTick()
+  scrollEl = scrollbarRef.value?.getContainer?.() || null
+  if (scrollEl) {
+    scrollEl.addEventListener('scroll', handleScroll, { passive: true })
+    // 如果列表不足以撑满容器，立即补齐下一页
+    checkShouldLoadMore()
+  }
+})
+
+onBeforeUnmount(() => {
+  if (scrollEl) {
+    scrollEl.removeEventListener('scroll', handleScroll)
+    scrollEl = null
+  }
+})
 
 // 搜索关键词
 const searchKeyword = ref('')
@@ -95,7 +140,7 @@ async function handleDelete(id: string) {
     </div>
 
     <!-- 对话列表 -->
-    <CustomScrollbar class="page-content">
+    <CustomScrollbar ref="scrollbarRef" class="page-content">
       <!-- 搜索无结果提示 -->
       <div v-if="filteredConversations.length === 0 && searchKeyword && !chatStore.isLoadingConversations" class="no-results">
         <i class="codicon codicon-search"></i>
@@ -107,6 +152,7 @@ async function handleDelete(id: string) {
         :conversations="filteredConversations"
         :current-id="chatStore.currentConversationId"
         :loading="chatStore.isLoadingConversations"
+        :loading-more="chatStore.isLoadingMoreConversations"
         :format-time="chatStore.formatTime"
         @select="handleSelect"
         @delete="handleDelete"
