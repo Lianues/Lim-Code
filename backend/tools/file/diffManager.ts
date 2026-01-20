@@ -717,9 +717,6 @@ export class DiffManager {
             
             diff.status = 'accepted';
             this.cleanup(id);
-            
-            // 移除 CodeLens 会话
-            getDiffCodeLensProvider().removeSession(id);
 
             this.notifyStatusChange();
             this.notifySaveComplete(diff);
@@ -801,9 +798,6 @@ export class DiffManager {
 
             diff.status = 'rejected';
             this.cleanup(id);
-            
-            // 4. 移除 CodeLens 会话
-            getDiffCodeLensProvider().removeSession(id);
 
             this.notifyStatusChange();
             
@@ -857,6 +851,13 @@ export class DiffManager {
         }
         
         this.contentProvider.removeContent(id);
+
+        // 移除 CodeLens 会话（会自动触发相关 UI 刷新）
+        try {
+            getDiffCodeLensProvider().removeSession(id);
+        } catch (err) {
+            console.warn(`[DiffManager] Failed to remove CodeLens session ${id}:`, err);
+        }
         
         const tempDir = path.join(require('os').tmpdir(), 'gemini-diff');
         const diff = this.pendingDiffs.get(id);
@@ -978,14 +979,7 @@ export class DiffManager {
                 this.closeListeners.delete(id);
             }
 
-            // 4. 移除 CodeLens 会话（避免残留）
-            try {
-                getDiffCodeLensProvider().removeSession(id);
-            } catch (err) {
-                console.warn(`[DiffManager] Failed to remove CodeLens session ${id}:`, err);
-            }
-
-            // 5. 清理临时资源
+            // 4. 清理资源（会自动移除 CodeLens 会话并通知状态变化）
             try {
                 this.cleanup(id);
             } catch (err) {

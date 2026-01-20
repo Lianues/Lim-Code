@@ -7,6 +7,7 @@ import { ChatViewProvider } from './webview/ChatViewProvider';
 import { getDiffCodeLensProvider } from './backend/tools/file/DiffCodeLensProvider';
 import { getDiffEditorActionsProvider } from './backend/tools/file/DiffEditorActionsProvider';
 import { getDiffInlineProvider, DiffInlineProvider } from './backend/tools/file/DiffInlineProvider';
+import { getDiffManager } from './backend/tools/file/diffManager';
 
 // 保存 ChatViewProvider 实例以便在停用时清理
 let chatViewProvider: ChatViewProvider | undefined;
@@ -66,6 +67,12 @@ export function activate(context: vscode.ExtensionContext) {
 
     // 注册 DiffCodeLensProvider
     const diffCodeLensProvider = getDiffCodeLensProvider();
+    
+    // 监听 DiffManager 状态变化，刷新相关 UI（CodeLens、内联高亮、标题栏按钮）
+    getDiffManager().addStatusListener(() => {
+        getDiffEditorActionsProvider().refresh();
+        getDiffInlineProvider().refreshAllDecorations();
+    });
     
     // 注册 CodeLens 提供者
     diffCodeLensDisposable = vscode.languages.registerCodeLensProvider(
