@@ -626,7 +626,8 @@ async function executeImageTask(
                 if (currentExt !== targetExt && !areSynonyms(currentExt, targetExt)) {
                     // 仅在后缀名完全不匹配且不是同义词时更正
                     const dirName = path.dirname(output_path);
-                    const baseNameWithoutExt = path.basename(output_path, currentExt);
+                    const currentExtName = path.extname(output_path);
+                    const baseNameWithoutExt = path.basename(output_path, currentExtName);
                     
                     const newFileName = baseNameWithoutExt + targetExt;
                     finalOutputPath = dirName === '.' ? newFileName : path.join(dirName, newFileName);
