@@ -3,6 +3,14 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.0.55] - 2026-01-20
+
+### Added
+  - 添加了 Mermaid 图表 显示支持
+
+### Fixed
+  - 修复了生成图片时路径和图片格式不一致的问题
+
 ## [1.0.54] - 2026-01-19
 
 ### Fixed
