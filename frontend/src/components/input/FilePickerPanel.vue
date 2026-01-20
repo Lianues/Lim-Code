@@ -15,6 +15,7 @@ interface FileItem {
   path: string
   name: string
   isDirectory: boolean
+  isOpen?: boolean
 }
 
 const props = defineProps<{
@@ -33,20 +34,37 @@ const files = ref<FileItem[]>([])
 const selectedIndex = ref(0)
 const isLoading = ref(false)
 const scrollbarRef = ref<InstanceType<typeof CustomScrollbar>>()
+const activeFilePath = ref<string | null>(null)
 
 // 防抖定时器
 let debounceTimer: ReturnType<typeof setTimeout> | null = null
 
 // 搜索文件
-async function searchFiles(query: string) {
+async function searchFiles(query: string, scrollToActive = false) {
   isLoading.value = true
   try {
-    const result = await sendToExtension<{ files: FileItem[] }>('searchWorkspaceFiles', {
+    const result = await sendToExtension<{ files: FileItem[]; activeFilePath: string | null }>('searchWorkspaceFiles', {
       query: query.trim(),
       limit: 50
     })
     files.value = result?.files || []
-    selectedIndex.value = 0
+    activeFilePath.value = result?.activeFilePath || null
+    
+    // 如果需要滚动到活跃文件
+    if (scrollToActive && activeFilePath.value && !query.trim()) {
+      // 查找活跃文件在列表中的索引
+      const activeIndex = files.value.findIndex(f => f.path === activeFilePath.value)
+      if (activeIndex >= 0) {
+        selectedIndex.value = activeIndex
+        // 等待渲染完成后滚动
+        nextTick(() => scrollToSelected())
+      } else {
+        // 活跃文件不在列表中（可能不在工作区），选中第一个
+        selectedIndex.value = 0
+      }
+    } else {
+      selectedIndex.value = 0
+    }
   } catch (error) {
     console.error('搜索文件失败:', error)
     files.value = []
@@ -212,8 +230,8 @@ watch(() => props.query, (newQuery) => {
 // 监听可见性变化
 watch(() => props.visible, (visible) => {
   if (visible) {
-    // 打开时立即搜索
-    searchFiles(props.query)
+    // 打开时立即搜索，并滚动到活跃文件
+    searchFiles(props.query, true)
     // 聚焦到列表以便键盘导航
     nextTick(() => {
       // 不需要聚焦搜索框，保持原输入框焦点
@@ -222,6 +240,7 @@ watch(() => props.visible, (visible) => {
     // 关闭时清理
     files.value = []
     selectedIndex.value = 0
+    activeFilePath.value = null
     if (debounceTimer) {
       clearTimeout(debounceTimer)
       debounceTimer = null
@@ -274,12 +293,13 @@ defineExpose({
           v-for="(file, index) in highlightedPaths"
           :key="file.path"
           class="file-item"
-          :class="{ selected: index === selectedIndex }"
+          :class="{ selected: index === selectedIndex, 'is-open': file.isOpen }"
           @click="selectFile(file)"
           @mouseenter="selectedIndex = index"
         >
           <i :class="['codicon', getFileIcon(file)]"></i>
           <span class="file-path" v-html="file.highlightedPath"></span>
+          <span v-if="file.isOpen" class="open-badge">•</span>
         </div>
       </CustomScrollbar>
       
@@ -403,6 +423,26 @@ defineExpose({
 
 .file-item.selected .codicon {
   opacity: 1;
+}
+
+/* 已打开的文件 - 浅蓝色背景 */
+.file-item.is-open {
+  background: rgba(30, 144, 255, 0.08);
+}
+
+.file-item.is-open:hover {
+  background: rgba(30, 144, 255, 0.15);
+}
+
+.file-item.is-open.selected {
+  background: var(--vscode-list-activeSelectionBackground);
+}
+
+.open-badge {
+  color: var(--vscode-textLink-foreground, #3794ff);
+  font-size: 16px;
+  flex-shrink: 0;
+  margin-left: auto;
 }
 
 .file-path {

@@ -384,42 +384,132 @@ export const searchWorkspaceFiles: MessageHandler = async (data, requestId, ctx)
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
     
     if (!workspaceFolder) {
-      ctx.sendResponse(requestId, { files: [] });
+      ctx.sendResponse(requestId, { files: [], activeFilePath: null });
       return;
     }
     
-    const results: { path: string; name: string; isDirectory: boolean }[] = [];
+    const results: { path: string; name: string; isDirectory: boolean; isOpen?: boolean }[] = [];
+    const addedPaths = new Set<string>();
+    const openPaths = new Set<string>(); // 记录所有已打开的文件路径
+    
+    // 获取当前活跃编辑器的文件路径（相对路径）
+    let activeFilePath: string | null = null;
+    const activeEditor = vscode.window.activeTextEditor;
+    if (activeEditor && !activeEditor.document.isUntitled) {
+      const activeUri = activeEditor.document.uri;
+      // 检查文件是否在工作区内
+      if (activeUri.fsPath.startsWith(workspaceFolder.uri.fsPath)) {
+        activeFilePath = vscode.workspace.asRelativePath(activeUri);
+      }
+    }
+    
+    // 收集所有已打开的标签页文件路径
+    for (const tabGroup of vscode.window.tabGroups.all) {
+      for (const tab of tabGroup.tabs) {
+        if (tab.input instanceof vscode.TabInputText) {
+          const uri = tab.input.uri;
+          // 检查文件是否在工作区内
+          if (uri.fsPath.startsWith(workspaceFolder.uri.fsPath)) {
+            const relativePath = vscode.workspace.asRelativePath(uri);
+            openPaths.add(relativePath);
+          }
+        }
+      }
+    }
+    
+    // 如果没有搜索查询，优先显示已打开的标签页
+    if (!query.trim()) {
+      // 收集所有打开的标签页文件
+      const openFiles: { path: string; name: string; isDirectory: boolean; isActive: boolean }[] = [];
+      
+      for (const tabGroup of vscode.window.tabGroups.all) {
+        for (const tab of tabGroup.tabs) {
+          if (tab.input instanceof vscode.TabInputText) {
+            const uri = tab.input.uri;
+            // 检查文件是否在工作区内
+            if (uri.fsPath.startsWith(workspaceFolder.uri.fsPath)) {
+              const relativePath = vscode.workspace.asRelativePath(uri);
+              if (!addedPaths.has(relativePath)) {
+                addedPaths.add(relativePath);
+                const isActive = activeFilePath === relativePath;
+                openFiles.push({
+                  path: relativePath,
+                  name: path.basename(uri.fsPath),
+                  isDirectory: false,
+                  isActive
+                });
+              }
+            }
+          }
+        }
+      }
+      
+      // 排序：当前活跃文件在最前，其他按路径排序
+      openFiles.sort((a, b) => {
+        if (a.isActive !== b.isActive) {
+          return a.isActive ? -1 : 1;
+        }
+        return a.path.localeCompare(b.path);
+      });
+      
+      // 添加已打开的文件到结果
+      for (const file of openFiles) {
+        if (results.length >= limit) break;
+        results.push({
+          path: file.path,
+          name: file.name,
+          isDirectory: false,
+          isOpen: true
+        });
+      }
+    }
     
     // 1. 搜索文件夹
-    await searchDirectories(workspaceFolder.uri, query.trim(), Math.floor(limit / 2), results);
+    const folderResults: { path: string; name: string; isDirectory: boolean }[] = [];
+    await searchDirectories(workspaceFolder.uri, query.trim(), Math.floor(limit / 2), folderResults);
+    
+    // 添加文件夹（排除已添加的）
+    for (const folder of folderResults) {
+      if (results.length >= limit) break;
+      if (!addedPaths.has(folder.path)) {
+        addedPaths.add(folder.path);
+        results.push(folder);
+      }
+    }
     
     // 2. 搜索文件
     const pattern = query.trim() ? `**/*${query}*` : '**/*';
     const excludePattern = '{**/node_modules/**,**/.git/**,**/dist/**,**/build/**,**/.next/**,**/out/**,**/.vscode/**,**/.idea/**,**/__pycache__/**,**/.cache/**,**/coverage/**}';
-    const files = await vscode.workspace.findFiles(pattern, excludePattern, limit - results.length);
+    const files = await vscode.workspace.findFiles(pattern, excludePattern, limit * 2); // 获取更多以便过滤
     
-    // 添加文件结果
+    // 添加文件结果（排除已添加的）
     for (const uri of files) {
       if (results.length >= limit) break;
       const relativePath = vscode.workspace.asRelativePath(uri);
-      results.push({
-        path: relativePath,
-        name: path.basename(uri.fsPath),
-        isDirectory: false
+      if (!addedPaths.has(relativePath)) {
+        addedPaths.add(relativePath);
+        results.push({
+          path: relativePath,
+          name: path.basename(uri.fsPath),
+          isDirectory: false,
+          isOpen: openPaths.has(relativePath)
+        });
+      }
+    }
+    
+    // 如果有查询，需要重新排序：文件夹在前，然后按路径长度排序
+    if (query.trim()) {
+      results.sort((a, b) => {
+        // 文件夹优先
+        if (a.isDirectory !== b.isDirectory) {
+          return a.isDirectory ? -1 : 1;
+        }
+        // 然后按路径长度
+        return a.path.length - b.path.length;
       });
     }
     
-    // 排序：文件夹在前，然后按路径长度排序
-    results.sort((a, b) => {
-      // 文件夹优先
-      if (a.isDirectory !== b.isDirectory) {
-        return a.isDirectory ? -1 : 1;
-      }
-      // 然后按路径长度
-      return a.path.length - b.path.length;
-    });
-    
-    ctx.sendResponse(requestId, { files: results });
+    ctx.sendResponse(requestId, { files: results, activeFilePath });
   } catch (error: any) {
     ctx.sendError(requestId, 'SEARCH_FILES_ERROR', error.message || t('webview.errors.searchFilesFailed'));
   }

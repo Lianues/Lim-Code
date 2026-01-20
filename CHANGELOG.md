@@ -3,6 +3,11 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.0.58] - 2026-01-20
+
+### Added
+  - 添加了使用"@"选择文件时，打开标签页的高亮显示和优先排序
+
 ## [1.0.57] - 2026-01-20
 
 ### Fixed
