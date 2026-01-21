@@ -3,6 +3,11 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.0.61] - 2026-01-22
+
+### Added
+  - 添加了选中文件里某一部分添加到上下文的功能，可以在选中要添加的代码后，悬停在代码上面，或者点击左侧的灯泡添加到输入框中。后续会扩展更多其他的添加上下文功能
+
 ## [1.0.60] - 2026-01-22
 
 ### Improved

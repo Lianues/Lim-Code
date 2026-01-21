@@ -204,6 +204,9 @@ async function loadLanguageSettings() {
 onMounted(async () => {
   console.log('LimCode Chat 已加载')
   
+  // Notify the extension that the webview is ready to receive command messages.
+  sendToExtension('webviewReady', {}).catch(() => {})
+  
   // 初始化终端 store（监听终端输出事件）
   terminalStore.initialize()
   

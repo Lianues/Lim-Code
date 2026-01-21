@@ -4,10 +4,12 @@
 
 import * as vscode from 'vscode';
 import { ChatViewProvider } from './webview/ChatViewProvider';
+import { t, setDetectedLanguage, setLanguage as setBackendLanguage } from './backend/i18n';
 import { getDiffCodeLensProvider } from './backend/tools/file/DiffCodeLensProvider';
 import { getDiffEditorActionsProvider } from './backend/tools/file/DiffEditorActionsProvider';
 import { getDiffInlineProvider, DiffInlineProvider } from './backend/tools/file/DiffInlineProvider';
 import { getDiffManager } from './backend/tools/file/diffManager';
+import { getSelectionContextProvider, SelectionContextProvider, type SelectionContextCommandArgs } from './backend/tools/file/SelectionContextProvider';
 
 // 保存 ChatViewProvider 实例以便在停用时清理
 let chatViewProvider: ChatViewProvider | undefined;
@@ -20,6 +22,10 @@ let diffInlineDisposable: vscode.Disposable | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('LimCode extension is now active!');
+
+    // Allow i18n to follow VS Code display language until settings load.
+    setDetectedLanguage(vscode.env.language);
+    setBackendLanguage('auto');
 
     // 注册聊天视图提供者
     chatViewProvider = new ChatViewProvider(context);
@@ -84,9 +90,108 @@ export function activate(context: vscode.ExtensionContext) {
     );
     context.subscriptions.push(diffCodeLensDisposable);
     
+    // ========== Selection Context (Hover + Code Actions) ==========
+    const selectionContextProvider = getSelectionContextProvider();
+
+    // Hover: selected text -> "Add to LimCode input"
+    const selectionHoverDisposable = vscode.languages.registerHoverProvider(
+        [{ scheme: 'file' }],
+        selectionContextProvider
+    );
+    context.subscriptions.push(selectionHoverDisposable);
+
+    // Lightbulb: add selection as context snippet
+    const selectionCodeActionDisposable = vscode.languages.registerCodeActionsProvider(
+        [{ scheme: 'file' }],
+        selectionContextProvider,
+        {
+            providedCodeActionKinds: SelectionContextProvider.providedCodeActionKinds
+        }
+    );
+    context.subscriptions.push(selectionCodeActionDisposable);
+
+    // Command used by hover/code actions
+    context.subscriptions.push(
+        vscode.commands.registerCommand('limcode.context.addSelectionToInput', async (args?: SelectionContextCommandArgs) => {
+            try {
+                const editor = vscode.window.activeTextEditor;
+                if (!editor) {
+                    vscode.window.showInformationMessage(t('tools.file.selectionContext.noActiveEditor'));
+                    return;
+                }
+
+                let targetUri = editor.document.uri;
+                let selection = editor.selection;
+
+                if (args?.uri) {
+                    targetUri = vscode.Uri.parse(args.uri);
+                    selection = new vscode.Selection(
+                        new vscode.Position(args.selection.start.line, args.selection.start.character),
+                        new vscode.Position(args.selection.end.line, args.selection.end.character)
+                    );
+                }
+
+                const doc = (targetUri.toString() === editor.document.uri.toString())
+                    ? editor.document
+                    : await vscode.workspace.openTextDocument(targetUri);
+
+                if (selection.isEmpty) {
+                    vscode.window.showInformationMessage(t('tools.file.selectionContext.noSelection'));
+                    return;
+                }
+
+                // Expand to whole lines. Adjust end line when selection ends at column 0.
+                let startLine = selection.start.line;
+                let endLine = selection.end.line;
+                if (selection.end.character === 0 && selection.end.line > selection.start.line) {
+                    endLine = Math.max(selection.start.line, selection.end.line - 1);
+                }
+
+                startLine = Math.max(0, Math.min(startLine, doc.lineCount - 1));
+                endLine = Math.max(0, Math.min(endLine, doc.lineCount - 1));
+                if (endLine < startLine) {
+                    const tmp = startLine;
+                    startLine = endLine;
+                    endLine = tmp;
+                }
+
+                const endChar = doc.lineAt(endLine).text.length;
+                const lineRange = new vscode.Range(startLine, 0, endLine, endChar);
+                const content = doc.getText(lineRange);
+
+                const lines = content.split(/\r?\n/);
+                const width = String(endLine + 1).length;
+                const numbered = lines
+                    .map((line, i) => `${String(startLine + 1 + i).padStart(width, ' ')} | ${line}`)
+                    .join('\n');
+
+                const relativePath = vscode.workspace.asRelativePath(targetUri, false);
+                const title = `${relativePath}[L${startLine + 1}-${endLine + 1}]`;
+
+                const contextItem = {
+                    id: `snippet-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                    type: 'snippet' as const,
+                    title,
+                    content: numbered,
+                    filePath: relativePath,
+                    language: doc.languageId,
+                    enabled: true,
+                    addedAt: Date.now()
+                };
+
+                // Ensure chat view is visible, then send to webview.
+                await vscode.commands.executeCommand('limcode.openChat');
+                chatViewProvider?.sendCommand('input.addContext', { contextItem });
+            } catch (err: any) {
+                console.error('Failed to add selection context:', err);
+                vscode.window.showErrorMessage(t('tools.file.selectionContext.failedToAddSelection', { error: err?.message || String(err) }));
+            }
+        })
+    );
+
     // ========== Diff Inline Provider (Hover + Code Actions) ==========
     const diffInlineProvider = getDiffInlineProvider();
-    
+
     // 注册 Hover 提供者（悬停显示可点击的 Accept/Reject 链接）
     diffInlineDisposable = vscode.languages.registerHoverProvider(
         [
@@ -96,7 +201,7 @@ export function activate(context: vscode.ExtensionContext) {
         diffInlineProvider
     );
     context.subscriptions.push(diffInlineDisposable);
-    
+
     // 注册 Code Action 提供者（灯泡操作，自定义来源 "LimCode Diff"）
     const diffCodeActionDisposable = vscode.languages.registerCodeActionsProvider(
         [
@@ -109,8 +214,7 @@ export function activate(context: vscode.ExtensionContext) {
         }
     );
     context.subscriptions.push(diffCodeActionDisposable);
-    
-    // 注册 diff 确认命令（CodeLens 和 Code Actions 使用）
+
     context.subscriptions.push(
         vscode.commands.registerCommand('limcode.diff.confirmBlock', async (sessionId: string, blockIndex?: number) => {
             await diffCodeLensProvider.confirmBlock(sessionId, blockIndex);

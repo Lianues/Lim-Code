@@ -328,6 +328,13 @@ const ja: BackendLanguageMessages = {
             },
             readFile: {
                 cannotReadFile: 'このファイルを読み取ることができません'
+            },
+            selectionContext: {
+                hoverAddToInput: '選択範囲を入力欄に追加',
+                codeActionAddToInput: 'LimCode: 選択範囲を入力欄に追加',
+                noActiveEditor: 'アクティブなエディターがありません',
+                noSelection: '選択範囲がありません',
+                failedToAddSelection: '選択範囲の追加に失敗しました: {error}'
             }
         },
 

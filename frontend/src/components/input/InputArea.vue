@@ -4,7 +4,7 @@
  * 负责把编辑器(InputBox)与外部能力(配置/模型/文件读取/VSCode预览)编排在一起。
  */
 
-import { ref, computed, onMounted, watch, nextTick } from 'vue'
+import { ref, computed, onMounted, watch, nextTick, onBeforeUnmount } from 'vue'
 import InputBox from './InputBox.vue'
 import FilePickerPanel from './FilePickerPanel.vue'
 import SendButton from './SendButton.vue'
@@ -17,7 +17,7 @@ import type { PromptMode } from './ModeSelector.vue'
 
 import { IconButton, Tooltip } from '../common'
 import { useChatStore, useSettingsStore } from '../../stores'
-import { showNotification } from '../../utils/vscode'
+import { showNotification, onExtensionCommand } from '../../utils/vscode'
 import * as configService from '../../services/config'
 import * as contextService from '../../services/context'
 import { formatNumber } from '../../utils/format'
@@ -221,6 +221,8 @@ const filePickerQuery = ref('')
 const inputBoxRef = ref<InstanceType<typeof InputBox> | null>(null)
 const filePickerRef = ref<InstanceType<typeof FilePickerPanel> | null>(null)
 
+let unsubscribeAddContext: (() => void) | null = null
+
 function handleTriggerAtPicker(query: string, _triggerPosition: number) {
   filePickerQuery.value = query
   showFilePicker.value = true
@@ -388,8 +390,27 @@ const ringDashOffset = computed(() => ringCircumference * (1 - chatStore.tokenUs
 // ========== lifecycle ==========
 
 onMounted(() => {
+  // Receive context chips pushed from the extension (e.g. editor selection hover/lightbulb).
+  unsubscribeAddContext = onExtensionCommand('input.addContext', (payload: any) => {
+    const contextItem = payload?.contextItem as PromptContextItem | undefined
+    if (!contextItem) return
+
+    // Best-effort: insert at caret if possible; otherwise fall back to append.
+    const inserted = inputBoxRef.value?.insertContextAtCaret(contextItem)
+    if (!inserted) {
+      editorNodes.value = [...editorNodes.value, { type: 'context', context: contextItem }]
+    }
+
+    // Keep the input ready for typing.
+    nextTick(() => inputBoxRef.value?.focus())
+  })
+
   loadConfigs()
   loadPromptModes()
+})
+
+onBeforeUnmount(() => {
+  if (unsubscribeAddContext) unsubscribeAddContext()
 })
 
 watch(() => chatStore.configId, () => {

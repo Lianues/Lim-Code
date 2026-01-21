@@ -328,6 +328,13 @@ const zhCN: BackendLanguageMessages = {
             },
             readFile: {
                 cannotReadFile: '无法读取此文件'
+            },
+            selectionContext: {
+                hoverAddToInput: '添加选中内容到输入框',
+                codeActionAddToInput: 'LimCode: 添加选中代码到输入框',
+                noActiveEditor: '没有活动编辑器',
+                noSelection: '没有选中内容',
+                failedToAddSelection: '添加选中内容失败: {error}'
             }
         },
 

@@ -341,6 +341,13 @@ export interface BackendLanguageMessages {
             readFile: {
                 cannotReadFile: string;
             };
+            selectionContext: {
+                hoverAddToInput: string;
+                codeActionAddToInput: string;
+                noActiveEditor: string;
+                noSelection: string;
+                failedToAddSelection: string;
+            };
         };
 
         /** 终端工具 */

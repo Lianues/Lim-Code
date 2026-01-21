@@ -67,6 +67,10 @@ class DiffPreviewContentProvider implements vscode.TextDocumentContentProvider, 
 
 export class ChatViewProvider implements vscode.WebviewViewProvider {
     private _view?: vscode.WebviewView;
+
+    // Commands may be sent before the webview JS is ready. Queue them until we get a ready handshake.
+    private webviewReady = false;
+    private pendingCommands: Array<{ command: string; data?: any }> = [];
     
     // Diff 预览内容提供者
     private diffPreviewProvider: DiffPreviewContentProvider;
@@ -444,6 +448,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         _token: vscode.CancellationToken,
     ) {
         this._view = webviewView;
+        this.webviewReady = false;
 
         webviewView.webview.options = {
             enableScripts: true,
@@ -526,6 +531,26 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private async handleMessage(message: any) {
         const { type, data, requestId } = message;
 
+        // The frontend sends this as soon as its JS is ready to receive commands.
+        // Handle it even if backend init is still running.
+        if (type === 'webviewReady') {
+            this.webviewReady = true;
+            // Flush any queued commands.
+            for (const cmd of this.pendingCommands) {
+                this._view?.webview.postMessage({
+                    type: 'command',
+                    command: cmd.command,
+                    data: cmd.data
+                });
+            }
+            this.pendingCommands = [];
+
+            if (requestId) {
+                this.sendResponse(requestId, { success: true });
+            }
+            return;
+        }
+
         try {
             // 等待初始化完成
             await this.initPromise;
@@ -581,6 +606,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     public dispose(): void {
         // 取消所有活跃的流式请求
         this.cancelAllStreams();
+
+        // Drop queued commands.
+        this.pendingCommands = [];
+        this.webviewReady = false;
         
         // 取消终端输出订阅
         if (this.terminalOutputUnsubscribe) {
@@ -642,7 +671,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
      * 发送命令到 Webview
      */
     public sendCommand(command: string, data?: any): void {
-        this._view?.webview.postMessage({
+        if (!this._view || !this.webviewReady) {
+            // Queue until webview is ready (or view exists).
+            this.pendingCommands.push({ command, data });
+            return;
+        }
+
+        this._view.webview.postMessage({
             type: 'command',
             command,
             data

@@ -328,6 +328,13 @@ Requirements:
             },
             readFile: {
                 cannotReadFile: 'Cannot read this file'
+            },
+            selectionContext: {
+                hoverAddToInput: 'Add selection to input',
+                codeActionAddToInput: 'LimCode: Add selection to input',
+                noActiveEditor: 'No active editor',
+                noSelection: 'No selection',
+                failedToAddSelection: 'Failed to add selection: {error}'
             }
         },
 
