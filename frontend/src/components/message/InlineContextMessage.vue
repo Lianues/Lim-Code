@@ -6,6 +6,7 @@ import type { PromptContextItem } from '../../types/promptContext'
 import { parseMessageToNodes } from '../../types/contextParser'
 import { getFileIcon } from '../../utils/fileIcons'
 import { sendToExtension } from '../../utils/vscode'
+import { languageFromPath } from '../../utils/languageFromPath'
 
 const props = defineProps<{
   content: string
@@ -64,56 +65,13 @@ function truncatePreview(content: string, maxLines = 10, maxChars = 500): string
   return result
 }
 
-function getLanguageFromPath(path?: string): string {
-  if (!path) return 'plaintext'
-
-  const ext = path.split('.').pop()?.toLowerCase()
-  const langMap: Record<string, string> = {
-    'ts': 'typescript',
-    'tsx': 'typescriptreact',
-    'js': 'javascript',
-    'jsx': 'javascriptreact',
-    'vue': 'vue',
-    'py': 'python',
-    'rs': 'rust',
-    'go': 'go',
-    'java': 'java',
-    'kt': 'kotlin',
-    'swift': 'swift',
-    'c': 'c',
-    'cpp': 'cpp',
-    'h': 'c',
-    'hpp': 'cpp',
-    'cs': 'csharp',
-    'rb': 'ruby',
-    'php': 'php',
-    'html': 'html',
-    'css': 'css',
-    'scss': 'scss',
-    'less': 'less',
-    'json': 'json',
-    'yaml': 'yaml',
-    'yml': 'yaml',
-    'xml': 'xml',
-    'md': 'markdown',
-    'sql': 'sql',
-    'sh': 'shellscript',
-    'bash': 'shellscript',
-    'zsh': 'shellscript',
-    'ps1': 'powershell',
-    'dockerfile': 'dockerfile'
-  }
-
-  return langMap[ext || ''] || 'plaintext'
-}
-
 // Click chip: open in VSCode virtual doc
 async function handleContextClick(ctx: PromptContextItem) {
   try {
     await sendToExtension('showContextContent', {
       title: ctx.title,
       content: ctx.content,
-      language: ctx.language || getLanguageFromPath(ctx.filePath)
+      language: ctx.language || languageFromPath(ctx.filePath)
     })
   } catch (error) {
     console.error('Failed to show context content:', error)

@@ -1347,7 +1347,7 @@ const ja: LanguageMessages = {
                 appInfo: {
                     title: 'アプリケーション情報',
                     name: 'Lim Code - Vibe Coding アシスタント',
-                    version: 'バージョン：1.0.59',
+                    version: 'バージョン：1.0.60',
                     repository: 'リポジトリ',
                     developer: '開発者'
                 }

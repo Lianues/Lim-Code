@@ -9,6 +9,7 @@ import type { PromptContextItem } from '../../types/promptContext'
 import { sendToExtension } from '../../utils/vscode'
 import { useI18n } from '../../i18n'
 import { getFileIcon } from '../../utils/fileIcons'
+import { languageFromPath } from '../../utils/languageFromPath'
 
 const { t } = useI18n()
 
@@ -88,55 +89,11 @@ async function handleClick(item: PromptContextItem) {
     await sendToExtension('showContextContent', {
       title: item.title,
       content: item.content,
-      language: item.language || getLanguageFromPath(item.filePath)
+      language: item.language || languageFromPath(item.filePath)
     })
   } catch (error) {
     console.error('Failed to show context content:', error)
   }
-}
-
-// 从文件路径推断语言
-function getLanguageFromPath(path?: string): string {
-  if (!path) return 'plaintext'
-  
-  const ext = path.split('.').pop()?.toLowerCase()
-  const langMap: Record<string, string> = {
-    'ts': 'typescript',
-    'tsx': 'typescriptreact',
-    'js': 'javascript',
-    'jsx': 'javascriptreact',
-    'vue': 'vue',
-    'py': 'python',
-    'rs': 'rust',
-    'go': 'go',
-    'java': 'java',
-    'kt': 'kotlin',
-    'swift': 'swift',
-    'c': 'c',
-    'cpp': 'cpp',
-    'h': 'c',
-    'hpp': 'cpp',
-    'cs': 'csharp',
-    'rb': 'ruby',
-    'php': 'php',
-    'html': 'html',
-    'css': 'css',
-    'scss': 'scss',
-    'less': 'less',
-    'json': 'json',
-    'yaml': 'yaml',
-    'yml': 'yaml',
-    'xml': 'xml',
-    'md': 'markdown',
-    'sql': 'sql',
-    'sh': 'shellscript',
-    'bash': 'shellscript',
-    'zsh': 'shellscript',
-    'ps1': 'powershell',
-    'dockerfile': 'dockerfile'
-  }
-  
-  return langMap[ext || ''] || 'plaintext'
 }
 
 // 截断内容用于预览

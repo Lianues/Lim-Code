@@ -16,6 +16,8 @@ import { MessageAttachments } from '../message'
 import InputBox from '../input/InputBox.vue'
 import FilePickerPanel from '../input/FilePickerPanel.vue'
 import { sendToExtension, showNotification } from '../../utils/vscode'
+import { languageFromPath } from '../../utils/languageFromPath'
+import { resolveWorkspaceItems } from '../../utils/resolveWorkspaceItems'
 import { t } from '../../i18n'
 
 interface Props {
@@ -214,6 +216,31 @@ async function handleAddFileContexts(files: { path: string; isDirectory: boolean
   })
 }
 
+async function handleDropFileItems(items: string[], insertAsTextPath: boolean) {
+  const resolved = await resolveWorkspaceItems(items)
+  if (resolved.length === 0) return
+
+  if (insertAsTextPath) {
+    inputBoxRef.value?.insertPathsAsAtText(resolved)
+    nextTick(() => inputBoxRef.value?.focus())
+    return
+  }
+
+  await handleAddFileContexts(resolved)
+}
+
+async function handleOpenContext(ctx: PromptContextItem) {
+  try {
+    await sendToExtension('showContextContent', {
+      title: ctx.title,
+      content: ctx.content,
+      language: ctx.language || languageFromPath(ctx.filePath)
+    })
+  } catch (error) {
+    console.error('Failed to show context content:', error)
+  }
+}
+
 // 从 @ 面板选择
 async function handleSelectFileFromPicker(path: string, asText: boolean = false) {
   showFilePicker.value = false
@@ -326,7 +353,8 @@ function handleRemoveAttachment(id: string) {
                 @update:nodes="handleNodesUpdate"
                 @remove-context="handleRemoveContext"
                 @paste="handlePasteFiles"
-                @add-file-contexts="handleAddFileContexts"
+                @drop-file-items="handleDropFileItems"
+                @open-context="handleOpenContext"
                 @trigger-at-picker="handleTriggerAtPicker"
                 @close-at-picker="handleCloseAtPicker"
                 @at-query-change="handleAtQueryChange"

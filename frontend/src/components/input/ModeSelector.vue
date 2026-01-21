@@ -4,9 +4,10 @@
  * 用于在输入区域选择提示词模式
  */
 
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed } from 'vue'
 import { CustomScrollbar } from '../common'
 import { useI18n } from '../../i18n'
+import { useSearchableDropdown } from '../../composables'
 
 const { t } = useI18n()
 
@@ -32,47 +33,17 @@ const emit = defineEmits<{
   (e: 'openSettings'): void
 }>()
 
-const isOpen = ref(false)
-const searchQuery = ref('')
-const highlightedIndex = ref(-1)
 const containerRef = ref<HTMLElement>()
-const inputRef = ref<HTMLInputElement>()
 
-const selectedOption = computed(() => {
-  return props.options.find(opt => opt.id === props.modelValue)
+const { isOpen, toggle, close, inputRef, searchQuery, filteredItems, highlightedIndex, handleKeydown: handleDropdownKeydown } = useSearchableDropdown<PromptMode>(containerRef, {
+  items: () => props.options,
+  getKey: (opt) => opt.id,
+  selectedKey: () => props.modelValue,
+  disabled: () => !!props.disabled,
+  filter: (opt, q) => opt.name.toLowerCase().includes(q)
 })
 
-const filteredOptions = computed(() => {
-  if (!searchQuery.value) {
-    return props.options
-  }
-  const query = searchQuery.value.toLowerCase()
-  return props.options.filter(opt =>
-    opt.name.toLowerCase().includes(query)
-  )
-})
-
-function open() {
-  if (props.disabled) return
-  isOpen.value = true
-  highlightedIndex.value = props.options.findIndex(opt => opt.id === props.modelValue)
-  searchQuery.value = ''
-  setTimeout(() => inputRef.value?.focus(), 10)
-}
-
-function close() {
-  isOpen.value = false
-  searchQuery.value = ''
-  highlightedIndex.value = -1
-}
-
-function toggle() {
-  if (isOpen.value) {
-    close()
-  } else {
-    open()
-  }
-}
+const selectedOption = computed(() => props.options.find(opt => opt.id === props.modelValue))
 
 function selectMode(option: PromptMode) {
   emit('update:modelValue', option.id)
@@ -85,57 +56,8 @@ function openSettings() {
 }
 
 function handleKeydown(event: KeyboardEvent) {
-  if (!isOpen.value) {
-    if (event.key === 'Enter' || event.key === ' ' || event.key === 'ArrowDown') {
-      event.preventDefault()
-      open()
-    }
-    return
-  }
-
-  switch (event.key) {
-    case 'ArrowDown':
-      event.preventDefault()
-      highlightedIndex.value = Math.min(
-        highlightedIndex.value + 1,
-        filteredOptions.value.length - 1
-      )
-      break
-    case 'ArrowUp':
-      event.preventDefault()
-      highlightedIndex.value = Math.max(highlightedIndex.value - 1, 0)
-      break
-    case 'Enter':
-      event.preventDefault()
-      if (highlightedIndex.value >= 0 && highlightedIndex.value < filteredOptions.value.length) {
-        selectMode(filteredOptions.value[highlightedIndex.value])
-      }
-      break
-    case 'Escape':
-      event.preventDefault()
-      close()
-      break
-  }
+  handleDropdownKeydown(event, selectMode)
 }
-
-function handleClickOutside(event: MouseEvent) {
-  if (containerRef.value && !containerRef.value.contains(event.target as Node)) {
-    close()
-  }
-}
-
-// 当搜索变化时重置高亮
-watch(searchQuery, () => {
-  highlightedIndex.value = filteredOptions.value.length > 0 ? 0 : -1
-})
-
-onMounted(() => {
-  document.addEventListener('click', handleClickOutside)
-})
-
-onUnmounted(() => {
-  document.removeEventListener('click', handleClickOutside)
-})
 </script>
 
 <template>
@@ -168,11 +90,11 @@ onUnmounted(() => {
             @click.stop
           />
         </div>
-        
+
         <CustomScrollbar :max-height="180" :width="5" :offset="1">
           <div class="mode-list">
             <div
-              v-for="(option, index) in filteredOptions"
+              v-for="(option, index) in filteredItems"
               :key="option.id"
               class="mode-item"
               :class="{ 
@@ -186,17 +108,17 @@ onUnmounted(() => {
               <span class="mode-item-name">{{ option.name }}</span>
               <i v-if="option.id === modelValue" class="codicon codicon-check"></i>
             </div>
-            
+
             <!-- 无结果提示 -->
-            <div v-if="filteredOptions.length === 0" class="no-results">
+            <div v-if="filteredItems.length === 0" class="no-results">
               {{ t('components.input.mode.noResults') }}
             </div>
           </div>
         </CustomScrollbar>
-        
+
         <!-- 分隔线 -->
         <div class="mode-divider"></div>
-        
+
         <!-- 设置按钮 -->
         <button class="mode-settings-btn" @click="openSettings">
           <i class="codicon codicon-settings-gear"></i>

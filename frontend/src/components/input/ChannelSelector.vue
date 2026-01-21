@@ -4,9 +4,10 @@
  * 支持选择渠道配置
  */
 
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed } from 'vue'
 import { CustomScrollbar } from '../common'
 import { useI18n } from '../../i18n'
+import { useSearchableDropdown } from '../../composables'
 
 const { t } = useI18n()
 
@@ -32,49 +33,20 @@ const emit = defineEmits<{
   (e: 'update:modelValue', value: string): void
 }>()
 
-const isOpen = ref(false)
-const searchQuery = ref('')
-const highlightedIndex = ref(-1)
 const containerRef = ref<HTMLElement>()
-const inputRef = ref<HTMLInputElement>()
 
-const selectedOption = computed(() => {
-  return props.options.find(opt => opt.id === props.modelValue)
+const { isOpen, toggle, close, inputRef, searchQuery, filteredItems, highlightedIndex, handleKeydown: handleDropdownKeydown } = useSearchableDropdown<ChannelOption>(containerRef, {
+  items: () => props.options,
+  getKey: (opt) => opt.id,
+  selectedKey: () => props.modelValue,
+  disabled: () => !!props.disabled,
+  filter: (opt, q) =>
+    opt.name.toLowerCase().includes(q) ||
+    opt.model?.toLowerCase().includes(q) ||
+    opt.type?.toLowerCase().includes(q)
 })
 
-const filteredOptions = computed(() => {
-  if (!searchQuery.value) {
-    return props.options
-  }
-  const query = searchQuery.value.toLowerCase()
-  return props.options.filter(opt =>
-    opt.name.toLowerCase().includes(query) ||
-    opt.model?.toLowerCase().includes(query) ||
-    opt.type?.toLowerCase().includes(query)
-  )
-})
-
-function open() {
-  if (props.disabled) return
-  isOpen.value = true
-  highlightedIndex.value = props.options.findIndex(opt => opt.id === props.modelValue)
-  searchQuery.value = ''
-  setTimeout(() => inputRef.value?.focus(), 10)
-}
-
-function close() {
-  isOpen.value = false
-  searchQuery.value = ''
-  highlightedIndex.value = -1
-}
-
-function toggle() {
-  if (isOpen.value) {
-    close()
-  } else {
-    open()
-  }
-}
+const selectedOption = computed(() => props.options.find(opt => opt.id === props.modelValue))
 
 function selectChannel(option: ChannelOption) {
   emit('update:modelValue', option.id)
@@ -82,56 +54,8 @@ function selectChannel(option: ChannelOption) {
 }
 
 function handleKeydown(event: KeyboardEvent) {
-  if (!isOpen.value) {
-    if (event.key === 'Enter' || event.key === ' ' || event.key === 'ArrowDown') {
-      event.preventDefault()
-      open()
-    }
-    return
-  }
-
-  switch (event.key) {
-    case 'ArrowDown':
-      event.preventDefault()
-      highlightedIndex.value = Math.min(
-        highlightedIndex.value + 1,
-        filteredOptions.value.length - 1
-      )
-      break
-    case 'ArrowUp':
-      event.preventDefault()
-      highlightedIndex.value = Math.max(highlightedIndex.value - 1, 0)
-      break
-    case 'Enter':
-      event.preventDefault()
-      if (highlightedIndex.value >= 0 && highlightedIndex.value < filteredOptions.value.length) {
-        selectChannel(filteredOptions.value[highlightedIndex.value])
-      }
-      break
-    case 'Escape':
-      event.preventDefault()
-      close()
-      break
-  }
+  handleDropdownKeydown(event, selectChannel)
 }
-
-function handleClickOutside(event: MouseEvent) {
-  if (containerRef.value && !containerRef.value.contains(event.target as Node)) {
-    close()
-  }
-}
-
-watch(searchQuery, () => {
-  highlightedIndex.value = 0
-})
-
-onMounted(() => {
-  document.addEventListener('click', handleClickOutside)
-})
-
-onUnmounted(() => {
-  document.removeEventListener('click', handleClickOutside)
-})
 </script>
 
 <template>
@@ -154,7 +78,7 @@ onUnmounted(() => {
     </button>
 
     <Transition name="dropdown">
-      <div v-if="isOpen" class="selector-dropdown">
+            <div v-if="isOpen" class="selector-dropdown">
         <!-- 搜索框 -->
         <div class="search-wrapper">
           <input
@@ -171,17 +95,17 @@ onUnmounted(() => {
         <CustomScrollbar :max-height="220" :width="5" :offset="1">
           <div class="channels-list">
             <div
-              v-for="(option, index) in filteredOptions"
+                            v-for="(option, index) in filteredItems"
               :key="option.id"
               :class="[
                 'channel-item',
                 {
                   selected: option.id === modelValue,
-                  highlighted: index === highlightedIndex
+                                    highlighted: index === highlightedIndex
                 }
               ]"
               @click="selectChannel(option)"
-              @mouseenter="highlightedIndex = index"
+                            @mouseenter="highlightedIndex = index"
             >
               <div class="channel-content">
                 <span class="channel-name">{{ option.name }}</span>
@@ -190,7 +114,7 @@ onUnmounted(() => {
               <span v-if="option.id === modelValue" class="check-icon">✓</span>
             </div>
 
-            <div v-if="filteredOptions.length === 0" class="empty-state">
+                        <div v-if="filteredItems.length === 0" class="empty-state">
               <span>{{ t('components.input.channelSelector.noMatch') }}</span>
             </div>
           </div>

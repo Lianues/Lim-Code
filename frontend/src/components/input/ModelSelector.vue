@@ -4,9 +4,10 @@
  * 点击后向上弹出模型列表下拉框
  */
 
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed } from 'vue'
 import { CustomScrollbar } from '../common'
 import { useI18n } from '../../i18n'
+import { useSearchableDropdown } from '../../composables'
 
 const { t } = useI18n()
 
@@ -17,8 +18,8 @@ export interface ModelInfo {
 }
 
 const props = withDefaults(defineProps<{
-  models: ModelInfo[]  // 从父组件传入的本地模型列表
-  currentModel: string
+  models: ModelInfo[]
+  modelValue: string
   disabled?: boolean
 }>(), {
   models: () => [],
@@ -26,95 +27,49 @@ const props = withDefaults(defineProps<{
 })
 
 const emit = defineEmits<{
-  (e: 'update:model', modelId: string): void
+  (e: 'update:modelValue', modelId: string): void
 }>()
 
-const isOpen = ref(false)
-const searchQuery = ref('')
 const containerRef = ref<HTMLElement>()
-const inputRef = ref<HTMLInputElement>()
 
-// 过滤后的模型列表
-const filteredModels = computed(() => {
-  if (!searchQuery.value) {
-    return props.models
-  }
-  const query = searchQuery.value.toLowerCase()
-  return props.models.filter(m =>
-    m.id.toLowerCase().includes(query) ||
-    m.name?.toLowerCase().includes(query)
-  )
+const { isOpen, toggle, close, inputRef, searchQuery, filteredItems, highlightedIndex, handleKeydown: handleDropdownKeydown } = useSearchableDropdown<ModelInfo>(containerRef, {
+  items: () => props.models,
+  getKey: (m) => m.id,
+  selectedKey: () => props.modelValue,
+  disabled: () => !!props.disabled,
+  filter: (m, q) => m.id.toLowerCase().includes(q) || (m.name || '').toLowerCase().includes(q)
 })
 
-function open() {
-  if (props.disabled) return
-  isOpen.value = true
-  searchQuery.value = ''
-  
-  setTimeout(() => inputRef.value?.focus(), 10)
-}
-
-function close() {
-  isOpen.value = false
-  searchQuery.value = ''
-}
-
-function toggle() {
-  if (isOpen.value) {
-    close()
-  } else {
-    open()
-  }
-}
+const filteredModels = computed(() => filteredItems.value)
 
 function selectModel(model: ModelInfo) {
-  emit('update:model', model.id)
+  emit('update:modelValue', model.id)
   close()
 }
 
 function handleKeydown(event: KeyboardEvent) {
-  if (event.key === 'Escape') {
-    event.preventDefault()
-    close()
-  }
+  handleDropdownKeydown(event, selectModel)
 }
-
-function handleClickOutside(event: MouseEvent) {
-  if (containerRef.value && !containerRef.value.contains(event.target as Node)) {
-    close()
-  }
-}
-
-onMounted(() => {
-  document.addEventListener('click', handleClickOutside)
-})
-
-onUnmounted(() => {
-  document.removeEventListener('click', handleClickOutside)
-})
 </script>
 
 <template>
   <div
     ref="containerRef"
-    :class="['model-selector', { open: isOpen, disabled }]"
+        :class="['model-selector', { open: isOpen, disabled }]"
     @keydown="handleKeydown"
   >
-    <!-- 触发按钮：显示当前模型ID -->
     <button
       type="button"
       class="model-trigger"
       :disabled="disabled"
-      @click="toggle"
+            @click="toggle"
     >
-      <span class="model-id">{{ currentModel || t('components.input.modelSelector.placeholder') }}</span>
-      <span :class="['select-arrow', isOpen ? 'arrow-up' : 'arrow-down']">▼</span>
+      <span class="model-id">{{ modelValue || t('components.input.modelSelector.placeholder') }}</span>
+            <span :class="['select-arrow', isOpen ? 'arrow-up' : 'arrow-down']">▼</span>
     </button>
 
-    <!-- 下拉面板 -->
     <Transition name="dropdown">
-      <div v-if="isOpen" class="model-dropdown">
-        <!-- 搜索框 -->
+            <div v-if="isOpen" class="model-dropdown">
         <div class="search-wrapper">
           <input
             ref="inputRef"
@@ -126,25 +81,25 @@ onUnmounted(() => {
           />
         </div>
 
-        <!-- 模型列表 -->
         <CustomScrollbar :max-height="220" :width="5" :offset="1">
           <div class="models-list">
             <template v-if="filteredModels.length > 0">
               <div
-                v-for="model in filteredModels"
+                v-for="(model, index) in filteredModels"
                 :key="model.id"
-                :class="['model-item', { selected: model.id === currentModel }]"
+                                :class="['model-item', { selected: model.id === modelValue, highlighted: index === highlightedIndex }]"
                 @click="selectModel(model)"
+                @mouseenter="highlightedIndex = index"
               >
                 <div class="model-content">
                   <span class="model-name">{{ model.name || model.id }}</span>
                   <span v-if="model.name && model.name !== model.id" class="model-id-hint">{{ model.id }}</span>
                 </div>
-                <span v-if="model.id === currentModel" class="check-icon">✓</span>
+                <span v-if="model.id === modelValue" class="check-icon">✓</span>
               </div>
             </template>
             <div v-else class="empty-state">
-              <span>{{ searchQuery ? t('components.input.modelSelector.noMatch') : t('components.input.modelSelector.addInSettings') }}</span>
+                            <span>{{ searchQuery ? t('components.input.modelSelector.noMatch') : t('components.input.modelSelector.addInSettings') }}</span>
             </div>
           </div>
         </CustomScrollbar>
@@ -209,7 +164,6 @@ onUnmounted(() => {
   transform: rotate(180deg);
 }
 
-/* 下拉面板 */
 .model-dropdown {
   position: absolute;
   bottom: 100%;
@@ -265,7 +219,8 @@ onUnmounted(() => {
   transition: background-color 0.1s;
 }
 
-.model-item:hover {
+.model-item:hover,
+.model-item.highlighted {
   background: var(--vscode-list-hoverBackground);
 }
 
@@ -316,7 +271,6 @@ onUnmounted(() => {
   color: var(--vscode-descriptionForeground);
 }
 
-/* 动画 */
 .dropdown-enter-active,
 .dropdown-leave-active {
   transition: opacity 0.15s, transform 0.15s;

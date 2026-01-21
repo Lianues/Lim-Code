@@ -3,6 +3,11 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.0.60] - 2026-01-22
+
+### Improved
+  - 拆分解耦了输入框组件，使其更简洁
+
 ## [1.0.59] - 2026-01-21
 
 ### Added
