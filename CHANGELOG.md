@@ -3,6 +3,11 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.0.62] - 2026-01-22
+
+### Fixed
+  - 修复子代理创建后无法删除的问题
+
 ## [1.0.61] - 2026-01-22
 
 ### Added

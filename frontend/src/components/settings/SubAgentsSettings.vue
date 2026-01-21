@@ -769,13 +769,13 @@ onMounted(async () => {
     
     <!-- 确认删除对话框 -->
     <ConfirmDialog
-      v-if="showDeleteConfirm"
+      v-model="showDeleteConfirm"
       :title="t('components.settings.subagents.deleteConfirm.title')"
       :message="t('components.settings.subagents.deleteConfirm.message')"
       :confirmText="t('common.delete')"
       :cancelText="t('common.cancel')"
+      :isDanger="true"
       @confirm="deleteAgent"
-      @cancel="showDeleteConfirm = false"
     />
   </div>
 </template>
