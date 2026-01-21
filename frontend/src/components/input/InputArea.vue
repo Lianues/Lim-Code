@@ -20,7 +20,7 @@ import { getFileIcon } from '../../utils/fileIcons'
 import type { Attachment } from '../../types'
 import type { PromptContextItem } from '../../types/promptContext'
 import type { EditorNode } from '../../types/editorNode'
-import { createTextNode, createContextNode, getPlainText, getContexts, serializeNodes, normalizeNodes } from '../../types/editorNode'
+import { createTextNode, getPlainText, getContexts, serializeNodes } from '../../types/editorNode'
 import { useI18n } from '../../i18n'
 
 const { t } = useI18n()
@@ -315,14 +315,14 @@ function handleCloseAtPicker() {
 }
 
 // 处理选择文件：@ 选中文件后，默认转为输入框内联徽章
-// Ctrl+Click: insert plain " @path " text instead of adding a badge.
+// Ctrl+Click 或选择文件夹: insert plain " @path " text instead of adding a badge.
 async function handleSelectFile(path: string, asText: boolean = false) {
   // 先关闭面板
   showFilePicker.value = false
   filePickerQuery.value = ''
 
   // Ctrl 模式：直接替换 @query 为 " @path "
-  if (asText) {
+  if (asText || path.endsWith('/')) {
     inputBoxRef.value?.replaceAtTriggerWithText(` @${path} `)
     nextTick(() => {
       inputBoxRef.value?.focus()
@@ -353,9 +353,10 @@ async function handleSelectFile(path: string, asText: boolean = false) {
         enabled: true,
         addedAt: Date.now()
       }
-      // 在当前位置插入徽章节点
-      editorNodes.value = normalizeNodes([...editorNodes.value, createContextNode(contextItem)])
-      
+
+      // 在当前光标位置插入徽章节点
+      inputBoxRef.value?.insertContextAtCaret(contextItem)
+
       // 聚焦输入框
       nextTick(() => {
         inputBoxRef.value?.focus()
@@ -906,22 +907,25 @@ function handleRemovePromptContextItem(id: string) {
 
 // 处理拖拽添加文件上下文（从 InputBox 拖拽文件时调用）
 async function handleAddFileContexts(files: { path: string; isDirectory: boolean }[]) {
-  const newNodes: EditorNode[] = []
-  
+  const inserted = new Set<string>()
+
   for (const file of files) {
     // 跳过文件夹
     if (file.isDirectory) continue
-    
+
+    if (inserted.has(file.path)) continue
+    inserted.add(file.path)
+
     // 检查是否已存在
     const exists = getContexts(editorNodes.value).some(ctx => ctx.filePath === file.path)
     if (exists) continue
-    
+
     try {
       const result = await sendToExtension<{ success: boolean; path: string; content: string; error?: string }>(
         'readWorkspaceTextFile',
         { path: file.path }
       )
-      
+
       if (result?.success) {
         const contextItem: PromptContextItem = {
           id: `file-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -932,7 +936,8 @@ async function handleAddFileContexts(files: { path: string; isDirectory: boolean
           enabled: true,
           addedAt: Date.now()
         }
-        newNodes.push(createContextNode(contextItem))
+
+        inputBoxRef.value?.insertContextAtCaret(contextItem)
       } else {
         await showNotification(result?.error || t('components.input.promptContext.readFailed'), 'error')
       }
@@ -941,14 +946,10 @@ async function handleAddFileContexts(files: { path: string; isDirectory: boolean
       await showNotification(t('components.input.promptContext.addFailed', { error: error.message || t('common.unknownError') }), 'error')
     }
   }
-  
-  if (newNodes.length > 0) {
-    editorNodes.value = normalizeNodes([...editorNodes.value, ...newNodes])
-    // 聚焦输入框
-    nextTick(() => {
-      inputBoxRef.value?.focus()
-    })
-  }
+
+  nextTick(() => {
+    inputBoxRef.value?.focus()
+  })
 }
 
 // 初始化加载配置

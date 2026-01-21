@@ -15,7 +15,7 @@ import { getFileIcon } from '../../utils/fileIcons'
 
 const { t } = useI18n()
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   /** 编辑器节点数组（文本和上下文徽章混合） */
   nodes: EditorNode[]
   disabled?: boolean
@@ -23,7 +23,11 @@ const props = defineProps<{
   maxLength?: number
   minRows?: number
   maxRows?: number
-}>()
+  /** Enter 键行为：true=Enter 发送（Shift+Enter 换行）；false=Enter 换行 */
+  submitOnEnter?: boolean
+}>(), {
+  submitOnEnter: true
+})
 
 const emit = defineEmits<{
   /** 节点数组更新 */
@@ -188,6 +192,10 @@ const atTriggerPosition = ref<number | null>(null)
 // @ 查询结束位置（纯文本偏移），用于在选择面板里点选文件后也能正确清理 @query
 const atQueryEndPosition = ref<number | null>(null)
 
+// Some contexts may be inserted imperatively (e.g. after async file read).
+// During that brief window, the chip exists in DOM but not yet in props.nodes.
+const transientContexts = new Map<string, PromptContextItem>()
+
 // 从编辑器中提取内容，生成新的节点数组
 function extractNodesFromEditor(): EditorNode[] {
   if (!editorRef.value) return []
@@ -208,9 +216,14 @@ function extractNodesFromEditor(): EditorNode[] {
         if (el.classList.contains('context-chip')) {
           // 徽章节点
           const contextId = el.dataset.contextId
-          const context = props.nodes
+          let context = props.nodes
             .filter((n): n is { type: 'context'; context: PromptContextItem } => n.type === 'context')
             .find(n => n.context.id === contextId)?.context
+
+          if (!context && contextId) {
+            context = transientContexts.get(contextId)
+          }
+
           if (context) {
             nodes.push(createContextNode(context))
           }
@@ -858,16 +871,20 @@ function handleKeydown(e: KeyboardEvent) {
     return
   }
 
-  // Enter 发送（Shift+Enter 换行）
-  if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.altKey) {
+  // Enter / Ctrl+Enter
+  if (e.key === 'Enter' && !e.shiftKey && !e.altKey) {
+    if (props.submitOnEnter) {
+      e.preventDefault()
+      emit('send')
+      return
+    }
+
+    // In non-submit mode, Enter behaves like a line break.
     e.preventDefault()
-    emit('send')
-  }
-  
-  // Ctrl+Enter 也可以发送
-  if (e.key === 'Enter' && e.ctrlKey) {
-    e.preventDefault()
-    emit('send')
+    if (insertLineBreakAtCaret()) {
+      handleInput()
+    }
+    return
   }
 }
 
@@ -1295,6 +1312,13 @@ watch(() => props.nodes, () => {
     }
   }
 
+  // Drop transient fallback entries once the parent state includes them.
+  for (const id of Array.from(transientContexts.keys())) {
+    if (props.nodes.some(n => n.type === 'context' && n.context.id === id)) {
+      transientContexts.delete(id)
+    }
+  }
+
   // 只在非输入状态时渲染（避免循环）；但如果节点被清空，需要强制渲染清理 DOM
   if (!isInputting || props.nodes.length === 0) {
     renderNodesToDOM()
@@ -1332,61 +1356,100 @@ function insertFilePath(_path: string) {
 // 用 replacement 替换从 @ 到当前光标的内容
 function replaceAtTriggerWithText(replacement: string = '') {
   if (!editorRef.value || atTriggerPosition.value === null) return
-  
-  // 提取当前节点
-  const nodes = extractNodesFromEditor()
+
+  const editor = editorRef.value
   const triggerPos = atTriggerPosition.value
   const cursorPos = atQueryEndPosition.value ?? getCaretTextOffset()
   const endPos = Math.max(cursorPos, triggerPos + 1)
-  
-  // 重建节点：删除从 triggerPos 到 endPos 的内容
-  let charIndex = 0
-  const newNodes: EditorNode[] = []
-  
-  for (const node of nodes) {
-    if (node.type === 'text') {
-      const text = node.text
-      const nodeStart = charIndex
-      const nodeEnd = charIndex + text.length
-      
-      if (nodeEnd <= triggerPos || nodeStart >= endPos) {
-        // 节点完全在删除范围外
-        newNodes.push(node)
-      } else {
-        // 节点与删除范围有交集
-        let newText = ''
-        if (nodeStart < triggerPos) {
-          newText += text.substring(0, triggerPos - nodeStart)
-        }
-        if (nodeEnd > endPos) {
-          newText += text.substring(endPos - nodeStart)
-        }
-        // 在删除位置插入 replacement
-        if (nodeStart <= triggerPos && nodeEnd > triggerPos && replacement) {
-          newText = text.substring(0, triggerPos - nodeStart) + replacement + (nodeEnd > endPos ? text.substring(endPos - nodeStart) : '')
-        }
-        if (newText) {
-          newNodes.push(createTextNode(newText))
-        }
+
+  editor.focus()
+
+  const getDomPointFromTextOffset = (targetOffset: number): { container: Node; offset: number } => {
+    let textCount = 0
+    const children = Array.from(editor.childNodes)
+
+    for (let i = 0; i < children.length; i++) {
+      const child = children[i]
+
+      // Boundary before this child
+      if (targetOffset === textCount) {
+        return { container: editor, offset: i }
       }
-      charIndex = nodeEnd
-    } else {
-      // 上下文节点不参与纯文本偏移，始终保留
-      newNodes.push(node)
+
+      if (child.nodeType === Node.TEXT_NODE) {
+        const t = child as Text
+        const raw = t.data
+        const logicalLen = raw.replace(/\u200B/g, '').length
+
+        if (targetOffset <= textCount + logicalLen) {
+          // Map logical offset (excluding ZWSP) -> actual text node offset
+          const need = targetOffset - textCount
+          let seen = 0
+          for (let j = 0; j <= raw.length; j++) {
+            if (seen === need) {
+              return { container: t, offset: j }
+            }
+            const ch = raw[j]
+            if (ch && ch !== '\u200B') {
+              seen += 1
+            }
+          }
+          return { container: t, offset: raw.length }
+        }
+
+        textCount += logicalLen
+        continue
+      }
+
+      if (child.nodeType !== Node.ELEMENT_NODE) continue
+
+      const el = child as HTMLElement
+
+      // <br data-lim-break="1"> counts as one character ("\n")
+      if (el.tagName === 'BR' && el.dataset.limBreak === '1') {
+        if (targetOffset === textCount + 1) {
+          return { container: editor, offset: i + 1 }
+        }
+        textCount += 1
+        continue
+      }
+
+      // Chips do not contribute to text offset
+      if (el.classList.contains('context-chip')) {
+        continue
+      }
     }
+
+    return { container: editor, offset: editor.childNodes.length }
   }
-  
-  emit('update:nodes', normalizeNodes(newNodes))
-  
-  // 关闭面板
+
+  const start = getDomPointFromTextOffset(triggerPos)
+  const end = getDomPointFromTextOffset(endPos)
+
+  const range = document.createRange()
+  range.setStart(start.container, start.offset)
+  range.setEnd(end.container, end.offset)
+  range.deleteContents()
+
+  if (replacement) {
+    const textNode = document.createTextNode(replacement)
+    range.insertNode(textNode)
+    range.setStartAfter(textNode)
+  }
+
+  range.collapse(true)
+  const selection = window.getSelection()
+  if (selection) {
+    selection.removeAllRanges()
+    selection.addRange(range)
+  }
+
+  // Close panel state
   atTriggerPosition.value = null
   atQueryEndPosition.value = null
   emit('close-at-picker')
-  
-  // 聚焦编辑器
-  nextTick(() => {
-    editorRef.value?.focus()
-  })
+
+  handleInput()
 }
 
 // 获取当前触发位置
@@ -1529,12 +1592,77 @@ async function handleContextClick(ctx: PromptContextItem) {
   }
 }
 
+function insertContextAtCaret(context: PromptContextItem): boolean {
+  if (!editorRef.value) return false
+
+  transientContexts.set(context.id, context)
+
+  const range = getRangeInEditor()
+  const selection = window.getSelection()
+  if (!range || !selection) return false
+
+  range.deleteContents()
+
+  // Build a chip element consistent with renderNodesToDOM().
+  const chip = document.createElement('span')
+  chip.className = 'context-chip'
+  chip.contentEditable = 'false'
+  chip.dataset.contextId = context.id
+
+  const icon = document.createElement('i')
+  icon.className = getContextIcon(context).class
+  chip.appendChild(icon)
+
+  const title = document.createElement('span')
+  title.className = 'context-chip__text'
+  title.textContent = context.title
+  chip.appendChild(title)
+
+  const removeBtn = document.createElement('button')
+  removeBtn.className = 'context-chip__remove'
+  removeBtn.type = 'button'
+  removeBtn.innerHTML = '<i class="codicon codicon-close"></i>'
+  removeBtn.onclick = (e) => {
+    e.stopPropagation()
+    handleRemoveContext(context.id)
+  }
+  chip.appendChild(removeBtn)
+
+  chip.onmouseenter = () => handleContextMouseEnter(context)
+  chip.onmouseleave = () => handleContextMouseLeave()
+  chip.onclick = (e) => {
+    e.stopPropagation()
+    handleContextClick(context)
+  }
+
+  range.insertNode(chip)
+
+  // Ensure caret anchors around the chip.
+  const after = document.createTextNode('\u200B')
+  chip.after(after)
+
+  const prev = chip.previousSibling
+  if (!prev || prev.nodeType === Node.ELEMENT_NODE) {
+    chip.before(document.createTextNode('\u200B'))
+  }
+
+  const newRange = document.createRange()
+  newRange.setStart(after, 1)
+  newRange.collapse(true)
+  selection.removeAllRanges()
+  selection.addRange(newRange)
+
+  handleInput()
+  return true
+}
+
 // 暴露方法
 defineExpose({
   focus,
   closeAtPicker,
   insertFilePath,
   replaceAtTriggerWithText,
+  insertContextAtCaret,
   getAtTriggerPosition
 })
 </script>

@@ -128,7 +128,7 @@ const en: LanguageMessages = {
             },
             editDialog: {
                 title: 'Edit Message',
-                placeholder: 'Enter new message content... (paste attachments, Shift+drag to add paths)',
+                placeholder: 'Enter new message content... (paste attachments, drag files to add badges, Ctrl+Shift+drag to insert @path text, type @ to search files)',
                 addAttachment: 'Add Attachment',
                 checkpointHint: 'A tool execution backup was detected before this message. You can choose to restore to before tool execution and then edit to recover file changes.',
                 cancel: 'Cancel',
@@ -1347,7 +1347,7 @@ const en: LanguageMessages = {
                 appInfo: {
                     title: 'Application Info',
                     name: 'Lim Code - Vibe Coding Assistant',
-                    version: 'Version: 1.0.58',
+                    version: 'Version: 1.0.59',
                     repository: 'Repository',
                     developer: 'Developer'
                 }

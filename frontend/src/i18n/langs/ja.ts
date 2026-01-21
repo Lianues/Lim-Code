@@ -128,7 +128,7 @@ const ja: LanguageMessages = {
             },
             editDialog: {
                 title: 'メッセージを編集',
-                placeholder: '新しいメッセージ内容を入力...（添付ファイルを貼り付け、Shift+ドラッグでパスを追加）',
+                placeholder: '新しいメッセージ内容を入力...（添付ファイルを貼り付け、ファイルをドラッグしてバッジを追加、Ctrl+Shift+ドラッグで @path を挿入、@ でファイル検索）',
                 addAttachment: '添付ファイルを追加',
                 checkpointHint: 'このメッセージの前にツール実行のバックアップが検出されました。ツール実行前に復元してから編集することで、ファイルの変更を回復できます。',
                 cancel: 'キャンセル',
@@ -1347,7 +1347,7 @@ const ja: LanguageMessages = {
                 appInfo: {
                     title: 'アプリケーション情報',
                     name: 'Lim Code - Vibe Coding アシスタント',
-                    version: 'バージョン：1.0.58',
+                    version: 'バージョン：1.0.59',
                     repository: 'リポジトリ',
                     developer: '開発者'
                 }

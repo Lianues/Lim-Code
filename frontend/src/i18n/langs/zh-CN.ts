@@ -128,7 +128,7 @@ const zhCN: LanguageMessages = {
             },
             editDialog: {
                 title: '编辑消息',
-                placeholder: '输入新的消息内容...（可粘贴附件，Shift+拖拽添加路径）',
+                placeholder: '输入新的消息内容...（可粘贴附件，拖拽文件添加徽章，Ctrl+Shift+拖拽插入 @path 文本，输入 @ 搜索文件）',
                 addAttachment: '添加附件',
                 checkpointHint: '检测到此消息前有工具执行的备份，您可以选择回档到工具执行前再编辑，以恢复文件变更。',
                 cancel: '取消',
@@ -1347,7 +1347,7 @@ const zhCN: LanguageMessages = {
                 appInfo: {
                     title: '应用信息',
                     name: 'Lim Code - Vibe Coding助手',
-                    version: '版本：1.0.58',
+                    version: '版本：1.0.59',
                     repository: '项目仓库',
                     developer: '开发者'
                 }
