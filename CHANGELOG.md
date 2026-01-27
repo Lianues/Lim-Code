@@ -3,6 +3,11 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.0.68] - 2026-01-27
+
+### Fixed
+  - 修复配置未持久化问题
+
 ## [1.0.67] - 2026-01-27
 
 ### Improved
