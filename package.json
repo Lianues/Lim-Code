@@ -179,6 +179,17 @@
     "configuration": {
       "title": "Lim Code",
       "properties": {
+        "limcode.activeChannelId": {
+          "type": "string",
+          "default": "",
+          "scope": "machine",
+          "description": "当前激活的模型渠道 ID（按机器保存，不参与 Settings Sync）"
+        },
+        "limcode.lastReadAnnouncementVersion": {
+          "type": "string",
+          "default": "",
+          "description": "用户上次查看的公告版本（可同步）"
+        },
         "limcode.toolsConfig": {
           "type": "object",
           "default": {},
