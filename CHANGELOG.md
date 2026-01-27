@@ -3,6 +3,11 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.0.67] - 2026-01-27
+
+### Improved
+  - 迁移至 VSCode 原生配置以支持 Settings Sync
+
 ## [1.0.66] - 2026-01-24
 
 ### Fixed
