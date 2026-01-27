@@ -379,6 +379,7 @@ export interface LanguageMessages {
                 sendContentTooltip: string;
                 hint: string;
                 openDirectory: string;
+                refresh: string;
             };
             promptContext: {
                 title: string;

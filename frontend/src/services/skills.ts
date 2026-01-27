@@ -32,6 +32,10 @@ export async function removeSkillConfig(id: string) {
   return await sendToExtension('removeSkillConfig', { id })
 }
 
+export async function refreshSkills() {
+  return await sendToExtension('refreshSkills', {})
+}
+
 export async function getSkillsDirectory(): Promise<{ path: string | null }> {
   return await sendToExtension('getSkillsDirectory', {}) as { path: string | null }
 }

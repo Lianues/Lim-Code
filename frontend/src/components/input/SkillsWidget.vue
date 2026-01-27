@@ -8,6 +8,7 @@ import {
   getSkillsDirectory,
   listSkills,
   openDirectory,
+  refreshSkills,
   removeSkillConfig,
   setSkillEnabled,
   setSkillSendContent
@@ -17,18 +18,32 @@ const { t } = useI18n()
 
 const skills = ref<SkillItem[]>([])
 const showSkillsPanel = ref(false)
-const isLoadingSkills = ref(false)
+
+const loadingCount = ref(0)
+const isLoadingSkills = computed(() => loadingCount.value > 0)
+
+async function withLoading<T>(fn: () => Promise<T>): Promise<T> {
+  loadingCount.value++
+  try {
+    return await fn()
+  } finally {
+    loadingCount.value--
+  }
+}
 
 async function loadSkills() {
-  isLoadingSkills.value = true
   try {
     skills.value = await listSkills()
   } catch (error) {
     console.error('Failed to load skills:', error)
-  } finally {
-    isLoadingSkills.value = false
   }
 }
+
+const refreshButtonIcon = computed(() =>
+  isLoadingSkills.value
+    ? 'codicon-refresh codicon-modifier-spin'
+    : 'codicon-refresh'
+)
 
 async function refreshSkillsExistence() {
   if (skills.value.length === 0) return
@@ -86,18 +101,34 @@ async function handleOpenSkillsDirectory() {
   }
 }
 
+async function handleRefreshSkills() {
+  if (isLoadingSkills.value) return
+
+  await withLoading(async () => {
+    try {
+      await refreshSkills()
+      await loadSkills()
+      await refreshSkillsExistence()
+    } catch (error: any) {
+      console.error('Failed to refresh skills:', error)
+    }
+  })
+}
+
 async function toggleSkillsPanel() {
   showSkillsPanel.value = !showSkillsPanel.value
   if (showSkillsPanel.value) {
-    await loadSkills()
-    await refreshSkillsExistence()
+    await withLoading(async () => {
+      await loadSkills()
+      await refreshSkillsExistence()
+    })
   }
 }
 
 const enabledSkillsCount = computed(() => skills.value.filter(s => s.enabled && s.exists !== false).length)
 
 onMounted(() => {
-  loadSkills()
+  void withLoading(loadSkills)
 })
 </script>
 
@@ -125,10 +156,17 @@ onMounted(() => {
       </span>
       <div class="skills-header-actions">
         <IconButton
+          :icon="refreshButtonIcon"
+          size="small"
+          :disabled="isLoadingSkills"
+          @click="handleRefreshSkills"
+          :tooltip="t('components.input.skillsPanel.refresh')"
+        />
+        <IconButton
           icon="codicon-folder-opened"
           size="small"
           @click="handleOpenSkillsDirectory"
-          :title="t('components.input.skillsPanel.openDirectory')"
+          :tooltip="t('components.input.skillsPanel.openDirectory')"
         />
         <IconButton
           icon="codicon-close"
@@ -487,12 +525,14 @@ onMounted(() => {
   font-size: 12px;
 }
 
-.codicon-modifier-spin {
-  animation: spin 1s linear infinite;
+:deep(.codicon-refresh.codicon-modifier-spin) {
+  /* codicon.css 只对部分 icon 默认开启 spin，这里补齐 refresh */
+  animation: codicon-spin 1.5s steps(30) infinite;
 }
 
-@keyframes spin {
-  from { transform: rotate(0deg); }
-  to { transform: rotate(360deg); }
+@media (prefers-reduced-motion: reduce) {
+  :deep(.codicon-refresh.codicon-modifier-spin) {
+    animation: none;
+  }
 }
 </style>

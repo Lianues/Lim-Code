@@ -27,7 +27,7 @@ import type { CreateMcpServerInput, UpdateMcpServerInput, McpServerInfo } from '
 import { DependencyManager, type InstallProgressEvent } from '../backend/modules/dependencies';
 import { toolRegistry, registerAllTools, onTerminalOutput, onImageGenOutput, TaskManager, setSubAgentExecutorContext } from '../backend/tools';
 import type { TerminalOutputEvent, ImageGenOutputEvent, TaskEvent } from '../backend/tools';
-import { createSkillsManager } from '../backend/modules/skills';
+import { createSkillsManager, getSkillsManager } from '../backend/modules/skills';
 import {
     setGlobalSettingsManager,
     setGlobalConfigManager,
@@ -636,6 +636,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         
         // 释放 MCP 管理器资源（断开所有连接）
         this.mcpManager?.dispose();
+
+        // 释放 Skills 管理器资源
+        getSkillsManager()?.dispose();
 
         console.log('ChatViewProvider disposed');
     }

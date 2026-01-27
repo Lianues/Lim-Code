@@ -54,7 +54,7 @@ export interface SkillsState {
  */
 export interface SkillsChangeEvent {
     /** 变更类型 */
-    type: 'enabled' | 'disabled' | 'refresh';
+    type: 'enabled' | 'disabled' | 'refresh' | 'update';
     
     /** 变更的 skill IDs */
     skillIds: string[];

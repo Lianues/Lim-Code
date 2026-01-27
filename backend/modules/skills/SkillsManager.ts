@@ -7,6 +7,7 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { getActualLanguage } from '../../i18n/index';
 import type { Skill, SkillFrontmatter, SkillsChangeEvent, SkillsChangeListener } from './types';
 
 /**
@@ -54,6 +55,9 @@ export class SkillsManager {
         // 确保 skills 目录存在
         await this.ensureSkillsDirectory();
         
+        // 创建示例 skill
+        await this.createExampleSkillIfNotExists();
+        
         // 扫描并加载所有 skills
         await this.refresh();
         
@@ -75,7 +79,11 @@ export class SkillsManager {
      * 创建示例 skill（如果不存在）
      */
     private async createExampleSkillIfNotExists(): Promise<void> {
-        const exampleDir = path.join(this.skillsDir, 'example-skill');
+        const lang = getActualLanguage();
+        const isChinese = lang === 'zh-CN';
+        
+        const exampleDirName = isChinese ? '示例技能' : 'example-skill';
+        const exampleDir = path.join(this.skillsDir, exampleDirName);
         const exampleFile = path.join(exampleDir, 'SKILL.md');
         
         // 检查示例 skill 是否已存在
@@ -86,7 +94,66 @@ export class SkillsManager {
         try {
             await fs.promises.mkdir(exampleDir, { recursive: true });
             
-            const exampleContent = `---
+            let exampleContent = '';
+            
+            if (isChinese) {
+                exampleContent = `---
+name: 示例技能
+description: "这是一个展示 Skill 格式的示例。启用此 Skill 以学习如何创建自己的技能。"
+---
+
+# 示例技能
+
+## 概览
+
+这是一个示例 Skill 文件，展示了创建 Skill 的正确格式。
+
+## 步骤
+
+1. 在 \`skills\` 目录中创建一个以你的技能命名的文件夹
+2. 在该文件夹中创建一个 \`SKILL.md\` 文件
+3. 在文件开头添加包含 \`name\` 和 \`description\` 字段的 Frontmatter
+4. 在 Frontmatter 之后添加你的技能内容
+
+## Skill 格式
+
+\`\`\`markdown
+---
+name: 你的技能名称
+description: "简要描述该技能的功能及使用场景"
+---
+
+# 你的技能名称
+
+## 指令
+[为 AI 提供清晰、逐步的指导]
+
+## 示例
+[使用此技能的具体例子]
+\`\`\`
+
+## 必填字段
+
+- **name**: 技能标识符（应唯一）
+- **description**: 在 toggle_skills 工具和面板中显示的简要描述
+
+## Skills 如何工作
+
+1. Skills 存储在插件数据目录下的 \`skills\` 文件夹中
+2. 每个 Skill 都有自己的子文件夹，其中包含一个 \`SKILL.md\` 文件
+3. AI 可以使用 \`toggle_skills\` 工具启用/禁用 Skills
+4. 启用后，Skill 内容将被注入到动态上下文中
+
+## 示例用例
+
+- 编程语言最佳实践
+- 特定框架的指导
+- 领域知识（如材料科学、数据分析）
+- 项目特定的规范
+- 代码风格指南
+`;
+            } else {
+                exampleContent = `---
 name: example-skill
 description: "This is an example skill demonstrating the skill format. Enable this skill to learn how to create your own skills."
 ---
@@ -141,9 +208,10 @@ description: "Brief description of what this skill does and when to use it"
 - Project-specific conventions
 - Code style guidelines
 `;
+            }
             
             await fs.promises.writeFile(exampleFile, exampleContent, 'utf-8');
-            console.log('[SkillsManager] Created example skill');
+            console.log(`[SkillsManager] Created example skill (${lang})`);
         } catch (error) {
             console.warn('[SkillsManager] Failed to create example skill:', error);
         }
@@ -365,8 +433,7 @@ description: "Brief description of what this skill does and when to use it"
      * @param skillStates skill ID 到启用状态的映射
      */
     setSkillsState(skillStates: Record<string, boolean>): void {
-        const enabledIds: string[] = [];
-        const disabledIds: string[] = [];
+        const changedIds: string[] = [];
         
         for (const [id, enabled] of Object.entries(skillStates)) {
             if (!this.skills.has(id)) {
@@ -379,22 +446,19 @@ description: "Brief description of what this skill does and when to use it"
                 this.enabledSkillIds.add(id);
                 const skill = this.skills.get(id);
                 if (skill) skill.enabled = true;
-                enabledIds.push(id);
+                changedIds.push(id);
             } else if (!enabled && currentlyEnabled) {
                 this.enabledSkillIds.delete(id);
                 const skill = this.skills.get(id);
                 if (skill) skill.enabled = false;
-                disabledIds.push(id);
+                changedIds.push(id);
             }
         }
         
         // 通知变更
-        if (enabledIds.length > 0) {
-            this.notifyChange({ type: 'enabled', skillIds: enabledIds });
+        if (changedIds.length > 0) {
+            this.notifyChange({ type: 'update', skillIds: changedIds });
         }
-        if (disabledIds.length > 0) {
-            this.notifyChange({ type: 'disabled', skillIds: disabledIds });
-    }
     }
     
     /**
@@ -438,7 +502,7 @@ description: "Brief description of what this skill does and when to use it"
         }
         
         // Notify change
-        this.notifyChange({ type: 'enabled', skillIds: [id] });
+        this.notifyChange({ type: 'update', skillIds: [id] });
     }
     
     /**
@@ -503,6 +567,13 @@ description: "Brief description of what this skill does and when to use it"
      */
     getEnabledSkillsCount(): number {
         return this.enabledSkillIds.size;
+    }
+    
+    /**
+     * 释放资源
+     */
+    dispose(): void {
+        this.listeners.clear();
     }
 }
 

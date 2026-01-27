@@ -273,12 +273,13 @@ const ja: LanguageMessages = {
                 title: 'Skills',
                 description: 'Skills はユーザー定義のナレッジモジュールです。チェックボックス：会話で有効化。スイッチ：詳細内容を AI に送信。',
                 loading: '読み込み中...',
-                empty: '利用可能な Skills がありません。skills フォルダーで作成してください。',
+                empty: '利用可能な Skills がありません。右上のフォルダーアイコンでディレクトリを開き、SKILL.md ファイルを含むフォルダーを作成すると追加できます。',
                 notExists: '存在しません',
                 enableTooltip: '現在の会話でこの Skill を有効にする',
                 sendContentTooltip: '有効時に Skill の内容を AI に送信する',
                 hint: 'AI も toggle_skills ツールで Skill 内容を送信するかどうかを決定できます',
-                openDirectory: 'Skills ディレクトリを開く'
+                openDirectory: 'Skills ディレクトリを開く',
+                refresh: 'Skills リストを更新'
             },
             promptContext: {
                 title: 'プロンプトコンテキスト',
