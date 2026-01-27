@@ -18,7 +18,7 @@ import { ConfigManager, MementoStorageAdapter } from '../backend/modules/config'
 import { ChannelManager } from '../backend/modules/channel';
 import { ChatHandler } from '../backend/modules/api/chat';
 import { ModelsHandler } from '../backend/modules/api/models';
-import { SettingsManager, FileSettingsStorage, StoragePathManager } from '../backend/modules/settings';
+import { SettingsManager, VSCodeSettingsStorage, StoragePathManager } from '../backend/modules/settings';
 import type { StoragePathConfig, StorageStats } from '../backend/modules/settings';
 import { SettingsHandler } from '../backend/modules/api/settings';
 import { CheckpointManager } from '../backend/modules/checkpoint';
@@ -126,8 +126,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
      */
     private async initializeBackend() {
         // 1. 初始化设置管理器（需要最先初始化以获取存储路径配置）
-        const settingsStorageDir = path.join(this.context.globalStorageUri.fsPath, 'settings');
-        const settingsStorage = new FileSettingsStorage(settingsStorageDir);
+        const legacySettingsDir = path.join(this.context.globalStorageUri.fsPath, 'settings');
+        const settingsStorage = new VSCodeSettingsStorage({
+            legacySettingsDir
+        });
         this.settingsManager = new SettingsManager(settingsStorage);
         await this.settingsManager.initialize();
         

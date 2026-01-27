@@ -95,6 +95,11 @@ npx @vscode/vsce package
 
 ## ⚙️ 配置说明
 
+### Settings Sync（配置同步）
+- LimCode 的大部分“设置类配置”（工具选项 / 提示词 / UI 偏好 / Token 计数 / 图像工具配置等）已迁移到 VS Code Settings（`limcode.*`），在开启 VS Code Settings Sync 时会自动同步到其他设备。
+- `limcode.proxy` 与 `limcode.storagePath` 为 **machine scope**：按机器保存，不参与同步（避免不同机器代理端口、存储路径冲突）。
+- 从旧版本升级时，会在首次启动自动从 `globalStorage/settings/settings.json` 迁移，并备份旧文件为 `settings.json.bak`。
+
 ### 渠道配置
 每个渠道可以独立配置：
 - **API URL** - API 端点地址

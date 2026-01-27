@@ -29,10 +29,10 @@
 全局设置管理器，负责设置的读写和通知。
 
 ```typescript
-import { SettingsManager, FileSettingsStorage } from './modules/settings';
+import { SettingsManager, VSCodeSettingsStorage } from './modules/settings';
 
-// 创建设置管理器
-const storage = new FileSettingsStorage('/path/to/storage');
+// 创建设置管理器（存入 VS Code Settings，可被 Settings Sync 同步）
+const storage = new VSCodeSettingsStorage();
 const settingsManager = new SettingsManager(storage);
 
 // 初始化（从存储加载）
@@ -43,7 +43,8 @@ await settingsManager.initialize();
 
 存储接口，支持不同的存储实现：
 
-- **FileSettingsStorage**: 基于文件系统的存储
+- **VSCodeSettingsStorage**: 基于 VS Code Settings 的存储（推荐，支持 Settings Sync）
+- **FileSettingsStorage**: 基于文件系统的存储（旧版/兼容）
 - **MemorySettingsStorage**: 基于内存的存储（测试用）
 
 ### 3. GlobalSettings
@@ -154,11 +155,11 @@ settingsManager.removeChangeListener(listener);
 ### 基本流程
 
 ```typescript
-// 1. 创建存储实现
-const storage = new FileSettingsStorage(
-    context.globalStorageUri.fsPath,  // VSCode 全局存储目录
-    'settings.json'
-);
+// 1. 创建存储实现（推荐：VS Code Settings）
+const storage = new VSCodeSettingsStorage({
+    // 可选：用于从旧版文件 settings.json 迁移
+    legacySettingsDir: path.join(context.globalStorageUri.fsPath, 'settings')
+});
 
 // 2. 创建设置管理器
 const settingsManager = new SettingsManager(storage);

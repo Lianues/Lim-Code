@@ -124,6 +124,20 @@ export class SettingsManager {
                 toolsConfig: {
                     ...DEFAULT_GLOBAL_SETTINGS.toolsConfig,
                     ...stored.toolsConfig
+                },
+                // 合并 UI 配置（避免用户只配置部分字段导致默认值丢失）
+                ui: {
+                    ...DEFAULT_GLOBAL_SETTINGS.ui,
+                    ...stored.ui,
+                    appearance: {
+                        ...DEFAULT_GLOBAL_SETTINGS.ui?.appearance,
+                        ...stored.ui?.appearance
+                    }
+                },
+                // 合并代理配置（避免用户只配置 url/enabled 时导致字段丢失）
+                proxy: {
+                    ...DEFAULT_GLOBAL_SETTINGS.proxy,
+                    ...stored.proxy
                 }
             };
         }
@@ -1749,7 +1763,9 @@ export class SettingsManager {
     setLastReadAnnouncementVersion(version: string): void {
         this.settings.lastReadAnnouncementVersion = version;
         this.settings.lastUpdated = Date.now();
-        this.storage.save(this.settings);
+        void this.storage.save(this.settings).catch(error => {
+            console.error('Failed to save settings:', error);
+        });
     }
     
     // ========== 事件监听 ==========

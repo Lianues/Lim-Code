@@ -175,6 +175,66 @@
           "icon": "resources/icon.svg"
         }
       ]
+    },
+    "configuration": {
+      "title": "Lim Code",
+      "properties": {
+        "limcode.toolsConfig": {
+          "type": "object",
+          "default": {},
+          "description": "LimCode 工具与提示词等配置（可同步）"
+        },
+        "limcode.ui": {
+          "type": "object",
+          "default": {},
+          "description": "LimCode UI 配置（可同步）"
+        },
+        "limcode.toolsEnabled": {
+          "type": "object",
+          "default": {},
+          "description": "工具启用状态（可同步）"
+        },
+        "limcode.toolAutoExec": {
+          "type": "object",
+          "default": {},
+          "description": "工具自动执行配置（可同步）"
+        },
+        "limcode.maxToolIterations": {
+          "type": "number",
+          "default": 50,
+          "description": "单回合最大工具调用次数（可同步，-1 表示无限制）"
+        },
+        "limcode.defaultToolMode": {
+          "type": "string",
+          "default": "function_call",
+          "enum": ["function_call", "xml"],
+          "description": "默认工具模式（可同步）"
+        },
+        "limcode.activeChannelId": {
+          "type": "string",
+          "default": "",
+          "description": "当前激活的渠道 ID（可同步）"
+        },
+        "limcode.lastReadAnnouncementVersion": {
+          "type": "string",
+          "default": "",
+          "description": "用户上次查看的公告版本（可同步）"
+        },
+        "limcode.proxy": {
+          "type": "object",
+          "default": {
+            "enabled": false
+          },
+          "scope": "machine",
+          "description": "代理设置（按机器保存，不参与 Settings Sync）"
+        },
+        "limcode.storagePath": {
+          "type": "object",
+          "default": {},
+          "scope": "machine",
+          "description": "自定义数据存储路径（按机器保存，不参与 Settings Sync）"
+        }
+      }
     }
   },
   "scripts": {
