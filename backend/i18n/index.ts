@@ -32,7 +32,7 @@ let detectedLanguage: string = 'zh-CN';
 /**
  * 获取实际使用的语言
  */
-function getActualLanguage(): string {
+export function getActualLanguage(): string {
     if (currentLanguage === 'auto') {
         // 尝试匹配检测到的语言
         if (detectedLanguage && messages[detectedLanguage]) {

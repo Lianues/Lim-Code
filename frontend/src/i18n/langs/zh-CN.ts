@@ -273,12 +273,13 @@ const zhCN: LanguageMessages = {
                 title: 'Skills',
                 description: 'Skills 是用户自定义的知识模块。勾选框：在对话中启用。开关：发送详细内容给 AI。',
                 loading: '加载中...',
-                empty: '暂无可用的 Skills。请在 skills 文件夹中创建。',
+                empty: '暂无可用的 Skills。点击右上角文件夹图标打开目录，创建一个文件夹并包含 SKILL.md 文件即可添加。',
                 notExists: '不存在',
                 enableTooltip: '在当前对话中启用此 Skill',
                 sendContentTooltip: '启用时发送 Skill 内容给 AI',
                 hint: 'AI 也可以通过 toggle_skills 工具来决定是否发送某个 Skill 内容',
-                openDirectory: '打开 Skills 存储目录'
+                openDirectory: '打开 Skills 存储目录',
+                refresh: '刷新 Skills 列表'
             },
             promptContext: {
                 title: '提示词上下文',

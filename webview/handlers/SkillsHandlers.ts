@@ -6,6 +6,7 @@ import * as vscode from 'vscode';
 import { t } from '../../backend/i18n';
 import type { MessageHandler } from '../types';
 import { getSkillsManager } from '../../backend/modules/skills';
+import type { SkillConfigItem } from '../../backend/modules/settings/types';
 
 // ========== Skills 类型 ==========
 
@@ -67,8 +68,37 @@ export const getSkillsConfig: MessageHandler = async (data, requestId, ctx) => {
                 exists: true
             };
         });
+
+        // 将最新的元数据（名称、描述）同步回 SettingsManager，确保 settings.json 中不再是空的
+        // 同时保留那些在配置中存在但目前不在磁盘上的 skill，避免被误删
+        const finalSkillsToSync: SkillConfigItem[] = [];
         
-        // 检查已保存但不再存在的 skills
+        // 1. 添加当前存在的 skills
+        for (const s of skills) {
+            if (s.exists) {
+                finalSkillsToSync.push({
+                    id: s.id,
+                    name: s.name,
+                    description: s.description,
+                    enabled: s.enabled,
+                    sendContent: s.sendContent
+                });
+            }
+        }
+        
+        // 2. 补充配置中存在但磁盘上缺失的 skills（保留其原样）
+        for (const savedSkill of savedConfig.skills) {
+            if (!finalSkillsToSync.some(s => s.id === savedSkill.id)) {
+                finalSkillsToSync.push(savedSkill);
+            }
+        }
+        
+        if (finalSkillsToSync.length > 0) {
+            // 批量更新配置，确保元数据得到同步
+            await ctx.settingsManager.updateSkillsConfig({ skills: finalSkillsToSync });
+        }
+        
+        // 检查已保存但不再存在的 skills (保留它们在 UI 显示为已丢失)
         for (const savedSkill of savedConfig.skills) {
             if (!allSkills.find(s => s.id === savedSkill.id)) {
                 skills.push({
@@ -119,11 +149,17 @@ export const setSkillEnabled: MessageHandler = async (data, requestId, ctx) => {
     try {
         const { id, enabled } = data;
         
-        // 保存到持久化配置
-        await ctx.settingsManager.setSkillEnabled(id, enabled);
+        // 获取实时元数据（名称、描述）
+        const skillsManager = getSkillsManager();
+        const skill = skillsManager?.getSkill(id);
+        
+        // 保存到持久化配置（带上最新的名称和描述）
+        await ctx.settingsManager.setSkillEnabled(id, enabled, {
+            name: skill?.name,
+            description: skill?.description
+        });
         
         // 同步到 SkillsManager
-        const skillsManager = getSkillsManager();
         if (skillsManager) {
             if (enabled) {
                 skillsManager.enableSkill(id);
@@ -145,11 +181,17 @@ export const setSkillSendContent: MessageHandler = async (data, requestId, ctx) 
     try {
         const { id, sendContent } = data;
         
-        // 保存到持久化配置
-        await ctx.settingsManager.setSkillSendContent(id, sendContent);
+        // 获取实时元数据（名称、描述）
+        const skillsManager = getSkillsManager();
+        const skill = skillsManager?.getSkill(id);
+        
+        // 保存到持久化配置（带上最新的名称和描述）
+        await ctx.settingsManager.setSkillSendContent(id, sendContent, {
+            name: skill?.name,
+            description: skill?.description
+        });
         
         // 同步到 SkillsManager
-        const skillsManager = getSkillsManager();
         if (skillsManager) {
             skillsManager.setSkillSendContent(id, sendContent);
         }

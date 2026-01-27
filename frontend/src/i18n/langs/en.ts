@@ -273,12 +273,13 @@ const en: LanguageMessages = {
                 title: 'Skills',
                 description: 'Skills are user-defined knowledge modules. Checkbox: enable in conversation. Switch: send detailed content to AI.',
                 loading: 'Loading...',
-                empty: 'No skills available. Create skills in the skills folder.',
+                empty: 'No skills available. Click the folder icon in the top right to open the directory. Create a folder containing a SKILL.md file to add a skill.',
                 notExists: 'Does not exist',
                 enableTooltip: 'Enable this skill in current conversation',
                 sendContentTooltip: 'Send skill content to AI when enabled',
                 hint: 'AI can also decide whether to send skill content via toggle_skills tool',
-                openDirectory: 'Open Skills Directory'
+                openDirectory: 'Open Skills Directory',
+                refresh: 'Refresh Skills list'
             },
             promptContext: {
                 title: 'Prompt Context',

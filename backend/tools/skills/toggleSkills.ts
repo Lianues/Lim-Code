@@ -74,8 +74,22 @@ async function handleToggleSkills(args: Record<string, boolean>): Promise<ToolRe
             continue;
         }
         
-        // Toggle the sendContent state in SkillsManager
+        // 1. 同步到内存状态 (SkillsManager)
         skillsManager.setSkillSendContent(skillId, shouldSend);
+        
+        // 2. 持久化到设置 (SettingsManager)
+        // 获取全局 settingsManager 引用
+        const { getGlobalSettingsManager } = await import('../../core/settingsContext');
+        const settingsManager = getGlobalSettingsManager();
+        if (settingsManager) {
+            // 注意：这里由于 skillId 已经从 skillsManager 获取，肯定存在
+            // 我们通过 settingsManager 保存启用状态，并同步最新的元数据
+            const skill = skillsManager.getSkill(skillId);
+            await settingsManager.setSkillSendContent(skillId, shouldSend, {
+                name: skill?.name,
+                description: skill?.description
+            });
+        }
     }
     
     // If some skills not found, return partial success
