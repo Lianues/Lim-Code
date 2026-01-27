@@ -866,7 +866,7 @@ export class SettingsHandler {
      * 标记公告已读
      */
     async markAnnouncementRead(version: string): Promise<void> {
-        this.settingsManager.setLastReadAnnouncementVersion(version);
+        await this.settingsManager.setLastReadAnnouncementVersion(version);
     }
     
     /**

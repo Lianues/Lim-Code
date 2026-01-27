@@ -284,7 +284,7 @@ export class SettingsManager {
      * @param enabled 是否启用
      */
     async setToolEnabled(toolName: string, enabled: boolean): Promise<void> {
-        const oldValue = this.settings.toolsEnabled[toolName];
+        const oldValue = { ...this.settings.toolsEnabled };
         this.settings.toolsEnabled[toolName] = enabled;
         this.settings.lastUpdated = Date.now();
         
@@ -292,9 +292,9 @@ export class SettingsManager {
         
         this.notifyChange({
             type: 'tools',
-            path: `toolsEnabled.${toolName}`,
+            path: 'toolsEnabled',
             oldValue,
-            newValue: enabled,
+            newValue: this.settings.toolsEnabled,
             settings: this.settings
         });
     }
@@ -376,9 +376,9 @@ export class SettingsManager {
         
         this.notifyChange({
             type: 'tools',
-            path: `toolAutoExec.${toolName}`,
-            oldValue: oldConfig[toolName],
-            newValue: autoExec,
+            path: 'toolAutoExec', // 修正 path 为父对象路径或针对特定工具的正确结构
+            oldValue: oldConfig,
+            newValue: this.settings.toolAutoExec,
             settings: this.settings
         });
     }
@@ -1786,11 +1786,19 @@ export class SettingsManager {
     /**
      * 设置用户上次查看的公告版本
      */
-    setLastReadAnnouncementVersion(version: string): void {
+    async setLastReadAnnouncementVersion(version: string): Promise<void> {
+        const oldValue = this.settings.lastReadAnnouncementVersion;
         this.settings.lastReadAnnouncementVersion = version;
         this.settings.lastUpdated = Date.now();
-        void this.storage.save(this.settings).catch(error => {
-            console.error('Failed to save settings:', error);
+        
+        await this.storage.save(this.settings);
+        
+        this.notifyChange({
+            type: 'full',
+            path: 'lastReadAnnouncementVersion',
+            oldValue: oldValue,
+            newValue: version,
+            settings: this.settings
         });
     }
     
