@@ -112,35 +112,57 @@ export class SettingsManager {
     async initialize(): Promise<void> {
         const stored = await this.storage.load();
         if (stored) {
-            this.settings = {
-                ...DEFAULT_GLOBAL_SETTINGS,
-                ...stored,
-                // 合并工具启用状态（保留默认值）
-                toolsEnabled: {
-                    ...DEFAULT_GLOBAL_SETTINGS.toolsEnabled,
-                    ...stored.toolsEnabled
-                },
-                // 合并工具配置（保留默认值和存储值）
-                toolsConfig: {
-                    ...DEFAULT_GLOBAL_SETTINGS.toolsConfig,
-                    ...stored.toolsConfig
-                },
-                // 合并 UI 配置（避免用户只配置部分字段导致默认值丢失）
-                ui: {
-                    ...DEFAULT_GLOBAL_SETTINGS.ui,
-                    ...stored.ui,
-                    appearance: {
-                        ...DEFAULT_GLOBAL_SETTINGS.ui?.appearance,
-                        ...stored.ui?.appearance
-                    }
-                },
-                // 合并代理配置（避免用户只配置 url/enabled 时导致字段丢失）
-                proxy: {
-                    ...DEFAULT_GLOBAL_SETTINGS.proxy,
-                    ...stored.proxy
-                }
-            };
+            // 使用深度合并处理所有配置，确保默认值不会因用户配置部分子字段而丢失
+            this.settings = this.deepMergeConfig(DEFAULT_GLOBAL_SETTINGS, stored) as GlobalSettings;
+            
+            // lastUpdated 需要使用最新的或当前时间
+            this.settings.lastUpdated = stored.lastUpdated || Date.now();
         }
+    }
+
+    /**
+     * 辅助方法：深度合并配置对象（递归）
+     * 
+     * 用于处理复杂的嵌套配置结构。
+     * 确保如果在 DEFAULT_CONFIG 中存在，而在 STORED_CONFIG 中不存在（或只有部分属性）时，
+     * 能够完整保留默认配置的子属性。
+     */
+    private deepMergeConfig<T>(defaultConfig: T, storedConfig: any): T {
+        // 基本类型或数组/null/undefined，直接使用 stored 的值（如果存在），否则回退到 default
+        if (storedConfig === undefined) {
+            return defaultConfig;
+        }
+
+        // 处理基础类型或特殊对象类型
+        if (
+            typeof defaultConfig !== 'object' || defaultConfig === null ||
+            typeof storedConfig !== 'object' || storedConfig === null ||
+            Array.isArray(defaultConfig) || Array.isArray(storedConfig)
+        ) {
+            return storedConfig as T;
+        }
+
+        const merged = { ...defaultConfig } as Record<string, any>;
+
+        // 遍历 default 的所有 key
+        for (const key of Object.keys(defaultConfig)) {
+            const defaultValue = (defaultConfig as Record<string, any>)[key];
+            const storedValue = storedConfig[key];
+
+            if (storedValue !== undefined) {
+                // 递归深合并
+                merged[key] = this.deepMergeConfig(defaultValue, storedValue);
+            }
+        }
+
+        // 保留 stored 中独有的 key（用户可能新增了我们当前版本未知但应该保留的配置）
+        for (const key of Object.keys(storedConfig)) {
+            if (!(key in defaultConfig)) {
+                merged[key] = storedConfig[key];
+            }
+        }
+
+        return merged as T;
     }
     
     /**
@@ -1436,18 +1458,20 @@ export class SettingsManager {
     /**
      * 设置 Skill 启用状态
      */
-    async setSkillEnabled(id: string, enabled: boolean): Promise<void> {
+    async setSkillEnabled(id: string, enabled: boolean, metadata?: { name?: string, description?: string }): Promise<void> {
         const skills = [...this.getSkills()];
         const skill = skills.find(s => s.id === id);
         
         if (skill) {
             skill.enabled = enabled;
+            if (metadata?.name) skill.name = metadata.name;
+            if (metadata?.description) skill.description = metadata.description;
         } else {
             // 如果 skill 不存在，创建新的配置项
             skills.push({
                 id,
-                name: id,
-                description: '',
+                name: metadata?.name || id,
+                description: metadata?.description || '',
                 enabled,
                 sendContent: true
             });
@@ -1459,18 +1483,20 @@ export class SettingsManager {
     /**
      * 设置 Skill 发送内容状态
      */
-    async setSkillSendContent(id: string, sendContent: boolean): Promise<void> {
+    async setSkillSendContent(id: string, sendContent: boolean, metadata?: { name?: string, description?: string }): Promise<void> {
         const skills = [...this.getSkills()];
         const skill = skills.find(s => s.id === id);
         
         if (skill) {
             skill.sendContent = sendContent;
+            if (metadata?.name) skill.name = metadata.name;
+            if (metadata?.description) skill.description = metadata.description;
         } else {
             // 如果 skill 不存在，创建新的配置项
             skills.push({
                 id,
-                name: id,
-                description: '',
+                name: metadata?.name || id,
+                description: metadata?.description || '',
                 enabled: true,
                 sendContent
             });

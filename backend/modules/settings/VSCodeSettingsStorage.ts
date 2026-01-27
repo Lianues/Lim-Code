@@ -93,19 +93,29 @@ export class VSCodeSettingsStorage implements SettingsStorage {
     async save(settings: GlobalSettings): Promise<void> {
         const config = vscode.workspace.getConfiguration(LIMCODE_CONFIG_SECTION);
 
-        // 注意：这里全部写入 Global 目标。
-        // 对于 scope: "machine" 的配置项，VS Code 会自动将其写入 Machine Settings，并且不参与 Sync。
-        await config.update('toolsConfig', settings.toolsConfig, vscode.ConfigurationTarget.Global);
-        await config.update('ui', settings.ui, vscode.ConfigurationTarget.Global);
-        await config.update('toolsEnabled', settings.toolsEnabled, vscode.ConfigurationTarget.Global);
-        await config.update('toolAutoExec', settings.toolAutoExec, vscode.ConfigurationTarget.Global);
-        await config.update('maxToolIterations', settings.maxToolIterations, vscode.ConfigurationTarget.Global);
-        await config.update('defaultToolMode', settings.defaultToolMode, vscode.ConfigurationTarget.Global);
-        await config.update('activeChannelId', settings.activeChannelId, vscode.ConfigurationTarget.Global);
-        await config.update('lastReadAnnouncementVersion', settings.lastReadAnnouncementVersion, vscode.ConfigurationTarget.Global);
+        try {
+            // 使用 Promise.all 并行写入配置，显著提升保存性能，并减小更新期间处于不一致状态的时间窗口
+            const updates = [
+                // Syncable scope
+                config.update('toolsConfig', settings.toolsConfig, vscode.ConfigurationTarget.Global),
+                config.update('ui', settings.ui, vscode.ConfigurationTarget.Global),
+                config.update('toolsEnabled', settings.toolsEnabled, vscode.ConfigurationTarget.Global),
+                config.update('toolAutoExec', settings.toolAutoExec, vscode.ConfigurationTarget.Global),
+                config.update('maxToolIterations', settings.maxToolIterations, vscode.ConfigurationTarget.Global),
+                config.update('defaultToolMode', settings.defaultToolMode, vscode.ConfigurationTarget.Global),
+                config.update('activeChannelId', settings.activeChannelId, vscode.ConfigurationTarget.Global),
+                config.update('lastReadAnnouncementVersion', settings.lastReadAnnouncementVersion, vscode.ConfigurationTarget.Global),
+                
+                // Machine scope
+                config.update('proxy', settings.proxy, vscode.ConfigurationTarget.Global),
+                config.update('storagePath', settings.storagePath, vscode.ConfigurationTarget.Global)
+            ];
 
-        await config.update('proxy', settings.proxy, vscode.ConfigurationTarget.Global);
-        await config.update('storagePath', settings.storagePath, vscode.ConfigurationTarget.Global);
+            await Promise.all(updates);
+        } catch (error) {
+            console.error('[VSCodeSettingsStorage] Failed to save settings:', error);
+            throw new Error(`保存设置失败: ${error instanceof Error ? error.message : String(error)}`);
+        }
     }
 
     private readSettingsFromVSCode(
@@ -116,13 +126,18 @@ export class VSCodeSettingsStorage implements SettingsStorage {
         // SettingsManager.initialize() 会与 DEFAULT_GLOBAL_SETTINGS 做合并。
         const settings: Partial<GlobalSettings> = {};
 
-        if (opts.includeSyncable) {
+            if (opts.includeSyncable) {
             settings.toolsConfig = config.get('toolsConfig');
             settings.ui = config.get('ui');
-            settings.toolsEnabled = config.get('toolsEnabled') as any;
+            settings.toolsEnabled = config.get('toolsEnabled');
             settings.toolAutoExec = config.get('toolAutoExec');
             settings.maxToolIterations = config.get('maxToolIterations');
-            settings.defaultToolMode = config.get('defaultToolMode') as any;
+            
+            const defaultToolMode = config.get('defaultToolMode');
+            if (defaultToolMode === 'function_call' || defaultToolMode === 'xml') {
+                settings.defaultToolMode = defaultToolMode;
+            }
+
             const activeChannelId = config.get<string>('activeChannelId');
             settings.activeChannelId = activeChannelId && activeChannelId.trim() ? activeChannelId : undefined;
 
@@ -137,9 +152,9 @@ export class VSCodeSettingsStorage implements SettingsStorage {
             settings.storagePath = config.get('storagePath');
         }
 
-        // toolsEnabled 在类型上是必填字段（但这里可能为 undefined），兜底给空对象，避免 TS 报错
+        // toolsEnabled 在类型上是必填字段（但这里可能为 undefined），兜底给空对象
         return {
-            toolsEnabled: (settings.toolsEnabled as any) ?? {},
+            toolsEnabled: settings.toolsEnabled ?? {},
             lastUpdated: Date.now(),
             ...(settings as any)
         };
@@ -184,7 +199,11 @@ export class VSCodeSettingsStorage implements SettingsStorage {
             if (error?.code === 'ENOENT') {
                 return null;
             }
-            console.warn('[VSCodeSettingsStorage] Failed to read legacy settings file:', error);
+            console.error('[VSCodeSettingsStorage] Failed to read legacy settings file:', error);
+            // 向用户显示警告，给予手动恢复的机会
+            vscode.window.showWarningMessage(
+                `LimCode: 读取旧版设置文件失败，配置可能无法迁移。请检查文件: ${legacyFile}`
+            );
             return null;
         }
 
@@ -192,7 +211,11 @@ export class VSCodeSettingsStorage implements SettingsStorage {
         try {
             legacySettings = JSON.parse(legacyContent);
         } catch (error) {
-            console.warn('[VSCodeSettingsStorage] Failed to parse legacy settings file:', error);
+            console.error('[VSCodeSettingsStorage] Failed to parse legacy settings file:', error);
+            // 向用户显示警告
+            vscode.window.showWarningMessage(
+                `LimCode: 解析旧版设置文件失败(JSON Error)，配置可能无法迁移。请检查文件: ${legacyFile}`
+            );
             return null;
         }
 

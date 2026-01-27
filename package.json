@@ -210,16 +210,6 @@
           "enum": ["function_call", "xml"],
           "description": "默认工具模式（可同步）"
         },
-        "limcode.activeChannelId": {
-          "type": "string",
-          "default": "",
-          "description": "当前激活的渠道 ID（可同步）"
-        },
-        "limcode.lastReadAnnouncementVersion": {
-          "type": "string",
-          "default": "",
-          "description": "用户上次查看的公告版本（可同步）"
-        },
         "limcode.proxy": {
           "type": "object",
           "default": {
