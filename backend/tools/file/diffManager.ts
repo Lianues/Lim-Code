@@ -304,6 +304,35 @@ export class DiffManager {
         }
         return { ...this.settings };
     }
+
+    /**
+     * 刷新自动保存定时器（用于运行时设置变更）
+     *
+     * 说明：
+     * - 当用户在 diff 已经处于 pending 状态后，才开启/关闭“启用自动应用”或调整延迟时，
+     *   需要通过此方法让当前已存在的 pending diff 立即按最新配置生效。
+     *
+     * 行为：
+     * - autoSave = false：取消所有已调度的自动保存
+     * - autoSave = true：为所有 pending diff 调度/重置自动保存（使用最新的 autoSaveDelay）
+     */
+    public refreshAutoSaveTimers(): void {
+        const currentSettings = this.getSettings();
+
+        // 关闭自动保存：清理全部定时器
+        if (!currentSettings.autoSave) {
+            for (const timer of this.autoSaveTimers.values()) {
+                clearTimeout(timer);
+            }
+            this.autoSaveTimers.clear();
+            return;
+        }
+
+        // 开启自动保存：为所有 pending diff 调度/重置定时器
+        for (const diff of this.getPendingDiffs()) {
+            this.scheduleAutoSave(diff.id);
+        }
+    }
     
     /**
      * 添加状态变化监听器

@@ -34,11 +34,16 @@ const chatStore = useChatStore()
 // 支持 diff 确认的工具名称列表
 const DIFF_SUPPORTED_TOOLS = ['apply_diff', 'write_file', 'search_in_files']
 
+type ApplyDiffAutoSaveConfig = { autoSave: boolean; autoSaveDelay: number }
+
 // 每个工具的自动确认配置
-const applyDiffConfigs = ref<Map<string, { autoSave: boolean; autoSaveDelay: number }>>(new Map())
+const applyDiffConfigs = ref<Map<string, ApplyDiffAutoSaveConfig>>(new Map())
 const applyDiffTimeLeft = ref<Map<string, number>>(new Map())
 const applyDiffProgress = ref<Map<string, number>>(new Map())
 const applyDiffTimers = new Map<string, ReturnType<typeof setInterval>>()
+
+// apply_diff 的全局配置（应用到所有支持 diff 的工具）
+const globalApplyDiffConfig = ref<ApplyDiffAutoSaveConfig>({ autoSave: false, autoSaveDelay: 3000 })
 
 // 工具 ID 到 Pending Diff ID 的映射
 const toolIdToPendingId = ref<Map<string, string>>(new Map())
@@ -96,6 +101,49 @@ function isDiffToolPending(tool: ToolUsage) {
   }
   
   return false
+}
+
+function normalizeApplyDiffConfig(raw: any): ApplyDiffAutoSaveConfig {
+  const autoSave = !!raw?.autoSave
+  const delay = Number(raw?.autoSaveDelay)
+  const autoSaveDelay = Number.isFinite(delay) ? Math.max(0, delay) : 3000
+  return { autoSave, autoSaveDelay }
+}
+
+function clearAllDiffTimers() {
+  for (const toolId of Array.from(applyDiffTimers.keys())) {
+    stopDiffTimer(toolId)
+  }
+  applyDiffTimeLeft.value = new Map()
+  applyDiffProgress.value = new Map()
+}
+
+function applyGlobalApplyDiffConfig(config: ApplyDiffAutoSaveConfig, opts?: { restartTimers?: boolean }) {
+  const restartTimers = opts?.restartTimers ?? false
+  globalApplyDiffConfig.value = config
+
+  // 更新当前工具的配置缓存（用于 UI 渲染）
+  for (const tool of enhancedTools.value) {
+    if (isDiffToolPending(tool)) {
+      applyDiffConfigs.value.set(tool.id, config)
+    } else {
+      applyDiffConfigs.value.delete(tool.id)
+    }
+  }
+
+  if (!restartTimers) return
+
+  // 配置变更时，重置所有倒计时并按新配置重新开始
+  clearAllDiffTimers()
+
+  if (config.autoSave) {
+    for (const tool of enhancedTools.value) {
+      if (isDiffToolPending(tool) && !applyDiffTimers.has(tool.id)) {
+        applyDiffConfigs.value.set(tool.id, config)
+        startDiffTimer(tool.id, config.autoSaveDelay)
+      }
+    }
+  }
 }
 
 // 启动自动确认计时器
@@ -183,26 +231,34 @@ async function rejectDiff(toolId: string) {
 onMounted(async () => {
   // 获取 diff 工具配置（apply_diff 的配置应用到所有支持 diff 的工具）
   try {
-    const response = await sendToExtension<{ config: { autoSave: boolean; autoSaveDelay: number } }>('tools.getToolConfig', {
+    const response = await sendToExtension<{ config: ApplyDiffAutoSaveConfig }>('tools.getToolConfig', {
       toolName: 'apply_diff'
     })
-    
     if (response?.config) {
-      // 监听 enhancedTools 的变化，为新出现的 pending 工具启动计时器
-      watchEffect(() => {
-        for (const tool of enhancedTools.value) {
-          if (isDiffToolPending(tool) && !applyDiffTimers.has(tool.id)) {
-            applyDiffConfigs.value.set(tool.id, response.config)
-            if (response.config.autoSave) {
-              startDiffTimer(tool.id, response.config.autoSaveDelay)
-            }
-          }
-        }
-      })
+      applyGlobalApplyDiffConfig(normalizeApplyDiffConfig(response.config), { restartTimers: true })
     }
   } catch (err) {
     console.error('Failed to get diff tool config:', err)
   }
+
+  // 监听后端推送的配置变更（无需刷新页面即可生效）
+  const unregisterApplyDiffConfigChanged = onExtensionCommand('tools.applyDiffConfigChanged', (data: any) => {
+    applyGlobalApplyDiffConfig(normalizeApplyDiffConfig(data?.config), { restartTimers: true })
+  })
+  onBeforeUnmount(unregisterApplyDiffConfigChanged)
+
+  // 监听 enhancedTools 的变化，为新出现的 pending 工具启动计时器
+  watchEffect(() => {
+    const cfg = globalApplyDiffConfig.value
+    for (const tool of enhancedTools.value) {
+      if (isDiffToolPending(tool) && !applyDiffTimers.has(tool.id)) {
+        applyDiffConfigs.value.set(tool.id, cfg)
+        if (cfg.autoSave) {
+          startDiffTimer(tool.id, cfg.autoSaveDelay)
+        }
+      }
+    }
+  })
   
   // 监听状态变化同步
   const unregister = onExtensionCommand('diff.statusChanged', (data: any) => {
@@ -223,13 +279,12 @@ onMounted(async () => {
     seenDiffToolIds.value = nextSeen
 
     // 检查是否有新的 pending 工具需要启动计时器
-    if (applyDiffConfigs.value.size > 0) {
-      const globalConfig = Array.from(applyDiffConfigs.value.values())[0]
-      if (globalConfig?.autoSave) {
-        for (const tool of enhancedTools.value) {
-          if (isDiffToolPending(tool) && !applyDiffTimers.has(tool.id)) {
-            startDiffTimer(tool.id, globalConfig.autoSaveDelay)
-          }
+    const cfg = globalApplyDiffConfig.value
+    if (cfg.autoSave) {
+      for (const tool of enhancedTools.value) {
+        if (isDiffToolPending(tool) && !applyDiffTimers.has(tool.id)) {
+          applyDiffConfigs.value.set(tool.id, cfg)
+          startDiffTimer(tool.id, cfg.autoSaveDelay)
         }
       }
     }

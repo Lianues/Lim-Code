@@ -19,7 +19,7 @@ import { ChannelManager } from '../backend/modules/channel';
 import { ChatHandler } from '../backend/modules/api/chat';
 import { ModelsHandler } from '../backend/modules/api/models';
 import { SettingsManager, VSCodeSettingsStorage, StoragePathManager } from '../backend/modules/settings';
-import type { StoragePathConfig, StorageStats } from '../backend/modules/settings';
+import type { StoragePathConfig, StorageStats, SettingsChangeEvent } from '../backend/modules/settings';
 import { SettingsHandler } from '../backend/modules/api/settings';
 import { CheckpointManager } from '../backend/modules/checkpoint';
 import { McpManager, VSCodeFileSystemMcpStorageAdapter } from '../backend/modules/mcp';
@@ -167,6 +167,30 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         setGlobalSettingsManager(this.settingsManager);
         setGlobalConfigManager(this.configManager);
         setGlobalToolRegistry(toolRegistry);
+
+        // 10.1 监听设置变更：apply_diff 自动应用开关/延迟变更时，让现有 pending diff 立即生效
+        const settingsChangeListener = (event: SettingsChangeEvent) => {
+            if (event.type === 'tools' && event.path === 'toolsConfig.apply_diff') {
+                try {
+                    // 对已存在的 pending diff 重新调度/取消自动保存
+                    getDiffManager().refreshAutoSaveTimers();
+                } catch (e) {
+                    console.warn('[ChatViewProvider] Failed to refresh diff autoSave timers:', e);
+                }
+
+                // 推送最新配置到前端（用于更新倒计时/自动确认 UI）
+                try {
+                    const config = event.settings?.toolsConfig?.apply_diff || this.settingsManager.getApplyDiffConfig();
+                    this.sendCommand('tools.applyDiffConfigChanged', { config });
+                } catch {
+                    // ignore
+                }
+            }
+        };
+        this.settingsManager.addChangeListener(settingsChangeListener);
+        this.context.subscriptions.push({
+            dispose: () => this.settingsManager.removeChangeListener(settingsChangeListener)
+        });
         
         // 11. 初始化 Skills 管理器（必须在注册工具之前，因为 skills 工具需要它）
         await createSkillsManager(this.storagePathManager.getEffectiveDataPath());
