@@ -1159,6 +1159,21 @@ const zhCN: LanguageMessages = {
                     enableTooltip: '启用/禁用动态上下文模板',
                     disabledNotice: '动态上下文模板已禁用，不会向 AI 发送动态上下文消息。'
                 },
+                toolPolicy: {
+                    title: '工具策略',
+                    description: '限制当前模式可用的工具。未设置时继承 Code 模式的工具集（同时仍受全局工具开关影响）。',
+                    inherit: '继承（默认）',
+                    custom: '自定义（Allowlist）',
+                    inheritHint: '当前模式将继承 Code 模式的工具集。',
+                    searchPlaceholder: '搜索工具…',
+                    selectAll: '全选',
+                    clear: '清空',
+                    loadingTools: '加载工具列表...',
+                    noTools: '暂无可用工具',
+                    disabledBadge: '已禁用',
+                    emptyWarning: '当前为自定义工具列表，但未选择任何工具。',
+                    emptyCannotSave: '自定义工具列表至少需要选择 1 个工具'
+                },
                 saveButton: '保存配置',
                 saveSuccess: '保存成功',
                 saveFailed: '保存失败',

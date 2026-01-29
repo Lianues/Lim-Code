@@ -561,6 +561,12 @@ export interface PromptMode {
      * 动态上下文模板
      */
     dynamicTemplate: string;
+    
+    /**
+     * 工具策略（allowlist）
+     * 未设置时继承 code 工具集
+     */
+    toolPolicy?: string[];
 }
 
 /**
@@ -1429,7 +1435,7 @@ export const DEFAULT_CHECKPOINT_CONFIG: CheckpointConfig = {
     enabled: true,
     beforeTools: [
         'apply_diff',
-        'write_to_file',
+        'write_file',
         'delete_file',
         'create_directory',
         'execute_command',
@@ -1437,7 +1443,7 @@ export const DEFAULT_CHECKPOINT_CONFIG: CheckpointConfig = {
     ],
     afterTools: [
         'apply_diff',
-        'write_to_file',
+        'write_file',
         'delete_file',
         'create_directory',
         'execute_command',
@@ -1685,7 +1691,7 @@ GUIDELINES
 - Use the provided tools to complete tasks. Tools can help you read files, search code, execute commands, and modify files.
 - **IMPORTANT: Avoid duplicate tool calls.** Each tool should only be called once with the same parameters. Never repeat the same tool call multiple times.
 - When you need to understand the codebase, use read_file to examine specific files or search_in_files to find relevant code patterns.
-- When you need to make changes, use apply_diff for targeted modifications or write_to_file for creating new files.
+- When you need to make changes, use apply_diff for targeted modifications or write_file for creating new files.
 - If the task is simple and doesn't require tools, just respond directly without calling any tools.
 - Always maintain code readability and maintainability.
 - Do not omit any code.`;
@@ -1717,6 +1723,16 @@ export const DEFAULT_MODE_ID = 'code';
 export const DESIGN_MODE_ID = 'design';
 
 /**
+ * 计划模式 ID
+ */
+export const PLAN_MODE_ID = 'plan';
+
+/**
+ * 询问模式 ID
+ */
+export const ASK_MODE_ID = 'ask';
+
+/**
  * 代码模式系统提示词模板
  */
 export const CODE_MODE_TEMPLATE = `You are a professional programming assistant, proficient in multiple programming languages and frameworks.
@@ -1734,7 +1750,7 @@ GUIDELINES
 - Use the provided tools to complete tasks. Tools can help you read files, search code, execute commands, and modify files.
 - **IMPORTANT: Avoid duplicate tool calls.** Each tool should only be called once with the same parameters. Never repeat the same tool call multiple times.
 - When you need to understand the codebase, use read_file to examine specific files or search_in_files to find relevant code patterns.
-- When you need to make changes, use apply_diff for targeted modifications or write_to_file for creating new files.
+- When you need to make changes, use apply_diff for targeted modifications or write_file for creating new files.
 - If the task is simple and doesn't require tools, just respond directly without calling any tools.
 - Always maintain code readability and maintainability.
 - Do not omit any code.`;
@@ -1757,7 +1773,7 @@ GUIDELINES
 - Use the provided tools to complete tasks. Tools can help you read files, search code, execute commands, and modify files.
 - **IMPORTANT: Avoid duplicate tool calls.** Each tool should only be called once with the same parameters. Never repeat the same tool call multiple times.
 - When you need to understand the codebase, use read_file to examine specific files or search_in_files to find relevant code patterns.
-- When you need to make changes, use apply_diff for targeted modifications or write_to_file for creating new files.
+- When you need to make changes, use apply_diff for targeted modifications or write_file for creating new files.
 - If the task is simple and doesn't require tools, just respond directly without calling any tools.
 - Always maintain code readability and maintainability.
 - Do not omit any code.
@@ -1788,6 +1804,55 @@ DESIGN MODE BEHAVIOR
 6. **Iterative Refinement**: Work with the user to refine the design through multiple rounds of discussion before implementation.`;
 
 /**
+ * 计划模式系统提示词模板
+ */
+export const PLAN_MODE_TEMPLATE = `You are a professional programming assistant, proficient in multiple programming languages and frameworks.
+
+{{$ENVIRONMENT}}
+
+{{$TOOLS}}
+
+{{$MCP_TOOLS}}
+
+====
+
+PLAN MODE
+
+**IMPORTANT: You are in PLAN MODE. Follow these principles:**
+
+- Use the provided tools to analyze the codebase and create implementation plans.
+- **IMPORTANT: Avoid duplicate tool calls.** Each tool should only be called once with the same parameters. Never repeat the same tool call multiple times.
+- When you need to understand the codebase, use read_file to examine specific files or search_in_files to find relevant code patterns.
+- You can use write_file to create plan documents in .cursor/plans directory.
+- Focus on creating detailed implementation plans and task breakdowns.
+- Do not modify actual code files directly. Only create plan documents.
+- Always maintain code readability and maintainability in your plans.`;
+
+/**
+ * 询问模式系统提示词模板
+ */
+export const ASK_MODE_TEMPLATE = `You are a professional programming assistant, proficient in multiple programming languages and frameworks.
+
+{{$ENVIRONMENT}}
+
+{{$TOOLS}}
+
+{{$MCP_TOOLS}}
+
+====
+
+ASK MODE
+
+**IMPORTANT: You are in ASK MODE. Follow these principles:**
+
+- Use the provided tools to read and analyze the codebase to answer questions.
+- **IMPORTANT: Avoid duplicate tool calls.** Each tool should only be called once with the same parameters. Never repeat the same tool call multiple times.
+- When you need to understand the codebase, use read_file to examine specific files or search_in_files to find relevant code patterns.
+- You can only read files and search code. You cannot modify files or execute commands.
+- Focus on providing accurate answers based on code analysis.
+- Always maintain code readability and maintainability in your responses.`;
+
+/**
  * 代码模式（默认模式）
  */
 export const CODE_PROMPT_MODE: PromptMode = {
@@ -1812,6 +1877,49 @@ export const DESIGN_PROMPT_MODE: PromptMode = {
 };
 
 /**
+ * 计划模式
+ */
+export const PLAN_PROMPT_MODE: PromptMode = {
+    id: PLAN_MODE_ID,
+    name: 'Plan',
+    icon: 'list-unordered',
+    template: PLAN_MODE_TEMPLATE,
+    dynamicTemplateEnabled: true,
+    dynamicTemplate: DEFAULT_DYNAMIC_CONTEXT_TEMPLATE,
+    toolPolicy: [
+        'read_file',
+        'list_files',
+        'find_files',
+        'search_in_files',
+        'goto_definition',
+        'find_references',
+        'get_symbols',
+        'write_file'
+    ]
+};
+
+/**
+ * 询问模式
+ */
+export const ASK_PROMPT_MODE: PromptMode = {
+    id: ASK_MODE_ID,
+    name: 'Ask',
+    icon: 'question',
+    template: ASK_MODE_TEMPLATE,
+    dynamicTemplateEnabled: true,
+    dynamicTemplate: DEFAULT_DYNAMIC_CONTEXT_TEMPLATE,
+    toolPolicy: [
+        'read_file',
+        'list_files',
+        'find_files',
+        'search_in_files',
+        'goto_definition',
+        'find_references',
+        'get_symbols'
+    ]
+};
+
+/**
  * 默认提示词模式（向后兼容）
  */
 export const DEFAULT_PROMPT_MODE = CODE_PROMPT_MODE;
@@ -1823,7 +1931,9 @@ export const DEFAULT_SYSTEM_PROMPT_CONFIG: SystemPromptConfig = {
     currentModeId: DEFAULT_MODE_ID,
     modes: {
         [DEFAULT_MODE_ID]: CODE_PROMPT_MODE,
-        [DESIGN_MODE_ID]: DESIGN_PROMPT_MODE
+        [DESIGN_MODE_ID]: DESIGN_PROMPT_MODE,
+        [PLAN_MODE_ID]: PLAN_PROMPT_MODE,
+        [ASK_MODE_ID]: ASK_PROMPT_MODE
     },
     template: CODE_MODE_TEMPLATE,
     dynamicTemplateEnabled: true,

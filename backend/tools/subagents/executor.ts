@@ -15,6 +15,7 @@ import type {
 } from './types';
 import type { ToolDeclaration, ToolResult, ToolContext } from '../types';
 import { StreamAccumulator } from '../../modules/channel/StreamAccumulator';
+import { isPlanPathAllowed } from '../../modules/settings/modeToolsPolicy';
 
 /**
  * 子代理执行器上下文存储
@@ -114,6 +115,63 @@ async function executeToolCall(
                 success: false,
                 error: 'Cancelled'
             };
+        }
+
+        // 安全策略：防止子代理绕过“模式工具限制”
+        // - mode.toolPolicy 为非空数组时：硬 allowlist
+        // - settingsManager.isToolEnabled(toolName) 为 false 时：拒绝
+        // - Plan 模式下 write_file：仅允许写入 .cursor/plans 下的 .md/.plan.md（同 ToolExecutionService 规则）
+        if (context.settingsManager) {
+            const currentMode = context.settingsManager.getCurrentPromptMode?.();
+            const allowlist = currentMode?.toolPolicy;
+
+            if (Array.isArray(allowlist) && allowlist.length > 0) {
+                const allowlistSet = new Set(allowlist);
+                if (!allowlistSet.has(toolName)) {
+                    return {
+                        result: null,
+                        success: false,
+                        error: `Tool not allowed in current mode: ${toolName}`
+                    };
+                }
+            }
+
+            if (context.settingsManager.isToolEnabled?.(toolName) === false) {
+                return {
+                    result: null,
+                    success: false,
+                    error: `Tool is disabled: ${toolName}`
+                };
+            }
+
+            if (currentMode?.id === 'plan' && toolName === 'write_file') {
+                const files = (args as any)?.files;
+                if (!Array.isArray(files) || files.length === 0) {
+                    return {
+                        result: null,
+                        success: false,
+                        error: 'Invalid write_file args in plan mode: files must be a non-empty array'
+                    };
+                }
+
+                for (const file of files) {
+                    const filePath = (file as any)?.path;
+                    if (typeof filePath !== 'string') {
+                        return {
+                            result: null,
+                            success: false,
+                            error: 'Invalid write_file args in plan mode: files[].path must be a string'
+                        };
+                    }
+                    if (!isPlanPathAllowed(filePath)) {
+                        return {
+                            result: null,
+                            success: false,
+                            error: `write_file path not allowed in plan mode: ${filePath}`
+                        };
+                    }
+                }
+            }
         }
         
         // 检查是否是 MCP 工具

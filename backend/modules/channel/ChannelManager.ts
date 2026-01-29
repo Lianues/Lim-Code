@@ -918,6 +918,10 @@ export class ChannelManager {
         channelType?: 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom',
         toolMode?: 'function_call' | 'xml' | 'json'
     ) {
+        // 获取当前模式的工具策略（allowlist）
+        const mode = this.settingsManager?.getCurrentPromptMode();
+        const allowlist = mode?.toolPolicy;
+        
         const tools: any[] = [];
         
         // 1. 获取内置工具
@@ -1096,6 +1100,15 @@ export class ChannelManager {
             }
         }
         
+        // 3. 如果设置了 allowlist，根据 allowlist 过滤工具（硬过滤）
+        // 只保留 allowlist 里出现的工具名
+        if (allowlist && allowlist.length > 0) {
+            const allowlistSet = new Set(allowlist);
+            const filteredTools = tools.filter(tool => allowlistSet.has(tool.name));
+            return filteredTools.length > 0 ? filteredTools : undefined;
+        }
+        
+        // 4. 如果没有设置 allowlist，保持现状（继承 code 工具集，即只按 toolsEnabled + 运行时排除规则过滤）
         return tools.length > 0 ? tools : undefined;
     }
     

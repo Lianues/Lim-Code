@@ -80,6 +80,31 @@ export interface ToolOptions {
 }
 
 /**
+ * 对话存储接口
+ *
+ * 用于存储和获取对话的自定义元数据
+ */
+export interface ConversationStore {
+    /**
+     * 获取自定义元数据
+     *
+     * @param conversationId 对话 ID
+     * @param key 元数据键
+     * @returns 元数据值
+     */
+    getCustomMetadata(conversationId: string, key: string): Promise<unknown>;
+    
+    /**
+     * 设置自定义元数据
+     *
+     * @param conversationId 对话 ID
+     * @param key 元数据键
+     * @param value 元数据值
+     */
+    setCustomMetadata(conversationId: string, key: string, value: unknown): Promise<void>;
+}
+
+/**
  * 工具执行上下文
  *
  * 包含工具执行时可能需要的额外信息
@@ -126,6 +151,23 @@ export interface ToolContext {
      * 各工具的渠道级配置项，由渠道配置传递
      */
     toolOptions?: ToolOptions;
+    
+    /**
+     * 对话 ID
+     *
+     * 当前对话的唯一标识符
+     */
+    conversationId?: string;
+    
+    /**
+     * 对话存储
+     *
+     * 用于存储和获取对话的自定义元数据
+     */
+    conversationStore?: {
+        getCustomMetadata: (conversationId: string, key: string) => Promise<unknown>;
+        setCustomMetadata: (conversationId: string, key: string, value: unknown) => Promise<void>;
+    };
     
     /** 其他上下文信息 */
     [key: string]: unknown;

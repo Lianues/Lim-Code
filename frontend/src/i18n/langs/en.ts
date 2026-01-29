@@ -1159,6 +1159,21 @@ const en: LanguageMessages = {
                     enableTooltip: 'Enable/disable dynamic context template',
                     disabledNotice: 'Dynamic context template is disabled. No dynamic context messages will be sent to AI.'
                 },
+                toolPolicy: {
+                    title: 'Tool Policy',
+                    description: 'Restrict which tools are available in this mode. When not set, it inherits the Code mode toolset (and still respects global tool toggles).',
+                    inherit: 'Inherit (default)',
+                    custom: 'Custom (allowlist)',
+                    inheritHint: 'This mode will inherit the Code mode toolset.',
+                    searchPlaceholder: 'Search tools…',
+                    selectAll: 'Select all',
+                    clear: 'Clear',
+                    loadingTools: 'Loading tools list...',
+                    noTools: 'No tools available',
+                    disabledBadge: 'Disabled',
+                    emptyWarning: 'Custom tool list is enabled, but no tools are selected.',
+                    emptyCannotSave: 'Please select at least 1 tool for a custom tool list'
+                },
                 saveButton: 'Save Configuration',
                 saveSuccess: 'Saved successfully',
                 saveFailed: 'Save failed',
