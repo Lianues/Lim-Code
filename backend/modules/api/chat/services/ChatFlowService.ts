@@ -90,7 +90,7 @@ export class ChatFlowService {
    * 非流式 Chat 流程
    */
   async handleChat(request: ChatRequestData): Promise<ChatSuccessData | ChatErrorData> {
-    const { conversationId, configId, message } = request;
+    const { conversationId, configId, message, modelOverride } = request;
 
     // 1. 确保对话存在（自动创建）
     await this.ensureConversation(conversationId);
@@ -130,6 +130,7 @@ export class ChatFlowService {
       configId,
       config,
       maxToolIterations,
+      modelOverride,
     );
 
     if (loopResult.exceededMaxIterations) {
@@ -311,7 +312,7 @@ export class ChatFlowService {
   async *handleChatStream(
     request: ChatRequestData,
   ): AsyncGenerator<ChatStreamOutput> {
-    const { conversationId, configId, message } = request;
+    const { conversationId, configId, message, modelOverride } = request;
 
     // 1. 确保对话存在
     await this.ensureConversation(conversationId);
@@ -398,6 +399,7 @@ export class ChatFlowService {
       conversationId,
       configId,
       config,
+      modelOverride,
       abortSignal: request.abortSignal,
       isFirstMessage,
       maxIterations: maxToolIterations,
@@ -633,7 +635,7 @@ export class ChatFlowService {
   async *handleToolConfirmation(
     request: ToolConfirmationResponseData,
   ): AsyncGenerator<ChatStreamOutput> {
-    const { conversationId, configId, toolResponses } = request;
+    const { conversationId, configId, toolResponses, modelOverride } = request;
 
     // 1. 确保对话存在
     await this.ensureConversation(conversationId);
@@ -714,6 +716,7 @@ export class ChatFlowService {
         conversationId,
         configId,
         config,
+        modelOverride,
         abortSignal: request.abortSignal,
         isFirstMessage: false,
         maxIterations: this.getMaxToolIterations(),
@@ -737,6 +740,7 @@ export class ChatFlowService {
         conversationId,
         configId,
         config,
+        modelOverride,
         abortSignal: request.abortSignal,
         isFirstMessage: false,
         maxIterations: this.getMaxToolIterations(),
@@ -1007,6 +1011,7 @@ export class ChatFlowService {
       conversationId,
       configId,
       config,
+      modelOverride,
       abortSignal: request.abortSignal,
       // 工具确认后的继续对话不视为首条消息
       isFirstMessage: false,

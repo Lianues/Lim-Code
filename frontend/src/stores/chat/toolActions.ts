@@ -483,6 +483,7 @@ export async function rejectPendingToolsWithAnnotation(
     await sendToExtension('toolConfirmation', {
       conversationId: state.currentConversationId.value,
       configId: state.currentConfig.value.id,
+      modelOverride: state.pendingModelOverride.value || undefined,
       toolResponses,
       annotation: trimmedAnnotation
     })

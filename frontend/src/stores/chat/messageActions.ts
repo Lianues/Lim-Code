@@ -60,7 +60,8 @@ export async function sendMessage(
   state: ChatStoreState,
   computed: ChatStoreComputed,
   messageText: string,
-  attachments?: Attachment[]
+  attachments?: Attachment[],
+  options?: { modelOverride?: string }
 ): Promise<void> {
   if (!messageText.trim() && (!attachments || attachments.length === 0)) return
   
@@ -90,6 +91,7 @@ export async function sendMessage(
     state.allMessages.value.push(userMessage)
     
     const assistantMessageId = generateId()
+    const displayModelVersion = options?.modelOverride || computed.currentModelName.value
     const assistantMessage: Message = {
       id: assistantMessageId,
       role: 'assistant',
@@ -99,7 +101,7 @@ export async function sendMessage(
       streaming: true,
       localOnly: true,
       metadata: {
-        modelVersion: computed.currentModelName.value
+        modelVersion: displayModelVersion
       }
     }
     state.allMessages.value.push(assistantMessage)
@@ -119,6 +121,7 @@ export async function sendMessage(
     
     state.toolCallBuffer.value = ''
     state.inToolCall.value = null
+    state.pendingModelOverride.value = options?.modelOverride || null
     
     const attachmentData: AttachmentData[] | undefined = attachments && attachments.length > 0
       ? attachments.map(att => ({
@@ -136,7 +139,8 @@ export async function sendMessage(
       conversationId: state.currentConversationId.value,
       configId: state.configId.value,
       message: messageText,
-      attachments: attachmentData
+      attachments: attachmentData,
+      modelOverride: options?.modelOverride
     })
     
   } catch (err: any) {

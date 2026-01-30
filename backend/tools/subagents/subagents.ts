@@ -272,7 +272,13 @@ async function subAgentsHandler(args: Record<string, any>, context?: ToolContext
                 success: true,
                 data: {
                     agentName,
-                    response: result.response
+                    response: result.response,
+                    // 子代理实际运行信息（用于 UI 展示）
+                    channelId: agentEntry.config.channel.channelId,
+                    modelId: agentEntry.config.channel.modelId,
+                    modelVersion: result.modelVersion,
+                    steps: result.steps,
+                    toolCalls: result.toolCalls || []
                 }
             };
         } else {
@@ -281,7 +287,13 @@ async function subAgentsHandler(args: Record<string, any>, context?: ToolContext
                 error: result.error || 'SubAgent execution failed',
                 data: {
                     agentName,
-                    partialResponse: result.response
+                    partialResponse: result.response,
+                    // 子代理实际运行信息（用于 UI 展示）
+                    channelId: agentEntry.config.channel.channelId,
+                    modelId: agentEntry.config.channel.modelId,
+                    modelVersion: result.modelVersion,
+                    steps: result.steps,
+                    toolCalls: result.toolCalls || []
                 }
             };
         }

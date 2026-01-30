@@ -402,6 +402,8 @@ export interface ChatRequest {
   conversationId: string
   configId: string
   message: string
+  /** 可选：覆盖本次请求使用的模型（不修改 config） */
+  modelOverride?: string
 }
 
 export interface RetryRequest {

@@ -121,8 +121,8 @@ export const useChatStore = defineStore('chat', () => {
 
   // ============ 消息操作 ============
   
-  const sendMessage = (messageText: string, attachments?: Attachment[]) =>
-    sendMessageFn(state, computed, messageText, attachments)
+  const sendMessage = (messageText: string, attachments?: Attachment[], options?: { modelOverride?: string }) =>
+    sendMessageFn(state, computed, messageText, attachments, options)
   
   const retryLastMessage = () => retryLastMessageFn(state, computed, cancelStream)
   const retryFromMessage = (messageIndex: number) => 
@@ -310,6 +310,10 @@ export const useChatStore = defineStore('chat', () => {
     inputValue: state.inputValue,
     setInputValue,
     clearInputValue,
+
+    // Build（Plan 执行）
+    activeBuild: state.activeBuild,
+    pendingModelOverride: state.pendingModelOverride,
     
     // 上下文总结
     summarizeContext,

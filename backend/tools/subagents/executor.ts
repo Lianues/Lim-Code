@@ -121,6 +121,50 @@ async function executeToolCall(
         // - mode.toolPolicy 为非空数组时：硬 allowlist
         // - settingsManager.isToolEnabled(toolName) 为 false 时：拒绝
         // - Plan 模式下 write_file：仅允许写入 .cursor/plans 下的 .md/.plan.md（同 ToolExecutionService 规则）
+        function isPlanModeWriteFilePathAllowed(path: string): boolean {
+            // 单工作区格式：.cursor/plans/...
+            if (isPlanPathAllowed(path)) {
+                return true;
+            }
+
+            // 多工作区：允许 workspaceName/.cursor/plans/...
+            const normalized = path.replace(/\\/g, '/');
+            const slashIndex = normalized.indexOf('/');
+            if (slashIndex <= 0) {
+                return false;
+            }
+            const withoutWorkspacePrefix = normalized.substring(slashIndex + 1);
+            return isPlanPathAllowed(withoutWorkspacePrefix);
+        }
+
+        function parseMcpToolNameAny(name: string): { serverId: string; toolName: string } | null {
+            // Preferred: mcp__{serverId}__{toolName}
+            if (name.startsWith('mcp__')) {
+                const parts = name.split('__');
+                if (parts.length >= 3) {
+                    const serverId = parts[1];
+                    const tool = parts.slice(2).join('__');
+                    if (serverId && tool) {
+                        return { serverId, toolName: tool };
+                    }
+                }
+                return null;
+            }
+
+            // Backward compatible: mcp_{serverId}_{toolName}
+            if (name.startsWith('mcp_')) {
+                const rest = name.substring(4);
+                const idx = rest.indexOf('_');
+                if (idx <= 0) return null;
+                const serverId = rest.substring(0, idx);
+                const tool = rest.substring(idx + 1);
+                if (!serverId || !tool) return null;
+                return { serverId, toolName: tool };
+            }
+
+            return null;
+        }
+
         if (context.settingsManager) {
             const currentMode = context.settingsManager.getCurrentPromptMode?.();
             const allowlist = currentMode?.toolPolicy;
@@ -163,7 +207,7 @@ async function executeToolCall(
                             error: 'Invalid write_file args in plan mode: files[].path must be a string'
                         };
                     }
-                    if (!isPlanPathAllowed(filePath)) {
+                    if (!isPlanModeWriteFilePathAllowed(filePath)) {
                         return {
                             result: null,
                             success: false,
@@ -175,25 +219,32 @@ async function executeToolCall(
         }
         
         // 检查是否是 MCP 工具
-        if (toolName.startsWith('mcp_') && context.mcpManager) {
-            // 解析 MCP 工具名: mcp_{serverId}_{toolName}
-            const parts = toolName.split('_');
-            if (parts.length >= 3) {
-                const serverId = parts[1];
-                const actualToolName = parts.slice(2).join('_');
-                
-                const result = await context.mcpManager.callTool(
-                    serverId,
-                    actualToolName,
-                    args
-                );
-                
+        const mcpParsed = context.mcpManager ? parseMcpToolNameAny(toolName) : null;
+        if (mcpParsed && context.mcpManager) {
+            const result = await context.mcpManager.callTool({
+                serverId: mcpParsed.serverId,
+                toolName: mcpParsed.toolName,
+                arguments: args
+            });
+
+            if (result.success) {
+                const textContent = result.content
+                    ?.filter((c: any) => c?.type === 'text')
+                    .map((c: any) => c?.text)
+                    .filter((t: any) => typeof t === 'string' && t.trim().length > 0)
+                    .join('\n') || '';
+
                 return {
-                    result: result.success ? result.data : result.error,
-                    success: result.success,
-                    error: result.error
+                    result: textContent,
+                    success: true
                 };
             }
+
+            return {
+                result: null,
+                success: false,
+                error: result.error || `MCP tool call failed: ${mcpParsed.toolName}`
+            };
         }
         
         // 内置工具
@@ -350,6 +401,7 @@ export function createDefaultExecutor(
     return async (request: SubAgentRequest, abortSignal?: AbortSignal): Promise<SubAgentResult> => {
         const toolCalls: SubAgentToolCall[] = [];
         let steps = 0;
+        let modelVersion: string | undefined;
         const maxIterations = config.maxIterations ?? 20;
         const maxRuntime = config.maxRuntime ?? 300; // 默认 5 分钟
         const startTime = Date.now();
@@ -429,6 +481,7 @@ export function createDefaultExecutor(
                     return {
                         success: false,
                         response: lastResponse,
+                        modelVersion,
                         steps,
                         toolCalls,
                         error: isTimeout 
@@ -444,6 +497,7 @@ export function createDefaultExecutor(
                     return {
                         success: false,
                         response: lastResponse,
+                        modelVersion,
                         steps,
                         toolCalls,
                         error: `Exceeded maximum runtime (${maxRuntime}s). Elapsed: ${timeoutCheck.elapsed}s`
@@ -455,6 +509,7 @@ export function createDefaultExecutor(
                     return {
                         success: false,
                         response: lastResponse,
+                        modelVersion,
                         steps,
                         toolCalls,
                         error: `Exceeded maximum iterations (${maxIterations})`
@@ -510,6 +565,7 @@ export function createDefaultExecutor(
                         return {
                             success: false,
                             response: lastResponse,
+                            modelVersion,
                             steps,
                             toolCalls,
                             error: `Exceeded maximum runtime (${maxRuntime}s). Elapsed: ${timeoutCheck.elapsed}s`
@@ -518,6 +574,7 @@ export function createDefaultExecutor(
                     return {
                         success: false,
                         response: lastResponse,
+                        modelVersion,
                         steps,
                         toolCalls,
                         error: `AI call failed: ${e instanceof Error ? e.message : String(e)}`
@@ -527,6 +584,15 @@ export function createDefaultExecutor(
                 // 解析响应
                 const currentToolCalls = parseToolCalls(response);
                 const textContent = extractTextContent(response);
+
+                // 记录子代理实际运行的模型版本（优先 content.modelVersion，其次 response.model）
+                const mvCandidate =
+                    (response as any)?.content?.modelVersion
+                    || (response as any)?.modelVersion
+                    || (response as any)?.model;
+                if (typeof mvCandidate === 'string' && mvCandidate.trim()) {
+                    modelVersion = mvCandidate.trim();
+                }
                 
                 if (textContent) {
                     lastResponse = textContent;
@@ -551,6 +617,7 @@ export function createDefaultExecutor(
                     return {
                         success: true,
                         response: lastResponse,
+                        modelVersion,
                         steps,
                         toolCalls
                     };
@@ -566,6 +633,7 @@ export function createDefaultExecutor(
                         return {
                             success: false,
                             response: lastResponse,
+                            modelVersion,
                             steps,
                             toolCalls,
                             error: `Exceeded maximum runtime (${maxRuntime}s). Elapsed: ${timeoutCheck.elapsed}s`
@@ -615,6 +683,7 @@ export function createDefaultExecutor(
             if (timeoutCheck.exceeded) {
                 return {
                     success: false,
+                    modelVersion,
                     steps,
                     toolCalls,
                     error: `Exceeded maximum runtime (${maxRuntime}s). Elapsed: ${timeoutCheck.elapsed}s`
@@ -622,6 +691,7 @@ export function createDefaultExecutor(
             }
             return {
                 success: false,
+                modelVersion,
                 steps,
                 toolCalls,
                 error: e instanceof Error ? e.message : String(e)

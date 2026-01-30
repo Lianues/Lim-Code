@@ -1692,6 +1692,8 @@ GUIDELINES
 - **IMPORTANT: Avoid duplicate tool calls.** Each tool should only be called once with the same parameters. Never repeat the same tool call multiple times.
 - When you need to understand the codebase, use read_file to examine specific files or search_in_files to find relevant code patterns.
 - When you need to make changes, use apply_diff for targeted modifications or write_file for creating new files.
+- For complex, multi-step work, use todo_write to maintain a structured task list.
+- For parallelizable investigations (or when you need to explore multiple areas quickly), use subagents to delegate focused sub-tasks.
 - If the task is simple and doesn't require tools, just respond directly without calling any tools.
 - Always maintain code readability and maintainability.
 - Do not omit any code.`;
@@ -1824,6 +1826,8 @@ PLAN MODE
 - **IMPORTANT: Avoid duplicate tool calls.** Each tool should only be called once with the same parameters. Never repeat the same tool call multiple times.
 - When you need to understand the codebase, use read_file to examine specific files or search_in_files to find relevant code patterns.
 - You can use write_file to create plan documents in .cursor/plans directory.
+- You can use todo_write to maintain a structured plan checklist when helpful.
+- You can use subagents for focused planning sub-tasks, but stay within the allowed tools and do not modify code.
 - Focus on creating detailed implementation plans and task breakdowns.
 - Do not modify actual code files directly. Only create plan documents.
 - Always maintain code readability and maintainability in your plans.`;
@@ -1894,6 +1898,8 @@ export const PLAN_PROMPT_MODE: PromptMode = {
         'goto_definition',
         'find_references',
         'get_symbols',
+        'todo_write',
+        'subagents',
         'write_file'
     ]
 };

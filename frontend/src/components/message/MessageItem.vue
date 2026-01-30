@@ -10,6 +10,7 @@ import MessageActions from './MessageActions.vue'
 import ToolMessage from './ToolMessage.vue'
 import MessageAttachments from './MessageAttachments.vue'
 import InlineContextMessage from './InlineContextMessage.vue'
+import MessageTaskCards from './MessageTaskCards.vue'
 import { MarkdownRenderer, RetryDialog, EditDialog } from '../common'
 import type { Message, ToolUsage, CheckpointRecord, Attachment } from '../../types'
 import { hasContextBlocks } from '../../types/contextParser'
@@ -551,6 +552,13 @@ function handleRestoreAndRetry(checkpointId: string) {
         <MessageAttachments
           v-if="isUser && message.attachments && message.attachments.length > 0"
           :attachments="message.attachments"
+        />
+
+        <!-- Cursor 风格任务卡片（方案B）：Plan/SubAgent 缩略预览，可滚动可展开 -->
+        <MessageTaskCards
+          v-if="!isUser && message.tools && message.tools.length > 0"
+          :tools="message.tools"
+          :message-model-version="modelVersion"
         />
         
         <!-- 显示模式 -->

@@ -130,6 +130,13 @@ export interface SubAgentResult {
     
     /** 代理响应内容 */
     response?: string;
+
+    /**
+     * 实际模型版本（优先使用渠道返回的 modelVersion）
+     *
+     * 用于在 UI 中展示“子代理实际运行的模型”
+     */
+    modelVersion?: string;
     
     /** 执行步骤数 */
     steps?: number;

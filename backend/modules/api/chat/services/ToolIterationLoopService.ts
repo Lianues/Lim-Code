@@ -50,6 +50,8 @@ export interface ToolIterationLoopConfig {
     configId: string;
     /** 渠道配置 */
     config: BaseChannelConfig;
+    /** 模型覆盖（可选，仅对本轮循环生效） */
+    modelOverride?: string;
     /** 取消信号 */
     abortSignal?: AbortSignal;
     /** 是否是首条消息（影响系统提示词刷新策略） */
@@ -142,6 +144,7 @@ export class ToolIterationLoopService {
             conversationId,
             configId,
             config,
+            modelOverride,
             abortSignal,
             isFirstMessage = false,
             maxIterations,
@@ -204,7 +207,8 @@ export class ToolIterationLoopService {
                 history,
                 abortSignal,
                 dynamicSystemPrompt,
-                dynamicContextMessages
+                dynamicContextMessages,
+                modelOverride
             });
 
             // 8. 处理响应
@@ -444,7 +448,8 @@ export class ToolIterationLoopService {
         conversationId: string,
         configId: string,
         config: BaseChannelConfig,
-        maxIterations: number
+        maxIterations: number,
+        modelOverride?: string
     ): Promise<NonStreamToolLoopResult> {
         let iteration = 0;
         const historyOptions = this.messageBuilderService.buildHistoryOptions(config);
@@ -463,7 +468,8 @@ export class ToolIterationLoopService {
             // 调用 AI（非流式）
             const response = await this.channelManager.generate({
                 configId,
-                history
+                history,
+                modelOverride
             });
 
             // 类型守卫：确保是 GenerateResponse

@@ -37,6 +37,9 @@ import './skills/toggle_skills'
 // SubAgents 工具
 import './subagents/subagents'
 
+// TODO 工具
+import './todo/todo_write'
+
 // 导出工具注册表
 export { toolRegistry, registerTool, getToolConfig, type ToolConfig } from '../toolRegistry'
 

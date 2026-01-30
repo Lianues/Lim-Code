@@ -1554,7 +1554,7 @@ export class SettingsManager {
             };
         }
         
-        // 情况2：已有 modes，补齐缺失的内置模式
+        // 情况2：已有 modes，补齐缺失的内置模式，并同步内置模式的 toolPolicy
         const modes = { ...config.modes };
         let needsUpdate = false;
         
@@ -1564,15 +1564,29 @@ export class SettingsManager {
             needsUpdate = true;
         }
         
-        // 补齐 plan 模式（如果缺失）
+        // 补齐或更新 plan 模式（强制同步 toolPolicy）
         if (!modes['plan']) {
             modes['plan'] = PLAN_PROMPT_MODE;
             needsUpdate = true;
+        } else if (!this.arraysEqual(modes['plan'].toolPolicy, PLAN_PROMPT_MODE.toolPolicy)) {
+            // 已存在但 toolPolicy 不一致，强制更新
+            modes['plan'] = {
+                ...modes['plan'],
+                toolPolicy: PLAN_PROMPT_MODE.toolPolicy
+            };
+            needsUpdate = true;
         }
         
-        // 补齐 ask 模式（如果缺失）
+        // 补齐或更新 ask 模式（强制同步 toolPolicy）
         if (!modes['ask']) {
             modes['ask'] = ASK_PROMPT_MODE;
+            needsUpdate = true;
+        } else if (!this.arraysEqual(modes['ask'].toolPolicy, ASK_PROMPT_MODE.toolPolicy)) {
+            // 已存在但 toolPolicy 不一致，强制更新
+            modes['ask'] = {
+                ...modes['ask'],
+                toolPolicy: ASK_PROMPT_MODE.toolPolicy
+            };
             needsUpdate = true;
         }
         
@@ -1843,6 +1857,18 @@ export class SettingsManager {
     /**
      * 通知设置变更
      */
+    /**
+     * 比较两个数组是否相等（用于 toolPolicy 比较）
+     */
+    private arraysEqual(a?: string[], b?: string[]): boolean {
+        if (!a && !b) return true;
+        if (!a || !b) return false;
+        if (a.length !== b.length) return false;
+        const sortedA = [...a].sort();
+        const sortedB = [...b].sort();
+        return sortedA.every((v, i) => v === sortedB[i]);
+    }
+    
     private notifyChange(event: SettingsChangeEvent): void {
         for (const listener of this.listeners) {
             // 异步执行，避免阻塞
