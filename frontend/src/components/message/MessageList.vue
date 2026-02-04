@@ -36,18 +36,29 @@ function normalizeTodoStatus(value: any): BuildTodoStatus {
 
 const latestTodoWrite = computed(() => {
   const startedAt = chatStore.activeBuild?.startedAt || 0
+  const planPath = chatStore.activeBuild?.planPath
   const all = chatStore.allMessages
   for (let i = all.length - 1; i >= 0; i--) {
     const msg = all[i]
-    if (startedAt && typeof msg.timestamp === 'number' && msg.timestamp < startedAt) {
+    // 对于 todo_write，仅限当前 Build 期间的更新
+    // 对于 create_plan，允许回溯到 Build 开始之前（以获取初始列表）
+    if (startedAt && typeof msg.timestamp === 'number' && msg.timestamp < startedAt - 600000) { // 允许回溯 10 分钟以防万一
       break
     }
     if (msg.role !== 'assistant' || !Array.isArray(msg.tools)) continue
     for (let j = msg.tools.length - 1; j >= 0; j--) {
       const tool = msg.tools[j]
-      if (tool.name !== 'todo_write') continue
-      const todos = (tool.result as any)?.data?.todos
-      if (Array.isArray(todos)) return todos as Array<{ id: string; content: string; status: string }>
+      if (tool.name === 'todo_write') {
+        // todo_write 必须在 Build 开始后（或刚好开始时）
+        if (startedAt && msg.timestamp && msg.timestamp < startedAt - 5000) continue 
+        const todos = (tool.result as any)?.data?.todos
+        if (Array.isArray(todos)) return todos as Array<{ id: string; content: string; status: string }>
+      } else if (tool.name === 'create_plan') {
+        // create_plan 可以是在 Build 开始前
+        const todos = (tool.result as any)?.data?.todos
+        const path = (tool.result as any)?.data?.path || tool.args?.path
+        if (Array.isArray(todos) && (!planPath || path === planPath)) return todos as Array<{ id: string; content: string; status: string }>
+      }
     }
   }
   return null

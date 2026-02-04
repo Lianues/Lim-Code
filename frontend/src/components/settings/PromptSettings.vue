@@ -194,7 +194,7 @@ const staticModuleIds = new Set(STATIC_PROMPT_MODULES.map(m => m.id))
 const dynamicModuleIds = new Set(DYNAMIC_CONTEXT_MODULES.map(m => m.id))
 
 // 默认静态系统提示词模板（代码模式）
-const DEFAULT_TEMPLATE = `You are a professional programming assistant, proficient in multiple programming languages and frameworks.
+const CODE_MODE_TEMPLATE = `You are a professional programming assistant, proficient in multiple programming languages and frameworks.
 
 {{$ENVIRONMENT}}
 
@@ -215,6 +215,102 @@ GUIDELINES
 - If the task is simple and doesn't require tools, just respond directly without calling any tools.
 - Always maintain code readability and maintainability.
 - Do not omit any code.`
+
+// 默认静态系统提示词模板（设计模式）
+const DESIGN_MODE_TEMPLATE = `You are a professional software architect and design consultant. Your primary role is to help users clarify requirements, design solutions, and plan implementation strategies.
+
+{{$ENVIRONMENT}}
+
+{{$TOOLS}}
+
+{{$MCP_TOOLS}}
+
+====
+
+GUIDELINES
+
+- Use the provided tools to complete tasks. Tools can help you read files, search code, execute commands, and modify files.
+- **IMPORTANT: Avoid duplicate tool calls.** Each tool should only be called once with the same parameters. Never repeat the same tool call multiple times.
+- When you need to understand the codebase, use read_file to examine specific files or search_in_files to find relevant code patterns.
+- When you need to make changes, use apply_diff for targeted modifications or write_file for creating new files.
+- If the task is simple and doesn't require tools, just respond directly without calling any tools.
+- Always maintain code readability and maintainability.
+- Do not omit any code.
+
+====
+
+DESIGN MODE BEHAVIOR
+
+**IMPORTANT: You are in DESIGN MODE. Follow these principles:**
+
+1. **Communicate First**: Before making any code changes, discuss the design with the user. Ask clarifying questions about requirements, constraints, and preferences.
+
+2. **Analyze and Plan**: When asked to implement something, first analyze the current codebase structure, identify potential approaches, and present options to the user.
+
+3. **Seek Confirmation**: Always confirm your understanding of the requirements and proposed solution before proceeding with implementation.
+
+4. **Minimal File Modifications**: Only write or modify files when:
+   - The user explicitly requests implementation
+   - You need to create design documents or diagrams
+   - The user confirms they want you to proceed with changes
+
+5. **Focus on Design Artifacts**: Prefer creating or discussing:
+   - Architecture diagrams and flowcharts (in markdown/mermaid)
+   - API specifications and interfaces
+   - Data models and schemas
+   - Implementation roadmaps and task breakdowns
+
+6. **Iterative Refinement**: Work with the user to refine the design through multiple rounds of discussion before implementation.`
+
+// 默认静态系统提示词模板（计划模式）
+const PLAN_MODE_TEMPLATE = `You are a professional programming assistant, proficient in multiple programming languages and frameworks.
+
+{{$ENVIRONMENT}}
+
+{{$TOOLS}}
+
+{{$MCP_TOOLS}}
+
+====
+
+PLAN MODE
+
+**IMPORTANT: You are in PLAN MODE. Follow these principles:**
+
+- Use the provided tools to analyze the codebase and create implementation plans.
+- **IMPORTANT: Avoid duplicate tool calls.** Each tool should only be called once with the same parameters. Never repeat the same tool call multiple times.
+- When you need to understand the codebase, use read_file to examine specific files or search_in_files to find relevant code patterns.
+- Use create_plan to write the plan document in .cursor/plans/**.md.
+- **MANDATORY: When calling create_plan, you MUST provide the "todos" argument.** This will automatically create a TaskCard for the user to track your progress.
+- After creating the plan, ALWAYS call execute_plan and wait for the user's approval before doing any implementation work.
+- You can use subagents for focused planning sub-tasks, but stay within the allowed tools and do not modify code.
+- Focus on creating detailed implementation plans and task breakdowns.
+- Do not modify actual code files directly. Only create plan documents.
+- Always maintain code readability and maintainability in your plans.`
+
+// 默认静态系统提示词模板（询问模式）
+const ASK_MODE_TEMPLATE = `You are a professional programming assistant, proficient in multiple programming languages and frameworks.
+
+{{$ENVIRONMENT}}
+
+{{$TOOLS}}
+
+{{$MCP_TOOLS}}
+
+====
+
+ASK MODE
+
+**IMPORTANT: You are in ASK MODE. Follow these principles:**
+
+- Use the provided tools to read and analyze the codebase to answer questions.
+- **IMPORTANT: Avoid duplicate tool calls.** Each tool should only be called once with the same parameters. Never repeat the same tool call multiple times.
+- When you need to understand the codebase, use read_file to examine specific files or search_in_files to find relevant code patterns.
+- You can only read files and search code. You cannot modify files or execute commands.
+- Focus on providing accurate answers based on code analysis.
+- Always maintain code readability and maintainability in your responses.`
+
+const DEFAULT_TEMPLATE = CODE_MODE_TEMPLATE
 
 // 默认动态上下文模板
 const DEFAULT_DYNAMIC_TEMPLATE = `This is the current turn's dynamic context information you can use. It may change between turns. Continue with the previous task if the information is not needed and ignore it.
@@ -243,6 +339,10 @@ const selectedModeId = ref(DEFAULT_MODE_ID)  // 当前编辑的模式
 const showAddModeDialog = ref(false)
 const showRenameModeDialog = ref(false)
 const showDeleteConfirm = ref(false)
+const showUnsavedConfirm = ref(false)
+const showResetStaticConfirm = ref(false)
+const showResetDynamicConfirm = ref(false)
+const pendingModeId = ref('')
 const renamingModeId = ref('')
 const renamingModeName = ref('')
 
@@ -279,7 +379,8 @@ const toolPolicy = ref<string[]>([])
 const originalToolPolicyMode = ref<ToolPolicyMode>('inherit')
 const originalToolPolicy = ref<string[]>([])
 
-function normalizeToolList(list: string[]): string[] {
+function normalizeToolList(list: string[] | undefined): string[] {
+  if (!Array.isArray(list)) return []
   return Array.from(new Set(list)).sort()
 }
 
@@ -478,11 +579,19 @@ function loadModeConfig(modeId: string) {
 async function handleModeChange(modeId: string) {
   // 如果有未保存的更改，提示用户
   if (hasChanges.value) {
-    const confirmed = confirm(t('components.settings.promptSettings.modes.unsavedChanges'))
-    if (!confirmed) return
+    pendingModeId.value = modeId
+    showUnsavedConfirm.value = true
+    return
   }
   selectedModeId.value = modeId
   loadModeConfig(modeId)
+}
+
+// 确认放弃更改并切换模式
+function confirmSwitchMode() {
+  selectedModeId.value = pendingModeId.value
+  loadModeConfig(pendingModeId.value)
+  showUnsavedConfirm.value = false
 }
 
 // 保存配置
@@ -609,12 +718,21 @@ function cleanupEmptyLines(text: string): string {
 
 // 重置静态模板为默认
 function resetStaticToDefault() {
-  config.template = DEFAULT_TEMPLATE
+  const modeDefaults: Record<string, string> = {
+    code: CODE_MODE_TEMPLATE,
+    design: DESIGN_MODE_TEMPLATE,
+    plan: PLAN_MODE_TEMPLATE,
+    ask: ASK_MODE_TEMPLATE
+  }
+  
+  config.template = modeDefaults[selectedModeId.value] || DEFAULT_TEMPLATE
+  showResetStaticConfirm.value = false
 }
 
 // 重置动态模板为默认
 function resetDynamicToDefault() {
   config.dynamicTemplate = DEFAULT_DYNAMIC_TEMPLATE
+  showResetDynamicConfirm.value = false
 }
 
 // 插入变量到静态模板
@@ -804,7 +922,7 @@ watch(selectedChannel, () => {
             {{ t('components.settings.promptSettings.staticSection.title') }}
             <span class="section-badge cacheable">{{ t('components.settings.promptSettings.staticModules.badge') }}</span>
           </label>
-          <button class="reset-btn" @click="resetStaticToDefault">
+          <button class="reset-btn" @click="showResetStaticConfirm = true">
             <i class="codicon codicon-discard"></i>
             {{ t('components.settings.promptSettings.templateSection.resetButton') }}
           </button>
@@ -839,7 +957,7 @@ watch(selectedChannel, () => {
               />
               <span class="toggle-slider"></span>
             </label>
-            <button class="reset-btn" @click="resetDynamicToDefault" :disabled="!config.dynamicTemplateEnabled">
+            <button class="reset-btn" @click="showResetDynamicConfirm = true" :disabled="!config.dynamicTemplateEnabled">
               <i class="codicon codicon-discard"></i>
               {{ t('components.settings.promptSettings.templateSection.resetButton') }}
             </button>
@@ -1205,6 +1323,30 @@ watch(selectedChannel, () => {
       :message="t('components.settings.promptSettings.modes.confirmDelete')"
       :is-danger="true"
       @confirm="confirmDeleteMode"
+    />
+
+    <!-- 未保存更改确认对话框 -->
+    <ConfirmDialog
+      v-model="showUnsavedConfirm"
+      :title="t('components.common.confirmDialog.title')"
+      :message="t('components.settings.promptSettings.modes.unsavedChanges')"
+      @confirm="confirmSwitchMode"
+    />
+
+    <!-- 重置静态模板确认对话框 -->
+    <ConfirmDialog
+      v-model="showResetStaticConfirm"
+      :title="t('components.settings.promptSettings.templateSection.title')"
+      :message="t('components.common.confirmDialog.message')"
+      @confirm="resetStaticToDefault"
+    />
+
+    <!-- 重置动态模板确认对话框 -->
+    <ConfirmDialog
+      v-model="showResetDynamicConfirm"
+      :title="t('components.settings.promptSettings.dynamicSection.title')"
+      :message="t('components.common.confirmDialog.message')"
+      @confirm="resetDynamicToDefault"
     />
   </div>
 </template>

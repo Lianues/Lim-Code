@@ -83,7 +83,7 @@ export function createCreatePlanToolDeclaration(): ToolDeclaration {
             'Optional output path. Must be under .cursor/plans/**.md (or multi-root: workspace/.cursor/plans/**.md).'
         }
       },
-      required: ['plan']
+      required: ['plan', 'todos']
     }
   };
 }
@@ -96,7 +96,7 @@ async function ensureParentDir(uriFsPath: string): Promise<void> {
 export function createCreatePlanTool(): Tool {
   return {
     declaration: createCreatePlanToolDeclaration(),
-    handler: async (rawArgs: Record<string, unknown>): Promise<ToolResult> => {
+    handler: async (rawArgs: Record<string, unknown>, context?: any): Promise<ToolResult> => {
       const args = rawArgs as unknown as CreatePlanArgs;
       const plan = typeof args.plan === 'string' ? args.plan : '';
       if (!plan.trim()) {
@@ -124,7 +124,6 @@ export function createCreatePlanTool(): Tool {
         await vscode.workspace.fs.writeFile(uri, bytes);
 
         // 如果提供了 todos，则同步到对话元数据中（实现 TaskCards 自动同步）
-        const context = (rawArgs as any).context; // 在 ToolExecutionService 中注入
         if (args.todos && args.todos.length > 0 && context?.conversationStore && context?.conversationId) {
           try {
             await context.conversationStore.setCustomMetadata(
@@ -141,7 +140,8 @@ export function createCreatePlanTool(): Tool {
           success: true,
           data: {
             path: outPath,
-            content
+            content,
+            todos: args.todos
           }
         };
       } catch (e: any) {

@@ -96,19 +96,41 @@ export interface PlanTodoItem {
 export function extractTodosFromPlan(content: string): PlanTodoItem[] {
   const lines = (content || '').split(/\r?\n/)
   const todos: PlanTodoItem[] = []
+  let hasCheckbox = false
 
+  // 1. First pass: try to find standard markdown checkboxes
   for (const line of lines) {
     const m = line.match(/^\s*[-*+]\s+\[( |x|X)\]\s+(.*)$/)
-    if (!m) continue
+    if (m) {
+      hasCheckbox = true
+      const mark = (m[1] || '').toLowerCase()
+      const text = (m[2] || '').trim()
+      if (text) {
+        todos.push({
+          text,
+          completed: mark === 'x'
+        })
+      }
+    }
+  }
 
-    const mark = (m[1] || '').toLowerCase()
-    const text = (m[2] || '').trim()
-    if (!text) continue
-
-    todos.push({
-      text,
-      completed: mark === 'x'
-    })
+  // 2. Fallback: if no checkboxes found, treat standard list items as pending tasks
+  // (only if we have "enough" content to avoid matching single-line greetings as tasks)
+  if (!hasCheckbox && todos.length === 0) {
+    for (const line of lines) {
+      // Match bullet points or numbered lists
+      // - item, * item, + item, 1. item
+      const m = line.match(/^\s*(?:[-*+]|\d+\.)\s+(.*)$/)
+      if (m) {
+        const text = (m[1] || '').trim()
+        if (text) {
+          todos.push({
+            text,
+            completed: false
+          })
+        }
+      }
+    }
   }
 
   return todos
