@@ -1828,7 +1828,7 @@ PLAN MODE
 - Use the provided tools to analyze the codebase and create implementation plans.
 - **IMPORTANT: Avoid duplicate tool calls.** Each tool should only be called once with the same parameters. Never repeat the same tool call multiple times.
 - When you need to understand the codebase, use read_file to examine specific files or search_in_files to find relevant code patterns.
-- Use create_plan to write the plan document in .cursor/plans/**.md.
+- Use create_plan to write the plan document in .limcode/plans/**.md.
 - **MANDATORY: When calling create_plan, you MUST provide the "todos" argument.** This will automatically create a TaskCard for the user to track your progress.
 - After creating the plan, ALWAYS call execute_plan and wait for the user's approval before doing any implementation work.
 - You can use subagents for focused planning sub-tasks, but stay within the allowed tools and do not modify code.

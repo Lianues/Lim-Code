@@ -263,7 +263,7 @@ const mergedFiles = computed((): MergedFile[] => {
   })
 })
 
-// 计划文档预览（.cursor/plans/**/*.md）
+// 计划文档预览（.limcode/plans/**/*.md）
 const planFiles = computed((): MergedFile[] => mergedFiles.value.filter(f => isPlanDocPath(f.path)))
 
 function getPlanCardStatus(file: MergedFile): 'pending' | 'running' | 'success' | 'error' {
@@ -679,7 +679,7 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <!-- Plan 预览面板（仅当写入 .cursor/plans/**.md 时展示） -->
+    <!-- Plan 预览面板（仅当写入 .limcode/plans/**.md 时展示） -->
     <div v-if="planFiles.length > 0" class="plan-preview-section">
       <div v-for="file in planFiles" :key="file.path" class="plan-panel">
         <!-- Plan 头部 -->

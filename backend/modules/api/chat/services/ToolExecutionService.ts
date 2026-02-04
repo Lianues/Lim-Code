@@ -797,7 +797,7 @@ export class ToolExecutionService {
      * 强制策略：
      * - 全局 toolsEnabled（SettingsManager.isToolEnabled）
      * - 当前模式 allowlist（mode.toolPolicy 仅当为非空数组时启用过滤）
-     * - Plan 模式 write_file 仅允许写入 .cursor/plans/**.md（多工作区支持 workspaceName/.cursor/plans/**.md）
+     * - Plan 模式 write_file 仅允许写入 .limcode/plans/**.md（多工作区支持 workspaceName/.limcode/plans/**.md）
      */
     private getToolRejectionReason(toolName: string, args?: Record<string, unknown>): string | null {
         // 1) 全局 toolsEnabled
@@ -814,7 +814,7 @@ export class ToolExecutionService {
             return `Tool "${toolName}" is not allowed in mode "${mode?.id ?? 'unknown'}".`;
         }
 
-        // 3) Plan 模式 write_file 受控例外：只允许写入 .cursor/plans/**.md
+        // 3) Plan 模式 write_file 受控例外：只允许写入 .limcode/plans/**.md
         if (mode?.id === 'plan' && toolName === 'write_file') {
             const validation = this.validatePlanModeWriteFileArgs(args);
             if (validation.ok === false) {
@@ -844,7 +844,7 @@ export class ToolExecutionService {
             if (!this.isPlanModeWriteFilePathAllowed(path)) {
                 return {
                     ok: false,
-                    error: `In plan mode, write_file is only allowed to write ".cursor/plans/**.md". Rejected path: ${path}`
+                    error: `In plan mode, write_file is only allowed to write ".limcode/plans/**.md". Rejected path: ${path}`
                 };
             }
         }
@@ -853,12 +853,12 @@ export class ToolExecutionService {
     }
 
     private isPlanModeWriteFilePathAllowed(path: string): boolean {
-        // 先尝试单工作区格式：.cursor/plans/...
+        // 先尝试单工作区格式：.limcode/plans/...
         if (isPlanPathAllowed(path)) {
             return true;
         }
 
-        // 多工作区：允许 workspaceName/.cursor/plans/...
+        // 多工作区：允许 workspaceName/.limcode/plans/...
         let isMultiRoot = false;
         try {
             isMultiRoot = getAllWorkspaces().length > 1;

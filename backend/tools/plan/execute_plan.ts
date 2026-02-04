@@ -1,7 +1,7 @@
 /**
  * execute_plan 工具
  *
- * 目标：读取 .cursor/plans/**.md 计划内容，并切换 PromptMode 到 code。
+ * 目标：读取 .limcode/plans/**.md 计划内容，并切换 PromptMode 到 code。
  *
  * 注意：本工具默认应“需要用户确认”才能执行（通过 toolAutoExec 配置控制）。
  */
@@ -37,12 +37,12 @@ export function createExecutePlanToolDeclaration(): ToolDeclaration {
   return {
     name: 'execute_plan',
     description:
-      'Read a plan markdown document from .cursor/plans/**.md and switch the current prompt mode to "code". This tool is a gate and should require user approval.',
+      'Read a plan markdown document from .limcode/plans/**.md and switch the current prompt mode to "code". This tool is a gate and should require user approval.',
     category: 'file',
     parameters: {
       type: 'object',
       properties: {
-        path: { type: 'string', description: 'Plan file path under .cursor/plans/**.md' }
+        path: { type: 'string', description: 'Plan file path under .limcode/plans/**.md' }
       },
       required: ['path']
     }
@@ -60,7 +60,7 @@ export function createExecutePlanTool(): Tool {
       const planPath = p.trim();
 
       if (!isPlanModePathAllowedWithMultiRoot(planPath)) {
-        return { success: false, error: `Invalid plan path. Only ".cursor/plans/**.md" is allowed. Rejected path: ${planPath}` };
+        return { success: false, error: `Invalid plan path. Only ".limcode/plans/**.md" is allowed. Rejected path: ${planPath}` };
       }
 
       const { uri, error } = resolveUriWithInfo(planPath);

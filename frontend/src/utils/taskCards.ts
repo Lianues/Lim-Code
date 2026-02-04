@@ -48,8 +48,8 @@ export function formatSubAgentRuntimeBadge(meta: SubAgentRuntimeMeta): string {
 }
 
 /**
- * Whether a path looks like a plan doc under .cursor/plans and ends with .md
- * (supports multi-root prefix like "workspace/.cursor/plans/x.plan.md").
+ * Whether a path looks like a plan doc under .limcode/plans and ends with .md
+ * (supports multi-root prefix like "workspace/.limcode/plans/x.plan.md").
  */
 export function isPlanDocPath(path: string): boolean {
   const normalized = (path || '').replace(/\\/g, '/')
@@ -62,10 +62,10 @@ export function isPlanDocPath(path: string): boolean {
   // (avoid path traversal patterns showing up as “plan docs” in UI)
   if (lower.includes('..')) return false
 
-  // Single-root: .cursor/plans/...
-  if (lower.startsWith('.cursor/plans/')) return true
+  // Single-root: .limcode/plans/...
+  if (lower.startsWith('.limcode/plans/')) return true
 
-  // Multi-root: workspaceName/.cursor/plans/...
+  // Multi-root: workspaceName/.limcode/plans/...
   // Only allow a single path segment as workspace prefix.
   const slashIndex = normalized.indexOf('/')
   if (slashIndex <= 0) return false
@@ -76,7 +76,7 @@ export function isPlanDocPath(path: string): boolean {
   if (workspacePrefix.includes(':')) return false
 
   const rest = normalized.slice(slashIndex + 1)
-  return rest.toLowerCase().startsWith('.cursor/plans/')
+  return rest.toLowerCase().startsWith('.limcode/plans/')
 }
 
 export interface PlanTodoItem {

@@ -2,6 +2,10 @@
 
 All notable changes to the "Lim Code" extension will be documented in this file.
 
+## [1.0.70] - 2026-02-04
+
+### Added
+  - 添加plan/build模式（测试版，暂时有很多bug）
 
 ## [1.0.69] - 2026-01-28
 

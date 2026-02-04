@@ -7,11 +7,11 @@
  * 检查路径是否允许在 Plan 模式下写入
  * 
  * 允许的路径：
- * - .cursor/plans/xxx.plan.md
- * - .cursor/plans/sub/xxx.md
+ * - .limcode/plans/xxx.plan.md
+ * - .limcode/plans/sub/xxx.md
  * 
  * 拒绝的路径：
- * - 不在 .cursor/plans/ 下的路径
+ * - 不在 .limcode/plans/ 下的路径
  * - 绝对路径
  * - 包含路径穿越（..）的路径
  * - 非 .md 或 .plan.md 扩展名的文件
@@ -39,8 +39,8 @@ export function isPlanPathAllowed(path: string): boolean {
         return false;
     }
 
-    // 必须以 .cursor/plans/ 开头
-    if (!normalizedPath.startsWith('.cursor/plans/')) {
+    // 必须以 .limcode/plans/ 开头
+    if (!normalizedPath.startsWith('.limcode/plans/')) {
         return false;
     }
 
@@ -49,8 +49,8 @@ export function isPlanPathAllowed(path: string): boolean {
         return false;
     }
 
-    // 必须是一个文件路径（不能只是 .cursor/plans/）
-    const relativePath = normalizedPath.substring('.cursor/plans/'.length);
+    // 必须是一个文件路径（不能只是 .limcode/plans/）
+    const relativePath = normalizedPath.substring('.limcode/plans/'.length);
     if (!relativePath || relativePath.length === 0) {
         return false;
     }

@@ -120,14 +120,14 @@ async function executeToolCall(
         // 安全策略：防止子代理绕过“模式工具限制”
         // - mode.toolPolicy 为非空数组时：硬 allowlist
         // - settingsManager.isToolEnabled(toolName) 为 false 时：拒绝
-        // - Plan 模式下 write_file：仅允许写入 .cursor/plans 下的 .md/.plan.md（同 ToolExecutionService 规则）
+        // - Plan 模式下 write_file：仅允许写入 .limcode/plans 下的 .md/.plan.md（同 ToolExecutionService 规则）
         function isPlanModeWriteFilePathAllowed(path: string): boolean {
-            // 单工作区格式：.cursor/plans/...
+            // 单工作区格式：.limcode/plans/...
             if (isPlanPathAllowed(path)) {
                 return true;
             }
 
-            // 多工作区：允许 workspaceName/.cursor/plans/...
+            // 多工作区：允许 workspaceName/.limcode/plans/...
             const normalized = path.replace(/\\/g, '/');
             const slashIndex = normalized.indexOf('/');
             if (slashIndex <= 0) {

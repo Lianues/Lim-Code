@@ -1,7 +1,7 @@
 /**
  * create_plan 工具
  *
- * 目标：把计划文档写入 .cursor/plans/**.md（或 multi-root: workspace/.cursor/plans/**.md）。
+ * 目标：把计划文档写入 .limcode/plans/**.md（或 multi-root: workspace/.limcode/plans/**.md）。
  * 注意：这是“生成计划”工具，不负责执行。
  */
 
@@ -32,10 +32,10 @@ function slugify(input: string): string {
 }
 
 function isPlanModePathAllowedWithMultiRoot(pathStr: string): boolean {
-  // 单工作区格式：.cursor/plans/...
+  // 单工作区格式：.limcode/plans/...
   if (isPlanPathAllowed(pathStr)) return true;
 
-  // 多工作区：允许 workspaceName/.cursor/plans/...
+  // 多工作区：允许 workspaceName/.limcode/plans/...
   const workspaces = getAllWorkspaces();
   if (workspaces.length <= 1) return false;
 
@@ -56,7 +56,7 @@ export function createCreatePlanToolDeclaration(): ToolDeclaration {
   return {
     name: 'create_plan',
     description:
-      'Create a plan document (markdown) and write it under .cursor/plans/**.md. This tool only creates the plan; it does NOT execute it.',
+      'Create a plan document (markdown) and write it under .limcode/plans/**.md. This tool only creates the plan; it does NOT execute it.',
     category: 'file',
     parameters: {
       type: 'object',
@@ -80,7 +80,7 @@ export function createCreatePlanToolDeclaration(): ToolDeclaration {
         path: {
           type: 'string',
           description:
-            'Optional output path. Must be under .cursor/plans/**.md (or multi-root: workspace/.cursor/plans/**.md).'
+            'Optional output path. Must be under .limcode/plans/**.md (or multi-root: workspace/.limcode/plans/**.md).'
         }
       },
       required: ['plan', 'todos']
@@ -104,11 +104,11 @@ export function createCreatePlanTool(): Tool {
       }
 
       const title = typeof args.title === 'string' ? args.title : '';
-      const defaultPath = `.cursor/plans/${slugify(title || 'plan')}.plan.md`;
+      const defaultPath = `.limcode/plans/${slugify(title || 'plan')}.plan.md`;
       const outPath = (typeof args.path === 'string' && args.path.trim()) ? args.path.trim() : defaultPath;
 
       if (!isPlanModePathAllowedWithMultiRoot(outPath)) {
-        return { success: false, error: `Invalid plan path. Only ".cursor/plans/**.md" is allowed. Rejected path: ${outPath}` };
+        return { success: false, error: `Invalid plan path. Only ".limcode/plans/**.md" is allowed. Rejected path: ${outPath}` };
       }
 
       const { uri, error } = resolveUriWithInfo(outPath);
