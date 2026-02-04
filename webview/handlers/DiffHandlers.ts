@@ -84,9 +84,11 @@ async function handleApplyDiffPreview(
   ctx: HandlerContext
 ): Promise<void> {
   const filePath = args.path as string;
-  const diffs = args.diffs as Array<{ search: string; replace: string; start_line?: number }>;
+  const patch = args.patch as string | undefined;
+  // legacy fallback
+  const diffs = args.diffs as Array<{ search: string; replace: string; start_line?: number }> | undefined;
   
-  if (!filePath || !diffs || diffs.length === 0) {
+  if (!filePath || (!patch && (!diffs || diffs.length === 0))) {
     throw new Error(t('webview.errors.invalidDiffData'));
   }
   
@@ -115,13 +117,91 @@ async function handleApplyDiffPreview(
     originalContent = fullOriginalContent;
     newContent = fullNewContent;
     diffTitle = t('webview.messages.fullFileDiffPreview', { filePath });
+  } else if (patch) {
+    const built = buildPreviewContentsFromUnifiedPatch(patch);
+    originalContent = built.originalContent;
+    newContent = built.newContent;
+    diffTitle = t('webview.messages.historyDiffPreview', { filePath });
   } else {
-    originalContent = diffs.map((d, i) => `// === Diff #${i + 1}${d.start_line ? ` (Line ${d.start_line})` : ''} ===\n${d.search}`).join('\n\n');
-    newContent = diffs.map((d, i) => `// === Diff #${i + 1}${d.start_line ? ` (Line ${d.start_line})` : ''} ===\n${d.replace}`).join('\n\n');
+    // legacy diffs preview
+    const safeDiffs = diffs || [];
+    originalContent = safeDiffs.map((d, i) => `// === Diff #${i + 1}${d.start_line ? ` (Line ${d.start_line})` : ''} ===\n${d.search}`).join('\n\n');
+    newContent = safeDiffs.map((d, i) => `// === Diff #${i + 1}${d.start_line ? ` (Line ${d.start_line})` : ''} ===\n${d.replace}`).join('\n\n');
     diffTitle = t('webview.messages.historyDiffPreview', { filePath });
   }
   
   await openDiffView(filePath, originalContent, newContent, diffTitle, ctx);
+}
+
+function buildPreviewContentsFromUnifiedPatch(patch: string): { originalContent: string; newContent: string } {
+  const normalized = patch.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+  const lines = normalized.split('\n')
+
+  const oldOut: string[] = []
+  const newOut: string[] = []
+
+  let currentHeader: string | null = null
+  let oldBlock: string[] = []
+  let newBlock: string[] = []
+  let inHunk = false
+
+  const flush = () => {
+    if (!inHunk) return
+
+    if (currentHeader) {
+      oldOut.push(`// ${currentHeader}`)
+      newOut.push(`// ${currentHeader}`)
+    }
+
+    oldOut.push(...oldBlock)
+    newOut.push(...newBlock)
+
+    oldOut.push('')
+    newOut.push('')
+
+    oldBlock = []
+    newBlock = []
+  }
+
+  for (const line of lines) {
+    if (line.startsWith('@@')) {
+      // flush previous hunk
+      flush()
+      currentHeader = line
+      inHunk = true
+      continue
+    }
+
+    if (!inHunk) {
+      // skip headers
+      continue
+    }
+
+    if (line.startsWith('\\')) {
+      // "\\ No newline at end of file"
+      continue
+    }
+
+    const prefix = line[0]
+    const content = line.length > 0 ? line.slice(1) : ''
+
+    if (prefix === ' ') {
+      oldBlock.push(content)
+      newBlock.push(content)
+    } else if (prefix === '-') {
+      oldBlock.push(content)
+    } else if (prefix === '+') {
+      newBlock.push(content)
+    }
+  }
+
+  // flush last hunk
+  flush()
+
+  return {
+    originalContent: oldOut.join('\n').trimEnd(),
+    newContent: newOut.join('\n').trimEnd()
+  }
 }
 
 /**

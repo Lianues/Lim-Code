@@ -52,9 +52,79 @@ const copyTimeouts = new Map<number, ReturnType<typeof setTimeout>>()
 interface DiffBlock {
   search: string
   replace: string
+  /** 原文件起始行（1-based） */
   start_line?: number
+  /** 新文件起始行（1-based）。仅 unified diff hunks 需要（old/new 起始行可能不同） */
+  new_start_line?: number
   success?: boolean
   error?: string
+}
+
+function parseUnifiedPatchToDiffBlocks(patch: string): DiffBlock[] {
+  const normalized = patch.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+  const lines = normalized.split('\n')
+
+  const blocks: DiffBlock[] = []
+
+  let oldStart = 1
+  let newStart = 1
+  let searchLines: string[] | null = null
+  let replaceLines: string[] | null = null
+
+  const flush = () => {
+    if (!searchLines || !replaceLines) return
+    blocks.push({
+      search: searchLines.join('\n'),
+      replace: replaceLines.join('\n'),
+      start_line: oldStart,
+      new_start_line: newStart
+    })
+    searchLines = null
+    replaceLines = null
+  }
+
+  for (const line of lines) {
+    if (line.startsWith('@@')) {
+      flush()
+      const m = line.match(/^@@\s+-(\d+)(?:,(\d+))?\s+\+(\d+)(?:,(\d+))?\s+@@/)
+      if (!m) {
+        continue
+      }
+      oldStart = parseInt(m[1], 10) || 1
+      newStart = parseInt(m[3], 10) || oldStart
+      searchLines = []
+      replaceLines = []
+      continue
+    }
+
+    if (!searchLines || !replaceLines) {
+      continue
+    }
+
+    if (!line) {
+      continue
+    }
+
+    if (line.startsWith('\\')) {
+      // "\\ No newline at end of file"
+      continue
+    }
+
+    const prefix = line[0]
+    const content = line.slice(1)
+
+    if (prefix === ' ') {
+      searchLines.push(content)
+      replaceLines.push(content)
+    } else if (prefix === '-') {
+      searchLines.push(content)
+    } else if (prefix === '+') {
+      replaceLines.push(content)
+    }
+  }
+
+  flush()
+  return blocks
 }
 
 // 获取文件路径
@@ -63,8 +133,14 @@ const filePath = computed(() => {
 })
 
 // 获取 diff 列表
-// 优先从 args.diffs 获取原始定义，并根据 result.data.results（或旧格式 data.diffs / data.failedDiffs）标记失败状态
+// - 新格式：优先读取 args.patch（unified diff）并按 hunk 转换为可展示的 DiffBlock
+// - 旧格式：兼容 args.diffs
 const diffList = computed((): DiffBlock[] => {
+  const patch = props.args.patch as string | undefined
+  if (patch && typeof patch === 'string' && patch.trim()) {
+    return parseUnifiedPatchToDiffBlocks(patch)
+  }
+
   const argsDiffs = (props.args.diffs as DiffBlock[] | undefined) || []
   const failedDiffs = (props.result?.data as Record<string, any>)?.failedDiffs as any[] | undefined
   
@@ -101,6 +177,24 @@ const diffList = computed((): DiffBlock[] => {
 const resultData = computed(() => {
   const result = props.result as Record<string, any> | undefined
   return result?.data || null
+})
+
+// 变更数量
+// 优先使用可渲染的 diffList（用于展示），否则回退到后端统计字段（避免 patch 过大未透传导致显示 0）
+const changesCount = computed(() => {
+  if (diffList.value.length > 0) return diffList.value.length
+
+  const data: any = resultData.value || {}
+  const fromDiffCount = Number(data?.diffCount)
+  if (Number.isFinite(fromDiffCount) && fromDiffCount > 0) return fromDiffCount
+
+  const fromTotalCount = Number(data?.totalCount)
+  if (Number.isFinite(fromTotalCount) && fromTotalCount > 0) return fromTotalCount
+
+  const fromApplied = Number(data?.appliedCount)
+  if (Number.isFinite(fromApplied) && fromApplied > 0) return fromApplied
+
+  return 0
 })
 
 // 获取用户编辑摘要（如果用户在保存前修改了 AI 建议）
@@ -162,9 +256,10 @@ interface DiffLine {
  * 计算 diff 行
  * @param search 搜索内容
  * @param replace 替换内容
- * @param startLine 起始行号（文件中的实际行号），默认为 1
+ * @param startLine 原文件起始行号（1-based），默认为 1
+ * @param newStartLine 新文件起始行号（1-based）。unified diff hunks 的 old/new 起始行可能不同。
  */
-function computeDiffLines(search: string, replace: string, startLine: number = 1): DiffLine[] {
+function computeDiffLines(search: string, replace: string, startLine: number = 1, newStartLine: number = startLine): DiffLine[] {
   const searchLines = search.split('\n')
   const replaceLines = replace.split('\n')
   const result: DiffLine[] = []
@@ -176,7 +271,7 @@ function computeDiffLines(search: string, replace: string, startLine: number = 1
   let newIdx = 0
   // 使用文件中的实际起始行号
   let oldLineNum = startLine
-  let newLineNum = startLine
+  let newLineNum = newStartLine
   
   for (const match of lcs) {
     // 添加删除的行（在 search 中但不在 LCS 中）
@@ -278,11 +373,12 @@ function computeLCS(oldLines: string[], newLines: string[]): LCSMatch[] {
 // 获取行号宽度
 function getLineNumWidth(diff: DiffBlock): number {
   const startLine = diff.start_line || 1
+  const newStartLine = diff.new_start_line ?? startLine
   const searchLines = diff.search.split('\n').length
   const replaceLines = diff.replace.split('\n').length
   // 计算实际的最大行号（起始行号 + 行数 - 1）
   const maxOldLineNum = startLine + searchLines - 1
-  const maxNewLineNum = startLine + replaceLines - 1
+  const maxNewLineNum = newStartLine + replaceLines - 1
   const maxLineNum = Math.max(maxOldLineNum, maxNewLineNum)
   return String(maxLineNum).length
 }
@@ -379,7 +475,7 @@ onBeforeUnmount(() => {
           <span class="codicon codicon-file"></span>
           {{ getFileNameWithoutExt(filePath) }}<span v-if="getFileExtension(filePath)" class="file-ext">.{{ getFileExtension(filePath) }}</span>
         </span>
-        <span class="stat">{{ diffList.length }} {{ t('components.tools.file.applyDiffPanel.changes') }}</span>
+        <span class="stat">{{ changesCount }} {{ t('components.tools.file.applyDiffPanel.changes') }}</span>
       </div>
     </div>
     
@@ -457,11 +553,11 @@ onBeforeUnmount(() => {
             <span v-if="diff.success !== false" class="diff-stats">
               <span class="stat deleted">
                 <span class="codicon codicon-remove"></span>
-                {{ getDiffStats(computeDiffLines(diff.search, diff.replace, diff.start_line || 1)).deleted }}
+                {{ getDiffStats(computeDiffLines(diff.search, diff.replace, diff.start_line || 1, diff.new_start_line || diff.start_line || 1)).deleted }}
               </span>
               <span class="stat added">
                 <span class="codicon codicon-add"></span>
-                {{ getDiffStats(computeDiffLines(diff.search, diff.replace, diff.start_line || 1)).added }}
+                {{ getDiffStats(computeDiffLines(diff.search, diff.replace, diff.start_line || 1, diff.new_start_line || diff.start_line || 1)).added }}
               </span>
             </span>
           </div>
@@ -482,7 +578,7 @@ onBeforeUnmount(() => {
           <CustomScrollbar :horizontal="true" :max-height="300">
             <div class="diff-lines">
               <div
-                v-for="(line, lineIndex) in getDisplayLines(computeDiffLines(diff.search, diff.replace, diff.start_line || 1), index)"
+                v-for="(line, lineIndex) in getDisplayLines(computeDiffLines(diff.search, diff.replace, diff.start_line || 1, diff.new_start_line || diff.start_line || 1), index)"
                 :key="lineIndex"
                 :class="['diff-line', `line-${line.type}`]"
               >
@@ -504,10 +600,10 @@ onBeforeUnmount(() => {
           </CustomScrollbar>
           
           <!-- 展开/收起按钮 -->
-          <div v-if="needsExpand(computeDiffLines(diff.search, diff.replace, diff.start_line || 1))" class="expand-section">
+          <div v-if="needsExpand(computeDiffLines(diff.search, diff.replace, diff.start_line || 1, diff.new_start_line || diff.start_line || 1))" class="expand-section">
             <button class="expand-btn" @click="toggleExpand(index)">
               <span :class="['codicon', isExpanded(index) ? 'codicon-chevron-up' : 'codicon-chevron-down']"></span>
-              {{ isExpanded(index) ? t('components.tools.file.applyDiffPanel.collapse') : t('components.tools.file.applyDiffPanel.expandRemaining', { count: computeDiffLines(diff.search, diff.replace, diff.start_line || 1).length - previewLineCount }) }}
+              {{ isExpanded(index) ? t('components.tools.file.applyDiffPanel.collapse') : t('components.tools.file.applyDiffPanel.expandRemaining', { count: computeDiffLines(diff.search, diff.replace, diff.start_line || 1, diff.new_start_line || diff.start_line || 1).length - previewLineCount }) }}
             </button>
           </div>
         </div>

@@ -15,6 +15,7 @@ import { t } from '../../i18n';
 
 import { getDiffCodeLensProvider } from './DiffCodeLensProvider';
 import { applyDiffToContent } from './apply_diff';
+import { applyUnifiedDiffHunks, type UnifiedDiffHunk } from './unifiedDiff';
 
 /**
  * 待处理的 Diff 修改
@@ -87,6 +88,20 @@ type DiffOp = {
     type: 'equal' | 'insert' | 'delete';
     line: string;
 };
+
+function isLegacySearchReplaceDiff(d: any): d is { search: string; replace: string; start_line?: number } {
+    return !!d && typeof d === 'object' && typeof d.search === 'string' && typeof d.replace === 'string';
+}
+
+function isUnifiedDiffHunk(d: any): d is UnifiedDiffHunk {
+    return (
+        !!d &&
+        typeof d === 'object' &&
+        typeof d.oldStart === 'number' &&
+        typeof d.newStart === 'number' &&
+        Array.isArray(d.lines)
+    );
+}
 
 function splitLines(text: string): string[] {
     const normalized = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
@@ -489,28 +504,61 @@ export class DiffManager {
         
         // 实时更新编辑器内容，移除被拒绝的块
         const diff = this.pendingDiffs.get(sessionId);
-        if (diff && diff.rawDiffs) {
+        if (diff && diff.rawDiffs && diff.rawDiffs.length > 0) {
             let tempContent = diff.originalContent;
             const session = provider.getSession(sessionId);
             if (session) {
-                // 重新计算并更新所有块的行号
+                // 本次需要应用的块（未被拒绝）
+                const applyIndices = new Set<number>();
                 for (let i = 0; i < diff.rawDiffs.length; i++) {
                     const blockInfo = session.blocks.find(b => b.index === i);
                     if (blockInfo && !blockInfo.rejected) {
-                        const searchLines = diff.rawDiffs[i].search.split('\n').length;
-                        const replaceLines = diff.rawDiffs[i].replace.split('\n').length;
-                        
-                        const result = applyDiffToContent(tempContent, diff.rawDiffs[i].search, diff.rawDiffs[i].replace, diff.rawDiffs[i].start_line);
+                        applyIndices.add(i);
+                    }
+                }
+
+                const first = diff.rawDiffs[0];
+
+                if (isUnifiedDiffHunk(first)) {
+                    // unified diff hunks：重新从 originalContent 计算“仅包含未拒绝块”的最终内容
+                    try {
+                        const hunks = diff.rawDiffs as UnifiedDiffHunk[];
+                        const r = applyUnifiedDiffHunks(tempContent, hunks, { applyIndices });
+                        tempContent = r.newContent;
+
+                        // 更新各块在当前内容中的范围
+                        for (const h of r.appliedHunks) {
+                            const blockInfo = session.blocks.find(b => b.index === h.index);
+                            if (blockInfo) {
+                                blockInfo.startLine = h.startLine;
+                                blockInfo.endLine = h.endLine;
+                            }
+                        }
+                    } catch (e) {
+                        console.warn('[DiffManager] Failed to recompute unified diff content after rejecting a block:', e);
+                    }
+                } else {
+                    // legacy search/replace diffs（向后兼容）
+                    for (let i = 0; i < diff.rawDiffs.length; i++) {
+                        const blockInfo = session.blocks.find(b => b.index === i);
+                        const d = diff.rawDiffs[i];
+                        if (!blockInfo || blockInfo.rejected || !isLegacySearchReplaceDiff(d)) {
+                            continue;
+                        }
+
+                        const replaceLines = d.replace.split('\n').length;
+
+                        const result = applyDiffToContent(tempContent, d.search, d.replace, d.start_line);
                         if (result.success && result.matchedLine !== undefined) {
                             tempContent = result.result;
-                            
+
                             // 更新此块在当前内容中的范围
                             blockInfo.startLine = result.matchedLine;
                             blockInfo.endLine = result.matchedLine + replaceLines - 1;
                         }
                     }
                 }
-                
+
                 // 更新编辑器
                 const uri = vscode.Uri.file(diff.absolutePath);
                 const doc = vscode.workspace.textDocuments.find(d => d.uri.fsPath === diff.absolutePath);
@@ -544,33 +592,61 @@ export class DiffManager {
     private computeFinalSuggestedContent(id: string, diff: PendingDiff): string {
         // 计算最终内容（仅包含已确认的块）
         let finalContent = diff.newContent;
-        if (diff.rawDiffs) {
-            const provider = getDiffCodeLensProvider();
-            const session = provider.getSession(id);
-            if (session) {
-                const rejectedBlocks = session.blocks.filter(b => b.rejected);
 
-                if (rejectedBlocks.length > 0) {
-                    // 有被拒绝的块，重新计算内容
-                    finalContent = diff.originalContent;
-                    for (let i = 0; i < diff.rawDiffs.length; i++) {
-                        const blockInfo = session.blocks.find(b => b.index === i);
-                        // 只有没被明确拒绝的块才应用
-                        if (blockInfo && !blockInfo.rejected) {
-                            const result = applyDiffToContent(
-                                finalContent,
-                                diff.rawDiffs[i].search,
-                                diff.rawDiffs[i].replace,
-                                diff.rawDiffs[i].start_line
-                            );
-                            if (result.success) {
-                                finalContent = result.result;
-                            }
-                        }
-                    }
+        if (!diff.rawDiffs || diff.rawDiffs.length === 0) {
+            return finalContent;
+        }
+
+        const provider = getDiffCodeLensProvider();
+        const session = provider.getSession(id);
+        if (!session) {
+            return finalContent;
+        }
+
+        const rejectedBlocks = session.blocks.filter(b => b.rejected);
+        if (rejectedBlocks.length === 0) {
+            return finalContent;
+        }
+
+        // 有被拒绝的块，重新计算内容
+        finalContent = diff.originalContent;
+
+        // 需要应用的块（未被拒绝）
+        const applyIndices = new Set<number>();
+        for (let i = 0; i < diff.rawDiffs.length; i++) {
+            const blockInfo = session.blocks.find(b => b.index === i);
+            if (blockInfo && !blockInfo.rejected) {
+                applyIndices.add(i);
+            }
+        }
+
+        const first = diff.rawDiffs[0];
+
+        if (isUnifiedDiffHunk(first)) {
+            // unified diff hunks
+            try {
+                const hunks = diff.rawDiffs as UnifiedDiffHunk[];
+                const r = applyUnifiedDiffHunks(finalContent, hunks, { applyIndices });
+                finalContent = r.newContent;
+            } catch (e) {
+                console.warn('[DiffManager] Failed to recompute final suggested content for unified diff:', e);
+            }
+        } else {
+            // legacy search/replace diffs
+            for (let i = 0; i < diff.rawDiffs.length; i++) {
+                const blockInfo = session.blocks.find(b => b.index === i);
+                const d = diff.rawDiffs[i];
+                if (!blockInfo || blockInfo.rejected || !isLegacySearchReplaceDiff(d)) {
+                    continue;
+                }
+
+                const result = applyDiffToContent(finalContent, d.search, d.replace, d.start_line);
+                if (result.success) {
+                    finalContent = result.result;
                 }
             }
         }
+
         return finalContent;
     }
 

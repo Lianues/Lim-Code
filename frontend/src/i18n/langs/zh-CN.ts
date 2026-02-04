@@ -1369,7 +1369,7 @@ const zhCN: LanguageMessages = {
                 appInfo: {
                     title: '应用信息',
                     name: 'Lim Code - Vibe Coding助手',
-                    version: '版本：1.0.70',
+                    version: '版本：1.0.71',
                     repository: '项目仓库',
                     developer: '开发者'
                 }
@@ -1389,7 +1389,12 @@ const zhCN: LanguageMessages = {
                         delay5s: '5 秒',
                         delay10s: '10 秒',
                         infoEnabled: '当前设置：AI 修改文件后，将在 {delay} 后自动保存并继续执行。',
-                        infoDisabled: '当前设置：AI 修改文件后，需要您手动在编辑器中按 Ctrl+S 保存确认修改。'
+                        infoDisabled: '当前设置：AI 修改文件后，需要您手动在编辑器中按 Ctrl+S 保存确认修改。',
+
+                        format: '差异格式',
+                        formatDesc: '选择 AI 调用 apply_diff 时使用的参数格式（默认推荐统一 diff）',
+                        formatUnified: '统一 diff（unified diff patch）',
+                        formatSearchReplace: '旧格式（search/replace）'
                     },
                     listFiles: {
                         ignoreList: '忽略列表',

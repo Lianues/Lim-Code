@@ -65,7 +65,19 @@ export interface SearchInFilesToolConfig {
 /**
  * Apply Diff 工具配置
  */
+export type ApplyDiffFormat = 'unified' | 'search_replace';
+
+/**
+ * Apply Diff 工具配置
+ */
 export interface ApplyDiffToolConfig {
+    /**
+     * apply_diff 参数格式：
+     * - unified: unified diff patch（---/+++/@ @/+/-）
+     * - search_replace: 旧版 search/replace/start_line diffs
+     */
+    format: ApplyDiffFormat;
+
     /**
      * 是否自动应用修改
      */
@@ -1358,6 +1370,8 @@ export const DEFAULT_SEARCH_IN_FILES_CONFIG: SearchInFilesToolConfig = {
  * 默认 apply_diff 配置
  */
 export const DEFAULT_APPLY_DIFF_CONFIG: ApplyDiffToolConfig = {
+    // 默认使用新格式（unified diff patch）
+    format: 'unified',
     autoSave: false,
     autoSaveDelay: 3000
 };

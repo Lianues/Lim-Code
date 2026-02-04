@@ -363,7 +363,7 @@ export class PromptManager {
         // 当前时间
         const now = new Date()
         sections.push(`Current Time: ${now.toISOString()}`)
-        
+
         // 工作区文件树
         if (contextConfig?.includeWorkspaceFiles ?? this.config.includeWorkspaceFiles) {
             const fileTreeContent = this.generateFileTreeSection(

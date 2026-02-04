@@ -13,6 +13,7 @@ import { CustomCheckbox } from '../../../common'
 import { t } from '@/i18n'
 
 // 配置数据
+const format = ref<'unified' | 'search_replace'>('unified')
 const autoSave = ref(false)
 const autoSaveDelay = ref(3000)
 
@@ -41,10 +42,14 @@ const currentDelayLabel = computed(() => {
 async function loadConfig() {
   isLoading.value = true
   try {
-    const response = await sendToExtension<{ config: { autoSave: boolean; autoSaveDelay: number } }>('tools.getToolConfig', {
-      toolName: 'apply_diff'
-    })
+    const response = await sendToExtension<{ config: { format?: 'unified' | 'search_replace'; autoSave: boolean; autoSaveDelay: number } }>(
+      'tools.getToolConfig',
+      {
+        toolName: 'apply_diff'
+      }
+    )
     if (response?.config) {
+      format.value = response.config.format ?? 'unified'
       autoSave.value = response.config.autoSave ?? false
       autoSaveDelay.value = response.config.autoSaveDelay ?? 3000
     }
@@ -61,6 +66,7 @@ async function saveConfig() {
   try {
     await sendToExtension('tools.updateApplyDiffConfig', {
       config: {
+        format: format.value,
         autoSave: autoSave.value,
         autoSaveDelay: autoSaveDelay.value
       }
@@ -70,6 +76,11 @@ async function saveConfig() {
   } finally {
     isSaving.value = false
   }
+}
+
+function updateFormat(newFormat: 'unified' | 'search_replace') {
+  format.value = newFormat
+  saveConfig()
 }
 
 // 切换自动保存开关
@@ -99,6 +110,39 @@ onMounted(() => {
     </div>
     
     <template v-else>
+      <!-- 参数格式 -->
+      <div class="config-section">
+        <div class="section-header">
+          <i class="codicon codicon-diff"></i>
+          <span>{{ t('components.settings.toolSettings.files.applyDiff.format') }}</span>
+        </div>
+
+        <div class="section-content">
+          <div class="config-item">
+            <div class="item-info">
+              <span class="item-label">{{ t('components.settings.toolSettings.files.applyDiff.format') }}</span>
+              <span class="item-description">{{ t('components.settings.toolSettings.files.applyDiff.formatDesc') }}</span>
+            </div>
+            <div class="delay-selector">
+              <button
+                :class="['delay-btn', { active: format === 'unified' }]"
+                :disabled="isSaving"
+                @click="updateFormat('unified')"
+              >
+                {{ t('components.settings.toolSettings.files.applyDiff.formatUnified') }}
+              </button>
+              <button
+                :class="['delay-btn', { active: format === 'search_replace' }]"
+                :disabled="isSaving"
+                @click="updateFormat('search_replace')"
+              >
+                {{ t('components.settings.toolSettings.files.applyDiff.formatSearchReplace') }}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <!-- 自动应用开关 -->
       <div class="config-section">
         <div class="section-header">

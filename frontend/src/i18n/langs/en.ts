@@ -1369,7 +1369,7 @@ const en: LanguageMessages = {
                 appInfo: {
                     title: 'Application Info',
                     name: 'Lim Code - Vibe Coding Assistant',
-                    version: 'Version: 1.0.70',
+                    version: 'Version: 1.0.71',
                     repository: 'Repository',
                     developer: 'Developer'
                 }
@@ -1389,7 +1389,12 @@ const en: LanguageMessages = {
                         delay5s: '5 seconds',
                         delay10s: '10 seconds',
                         infoEnabled: 'Current setting: After AI modifies files, changes will be automatically saved after {delay} and continue execution.',
-                        infoDisabled: 'Current setting: After AI modifies files, you need to manually press Ctrl+S in the editor to confirm and save changes.'
+                        infoDisabled: 'Current setting: After AI modifies files, you need to manually press Ctrl+S in the editor to confirm and save changes.',
+
+                        format: 'Diff Format',
+                        formatDesc: 'Choose the parameter format used when AI calls apply_diff (unified diff is recommended by default)',
+                        formatUnified: 'Unified diff (unified diff patch)',
+                        formatSearchReplace: 'Legacy (search/replace)'
                     },
                     listFiles: {
                         ignoreList: 'Ignore List',

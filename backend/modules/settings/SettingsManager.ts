@@ -559,7 +559,12 @@ export class SettingsManager {
      * 获取 apply_diff 工具配置
      */
     getApplyDiffConfig(): Readonly<ApplyDiffToolConfig> {
-        return this.settings.toolsConfig?.apply_diff || DEFAULT_APPLY_DIFF_CONFIG;
+        // 这里需要与默认配置 merge，避免历史配置缺少新增字段（如 format）
+        const cfg = this.settings.toolsConfig?.apply_diff;
+        return {
+            ...DEFAULT_APPLY_DIFF_CONFIG,
+            ...(cfg || {})
+        };
     }
     
     /**

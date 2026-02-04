@@ -467,6 +467,11 @@ export interface LanguageMessages {
                         delay10s: string;
                         infoEnabled: string;
                         infoDisabled: string;
+
+                        format: string;
+                        formatDesc: string;
+                        formatUnified: string;
+                        formatSearchReplace: string;
                     };
                     listFiles: {
                         ignoreList: string;

@@ -1,35 +1,28 @@
 /**
- * Apply Diff 工具 - 精确搜索替换文件内容
+ * Apply Diff 工具 - 按用户设置选择两种格式应用文件变更：
+ * - unified diff patch（---/+++/@ @/+/-）
+ * - legacy search/replace/start_line diffs
+ *
  * 支持多工作区（Multi-root Workspaces）
  */
 
-import * as vscode from 'vscode';
 import * as fs from 'fs';
-import * as path from 'path';
-import type { Tool, ToolResult } from '../types';
+import type { Tool, ToolDeclaration, ToolResult } from '../types';
 import { getDiffManager } from './diffManager';
 import { resolveUriWithInfo, getAllWorkspaces } from '../utils';
 import { getDiffStorageManager } from '../../modules/conversation';
+import { getGlobalSettingsManager } from '../../core/settingsContext';
+import { applyUnifiedDiff, parseUnifiedDiff, type UnifiedDiffHunk } from './unifiedDiff';
 
 /**
- * 单个 diff 块
+ * Legacy：单个 search/replace diff（仍被 DiffManager 用于旧结构的块级 accept/reject 逻辑）
  */
-interface DiffBlock {
+export interface LegacyDiffBlock {
     /** 要搜索的内容（必须 100% 精确匹配） */
     search: string;
     /** 替换后的内容 */
     replace: string;
-    /**
-     * 搜索起始行号（1-based，可选）
-     *
-     * 注意：在同一次 apply_diff 调用中包含多个 diff 块时，diff 是“按顺序”依次应用的。
-     * 因此前一个 diff 可能会改变文件的行号。
-     *
-     * - diff[0].start_line：相对于原始文件内容（即应用任何 diff 之前）。
-     * - diff[i].start_line (i>0)：相对于“已经应用了 diff[0..i-1] 后”的当前内容。
-     *
-     * 如果不确定或内容在文件中是唯一的，也可以省略 start_line，让工具全局精确匹配 search。
-     */
+    /** 搜索起始行号（1-based，可选） */
     start_line?: number;
 }
 
@@ -41,7 +34,7 @@ function normalizeLineEndings(text: string): string {
 }
 
 /**
- * 应用单个 diff
+ * Legacy：应用单个 search/replace diff
  */
 export function applyDiffToContent(
     content: string,
@@ -141,28 +134,37 @@ export function applyDiffToContent(
     };
 }
 
+function getApplyDiffFormat(): 'unified' | 'search_replace' {
+    const settingsManager = getGlobalSettingsManager();
+    const raw = settingsManager?.getApplyDiffConfig()?.format;
+    return raw === 'search_replace' ? 'search_replace' : 'unified';
+}
+
 /**
  * 创建 apply_diff 工具
  */
 export function createApplyDiffTool(): Tool {
-    // 获取工作区信息
-    const workspaces = getAllWorkspaces();
-    const isMultiRoot = workspaces.length > 1;
-    
-    // 根据工作区数量生成描述
-    let pathDescription = 'Path to the file (relative to workspace root)';
-    let descriptionSuffix = '';
-    
-    if (isMultiRoot) {
-        pathDescription = `Path to the file, must use "workspace_name/path" format. Available workspaces: ${workspaces.map(w => w.name).join(', ')}`;
-        descriptionSuffix = `\n\nMulti-root workspace: Must use "workspace_name/path" format. Available workspaces: ${workspaces.map(w => w.name).join(', ')}`;
-    }
-    
-    return {
-        declaration: {
-            name: 'apply_diff',
-            category: 'file',
-            description: `Apply precise search-and-replace diff(s) to a file. The search content must match EXACTLY (including whitespace and indentation).
+    const buildDeclaration = (): ToolDeclaration => {
+        // 获取工作区信息
+        const workspaces = getAllWorkspaces();
+        const isMultiRoot = workspaces.length > 1;
+
+        // 根据工作区数量生成描述
+        let pathDescription = 'Path to the file (relative to workspace root)';
+        let descriptionSuffix = '';
+
+        if (isMultiRoot) {
+            pathDescription = `Path to the file, must use "workspace_name/path" format. Available workspaces: ${workspaces.map(w => w.name).join(', ')}`;
+            descriptionSuffix = `\n\nMulti-root workspace: Must use "workspace_name/path" format. Available workspaces: ${workspaces.map(w => w.name).join(', ')}`;
+        }
+
+        const format = getApplyDiffFormat();
+
+        if (format === 'search_replace') {
+            return {
+                name: 'apply_diff',
+                category: 'file',
+                description: `Apply legacy search/replace diffs to a file and open a pending diff for user confirmation.
 
 Parameters:
 - path: Path to the file (relative to workspace root)
@@ -171,27 +173,84 @@ Parameters:
 Each diff object contains:
 - search: The exact content to search for (must match 100%)
 - replace: The content to replace with
-- start_line: (RECOMMENDED, 1-based) Where to start searching in the CURRENT content when applying this diff.
+- start_line: (optional, 1-based) Where to start searching
 
 Important:
-- Diffs are applied strictly in order.
-- When providing multiple diffs in one call, the file content changes after each successful diff.
-  Therefore, for diff[i] (i>0), start_line MUST be calculated against the file AFTER applying diff[0..i-1], not the original file.
-- If you are not sure, omit start_line and make 'search' unique by including enough surrounding context.
-- The 'search' content must match EXACTLY (including whitespace and indentation)
-- If any diff fails, the entire operation is rolled back
+- Search content must match EXACTLY (including whitespace and indentation)
+- Diffs are applied strictly in order
+- If a diff fails, it will not be applied
 
-Result (when accepted):
-- If the user manually edits the AI-suggested content before saving, the response may include \`data.userEditedContent\`.
-- \`data.userEditedContent\` is a string summarizing the user's manual edits.
-  Each line is one record, separated by \`\n\`. Empty lines are represented as an empty string.
-  Format:
-  - Inserted line: \`+ | newLine | content\` (newLine is 1-based line number in the user's final saved content)
-  - Replaced line: \`~ | newLine | content\` (newLine is 1-based line number in the user's final saved content)
-  - Deleted line: \`- | baseLine | content\` (baseLine is 1-based line number in the system-suggested content)
+${descriptionSuffix}`,
 
-**IMPORTANT**: The \`diffs\` parameter MUST be an array, even for a single diff. Example: \`{"path": "file.txt", "diffs": [{"search": "...", "replace": "...", "start_line": 1}]}\`${descriptionSuffix}`,
-            
+                parameters: {
+                    type: 'object',
+                    properties: {
+                        path: {
+                            type: 'string',
+                            description: pathDescription
+                        },
+                        diffs: {
+                            type: 'array',
+                            description: 'Array of legacy diff objects to apply. MUST be an array even for a single diff.',
+                            items: {
+                                type: 'object',
+                                properties: {
+                                    search: {
+                                        type: 'string',
+                                        description: 'The exact content to search for'
+                                    },
+                                    replace: {
+                                        type: 'string',
+                                        description: 'The content to replace with'
+                                    },
+                                    start_line: {
+                                        type: 'number',
+                                        description: 'Line number (1-based) to start searching (optional).'
+                                    }
+                                },
+                                required: ['search', 'replace']
+                            }
+                        }
+                    },
+                    required: ['path', 'diffs']
+                }
+            };
+        }
+
+        // 默认：unified diff patch
+        return {
+            name: 'apply_diff',
+            category: 'file',
+            description: `Apply a unified diff patch (unified diff format) to a file and open a pending diff for user confirmation.
+
+Parameters:
+- path: Path to the file (relative to workspace root)
+- patch: Unified diff patch text. You may provide either:
+  - Full unified diff with file headers (---/+++), or
+  - Hunk-only patch starting from @@ ... @@ (recommended here because the tool already targets a single file)
+
+Requirements:
+- patch must be for a single file (do NOT include multiple file diffs)
+- /dev/null create/delete patches are not supported (use write_file/delete_file instead)
+- patch must contain enough context lines so it can be applied exactly
+
+Example (hunk-only):
+@@ -1,3 +1,3 @@
+ const x = 1;
+-const y = 2;
++const y = 3;
+ console.log(x, y);
+
+Example (full):
+--- a/src/foo.ts
++++ b/src/foo.ts
+@@ -1,3 +1,3 @@
+ const x = 1;
+-const y = 2;
++const y = 3;
+ console.log(x, y);
+${descriptionSuffix}`,
+
             parameters: {
                 type: 'object',
                 properties: {
@@ -199,109 +258,235 @@ Result (when accepted):
                         type: 'string',
                         description: pathDescription
                     },
-                    diffs: {
-                        type: 'array',
-                        description: 'Array of diff objects to apply. MUST be an array even for a single diff.',
-                        items: {
-                            type: 'object',
-                            properties: {
-                                search: {
-                                    type: 'string',
-                                    description: 'The exact content to search for'
-                                },
-                                replace: {
-                                    type: 'string',
-                                    description: 'The content to replace with'
-                                },
-                                start_line: {
-                                    type: 'number',
-                                    description: 'Line number (1-based) to start searching in the current content while applying this diff (RECOMMENDED). For multiple diffs in one call, diff[i] is applied after diff[0..i-1], so its start_line is relative to the updated content.'
-                                }
-                            },
-                            required: ['search', 'replace']
-                        }
+                    patch: {
+                        type: 'string',
+                        description: 'Unified diff patch text. File headers (---/+++) are optional; hunks (@@ ... @@ with +/-/ ) are required.'
                     }
                 },
-                required: ['path', 'diffs']
+                required: ['path', 'patch']
             }
+        };
+    };
+
+    return {
+        // declaration 做成 getter：根据用户设置动态返回不同描述/Schema
+        get declaration() {
+            return buildDeclaration();
         },
+
         handler: async (args, context): Promise<ToolResult> => {
             const filePath = args.path as string;
-            const diffs = args.diffs as DiffBlock[] | undefined;
-            
+            const patch = args.patch as string | undefined;
+            const diffs = args.diffs as LegacyDiffBlock[] | undefined;
+
             if (!filePath || typeof filePath !== 'string') {
                 return { success: false, error: 'Path is required' };
             }
-            
-            if (!diffs || !Array.isArray(diffs) || diffs.length === 0) {
-                return { success: false, error: 'Diffs array is required and must not be empty' };
-            }
-            
-            const { uri, workspace } = resolveUriWithInfo(filePath);
+
+            const { uri } = resolveUriWithInfo(filePath);
             if (!uri) {
                 return { success: false, error: 'No workspace folder open' };
             }
-            
+
             const absolutePath = uri.fsPath;
             if (!fs.existsSync(absolutePath)) {
                 return { success: false, error: `File not found: ${filePath}` };
             }
-            
+
+            const format = getApplyDiffFormat();
+
             try {
                 const originalContent = fs.readFileSync(absolutePath, 'utf8');
+
+                // ========== 统一 diff 模式 ==========
+                if (format === 'unified') {
+                    if (!patch || typeof patch !== 'string') {
+                        return {
+                            success: false,
+                            error: 'apply_diff is configured to use unified diff patch. Please provide { patch } (unified diff hunks starting with @@ ... @@; file headers ---/+++ are optional).'
+                        };
+                    }
+
+                    const parsed = parseUnifiedDiff(patch);
+                    const { newContent, appliedHunks } = applyUnifiedDiff(originalContent, parsed);
+
+                    const diffCount = parsed.hunks.length;
+
+                    // 创建待审阅的 diff
+                    const diffManager = getDiffManager();
+
+                    const blocks: Array<{ index: number; startLine: number; endLine: number }> = appliedHunks.map(h => ({
+                        index: h.index,
+                        startLine: h.startLine,
+                        endLine: h.endLine
+                    }));
+
+                    const rawHunks: UnifiedDiffHunk[] = parsed.hunks;
+
+                    const pendingDiff = await diffManager.createPendingDiff(
+                        filePath,
+                        absolutePath,
+                        originalContent,
+                        newContent,
+                        blocks,
+                        rawHunks as any[],
+                        context?.toolId
+                    );
+
+                    // 等待 diff 被处理（保存或拒绝）或用户中断
+                    const wasInterrupted = await new Promise<boolean>((resolve) => {
+                        let resolved = false;
+                        let abortHandler: (() => void) | undefined;
+                        let statusListener: ((pending: any[], allProcessed: boolean) => void) | undefined;
+
+                        const finish = (interrupted: boolean) => {
+                            if (resolved) return;
+                            resolved = true;
+
+                            if (statusListener) {
+                                diffManager.removeStatusListener(statusListener);
+                            }
+                            if (abortHandler && context?.abortSignal) {
+                                try {
+                                    context.abortSignal.removeEventListener('abort', abortHandler);
+                                } catch {
+                                    // ignore
+                                }
+                            }
+                            resolve(interrupted);
+                        };
+
+                        abortHandler = () => {
+                            diffManager.rejectDiff(pendingDiff.id).catch(() => {});
+                            finish(true);
+                        };
+
+                        // 监听信号取消
+                        if (context?.abortSignal) {
+                            if (context.abortSignal.aborted) {
+                                abortHandler();
+                                return;
+                            }
+                            context.abortSignal.addEventListener('abort', abortHandler, { once: true } as any);
+                        }
+
+                        // 监听 diffManager 的状态变化
+                        statusListener = (_pending: any[], _allProcessed: boolean) => {
+                            const d = diffManager.getDiff(pendingDiff.id);
+                            if (!d || d.status !== 'pending') {
+                                finish(false);
+                            }
+                        };
+                        diffManager.addStatusListener(statusListener);
+                    });
+
+                    // 获取最终状态
+                    const finalDiff = diffManager.getDiff(pendingDiff.id);
+                    const wasAccepted = !wasInterrupted && (!finalDiff || finalDiff.status === 'accepted');
+
+                    // 用户可能在保存前编辑了内容（手动保存/手动接受时）
+                    const userEditedContent = finalDiff?.userEditedContent;
+
+                    // 尝试将大内容保存到 DiffStorageManager
+                    const diffStorageManager = getDiffStorageManager();
+                    let diffContentId: string | undefined;
+
+                    if (diffStorageManager) {
+                        try {
+                            const diffRef = await diffStorageManager.saveGlobalDiff({
+                                originalContent,
+                                newContent,
+                                filePath
+                            });
+                            diffContentId = diffRef.diffId;
+                        } catch (e) {
+                            console.warn('Failed to save diff content to storage:', e);
+                        }
+                    }
+
+                    if (wasInterrupted) {
+                        return {
+                            success: false,
+                            cancelled: true,
+                            error: 'Diff was cancelled by user',
+                            data: {
+                                file: filePath,
+                                message: `Diff for ${filePath} was cancelled by user.`,
+                                status: 'rejected',
+                                diffCount,
+                                appliedCount: diffCount,
+                                failedCount: 0,
+                                diffContentId
+                            }
+                        };
+                    }
+
+                    const message = wasAccepted
+                        ? `Diff applied and saved to ${filePath}`
+                        : finalDiff?.status === 'rejected'
+                          ? `Diff was explicitly rejected by the user for ${filePath}. No changes were saved.`
+                          : `Diff was not accepted for ${filePath}. No changes were saved.`;
+
+                    return {
+                        success: wasAccepted,
+                        data: {
+                            file: filePath,
+                            message,
+                            status: wasAccepted ? 'accepted' : 'rejected',
+                            diffCount,
+                            appliedCount: diffCount,
+                            failedCount: 0,
+                            userEditedContent,
+                            diffContentId,
+                            pendingDiffId: pendingDiff.id
+                        }
+                    };
+                }
+
+                // ========== 旧 search/replace 模式 ==========
+                if (!diffs || !Array.isArray(diffs) || diffs.length === 0) {
+                    return {
+                        success: false,
+                        error: 'apply_diff is configured to use legacy diffs. Please provide { diffs: [{search, replace, start_line?}, ...] }.'
+                    };
+                }
+
                 let currentContent = originalContent;
-                
-                // 记录每个 diff 的应用结果
+
                 const diffResults: Array<{
                     index: number;
                     success: boolean;
                     error?: string;
                     matchedLine?: number;
-                    lineCountDelta: number;
                 }> = [];
-                
-                // 依次尝试应用每个 diff
+
                 for (let i = 0; i < diffs.length; i++) {
                     const diff = diffs[i];
-                    
+
                     if (!diff.search || diff.replace === undefined) {
                         diffResults.push({
                             index: i,
                             success: false,
-                            error: `Diff at index ${i} is missing 'search' or 'replace' field`,
-                            lineCountDelta: 0
+                            error: `Diff at index ${i} is missing 'search' or 'replace' field`
                         });
                         continue;
                     }
-                    
+
                     const result = applyDiffToContent(currentContent, diff.search, diff.replace, diff.start_line);
-                    
-                    const searchLines = diff.search.split('\n').length;
-                    const replaceLines = diff.replace.split('\n').length;
-                    
                     diffResults.push({
                         index: i,
                         success: result.success,
                         error: result.error,
-                        matchedLine: result.matchedLine,
-                        lineCountDelta: result.success ? (replaceLines - searchLines) : 0
+                        matchedLine: result.matchedLine
                     });
-                    
+
                     if (result.success) {
                         currentContent = result.result;
                     }
                 }
-                
+
                 const appliedCount = diffResults.filter(r => r.success).length;
                 const failedCount = diffResults.length - appliedCount;
-                
-                // 每个 diff 的结果（用于 AI/前端理解哪些块成功/失败）
-                const results = diffResults.map(r => ({
-                    index: r.index,
-                    success: r.success,
-                    matchedLine: r.matchedLine,
-                    error: r.error
-                }));
 
                 // 如果没有任何一个 diff 成功应用，则返回失败
                 if (appliedCount === 0 && diffs.length > 0) {
@@ -312,60 +497,39 @@ Result (when accepted):
                         data: {
                             file: filePath,
                             message: `Failed to apply any diffs to ${filePath}.`,
-                            // 每个 diff 的执行结果（哪些成功/失败）
-                            results,
+                            results: diffResults,
                             appliedCount: 0,
                             totalCount: diffs.length,
                             failedCount: diffs.length
                         }
                     };
                 }
-                
-                // 至少有一个 diff 成功应用，创建待审阅的 diff
+
                 const diffManager = getDiffManager();
-                
-                // 计算每个成功的 diff 块在最终 currentContent 中的范围
+
                 const blocks: Array<{ index: number; startLine: number; endLine: number }> = [];
-                
                 for (let i = 0; i < diffs.length; i++) {
                     const res = diffResults[i];
                     if (res.success && res.matchedLine !== undefined) {
-                        let finalMatchedLine = res.matchedLine;
-                        
-                        // 调整行号：受后面应用但位置在前的 diff 影响（虽然通常是顺序的，但为了健壮性考虑）
-                        // 实际上，因为我们是顺序应用的，前面的 diff 已经改变了 currentContent。
-                        // 所以 res.matchedLine 就是它在它被应用时的那个 content 里的行号。
-                        // 如果后面的 diff 在它【之前】应用，它会移动。
-                        // 但由于我们是【顺序】应用，所以前面的 diff 已经生效了。
-                        // 现在的 res.matchedLine 是相对于已经应用了 0...i-1 个 diff 的 content。
-                        // 如果后续 i+1...n 个 diff 应用在它【之前】，它的行号会变。
-                        
-                        // 我们需要计算最终行号。
-                        // 我们可以通过在应用所有 diff 后再次搜索，或者在应用时记录。
-                        // 简单的办法：假设 AI 是按顺序（从上到下）提供 diff 的。
-                        // 这样 res.matchedLine 对于最终 content 也是大致正确的，除非后续 diff 插在前面。
-                        
-                        // 这里的逻辑简化处理：直接使用应用时的行号
                         const replaceLines = diffs[i].replace.split('\n').length;
                         blocks.push({
                             index: i,
-                            startLine: finalMatchedLine,
-                            endLine: finalMatchedLine + replaceLines - 1
+                            startLine: res.matchedLine,
+                            endLine: res.matchedLine + replaceLines - 1
                         });
                     }
                 }
-                
+
                 const pendingDiff = await diffManager.createPendingDiff(
                     filePath,
                     absolutePath,
                     originalContent,
                     currentContent,
                     blocks,
-                    diffs,
+                    diffs as any[],
                     context?.toolId
                 );
 
-                // 等待 diff 被处理（保存或拒绝）或用户中断
                 const wasInterrupted = await new Promise<boolean>((resolve) => {
                     let resolved = false;
                     let abortHandler: (() => void) | undefined;
@@ -393,7 +557,6 @@ Result (when accepted):
                         finish(true);
                     };
 
-                    // 监听信号取消
                     if (context?.abortSignal) {
                         if (context.abortSignal.aborted) {
                             abortHandler();
@@ -402,7 +565,6 @@ Result (when accepted):
                         context.abortSignal.addEventListener('abort', abortHandler, { once: true } as any);
                     }
 
-                    // 监听 diffManager 的状态变化
                     statusListener = (_pending: any[], _allProcessed: boolean) => {
                         const d = diffManager.getDiff(pendingDiff.id);
                         if (!d || d.status !== 'pending') {
@@ -411,18 +573,14 @@ Result (when accepted):
                     };
                     diffManager.addStatusListener(statusListener);
                 });
-                
-                // 获取最终状态
+
                 const finalDiff = diffManager.getDiff(pendingDiff.id);
                 const wasAccepted = !wasInterrupted && (!finalDiff || finalDiff.status === 'accepted');
-
-                // 用户可能在保存前编辑了内容（手动保存/手动接受时）
                 const userEditedContent = finalDiff?.userEditedContent;
 
-                // 尝试将大内容保存到 DiffStorageManager
                 const diffStorageManager = getDiffStorageManager();
                 let diffContentId: string | undefined;
-                
+
                 if (diffStorageManager) {
                     try {
                         const diffRef = await diffStorageManager.saveGlobalDiff({
@@ -435,9 +593,8 @@ Result (when accepted):
                         console.warn('Failed to save diff content to storage:', e);
                     }
                 }
-                
+
                 if (wasInterrupted) {
-                    // 用户主动终止（AbortSignal），视为取消
                     return {
                         success: false,
                         cancelled: true,
@@ -447,31 +604,24 @@ Result (when accepted):
                             message: `Diff for ${filePath} was cancelled by user.`,
                             status: 'rejected',
                             diffCount: diffs.length,
-                            appliedCount: appliedCount,
-                            failedCount: failedCount,
-                            // 每个 diff 的执行结果（哪些成功/失败）
-                            results,
-                            // 仅供前端按需加载用，不发送给 AI
+                            appliedCount,
+                            failedCount,
+                            results: diffResults,
                             diffContentId
                         }
                     };
                 }
-                
-                // 简化返回：AI 已经知道 diffs 内容，不需要重复返回
-                let message: string;
 
+                let message: string;
                 if (wasAccepted) {
                     message = `Diff applied and saved to ${filePath}`;
                     if (failedCount > 0) {
                         message = `Partially applied diffs to ${filePath}: ${appliedCount} succeeded, ${failedCount} failed. Saved successfully.`;
                     }
                 } else {
-                    // 明确区分：用户主动拒绝（Reject） vs. 其他未接受情况
-                    if (finalDiff?.status === 'rejected') {
-                        message = `Diff was explicitly rejected by the user for ${filePath}. No changes were saved.`;
-                    } else {
-                        message = `Diff was not accepted for ${filePath}. No changes were saved.`;
-                    }
+                    message = finalDiff?.status === 'rejected'
+                        ? `Diff was explicitly rejected by the user for ${filePath}. No changes were saved.`
+                        : `Diff was not accepted for ${filePath}. No changes were saved.`;
                 }
 
                 return {
@@ -481,15 +631,11 @@ Result (when accepted):
                         message,
                         status: wasAccepted ? 'accepted' : 'rejected',
                         diffCount: diffs.length,
-                        appliedCount: appliedCount,
-                        failedCount: failedCount,
-                        // 每个 diff 的执行结果（哪些成功/失败）
-                        results,
-                        // 用户对 AI 建议的手动编辑摘要（如果用户在保存前修改了 AI 建议）
+                        appliedCount,
+                        failedCount,
+                        results: diffResults,
                         userEditedContent,
-                        // 仅供前端按需加载用，不发送给 AI
                         diffContentId,
-                        // Diff 会话 ID（仅供前端/内部使用，发送给 AI 时会被过滤）
                         pendingDiffId: pendingDiff.id
                     }
                 };

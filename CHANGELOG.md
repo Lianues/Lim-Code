@@ -2,6 +2,15 @@
 
 All notable changes to the "Lim Code" extension will be documented in this file.
 
+
+## [1.0.71] - 2026-02-05
+
+### Added
+  - 添加了新的diff格式，且默认使用新diff格式。新格式成功率更高，依旧可以在设置里使用旧格式
+
+### Fixed
+  - 修复gemini格式工具响应无法正常发送的问题
+
 ## [1.0.70] - 2026-02-04
 
 ### Added
