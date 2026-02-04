@@ -129,7 +129,7 @@ function mergeTodos(existing: TodoItem[], incoming: TodoItem[]): TodoItem[] {
 export function createTodoWriteToolDeclaration(): ToolDeclaration {
     return {
         name: 'todo_write',
-        description: 'Create and update a per-conversation TODO list. Use merge=true to update/append items by id; merge=false to replace the entire list.',
+        description: 'Create and update a per-conversation TODO list. IMPORTANT: Use this tool AT THE START of a complex task to outline your plan. Update it as you progress to let the user track your status.',
         category: 'todo',
         parameters: {
             type: 'object',

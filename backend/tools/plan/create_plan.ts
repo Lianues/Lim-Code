@@ -11,6 +11,8 @@ import type { Tool, ToolDeclaration, ToolResult } from '../types';
 import { getAllWorkspaces, resolveUriWithInfo, normalizeLineEndingsToLF } from '../utils';
 import { isPlanPathAllowed } from '../../modules/settings/modeToolsPolicy';
 
+const TODO_METADATA_KEY = 'todoList';
+
 export interface CreatePlanArgs {
   title?: string;
   overview?: string;
@@ -120,6 +122,20 @@ export function createCreatePlanTool(): Tool {
         const content = normalizeLineEndingsToLF(plan);
         const bytes = new TextEncoder().encode(content);
         await vscode.workspace.fs.writeFile(uri, bytes);
+
+        // 如果提供了 todos，则同步到对话元数据中（实现 TaskCards 自动同步）
+        const context = (rawArgs as any).context; // 在 ToolExecutionService 中注入
+        if (args.todos && args.todos.length > 0 && context?.conversationStore && context?.conversationId) {
+          try {
+            await context.conversationStore.setCustomMetadata(
+              context.conversationId,
+              TODO_METADATA_KEY,
+              args.todos
+            );
+          } catch (todoError) {
+            console.error('[create_plan] Failed to sync todos:', todoError);
+          }
+        }
 
         return {
           success: true,

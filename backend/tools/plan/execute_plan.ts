@@ -86,7 +86,8 @@ export function createExecutePlanTool(): Tool {
             path: planPath,
             planContent,
             switchedModeFrom: from,
-            switchedModeTo: 'code'
+            switchedModeTo: 'code',
+            instruction: 'The plan has been approved. You are now in CODE mode. Please start implementation and remember to use todo_write to mark tasks as "in_progress" or "completed" as you go.'
           }
         };
       } catch (e: any) {
