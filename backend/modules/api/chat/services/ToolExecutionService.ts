@@ -6,12 +6,14 @@
 
 import { t } from '../../../../i18n';
 import type { ToolRegistry } from '../../../../tools/ToolRegistry';
+import type { ConversationStore } from '../../../../tools/types';
 import type { CheckpointRecord } from '../../../checkpoint';
 import type { SettingsManager } from '../../../settings/SettingsManager';
+import { isPlanPathAllowed } from '../../../settings/modeToolsPolicy';
 import type { McpManager } from '../../../mcp/McpManager';
 import type { ContentPart } from '../../../conversation/types';
 import type { BaseChannelConfig } from '../../../config/configs/base';
-import { getMultimodalCapability, type ChannelType as UtilChannelType, type ToolMode as UtilToolMode } from '../../../../tools/utils';
+import { getAllWorkspaces, getMultimodalCapability, type ChannelType as UtilChannelType, type ToolMode as UtilToolMode } from '../../../../tools/utils';
 import type { FunctionCallInfo, ToolExecutionResult } from '../utils';
 import type { CheckpointService } from './CheckpointService';
 
@@ -53,6 +55,7 @@ export class ToolExecutionService {
     private settingsManager?: SettingsManager;
     private mcpManager?: McpManager;
     private toolRegistry?: ToolRegistry;
+    private conversationStore?: ConversationStore;
 
     constructor(
         toolRegistry?: ToolRegistry,
@@ -84,6 +87,13 @@ export class ToolExecutionService {
      */
     setToolRegistry(toolRegistry: ToolRegistry): void {
         this.toolRegistry = toolRegistry;
+    }
+
+    /**
+     * 注入对话存储（用于工具持久化对话元数据）
+     */
+    setConversationStore(store: ConversationStore): void {
+        this.conversationStore = store;
     }
 
     /**
@@ -194,6 +204,31 @@ export class ToolExecutionService {
                 break;
             }
 
+            // 执行前强制过滤（模式 toolPolicy / 全局 toolsEnabled / Plan write_file 路径限制）
+            const rejectionReason = this.getToolRejectionReason(call.name, call.args);
+            if (rejectionReason) {
+                const response: Record<string, unknown> = {
+                    success: false,
+                    error: rejectionReason,
+                    rejected: true
+                };
+
+                toolResults.push({
+                    id: call.id,
+                    name: call.name,
+                    result: JSON.parse(JSON.stringify(response))
+                });
+
+                responseParts.push({
+                    functionResponse: {
+                        id: call.id,
+                        name: call.name,
+                        response
+                    }
+                });
+                continue;
+            }
+
             let response: Record<string, unknown>;
 
             try {
@@ -201,7 +236,7 @@ export class ToolExecutionService {
                 if (call.name.startsWith('mcp__') && this.mcpManager) {
                     response = await this.executeMcpTool(call);
                 } else {
-                    response = await this.executeBuiltinTool(call, config, abortSignal);
+                    response = await this.executeBuiltinTool(call, conversationId, config, abortSignal);
                 }
             } catch (error) {
                 const err = error as Error;
@@ -349,6 +384,34 @@ export class ToolExecutionService {
                 break;
             }
 
+            // 执行前强制过滤（模式 toolPolicy / 全局 toolsEnabled / Plan write_file 路径限制）
+            const rejectionReason = this.getToolRejectionReason(call.name, call.args);
+            if (rejectionReason) {
+                const response: Record<string, unknown> = {
+                    success: false,
+                    error: rejectionReason,
+                    rejected: true
+                };
+
+                const toolResult: ToolExecutionResult = {
+                    id: call.id,
+                    name: call.name,
+                    result: JSON.parse(JSON.stringify(response))
+                };
+                toolResults.push(toolResult);
+                responseParts.push({
+                    functionResponse: {
+                        id: call.id,
+                        name: call.name,
+                        response
+                    }
+                });
+
+                // 被策略拒绝的工具：直接给 end 事件（不发 start，避免 UI 把它当作“执行中”）
+                yield { type: 'end', call, toolResult };
+                continue;
+            }
+
             yield { type: 'start', call };
 
             let response: Record<string, unknown>;
@@ -357,7 +420,7 @@ export class ToolExecutionService {
                 if (call.name.startsWith('mcp__') && this.mcpManager) {
                     response = await this.executeMcpTool(call);
                 } else {
-                    response = await this.executeBuiltinTool(call, config, abortSignal);
+                    response = await this.executeBuiltinTool(call, conversationId, config, abortSignal);
                 }
             } catch (error) {
                 const err = error as Error;
@@ -472,6 +535,7 @@ export class ToolExecutionService {
      */
     private async executeBuiltinTool(
         call: FunctionCallInfo,
+        conversationId?: string,
         config?: BaseChannelConfig,
         abortSignal?: AbortSignal
     ): Promise<Record<string, unknown>> {
@@ -497,7 +561,10 @@ export class ToolExecutionService {
             capability,
             abortSignal,
             toolId: call.id,  // 使用函数调用 ID 作为工具 ID，用于追踪和取消
-            toolOptions: config?.toolOptions  // 传递工具配置
+            toolOptions: config?.toolOptions,  // 传递工具配置
+            // 注入对话上下文（供 todo_write 等工具使用）
+            conversationId,
+            conversationStore: this.conversationStore
         };
 
         // 为特定工具添加配置
@@ -658,6 +725,11 @@ export class ToolExecutionService {
             return false;
         }
 
+        // 如果工具在当前模式被禁用（mode allowlist / Plan write_file 路径限制 / toolsEnabled），则不等待确认
+        if (this.getToolRejectionReason(toolName) !== null) {
+            return false;
+        }
+
         // 使用统一的自动执行配置
         // isToolAutoExec 返回 true 表示自动执行，不需要确认
         // isToolAutoExec 返回 false 表示需要确认
@@ -717,5 +789,93 @@ export class ToolExecutionService {
         }
         
         return { allowed, rejected };
+    }
+
+    /**
+     * 获取工具在当前模式下的拒绝原因（若允许则返回 null）
+     *
+     * 强制策略：
+     * - 全局 toolsEnabled（SettingsManager.isToolEnabled）
+     * - 当前模式 allowlist（mode.toolPolicy 仅当为非空数组时启用过滤）
+     * - Plan 模式 write_file 仅允许写入 .cursor/plans/**.md（多工作区支持 workspaceName/.cursor/plans/**.md）
+     */
+    private getToolRejectionReason(toolName: string, args?: Record<string, unknown>): string | null {
+        // 1) 全局 toolsEnabled
+        if (this.settingsManager && this.settingsManager.isToolEnabled(toolName) === false) {
+            return `Tool "${toolName}" is disabled by settings (toolsEnabled).`;
+        }
+
+        // 2) 当前模式 allowlist（仅当 toolPolicy 为非空数组时启用过滤）
+        const mode = this.settingsManager?.getCurrentPromptMode();
+        const allowlist = Array.isArray(mode?.toolPolicy) && mode.toolPolicy.length > 0
+            ? mode.toolPolicy
+            : undefined;
+        if (allowlist && !allowlist.includes(toolName)) {
+            return `Tool "${toolName}" is not allowed in mode "${mode?.id ?? 'unknown'}".`;
+        }
+
+        // 3) Plan 模式 write_file 受控例外：只允许写入 .cursor/plans/**.md
+        if (mode?.id === 'plan' && toolName === 'write_file') {
+            const validation = this.validatePlanModeWriteFileArgs(args);
+            if (validation.ok === false) {
+                return validation.error;
+            }
+        }
+
+        return null;
+    }
+
+    private validatePlanModeWriteFileArgs(
+        args?: Record<string, unknown>
+    ): { ok: true } | { ok: false; error: string } {
+        const files = (args as any)?.files;
+        if (!Array.isArray(files) || files.length === 0) {
+            return { ok: false, error: 'In plan mode, write_file requires a non-empty "files" array.' };
+        }
+
+        for (const entry of files) {
+            if (!entry || typeof entry !== 'object') {
+                return { ok: false, error: 'In plan mode, write_file.files entries must be objects.' };
+            }
+            const path = (entry as any).path;
+            if (typeof path !== 'string' || !path.trim()) {
+                return { ok: false, error: 'In plan mode, write_file.files[].path must be a non-empty string.' };
+            }
+            if (!this.isPlanModeWriteFilePathAllowed(path)) {
+                return {
+                    ok: false,
+                    error: `In plan mode, write_file is only allowed to write ".cursor/plans/**.md". Rejected path: ${path}`
+                };
+            }
+        }
+
+        return { ok: true };
+    }
+
+    private isPlanModeWriteFilePathAllowed(path: string): boolean {
+        // 先尝试单工作区格式：.cursor/plans/...
+        if (isPlanPathAllowed(path)) {
+            return true;
+        }
+
+        // 多工作区：允许 workspaceName/.cursor/plans/...
+        let isMultiRoot = false;
+        try {
+            isMultiRoot = getAllWorkspaces().length > 1;
+        } catch {
+            isMultiRoot = false;
+        }
+
+        if (!isMultiRoot) {
+            return false;
+        }
+
+        const normalized = path.replace(/\\/g, '/');
+        const slashIndex = normalized.indexOf('/');
+        if (slashIndex <= 0) {
+            return false;
+        }
+        const withoutWorkspacePrefix = normalized.substring(slashIndex + 1);
+        return isPlanPathAllowed(withoutWorkspacePrefix);
     }
 }

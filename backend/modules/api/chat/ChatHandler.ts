@@ -12,6 +12,7 @@ import type { DiffStorageManager } from '../../conversation/DiffStorageManager';
 import type { ToolRegistry } from '../../../tools/ToolRegistry';
 import type { CheckpointManager, CheckpointRecord } from '../../checkpoint';
 import type { SettingsManager } from '../../settings/SettingsManager';
+import type { SettingsChangeEvent, SettingsChangeListener } from '../../settings/types';
 import type { McpManager } from '../../mcp/McpManager';
 import { PromptManager } from '../../prompt';
 import { StreamAccumulator } from '../../channel/StreamAccumulator';
@@ -73,6 +74,7 @@ const DEFAULT_MAX_TOOL_ITERATIONS = 20;
 export class ChatHandler {
     private checkpointManager?: CheckpointManager;
     private settingsManager?: SettingsManager;
+    private settingsChangeListener?: SettingsChangeListener;
     private mcpManager?: McpManager;
     private diffStorageManager?: DiffStorageManager;
     private promptManager: PromptManager;
@@ -118,6 +120,8 @@ export class ChatHandler {
             this.settingsManager,
             this.checkpointService
         );
+        // 注入 conversationStore，供 todo_write 等工具持久化使用
+        this.toolExecutionService.setConversationStore(this.conversationManager);
         this.summarizeService = new SummarizeService(
             this.configManager,
             this.channelManager,
@@ -169,7 +173,32 @@ export class ChatHandler {
      * 设置设置管理器（可选）
      */
     setSettingsManager(settingsManager: SettingsManager): void {
+        // 避免重复注册 listener（setSettingsManager 可能被多次调用）
+        if (this.settingsChangeListener && this.settingsManager) {
+            this.settingsManager.removeChangeListener(this.settingsChangeListener);
+        }
+        
+        const listener: SettingsChangeListener = this.settingsChangeListener ?? ((event: SettingsChangeEvent) => {
+            const path = event.path;
+            const pathStartsWithSystemPrompt =
+                typeof path === 'string' && path.startsWith('toolsConfig.system_prompt');
+            
+            const toolsChangeContainsSystemPrompt =
+                event.type === 'tools'
+                && (
+                    (typeof path === 'string' && path.includes('system_prompt'))
+                    || (event.newValue && typeof event.newValue === 'object' && 'system_prompt' in (event.newValue as Record<string, unknown>))
+                    || (event.oldValue && typeof event.oldValue === 'object' && 'system_prompt' in (event.oldValue as Record<string, unknown>))
+                );
+            
+            if (pathStartsWithSystemPrompt || toolsChangeContainsSystemPrompt) {
+                this.promptManager.invalidateCache();
+            }
+        });
+        
+        this.settingsChangeListener = listener;
         this.settingsManager = settingsManager;
+        this.settingsManager.addChangeListener(listener);
         // 更新 tokenCountService 的代理设置
         this.tokenCountService.setProxyUrl(settingsManager.getEffectiveProxyUrl());
         // 更新 tokenEstimationService 的设置管理器

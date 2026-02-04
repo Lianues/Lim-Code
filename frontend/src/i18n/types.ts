@@ -259,6 +259,10 @@ export interface LanguageMessages {
                 tool: string;
                 assistant: string;
             };
+            actions: {
+                viewRaw: string;
+            };
+            emptyResponse: string;
             stats: {
                 responseDuration: string;
                 tokenRate: string;
@@ -1303,6 +1307,21 @@ export interface LanguageMessages {
                     placeholder: string;
                     enableTooltip: string;
                     disabledNotice: string;
+                };
+                toolPolicy: {
+                    title: string;
+                    description: string;
+                    inherit: string;
+                    custom: string;
+                    inheritHint: string;
+                    searchPlaceholder: string;
+                    selectAll: string;
+                    clear: string;
+                    loadingTools: string;
+                    noTools: string;
+                    disabledBadge: string;
+                    emptyWarning: string;
+                    emptyCannotSave: string;
                 };
                 saveButton: string;
                 saveSuccess: string;

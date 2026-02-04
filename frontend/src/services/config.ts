@@ -1,4 +1,5 @@
 import type { PromptMode } from '../components/input/ModeSelector.vue'
+import type { ModelInfo } from '../types'
 import { sendToExtension } from '../utils/vscode'
 
 export async function listConfigIds(): Promise<string[]> {
@@ -19,4 +20,8 @@ export async function getPromptModes() {
 
 export async function setCurrentPromptMode(modeId: string) {
   return await sendToExtension('setCurrentPromptMode', { modeId })
+}
+
+export async function getChannelModels(configId: string): Promise<ModelInfo[]> {
+  return await sendToExtension<ModelInfo[]>('models.getModels', { configId })
 }

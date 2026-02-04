@@ -32,6 +32,8 @@ export * from './terminal';
 export * from './media';
 export * from './lsp';
 export * from './subagents';
+export * from './todo';
+export * from './plan';
 
 // 导出工具辅助函数
 export * from './utils';
@@ -63,6 +65,8 @@ export function getAllTools(): Tool[] {
     const { getMediaToolRegistrations } = require('./media');
     const { getLspToolRegistrations } = require('./lsp');
     const { getSubAgentsToolRegistrations } = require('./subagents');
+    const { getTodoToolRegistrations } = require('./todo');
+    const { getPlanToolRegistrations } = require('./plan');
     
     const registrations = [
         ...getFileToolRegistrations(),
@@ -70,6 +74,8 @@ export function getAllTools(): Tool[] {
         ...getTerminalToolRegistrations(),
         ...getMediaToolRegistrations(),
         ...getLspToolRegistrations(),
+        ...getTodoToolRegistrations(),
+        ...getPlanToolRegistrations()
     ];
     
     const tools = registrations.map(reg => reg());

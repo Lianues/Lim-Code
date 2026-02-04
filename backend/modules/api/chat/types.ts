@@ -45,6 +45,13 @@ export interface ChatRequestData {
     
     /** 配置 ID */
     configId: string;
+
+    /**
+     * 模型覆盖（可选）
+     *
+     * 如果提供，将覆盖该 config 的 model 字段，仅对本次请求生效。
+     */
+    modelOverride?: string;
     
     /** 用户消息（文本） */
     message: string;
@@ -326,6 +333,13 @@ export interface ToolConfirmationResponseData {
     
     /** 配置 ID */
     configId: string;
+
+    /**
+     * 模型覆盖（可选）
+     *
+     * 如果提供，将覆盖该 config 的 model 字段，仅对本次继续对话/工具确认生效。
+     */
+    modelOverride?: string;
     
     /** 确认或拒绝的工具调用 */
     toolResponses: Array<{

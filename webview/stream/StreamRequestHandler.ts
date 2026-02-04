@@ -50,7 +50,7 @@ export class StreamRequestHandler {
    * 处理普通聊天流
    */
   async handleChatStream(data: any, requestId: string): Promise<void> {
-    const { conversationId, message, configId, attachments } = data;
+    const { conversationId, message, configId, attachments, modelOverride } = data;
     
     const controller = this.deps.abortManager.create(conversationId);
     const processor = new StreamChunkProcessor(this.deps.getView(), conversationId);
@@ -60,6 +60,7 @@ export class StreamRequestHandler {
         conversationId,
         message,
         configId,
+        modelOverride,
         attachments,
         abortSignal: controller.signal
       });
@@ -171,7 +172,7 @@ export class StreamRequestHandler {
    * 处理工具确认流
    */
   async handleToolConfirmationStream(data: any, requestId: string): Promise<void> {
-    const { conversationId, toolResponses, annotation, configId } = data;
+    const { conversationId, toolResponses, annotation, configId, modelOverride } = data;
     
     const controller = this.deps.abortManager.create(conversationId);
     const processor = new StreamChunkProcessor(this.deps.getView(), conversationId);
@@ -182,6 +183,7 @@ export class StreamRequestHandler {
         toolResponses,
         annotation,
         configId,
+        modelOverride,
         abortSignal: controller.signal
       });
       

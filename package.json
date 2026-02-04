@@ -218,7 +218,10 @@
         "limcode.defaultToolMode": {
           "type": "string",
           "default": "function_call",
-          "enum": ["function_call", "xml"],
+          "enum": [
+            "function_call",
+            "xml"
+          ],
           "description": "默认工具模式（可同步）"
         },
         "limcode.proxy": {
@@ -244,7 +247,8 @@
     "watch": "tsc -watch -p ./",
     "build:frontend": "cd frontend && pnpm run build",
     "build": "pnpm run compile && pnpm run build:frontend",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "jest",
+    "test:watch": "jest --watch"
   },
   "dependencies": {
     "@vscode/codicons": "^0.0.43",
@@ -255,8 +259,11 @@
     "undici-types": "^6.21.0"
   },
   "devDependencies": {
+    "@types/jest": "^29.5.14",
     "@types/node": "^24.10.2",
-    "@types/vscode": "^1.96.0"
+    "@types/vscode": "^1.96.0",
+    "jest": "^29.7.0",
+    "ts-jest": "^29.4.6"
   },
   "keywords": [
     "agent",

@@ -12,6 +12,7 @@ import { useChatStore } from '../../stores'
 import { formatTime } from '../../utils/format'
 import { useI18n } from '../../i18n'
 import type { Message, CheckpointRecord, Attachment } from '../../types'
+import { extractTodosFromPlan } from '../../utils/taskCards'
 
 const { t } = useI18n()
 
@@ -21,6 +22,116 @@ const props = defineProps<{
 
 // 从 store 读取等待状态
 const chatStore = useChatStore()
+
+// ============ Build（Plan 执行）顶部卡片 ============
+type BuildTodoStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled'
+type BuildTodoItem = { id: string; text: string; status: BuildTodoStatus }
+
+const isBuildExpanded = ref(false)
+
+function normalizeTodoStatus(value: any): BuildTodoStatus {
+  if (value === 'in_progress' || value === 'completed' || value === 'cancelled') return value
+  return 'pending'
+}
+
+const latestTodoWrite = computed(() => {
+  const startedAt = chatStore.activeBuild?.startedAt || 0
+  const planPath = chatStore.activeBuild?.planPath
+  const all = chatStore.allMessages
+  for (let i = all.length - 1; i >= 0; i--) {
+    const msg = all[i]
+    // 对于 todo_write，仅限当前 Build 期间的更新
+    // 对于 create_plan，允许回溯到 Build 开始之前（以获取初始列表）
+    if (startedAt && typeof msg.timestamp === 'number' && msg.timestamp < startedAt - 600000) { // 允许回溯 10 分钟以防万一
+      break
+    }
+    if (msg.role !== 'assistant' || !Array.isArray(msg.tools)) continue
+    for (let j = msg.tools.length - 1; j >= 0; j--) {
+      const tool = msg.tools[j]
+      if (tool.name === 'todo_write') {
+        // todo_write 必须在 Build 开始后（或刚好开始时）
+        if (startedAt && msg.timestamp && msg.timestamp < startedAt - 5000) continue 
+        const todos = (tool.result as any)?.data?.todos
+        if (Array.isArray(todos)) return todos as Array<{ id: string; content: string; status: string }>
+      } else if (tool.name === 'create_plan') {
+        // create_plan 可以是在 Build 开始前
+        const todos = (tool.result as any)?.data?.todos
+        const path = (tool.result as any)?.data?.path || tool.args?.path
+        if (Array.isArray(todos) && (!planPath || path === planPath)) return todos as Array<{ id: string; content: string; status: string }>
+      }
+    }
+  }
+  return null
+})
+
+const buildTodoItems = computed<BuildTodoItem[]>(() => {
+  // 1) 优先显示 todo_write 的真实列表（最接近 Cursor 的 Build To-dos）
+  if (latestTodoWrite.value) {
+    return latestTodoWrite.value
+      .filter(t => typeof t?.id === 'string' && typeof (t as any)?.content === 'string')
+      .map(t => ({
+        id: String(t.id),
+        text: String((t as any).content || '').trim(),
+        status: normalizeTodoStatus((t as any).status)
+      }))
+      .filter(t => t.text.length > 0)
+  }
+
+  // 2) fallback：从 Plan markdown checklist 解析
+  const planContent = chatStore.activeBuild?.planContent || ''
+  const planTodos = extractTodosFromPlan(planContent)
+  return planTodos.map((t, idx) => ({
+    id: `plan:${idx}`,
+    text: t.text,
+    status: t.completed ? 'completed' : 'pending'
+  }))
+})
+
+const buildTotal = computed(() => buildTodoItems.value.filter(t => t.status !== 'cancelled').length)
+const buildCompleted = computed(() => buildTodoItems.value.filter(t => t.status === 'completed').length)
+const buildCurrentText = computed(() => {
+  const list = buildTodoItems.value
+  const inProgress = list.find(t => t.status === 'in_progress')
+  if (inProgress) return inProgress.text
+  const next = list.find(t => t.status === 'pending')
+  if (next) return next.text
+  return ''
+})
+
+const isBuildRunning = computed(() => !!chatStore.activeBuild && chatStore.activeBuild.status === 'running')
+
+watch(
+  () => chatStore.activeBuild?.id,
+  (id, prev) => {
+    if (id && id !== prev) {
+      isBuildExpanded.value = true
+    }
+  }
+)
+
+watch(
+  () => chatStore.isWaitingForResponse,
+  (waiting) => {
+    if (!waiting && chatStore.activeBuild && chatStore.activeBuild.status === 'running') {
+      chatStore.activeBuild = { ...chatStore.activeBuild, status: 'done' }
+    }
+  }
+)
+
+async function stopBuild() {
+  try {
+    await chatStore.cancelStream()
+  } finally {
+    if (chatStore.activeBuild) {
+      chatStore.activeBuild = { ...chatStore.activeBuild, status: 'done' }
+    }
+  }
+}
+
+function dismissBuild() {
+  chatStore.activeBuild = null
+  isBuildExpanded.value = false
+}
 
 // 消息分页显示逻辑：解决消息过多导致的输入卡顿
 const VISIBLE_INCREMENT = 40
@@ -447,6 +558,71 @@ function formatCheckpointTime(timestamp: number): string {
 
 <template>
   <div class="message-list">
+    <!-- Build 顶部卡片（Plan 执行时显示） -->
+    <div v-if="chatStore.activeBuild" class="build-bar" :class="{ expanded: isBuildExpanded }">
+      <div class="build-header" @click="isBuildExpanded = !isBuildExpanded">
+        <div class="build-title">
+          <i class="codicon codicon-tools build-icon"></i>
+          <span class="build-label">Build</span>
+          <span class="build-sep">·</span>
+          <span class="build-name">{{ chatStore.activeBuild.title }}</span>
+        </div>
+
+        <div class="build-actions">
+          <span v-if="buildTotal > 0" class="build-progress">{{ buildCompleted }}/{{ buildTotal }}</span>
+          <span v-else class="build-progress">—</span>
+
+          <button
+            v-if="isBuildRunning"
+            class="build-btn"
+            title="停止"
+            @click.stop="stopBuild"
+          >
+            <i class="codicon codicon-debug-stop"></i>
+          </button>
+          <button
+            v-else
+            class="build-btn"
+            title="关闭"
+            @click.stop="dismissBuild"
+          >
+            <i class="codicon codicon-close"></i>
+          </button>
+
+          <button
+            class="build-btn"
+            :title="isBuildExpanded ? '收起' : '展开'"
+            @click.stop="isBuildExpanded = !isBuildExpanded"
+          >
+            <i class="codicon" :class="isBuildExpanded ? 'codicon-chevron-up' : 'codicon-chevron-down'"></i>
+          </button>
+        </div>
+      </div>
+
+      <div v-if="!isBuildExpanded && buildCurrentText" class="build-current">
+        {{ buildCurrentText }}
+      </div>
+
+      <div v-if="isBuildExpanded" class="build-body">
+        <div v-if="buildTodoItems.length === 0" class="build-empty">
+          <i class="codicon codicon-info"></i>
+          <span>暂无 To-dos</span>
+        </div>
+
+        <div v-else class="build-todos">
+          <div
+            v-for="t in buildTodoItems"
+            :key="t.id"
+            class="build-todo"
+            :class="`status-${t.status}`"
+          >
+            <span class="todo-dot" :class="t.status"></span>
+            <span class="todo-text">{{ t.text }}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <CustomScrollbar ref="scrollbarRef" sticky-bottom show-jump-buttons>
       <div class="messages-container">
         <!-- 自动加载更多指示器 -->
@@ -600,6 +776,179 @@ function formatCheckpointTime(timestamp: number): string {
   height: 100%;
   overflow: hidden;
   background: var(--vscode-editor-background);
+}
+
+/* ============ Build 顶部卡片（Cursor-like，保持 LimCode 面板风格） ============ */
+.build-bar {
+  margin: 8px var(--spacing-md, 16px) 0;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: var(--radius-sm, 2px);
+  overflow: hidden;
+  background: var(--vscode-editor-background);
+  flex-shrink: 0;
+}
+
+.build-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm, 8px);
+  padding: 6px 10px;
+  background: var(--vscode-editor-inactiveSelectionBackground);
+  cursor: pointer;
+  user-select: none;
+}
+
+.build-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.build-icon {
+  font-size: 12px;
+  color: var(--vscode-charts-orange, #e69500);
+  flex-shrink: 0;
+}
+
+.build-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--vscode-foreground);
+  flex-shrink: 0;
+}
+
+.build-sep {
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.7;
+  flex-shrink: 0;
+}
+
+.build-name {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.build-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.build-progress {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.8;
+  min-width: 42px;
+  text-align: right;
+}
+
+.build-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--vscode-descriptionForeground);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+.build-btn:hover {
+  background: var(--vscode-toolbar-hoverBackground);
+  color: var(--vscode-foreground);
+}
+
+.build-current {
+  padding: 4px 10px;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  background: var(--vscode-editor-background);
+  border-top: 1px solid var(--vscode-panel-border);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.build-body {
+  padding: 8px 10px 10px;
+  background: var(--vscode-editor-background);
+  border-top: 1px solid var(--vscode-panel-border);
+}
+
+.build-empty {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.85;
+  padding: 6px 2px;
+}
+
+.build-todos {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.build-todo {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--vscode-foreground);
+}
+
+.todo-dot {
+  width: 8px;
+  height: 8px;
+  margin-top: 4px;
+  border-radius: 999px;
+  background: var(--vscode-panel-border);
+  flex-shrink: 0;
+}
+
+.todo-dot.pending {
+  background: color-mix(in srgb, var(--vscode-foreground) 25%, transparent);
+}
+
+.todo-dot.in_progress {
+  background: var(--vscode-charts-blue, #3794ff);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--vscode-charts-blue) 18%, transparent);
+}
+
+.todo-dot.completed {
+  background: var(--vscode-testing-iconPassed);
+}
+
+.todo-dot.cancelled {
+  background: var(--vscode-testing-iconFailed);
+}
+
+.build-todo.status-completed .todo-text {
+  color: var(--vscode-descriptionForeground);
+  text-decoration: line-through;
+  opacity: 0.85;
+}
+
+.build-todo.status-cancelled .todo-text {
+  color: var(--vscode-descriptionForeground);
+  text-decoration: line-through;
+  opacity: 0.6;
+}
+
+.todo-text {
+  line-height: 1.35;
+  word-break: break-word;
 }
 
 .messages-container {

@@ -9,10 +9,17 @@
  * - 写入的内容（带行号）或 diff 对比视图
  */
 
-import { computed, ref, onBeforeUnmount, watch } from 'vue'
+import { computed, ref, onBeforeUnmount, watch, onMounted } from 'vue'
 import CustomScrollbar from '../../common/CustomScrollbar.vue'
+import { MarkdownRenderer } from '../../common'
+import ChannelSelector, { type ChannelOption } from '../../input/ChannelSelector.vue'
+import ModelSelector, { type ModelInfo } from '../../input/ModelSelector.vue'
 import { useI18n } from '@/composables'
 import { loadDiffContent as loadDiffContentFromBackend } from '@/utils/vscode'
+import { extractPreviewText, isPlanDocPath } from '../../../utils/taskCards'
+import { generateId } from '@/utils/format'
+import { useChatStore } from '@/stores'
+import * as configService from '@/services/config'
 
 const props = defineProps<{
   args: Record<string, unknown>
@@ -21,6 +28,160 @@ const props = defineProps<{
 }>()
 
 const { t } = useI18n()
+const chatStore = useChatStore()
+
+// ============ Plan 执行相关 ============
+const channelConfigs = ref<any[]>([])
+const selectedChannelId = ref('')
+const selectedModelId = ref('')
+const modelOptions = ref<ModelInfo[]>([])
+const isLoadingChannels = ref(false)
+const isLoadingModels = ref(false)
+const expandedPlanFiles = ref<Set<string>>(new Set())
+const isExecutingPlan = ref(false)
+
+const channelOptions = computed<ChannelOption[]>(() =>
+  channelConfigs.value
+    .filter(config => config.enabled !== false)
+    .map(config => ({
+      id: config.id,
+      name: config.name,
+      model: config.model || config.id,
+      type: config.type
+    }))
+)
+
+async function loadChannels() {
+  isLoadingChannels.value = true
+  try {
+    const ids = await configService.listConfigIds()
+    const loaded: any[] = []
+    for (const id of ids) {
+      const config = await configService.getConfig(id)
+      if (config) loaded.push(config)
+    }
+    channelConfigs.value = loaded
+    // 默认选择当前渠道
+    if (chatStore.configId && !selectedChannelId.value) {
+      selectedChannelId.value = chatStore.configId
+    } else if (loaded.length > 0 && !selectedChannelId.value) {
+      selectedChannelId.value = loaded[0].id
+    }
+  } catch (error) {
+    console.error('Failed to load channels:', error)
+  } finally {
+    isLoadingChannels.value = false
+  }
+}
+
+function getSelectedChannelConfig() {
+  return channelConfigs.value.find(c => c.id === selectedChannelId.value)
+}
+
+async function loadModelsForChannel(configId: string) {
+  if (!configId) {
+    modelOptions.value = []
+    selectedModelId.value = ''
+    return
+  }
+
+  isLoadingModels.value = true
+  try {
+    const cfg = channelConfigs.value.find(c => c.id === configId)
+    const localModels = Array.isArray((cfg as any)?.models) ? ((cfg as any).models as ModelInfo[]) : []
+    let models = localModels.length > 0 ? localModels : await configService.getChannelModels(configId)
+
+    const current = (cfg?.model || '').trim()
+    if (current && !models.some(m => m.id === current)) {
+      models = [{ id: current, name: current }, ...models]
+    }
+
+    modelOptions.value = models
+    if (!selectedModelId.value) {
+      selectedModelId.value = current || models[0]?.id || ''
+    }
+  } catch (error) {
+    console.error('Failed to load models:', error)
+    const current = (getSelectedChannelConfig()?.model || '').trim()
+    modelOptions.value = current ? [{ id: current, name: current }] : []
+    if (!selectedModelId.value) selectedModelId.value = current
+  } finally {
+    isLoadingModels.value = false
+  }
+}
+
+function togglePlanExpand(path: string) {
+  if (expandedPlanFiles.value.has(path)) {
+    expandedPlanFiles.value.delete(path)
+  } else {
+    expandedPlanFiles.value.add(path)
+  }
+}
+
+function isPlanExpanded(path: string): boolean {
+  return expandedPlanFiles.value.has(path)
+}
+
+function getPlanTitle(planContent: string, planPath?: string): string {
+  const m = (planContent || '').match(/^\s*#\s+(.+)\s*$/m)
+  if (m && m[1] && m[1].trim()) return m[1].trim()
+
+  if (planPath) {
+    const parts = planPath.replace(/\\/g, '/').split('/')
+    const file = parts[parts.length - 1] || planPath
+    return file.replace(/\.md$/i, '') || 'Plan'
+  }
+
+  return 'Plan'
+}
+
+async function executePlan(planContent: string, planPath?: string) {
+  if (isExecutingPlan.value || !planContent.trim()) return
+  isExecutingPlan.value = true
+  
+  try {
+    // 临时切换到选定的渠道
+    const originalConfigId = chatStore.configId
+    if (selectedChannelId.value && selectedChannelId.value !== originalConfigId) {
+      chatStore.setConfigId(selectedChannelId.value)
+    }
+    
+    // 启动 Build 顶部卡片（Cursor-like）
+    chatStore.activeBuild = {
+      id: generateId(),
+      title: getPlanTitle(planContent, planPath),
+      planContent,
+      planPath,
+      channelId: selectedChannelId.value || undefined,
+      modelId: selectedModelId.value || undefined,
+      startedAt: Date.now(),
+      status: 'running'
+    }
+
+    // 发送 Plan 内容作为新消息
+    const prompt = `请按照以下计划执行：\n\n${planContent}`
+    await chatStore.sendMessage(prompt, undefined, {
+      modelOverride: selectedModelId.value || undefined
+    })
+  } catch (error) {
+    console.error('Failed to execute plan:', error)
+  } finally {
+    isExecutingPlan.value = false
+  }
+}
+
+onMounted(() => {
+  loadChannels()
+})
+
+watch(
+  () => selectedChannelId.value,
+  async (id) => {
+    const cfg = channelConfigs.value.find(c => c.id === id)
+    selectedModelId.value = (cfg?.model || '').trim()
+    await loadModelsForChannel(id)
+  }
+)
 
 // 每个文件的展开状态
 const expandedFiles = ref<Set<string>>(new Set())
@@ -101,6 +262,17 @@ const mergedFiles = computed((): MergedFile[] => {
     }
   })
 })
+
+// 计划文档预览（.cursor/plans/**/*.md）
+const planFiles = computed((): MergedFile[] => mergedFiles.value.filter(f => isPlanDocPath(f.path)))
+
+function getPlanCardStatus(file: MergedFile): 'pending' | 'running' | 'success' | 'error' {
+  // 还没收到 tool result：视为 running
+  if (!props.result) return 'running'
+  if (file.result && file.result.success === false) return 'error'
+  if (props.error) return 'error'
+  return 'success'
+}
 
 // 监听结果变化，自动加载 diff 内容
 watch(writeResults, async (results) => {
@@ -506,6 +678,77 @@ onBeforeUnmount(() => {
         <span class="stat total">{{ t('components.tools.file.writeFilePanel.total', { count: mergedFiles.length }) }}</span>
       </div>
     </div>
+
+    <!-- Plan 预览面板（仅当写入 .cursor/plans/**.md 时展示） -->
+    <div v-if="planFiles.length > 0" class="plan-preview-section">
+      <div v-for="file in planFiles" :key="file.path" class="plan-panel">
+        <!-- Plan 头部 -->
+        <div class="plan-header">
+          <div class="plan-info">
+            <span class="codicon codicon-list-unordered plan-icon"></span>
+            <span class="plan-title">Plan</span>
+            <span v-if="getPlanCardStatus(file) === 'success'" class="plan-status success">
+              <span class="codicon codicon-check"></span>
+            </span>
+            <span v-else-if="getPlanCardStatus(file) === 'running'" class="plan-status running">
+              <span class="codicon codicon-loading codicon-modifier-spin"></span>
+            </span>
+            <span v-else-if="getPlanCardStatus(file) === 'error'" class="plan-status error">
+              <span class="codicon codicon-error"></span>
+            </span>
+          </div>
+          <div class="plan-actions">
+            <button
+              class="action-btn"
+              :title="isPlanExpanded(file.path) ? '收起' : '展开'"
+              @click="togglePlanExpand(file.path)"
+            >
+              <span :class="['codicon', isPlanExpanded(file.path) ? 'codicon-chevron-up' : 'codicon-chevron-down']"></span>
+            </button>
+          </div>
+        </div>
+        
+        <!-- Plan 路径 -->
+        <div class="plan-path">{{ file.path }}</div>
+        
+        <!-- Plan 预览内容 -->
+        <div class="plan-content">
+          <CustomScrollbar :max-height="isPlanExpanded(file.path) ? 500 : 200">
+            <div class="plan-preview">
+              <MarkdownRenderer :content="isPlanExpanded(file.path) ? file.content : extractPreviewText(file.content, { maxLines: 12, maxChars: 1600 })" />
+            </div>
+          </CustomScrollbar>
+        </div>
+        
+        <!-- Plan 执行区域 -->
+        <div class="plan-execute">
+          <div class="execute-selector">
+            <span class="execute-label">执行：</span>
+            <ChannelSelector
+              v-model="selectedChannelId"
+              :options="channelOptions"
+              :disabled="isLoadingChannels || isExecutingPlan"
+              class="channel-select"
+            />
+            <ModelSelector
+              v-model="selectedModelId"
+              :models="modelOptions"
+              :disabled="isLoadingChannels || isLoadingModels || isExecutingPlan || !selectedChannelId"
+              class="model-select"
+            />
+          </div>
+          <button
+            class="execute-btn"
+            :disabled="isExecutingPlan || !selectedChannelId || !selectedModelId"
+            @click="executePlan(file.content, file.path)"
+          >
+            <span v-if="isExecutingPlan" class="codicon codicon-loading codicon-modifier-spin"></span>
+            <span v-else class="codicon codicon-play"></span>
+            <span class="btn-text">{{ isExecutingPlan ? '执行中...' : '执行计划' }}</span>
+          </button>
+        </div>
+      </div>
+    </div>
     
     <!-- 全局错误 -->
     <div v-if="error && mergedFiles.length === 0" class="panel-error">
@@ -664,6 +907,176 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   align-items: center;
   padding: var(--spacing-xs, 4px) 0;
+}
+
+/* Plan 预览面板 - 继承 file-panel 风格 */
+.plan-preview-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm, 8px);
+}
+
+.plan-panel {
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: var(--radius-sm, 2px);
+  overflow: hidden;
+}
+
+.plan-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--spacing-xs, 4px) var(--spacing-sm, 8px);
+  background: var(--vscode-editor-inactiveSelectionBackground);
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.plan-info {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs, 4px);
+  flex: 1;
+  min-width: 0;
+}
+
+.plan-icon {
+  font-size: 12px;
+  color: var(--vscode-charts-blue, #3794ff);
+  flex-shrink: 0;
+}
+
+.plan-title {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--vscode-foreground);
+}
+
+.plan-status {
+  font-size: 12px;
+  margin-left: var(--spacing-xs, 4px);
+}
+
+.plan-status.success {
+  color: var(--vscode-testing-iconPassed);
+}
+
+.plan-status.running {
+  color: var(--vscode-charts-blue);
+}
+
+.plan-status.error {
+  color: var(--vscode-testing-iconFailed);
+}
+
+.plan-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs, 4px);
+}
+
+.plan-path {
+  padding: 2px var(--spacing-sm, 8px);
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+  font-family: var(--vscode-editor-font-family);
+  background: var(--vscode-editor-background);
+  border-bottom: 1px solid var(--vscode-panel-border);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plan-content {
+  background: var(--vscode-editor-background);
+}
+
+.plan-preview {
+  padding: var(--spacing-sm, 8px);
+}
+
+.plan-execute {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm, 8px);
+  padding: var(--spacing-xs, 4px) var(--spacing-sm, 8px);
+  background: var(--vscode-editor-inactiveSelectionBackground);
+  border-top: 1px solid var(--vscode-panel-border);
+}
+
+.execute-selector {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs, 4px);
+  flex: 1;
+  min-width: 0;
+}
+
+.execute-label {
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+  white-space: nowrap;
+}
+
+.channel-select {
+  flex: 1;
+  min-width: 120px;
+  max-width: 180px;
+}
+
+.model-select {
+  flex: 1;
+  min-width: 120px;
+  max-width: 220px;
+}
+
+.execute-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-xs, 4px);
+  padding: 4px 10px;
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+  border: none;
+  border-radius: var(--radius-sm, 2px);
+  font-size: 11px;
+  cursor: pointer;
+  transition: background-color 0.1s;
+  white-space: nowrap;
+}
+
+.execute-btn:hover:not(:disabled) {
+  background: var(--vscode-button-hoverBackground);
+}
+
+.execute-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-text {
+  font-size: 11px;
+}
+
+/* 让 ModelSelector 在 Plan 面板里看起来像输入框（与 ChannelSelector 对齐） */
+.plan-execute :deep(.model-trigger) {
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border);
+  border-radius: 4px;
+  padding: 4px 8px;
+}
+
+.plan-execute :deep(.model-trigger:hover:not(:disabled)) {
+  border-color: var(--vscode-focusBorder);
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+}
+
+.plan-execute :deep(.model-selector.open .model-trigger) {
+  border-color: var(--vscode-focusBorder);
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
 }
 
 .header-info {

@@ -10,6 +10,7 @@ import type {
   WorkspaceFilter,
   RetryStatus,
   ConfigInfo,
+  BuildSession,
   ChatStoreState
 } from './types'
 
@@ -110,6 +111,12 @@ export function createChatState(): ChatStoreState {
   /** 工作区筛选模式（默认当前工作区） */
   const workspaceFilter = ref<WorkspaceFilter>('current')
 
+  /** 当前 Build 会话（Plan 执行） */
+  const activeBuild = ref<BuildSession | null>(null)
+
+  /** 当前回合模型覆盖（用于 Plan 执行的“渠道 + 模型”选择） */
+  const pendingModelOverride = ref<string | null>(null)
+
   return {
     conversations,
     persistedConversationIds,
@@ -138,6 +145,8 @@ export function createChatState(): ChatStoreState {
     deletingConversationIds,
     currentWorkspaceUri,
     inputValue,
-    workspaceFilter
+    workspaceFilter,
+    activeBuild,
+    pendingModelOverride
   }
 }

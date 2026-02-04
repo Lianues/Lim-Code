@@ -14,6 +14,20 @@
             "preLaunchTask": "${defaultBuildTask}"
         },
         {
+            "name": "Run Extension (Playground Worktree)",
+            "type": "extensionHost",
+            "request": "launch",
+            "args": [
+                "--extensionDevelopmentPath=${workspaceFolder}",
+                "--new-window",
+                "${workspaceFolder}/../Lim-Code-playground"
+            ],
+            "outFiles": [
+                "${workspaceFolder}/dist/**/*.js"
+            ],
+            "preLaunchTask": "${defaultBuildTask}"
+        },
+        {
             "name": "Extension Tests",
             "type": "extensionHost",
             "request": "launch",

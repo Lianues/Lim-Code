@@ -65,6 +65,21 @@ export interface ConfigInfo {
   maxContextTokens?: number
 }
 
+// ============ Build（Plan 执行）相关 ============
+
+export type BuildStatus = 'running' | 'done'
+
+export interface BuildSession {
+  id: string
+  title: string
+  planContent: string
+  planPath?: string
+  channelId?: string
+  modelId?: string
+  startedAt: number
+  status: BuildStatus
+}
+
 /**
  * Chat Store 状态类型
  */
@@ -138,6 +153,16 @@ export interface ChatStoreState {
   inputValue: Ref<string>
   /** 工作区筛选模式 */
   workspaceFilter: Ref<WorkspaceFilter>
+
+  /** 当前 Build 会话（用于 Plan 执行 UI 展示） */
+  activeBuild: Ref<BuildSession | null>
+
+  /**
+   * 当前回合的模型覆盖（仅对本轮流式/工具确认生效）
+   *
+   * 用于：Plan 执行时选择“渠道 + 模型”，并在 toolConfirmation 时保持一致。
+   */
+  pendingModelOverride: Ref<string | null>
 }
 
 /**

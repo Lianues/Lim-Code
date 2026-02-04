@@ -497,6 +497,7 @@ async function sendToolConfirmation(toolResponses: Array<{ id: string; name: str
     await sendToExtension('toolConfirmation', {
       conversationId: currentConversationId,
       configId: currentConfig.id,
+      modelOverride: chatStore.pendingModelOverride || undefined,
       toolResponses,
       annotation
     })

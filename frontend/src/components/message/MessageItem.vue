@@ -10,7 +10,8 @@ import MessageActions from './MessageActions.vue'
 import ToolMessage from './ToolMessage.vue'
 import MessageAttachments from './MessageAttachments.vue'
 import InlineContextMessage from './InlineContextMessage.vue'
-import { MarkdownRenderer, RetryDialog, EditDialog } from '../common'
+import MessageTaskCards from './MessageTaskCards.vue'
+import { MarkdownRenderer, RetryDialog, EditDialog, JsonViewerDialog } from '../common'
 import type { Message, ToolUsage, CheckpointRecord, Attachment } from '../../types'
 import { hasContextBlocks } from '../../types/contextParser'
 import { formatTime } from '../../utils/format'
@@ -49,6 +50,7 @@ const streamingIndicatorChars = computed(() => Array.from(streamingIndicatorText
 const showActions = ref(false)
 const showRetryDialog = ref(false)
 const showEditDialog = ref(false)
+const showRawDialog = ref(false)
 
 // 消息角色判断
 const isUser = computed(() => props.message.role === 'user')
@@ -465,6 +467,43 @@ function handleRetryClick() {
   showRetryDialog.value = true
 }
 
+function handleViewRaw() {
+  showRawDialog.value = true
+}
+
+const rawMessageView = computed(() => {
+  const attachments = (props.message.attachments || []).map(att => {
+    const { data, thumbnail, ...rest } = att as any
+    return {
+      ...rest,
+      hasData: !!data,
+      hasThumbnail: !!thumbnail,
+      dataSize: typeof data === 'string' ? data.length : 0,
+      thumbnailSize: typeof thumbnail === 'string' ? thumbnail.length : 0
+    }
+  })
+
+  return {
+    id: props.message.id,
+    role: props.message.role,
+    createdAt: props.message.timestamp,
+    backendIndex: props.message.backendIndex,
+    modelVersion: (props.message.metadata as any)?.modelVersion,
+    content: props.message.content,
+    parts: props.message.parts,
+    tools: props.message.tools,
+    attachments,
+    metadata: props.message.metadata,
+    checkpoints: {
+      availableBefore: availableCheckpoints.value,
+      editRestoreCandidates: checkpointsBeforeMessage.value
+    },
+    debug: {
+      renderBlocks: renderBlocks.value
+    }
+  }
+})
+
 function handleRetry() {
   emit('retry', props.message.id)
 }
@@ -494,10 +533,12 @@ function handleRestoreAndRetry(checkpointId: string) {
         :message="message"
         :can-edit="isUser"
         :can-retry="!isUser"
+        :can-view-raw="!isUser"
         @edit="startEdit"
         @copy="handleCopy"
         @delete="handleDelete"
         @retry="handleRetryClick"
+        @view-raw="handleViewRaw"
       />
     </div>
     
@@ -517,6 +558,14 @@ function handleRestoreAndRetry(checkpointId: string) {
       :original-attachments="message.attachments || []"
       @edit="handleEdit"
       @restore-and-edit="handleRestoreAndEdit"
+    />
+
+    <!-- 原始返回查看（调试用） -->
+    <JsonViewerDialog
+      v-model="showRawDialog"
+      :value="rawMessageView"
+      :title="t('components.message.actions.viewRaw')"
+      width="860px"
     />
 
     <div class="message-body">
@@ -551,6 +600,13 @@ function handleRestoreAndRetry(checkpointId: string) {
         <MessageAttachments
           v-if="isUser && message.attachments && message.attachments.length > 0"
           :attachments="message.attachments"
+        />
+
+        <!-- Cursor 风格任务卡片（方案B）：Plan/SubAgent 缩略预览，可滚动可展开 -->
+        <MessageTaskCards
+          v-if="!isUser && message.tools && message.tools.length > 0"
+          :tools="message.tools"
+          :message-model-version="modelVersion"
         />
         
         <!-- 显示模式 -->
@@ -621,6 +677,11 @@ function handleRestoreAndRetry(checkpointId: string) {
           :is-streaming="isStreaming"
           class="content-text"
         />
+
+        <!-- 无内容兜底（模型返回空内容/仅返回签名等场景） -->
+        <div v-else-if="!isStreaming" class="empty-response">
+          {{ t('components.message.emptyResponse') }}
+        </div>
         
         <!-- 流式指示器 - Loading 逐字波动 -->
         <span
@@ -798,6 +859,15 @@ function handleRestoreAndRetry(checkpointId: string) {
 
 .message-content {
   position: relative;
+}
+
+.empty-response {
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px dashed var(--vscode-panel-border);
+  color: var(--vscode-descriptionForeground);
+  font-size: 12px;
+  opacity: 0.85;
 }
 
 /* .content-text 样式由 MarkdownRenderer 组件内部处理 */
