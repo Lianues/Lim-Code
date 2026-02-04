@@ -331,6 +331,10 @@ const zhCN: LanguageMessages = {
                 tool: '工具',
                 assistant: '助手'
             },
+            actions: {
+                viewRaw: '查看返回'
+            },
+            emptyResponse: '（模型返回空内容）',
             stats: {
                 responseDuration: '响应时间',
                 tokenRate: 'Token 速率'

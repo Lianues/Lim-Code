@@ -40,6 +40,10 @@ import './subagents/subagents'
 // TODO 工具
 import './todo/todo_write'
 
+// Plan 工具
+import './plan/create_plan'
+import './plan/execute_plan'
+
 // 导出工具注册表
 export { toolRegistry, registerTool, getToolConfig, type ToolConfig } from '../toolRegistry'
 

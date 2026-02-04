@@ -4,14 +4,16 @@
  * 提供编辑、复制、删除、重试等操作
  */
 
-import { ref } from 'vue'
+import { ref, onUnmounted } from 'vue'
 import { IconButton } from '../common'
 import type { Message } from '../../types'
+import { t } from '../../i18n'
 
 defineProps<{
   message: Message
   canEdit?: boolean
   canRetry?: boolean
+  canViewRaw?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -19,11 +21,19 @@ const emit = defineEmits<{
   copy: []
   delete: []
   retry: []
+  viewRaw: []
 }>()
 
 // 复制状态
 const isCopied = ref(false)
-let copyTimer: NodeJS.Timeout | null = null
+let copyTimer: ReturnType<typeof setTimeout> | null = null
+
+onUnmounted(() => {
+  if (copyTimer) {
+    clearTimeout(copyTimer)
+    copyTimer = null
+  }
+})
 
 // 处理复制
 function handleCopy() {
@@ -60,7 +70,17 @@ function handleCopy() {
     <IconButton
       :icon="isCopied ? 'codicon-check' : 'codicon-copy'"
       size="small"
+      :tooltip="isCopied ? t('components.common.tooltip.copied') : t('common.copy')"
       @click="handleCopy"
+    />
+
+    <!-- 查看原始返回（仅助手消息/调试用） -->
+    <IconButton
+      v-if="canViewRaw"
+      icon="codicon-eye"
+      size="small"
+      :tooltip="t('components.message.actions.viewRaw')"
+      @click="emit('viewRaw')"
     />
 
     <!-- 重试按钮（仅 AI 消息） -->

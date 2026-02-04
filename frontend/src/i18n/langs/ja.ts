@@ -331,6 +331,10 @@ const ja: LanguageMessages = {
                 tool: 'ツール',
                 assistant: 'アシスタント'
             },
+            actions: {
+                viewRaw: '返り値を見る'
+            },
+            emptyResponse: '（モデルの返答が空です）',
             stats: {
                 responseDuration: '応答時間',
                 tokenRate: 'トークン速度'
@@ -1158,6 +1162,21 @@ const ja: LanguageMessages = {
                     placeholder: '動的コンテキストテンプレートを入力、{{$WORKSPACE_FILES}}、{{$OPEN_TABS}} などの変数を使用できます...',
                     enableTooltip: '動的コンテキストテンプレートを有効/無効にする',
                     disabledNotice: '動的コンテキストテンプレートは無効です。AI に動的コンテキストメッセージは送信されません。'
+                },
+                toolPolicy: {
+                    title: 'ツールポリシー',
+                    description: 'このモードで利用可能なツールを制限します。未設定の場合は Code モードのツールセットを継承します（全体のツールスイッチも適用されます）。',
+                    inherit: '継承（デフォルト）',
+                    custom: 'カスタム（許可リスト）',
+                    inheritHint: 'このモードは Code モードのツールセットを継承します。',
+                    searchPlaceholder: 'ツールを検索…',
+                    selectAll: 'すべて選択',
+                    clear: 'クリア',
+                    loadingTools: 'ツール一覧を読み込み中...',
+                    noTools: '利用可能なツールがありません',
+                    disabledBadge: '無効',
+                    emptyWarning: 'カスタムツールリストが有効ですが、ツールが選択されていません。',
+                    emptyCannotSave: 'カスタムツールリストには少なくとも 1 つのツールを選択してください'
                 },
                 saveButton: '設定を保存',
                 saveSuccess: '保存しました',

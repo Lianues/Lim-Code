@@ -1463,7 +1463,8 @@ export const DEFAULT_CHECKPOINT_CONFIG: CheckpointConfig = {
  */
 export const DEFAULT_TOOL_AUTO_EXEC_CONFIG: ToolAutoExecConfig = {
     delete_file: false,      // 需要确认
-    execute_command: false   // 需要确认
+  execute_command: false,  // 需要确认
+  execute_plan: false      // 需要确认（Plan 两阶段门闸）
 };
 
 /**
@@ -1825,7 +1826,8 @@ PLAN MODE
 - Use the provided tools to analyze the codebase and create implementation plans.
 - **IMPORTANT: Avoid duplicate tool calls.** Each tool should only be called once with the same parameters. Never repeat the same tool call multiple times.
 - When you need to understand the codebase, use read_file to examine specific files or search_in_files to find relevant code patterns.
-- You can use write_file to create plan documents in .cursor/plans directory.
+- Use create_plan to write the plan document in .cursor/plans/**.md.
+- After creating the plan, ALWAYS call execute_plan and wait for the user's approval before doing any implementation work.
 - You can use todo_write to maintain a structured plan checklist when helpful.
 - You can use subagents for focused planning sub-tasks, but stay within the allowed tools and do not modify code.
 - Focus on creating detailed implementation plans and task breakdowns.
@@ -1900,6 +1902,8 @@ export const PLAN_PROMPT_MODE: PromptMode = {
         'get_symbols',
         'todo_write',
         'subagents',
+        'create_plan',
+        'execute_plan',
         'write_file'
     ]
 };

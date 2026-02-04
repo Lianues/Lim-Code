@@ -20,6 +20,7 @@ export { default as MarkdownRenderer } from './MarkdownRenderer.vue'
 export { default as TaskCard } from './TaskCard.vue'
 export { default as DependencyWarning } from './DependencyWarning.vue'
 export { default as AnnouncementModal } from './AnnouncementModal.vue'
+export { default as JsonViewerDialog } from './JsonViewerDialog.vue'
 
 // 导出类型
 export type { SelectOption } from './CustomSelect.vue'

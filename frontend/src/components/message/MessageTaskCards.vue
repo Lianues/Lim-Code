@@ -242,6 +242,20 @@ function getWriteFilePlanEntries(tool: ToolUsage): Array<{ path: string; content
   return entries
 }
 
+function getCreatePlanEntries(tool: ToolUsage): Array<{ path: string; content: string; success?: boolean }> {
+  const args = tool.args as any
+  const result = tool.result as any
+
+  const path = (result?.data?.path || args?.path) as string | undefined
+  const content = (result?.data?.content || args?.plan) as string | undefined
+
+  if (typeof path !== 'string' || typeof content !== 'string') return []
+  if (!isPlanDocPath(path)) return []
+
+  const success = typeof result?.success === 'boolean' ? result.success : undefined
+  return [{ path, content, success }]
+}
+
 // ============ 计算卡片数据 ============
 const subAgentCards = computed(() => {
   return props.tools
@@ -287,8 +301,13 @@ const planCards = computed(() => {
   }> = []
 
   for (const tool of props.tools) {
-    if (tool.name !== 'write_file') continue
-    const entries = getWriteFilePlanEntries(tool)
+    const entries = tool.name === 'write_file'
+      ? getWriteFilePlanEntries(tool)
+      : tool.name === 'create_plan'
+        ? getCreatePlanEntries(tool)
+        : []
+    if (entries.length === 0) continue
+
     for (const entry of entries) {
       const status: CardStatus = typeof entry.success === 'boolean'
         ? (entry.success ? 'success' : 'error')

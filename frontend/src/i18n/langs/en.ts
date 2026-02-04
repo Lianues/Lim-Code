@@ -331,6 +331,10 @@ const en: LanguageMessages = {
                 tool: 'Tool',
                 assistant: 'Assistant'
             },
+            actions: {
+                viewRaw: 'View raw'
+            },
+            emptyResponse: '(Empty response from model)',
             stats: {
                 responseDuration: 'Response Duration',
                 tokenRate: 'Token Rate'

@@ -1,5 +1,16 @@
 node_modules
 dist
 
+# tests (keep local; do not track in git)
+test/
+jest.config.cjs
+tsconfig.jest.json
+
+# test artifacts
+coverage
+.jest-cache
+.ts-jest
+.cache
+
 # lock files (project uses npm)
 pnpm-lock.yaml

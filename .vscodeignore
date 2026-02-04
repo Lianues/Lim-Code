@@ -12,6 +12,11 @@ pnpm-lock.yaml
 package-lock.json
 yarn.lock
 
+# 测试相关（不打包进扩展）
+test/**
+jest.config.cjs
+tsconfig.jest.json
+
 # 后端源文件和文档（只需要 dist 中的编译结果）
 backend/**
 webview/**

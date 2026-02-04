@@ -173,19 +173,8 @@ export function handleToolsExecuting(chunk: StreamChunk, state: ChatStoreState):
 
     const finalMessage = contentToMessage(chunk.content, message.id)
 
-    // 合并 tools（优先保留 existingTools 的状态；缺失时用 finalMessage.tools 补齐）
-    const mergedTools = (() => {
-      const a = existingTools || []
-      const b = finalMessage.tools || []
-      if (a.length === 0) return b
-      if (b.length === 0) return a
-      const map = new Map<string, any>()
-      for (const t of a) map.set(t.id, t)
-      for (const t of b) {
-        if (!map.has(t.id)) map.set(t.id, t)
-      }
-      return Array.from(map.values())
-    })()
+    // 合并 tools：以 finalMessage.tools 的顺序为基准，保留 existingTools 的运行态字段
+    const mergedTools = mergeToolsPreferExisting(existingTools, finalMessage.tools) || []
 
     // 创建更新后的消息对象
     const updatedMessage: Message = {
@@ -312,7 +301,7 @@ export function handleAwaitingConfirmation(
     const finalMessage = contentToMessage(chunk.content, message.id)
 
     // 合并 tools：以 finalMessage.tools 的顺序为基准，保留 existingTools 的运行态字段
-    const mergedTools = mergeToolsPreferExisting(existingTools, finalMessage.tools)
+    const mergedTools = mergeToolsPreferExisting(existingTools, finalMessage.tools) || []
 
     // 创建更新后的消息对象
     const updatedMessage: Message = {
