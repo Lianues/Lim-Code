@@ -218,32 +218,26 @@ ${descriptionSuffix}`,
         }
 
         // 默认：unified diff patch
+        // 由于 apply_diff 已通过 path 指定单文件，这里将 patch 定义简化为“只提供 hunks”
         return {
             name: 'apply_diff',
             category: 'file',
-            description: `Apply a unified diff patch (unified diff format) to a file and open a pending diff for user confirmation.
+            description: `Apply a unified diff patch (single-file) to a file and open a pending diff for user confirmation.
+
+Input format (simplified):
+- Provide ONLY unified diff hunks starting with @@ ... @@
+- Do NOT include file headers (---/+++), diff --git, index, etc.
 
 Parameters:
 - path: Path to the file (relative to workspace root)
-- patch: Unified diff patch text. You may provide either:
-  - Full unified diff with file headers (---/+++), or
-  - Hunk-only patch starting from @@ ... @@ (recommended here because the tool already targets a single file)
+- patch: Unified diff hunks text (must include @@ headers and lines starting with ' ', '+', '-')
 
 Requirements:
-- patch must be for a single file (do NOT include multiple file diffs)
+- patch must be a single-file patch (this tool call targets exactly one file via path)
 - /dev/null create/delete patches are not supported (use write_file/delete_file instead)
 - patch must contain enough context lines so it can be applied exactly
 
-Example (hunk-only):
-@@ -1,3 +1,3 @@
- const x = 1;
--const y = 2;
-+const y = 3;
- console.log(x, y);
-
-Example (full):
---- a/src/foo.ts
-+++ b/src/foo.ts
+Example:
 @@ -1,3 +1,3 @@
  const x = 1;
 -const y = 2;
@@ -260,7 +254,7 @@ ${descriptionSuffix}`,
                     },
                     patch: {
                         type: 'string',
-                        description: 'Unified diff patch text. File headers (---/+++) are optional; hunks (@@ ... @@ with +/-/ ) are required.'
+                        description: "Unified diff hunks only. Must start with @@ ... @@ and contain lines prefixed by ' ', '+', '-'. Do NOT include ---/+++ headers."
                     }
                 },
                 required: ['path', 'patch']
@@ -303,7 +297,7 @@ ${descriptionSuffix}`,
                     if (!patch || typeof patch !== 'string') {
                         return {
                             success: false,
-                            error: 'apply_diff is configured to use unified diff patch. Please provide { patch } (unified diff hunks starting with @@ ... @@; file headers ---/+++ are optional).'
+                            error: 'apply_diff is configured to use unified diff patch. Please provide { patch } containing unified diff hunks starting with @@ ... @@ (do not include ---/+++ headers).'
                         };
                     }
 
