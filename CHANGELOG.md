@@ -3,12 +3,16 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.0.75] - 2026-02-06
+
+### Improved
+  - apply_diff 添加兜底全局搜索替换机制
+
 ## [1.0.74] - 2026-02-06
 
 ### Improved
   - apply_diff：unified patch 支持“裸 @@”hunk 头（无行号）时自动退化为全局精确 search/replace 应用，提升兼容性
   - apply_diff 工具面板/历史预览：增强对“裸 @@ / 无前缀行”的展示兜底
-  - apply_diff 添加兜底全局搜索替换机制
 
 ## [1.0.73] - 2026-02-05
 
