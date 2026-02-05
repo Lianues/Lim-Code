@@ -33,6 +33,205 @@ function normalizeLineEndings(text: string): string {
     return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 }
 
+function findAllExactMatchLineNumbers(
+    normalizedContent: string,
+    normalizedSearch: string,
+    options?: {
+        /** 最多返回多少个候选（避免返回体过大） */
+        limit?: number;
+    }
+): number[] {
+    if (!normalizedSearch) return [];
+
+    const limit = options?.limit ?? 20;
+
+    const result: number[] = [];
+    let fromIndex = 0;
+    let scanIndex = 0;
+    let currentLine = 1;
+
+    while (result.length < limit) {
+        const pos = normalizedContent.indexOf(normalizedSearch, fromIndex);
+        if (pos === -1) {
+            break;
+        }
+
+        // 从 scanIndex 扫描到 pos，累计行号（scanIndex 单调递增，整体 O(n)）
+        for (; scanIndex < pos; scanIndex++) {
+            if (normalizedContent.charCodeAt(scanIndex) === 10) {
+                currentLine++;
+            }
+        }
+
+        result.push(currentLine);
+
+        // 继续往后找（允许重叠匹配，尽量保守）
+        fromIndex = pos + 1;
+    }
+
+    return result;
+}
+
+/**
+ * 对常见“AI 包裹/噪声行”做轻量去除，提升 loose patch 解析兼容性。
+ *
+ * 说明：
+ * - 这是 unifiedDiff.ts 中 sanitize 的轻量副本，避免引入跨模块依赖。
+ * - 仅移除明显不属于 patch 的外层壳；不做语义修复。
+ */
+function sanitizeLooseUnifiedPatch(patch: string): string {
+    const normalized = normalizeLineEndings(patch);
+    const lines = normalized.split('\n');
+    const out: string[] = [];
+
+    for (const line of lines) {
+        // Markdown code fences（``` / ```diff / ```patch）
+        if (line.startsWith('```')) {
+            continue;
+        }
+
+        // 常见 ApplyPatch 风格包裹（*** Begin Patch / *** Update File: / *** End Patch 等）
+        if (line.startsWith('***')) {
+            if (
+                line === '***' ||
+                line.startsWith('*** Begin Patch') ||
+                line.startsWith('*** End Patch') ||
+                line.startsWith('*** Update File:') ||
+                line.startsWith('*** Add File:') ||
+                line.startsWith('*** Delete File:') ||
+                line.startsWith('*** End of File')
+            ) {
+                continue;
+            }
+        }
+
+        out.push(line);
+    }
+
+    return out.join('\n');
+}
+
+/**
+ * 将“裸 @@”的 unified diff hunks 解析为 legacy search/replace diffs。
+ *
+ * 兜底语义：
+ * - 每个 hunk 头以 `@@` 开始（不要求带行号）
+ * - hunk 内：
+ *   - search = context(' ') + del('-')
+ *   - replace = context(' ') + add('+')
+ */
+function parseLooseUnifiedPatchToLegacyDiffs(patch: string): LegacyDiffBlock[] {
+    const normalized = sanitizeLooseUnifiedPatch(patch);
+    const lines = normalized.split('\n');
+
+    const diffs: LegacyDiffBlock[] = [];
+
+    let inHunk = false;
+    let searchLines: string[] = [];
+    let replaceLines: string[] = [];
+
+    const flush = () => {
+        if (!inHunk) return;
+        const search = searchLines.join('\n');
+        const replace = replaceLines.join('\n');
+
+        // 没有 search 无法定位（裸 @@ 没有行号），直接拒绝
+        if (!search.trim()) {
+            throw new Error('Loose @@ hunk has empty search block. Please provide context lines so it can be matched uniquely.');
+        }
+
+        diffs.push({ search, replace });
+        searchLines = [];
+        replaceLines = [];
+    };
+
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+
+        // 新 hunk
+        if (line.startsWith('@@')) {
+            flush();
+            inHunk = true;
+            continue;
+        }
+
+        if (!inHunk) {
+            // 跳过 file header / diff header 等
+            continue;
+        }
+
+        // 结束条件：遇到文件头/新的 diff 块
+        if (line.startsWith('diff --git ') || line.startsWith('--- ') || line.startsWith('+++ ')) {
+            // flush 当前 hunk，然后回到非 hunk 状态
+            flush();
+            inHunk = false;
+            continue;
+        }
+
+        // 统一 diff 里常见的特殊行："\\ No newline at end of file"
+        if (line.startsWith('\\')) {
+            continue;
+        }
+
+        // 忽略纯空行（一般是 patch 末尾 split 出来的噪声）
+        if (line === '') {
+            continue;
+        }
+
+        const prefix = line[0];
+        const content = line.length > 0 ? line.slice(1) : '';
+
+        if (prefix === ' ') {
+            searchLines.push(content);
+            replaceLines.push(content);
+        } else if (prefix === '-') {
+            searchLines.push(content);
+        } else if (prefix === '+') {
+            replaceLines.push(content);
+        } else {
+            // 兜底：AI 可能会漏掉前缀，将其视为 context 行
+            searchLines.push(line);
+            replaceLines.push(line);
+        }
+    }
+
+    flush();
+
+    if (diffs.length === 0) {
+        throw new Error('No hunks (@@) found in patch.');
+    }
+
+    return diffs;
+}
+
+function convertUnifiedHunksToLegacyDiffs(hunks: UnifiedDiffHunk[]): LegacyDiffBlock[] {
+    return hunks.map(h => {
+        const searchLines: string[] = [];
+        const replaceLines: string[] = [];
+
+        for (const l of h.lines) {
+            if (l.type === 'context') {
+                searchLines.push(l.content);
+                replaceLines.push(l.content);
+                continue;
+            }
+
+            if (l.type === 'del') {
+                searchLines.push(l.content);
+                continue;
+            }
+
+            // add
+            replaceLines.push(l.content);
+        }
+
+        return {
+            search: searchLines.join('\n'),
+            replace: replaceLines.join('\n')
+        };
+    });
+}
+
 /**
  * Legacy：应用单个 search/replace diff
  */
@@ -41,10 +240,27 @@ export function applyDiffToContent(
     search: string,
     replace: string,
     startLine?: number
-): { success: boolean; result: string; error?: string; matchCount: number; matchedLine?: number } {
+): {
+    success: boolean;
+    result: string;
+    error?: string;
+    matchCount: number;
+    matchedLine?: number;
+    /** 当匹配不唯一时，返回候选行号（1-based，最多返回部分） */
+    candidateLines?: number[];
+} {
     const normalizedContent = normalizeLineEndings(content);
     const normalizedSearch = normalizeLineEndings(search);
     const normalizedReplace = normalizeLineEndings(replace);
+
+    if (!normalizedSearch) {
+        return {
+            success: false,
+            result: normalizedContent,
+            error: 'Search content is empty. Please provide enough context so the change can be located.',
+            matchCount: 0
+        };
+    }
 
     // 如果提供了起始行号，从该行开始搜索
     if (startLine !== undefined && startLine > 0) {
@@ -110,11 +326,15 @@ export function applyDiffToContent(
     }
 
     if (matches > 1) {
+        const candidateLines = findAllExactMatchLineNumbers(normalizedContent, normalizedSearch, { limit: 20 });
         return {
             success: false,
             result: normalizedContent,
-            error: `Multiple matches found (${matches}). Please provide 'start_line' parameter to specify which match to use.`,
-            matchCount: matches
+            error:
+                `Multiple matches found (${matches}). Please provide 'start_line' parameter to specify which match to use.` +
+                (candidateLines.length > 0 ? ` Candidate match lines: ${candidateLines.join(', ')}.` : ''),
+            matchCount: matches,
+            candidateLines
         };
     }
 
@@ -131,6 +351,92 @@ export function applyDiffToContent(
         result,
         matchCount: 1,
         matchedLine: actualMatchedLine
+    };
+}
+
+function applyLegacyDiffsBestEffort(
+    originalContent: string,
+    diffs: LegacyDiffBlock[],
+    options?: {
+        /** 在错误信息中附加说明（用于统一 diff 的 loose fallback 场景） */
+        errorSuffix?: string;
+    }
+): {
+    newContent: string;
+    results: Array<{
+        index: number;
+        success: boolean;
+        error?: string;
+        startLine?: number;
+        endLine?: number;
+        matchCount?: number;
+        candidateLines?: number[];
+    }>;
+    blocks: Array<{ index: number; startLine: number; endLine: number }>;
+    appliedCount: number;
+    failedCount: number;
+} {
+    let currentContent = originalContent;
+
+    const results: Array<{
+        index: number;
+        success: boolean;
+        error?: string;
+        startLine?: number;
+        endLine?: number;
+        matchCount?: number;
+        candidateLines?: number[];
+    }> = [];
+    const blocks: Array<{ index: number; startLine: number; endLine: number }> = [];
+
+    for (let i = 0; i < diffs.length; i++) {
+        const diff = diffs[i];
+        if (typeof diff.search !== 'string' || diff.replace === undefined) {
+            results.push({
+                index: i,
+                success: false,
+                error: `Diff at index ${i} is missing 'search' or 'replace' field${options?.errorSuffix ? ` ${options.errorSuffix}` : ''}`
+            });
+            continue;
+        }
+
+        const r = applyDiffToContent(currentContent, diff.search, diff.replace, diff.start_line);
+        let error = r.error;
+        if (!r.success && error && options?.errorSuffix) {
+            error = `${error} ${options.errorSuffix}`;
+        }
+
+        const replaceLines = normalizeLineEndings(diff.replace).split('\n').length;
+        const startLine = r.matchedLine;
+        const endLine = startLine !== undefined ? startLine + replaceLines - 1 : undefined;
+
+        results.push({
+            index: i,
+            success: r.success,
+            error,
+            startLine,
+            endLine,
+            matchCount: r.matchCount,
+            candidateLines: r.candidateLines
+        });
+
+        if (r.success) {
+            currentContent = r.result;
+            if (startLine !== undefined && endLine !== undefined) {
+                blocks.push({ index: i, startLine, endLine });
+            }
+        }
+    }
+
+    const appliedCount = results.filter(x => x.success).length;
+    const failedCount = results.length - appliedCount;
+
+    return {
+        newContent: currentContent,
+        results,
+        blocks,
+        appliedCount,
+        failedCount
     };
 }
 
@@ -230,7 +536,8 @@ Input format (simplified):
   @@ -oldStart,oldCount +newStart,newCount @@
   (oldCount/newCount are optional, but oldStart/newStart are required)
 - Do NOT include file headers (---/+++), diff --git, index, etc.
-- Do NOT include bare "@@" lines. Every "@@" line must be a valid hunk header.
+- Fallback compatibility: Bare "@@" lines (without line numbers) are allowed and will be applied using a global exact search/replace based on the hunk content.
+  This may fail if the search block is not unique; prefer full headers when possible.
 
 Parameters:
 - path: Path to the file (relative to workspace root)
@@ -258,7 +565,7 @@ ${descriptionSuffix}`,
                     },
                     patch: {
                         type: 'string',
-                        description: "Unified diff hunks only. Each hunk header must be like '@@ -oldStart,oldCount +newStart,newCount @@'. Lines must be prefixed by ' ', '+', '-'. Do NOT include ---/+++ headers."
+                        description: "Unified diff hunks only. Each hunk header should be like '@@ -oldStart,oldCount +newStart,newCount @@'. Lines should be prefixed by ' ', '+', '-'. Do NOT include ---/+++ headers. Bare '@@' is accepted as a fallback and will be applied using global exact search/replace based on hunk content."
                     }
                 },
                 required: ['path', 'patch']
@@ -305,24 +612,89 @@ ${descriptionSuffix}`,
                         };
                     }
 
-                    const parsed = parseUnifiedDiff(patch);
-                    const applied = applyUnifiedDiffBestEffort(originalContent, parsed);
+                    let diffCount = 0;
+                    let appliedCount = 0;
+                    let failedCount = 0;
+                    let results: Array<{ index: number; success: boolean; error?: string; startLine?: number; endLine?: number }> = [];
+                    let blocks: Array<{ index: number; startLine: number; endLine: number }> = [];
+                    let newContent = originalContent;
+                    let rawDiffs: any[] = [];
+                    let fallbackMode: 'none' | 'loose_hunk_search_replace' | 'unified_hunks_search_replace' = 'none';
 
-                    const diffCount = parsed.hunks.length;
-                    const appliedCount = applied.results.filter(r => r.ok).length;
-                    const failedCount = diffCount - appliedCount;
+                    try {
+                        const parsed = parseUnifiedDiff(patch);
+                        const applied = applyUnifiedDiffBestEffort(originalContent, parsed);
 
-                    const results = applied.results.map(r => ({
-                        index: r.index,
-                        success: r.ok,
-                        error: r.error,
-                        startLine: r.startLine,
-                        endLine: r.endLine
-                    }));
+                        diffCount = parsed.hunks.length;
+                        appliedCount = applied.results.filter(r => r.ok).length;
+                        failedCount = diffCount - appliedCount;
+
+                        results = applied.results.map(r => ({
+                            index: r.index,
+                            success: r.ok,
+                            error: r.error,
+                            startLine: r.startLine,
+                            endLine: r.endLine
+                        }));
+
+                        blocks = applied.appliedHunks.map(h => ({
+                            index: h.index,
+                            startLine: h.startLine,
+                            endLine: h.endLine
+                        }));
+
+                        newContent = applied.newContent;
+                        rawDiffs = parsed.hunks as UnifiedDiffHunk[] as any[];
+
+                        // 若有 hunk 因行号/上下文不匹配等原因失败，尝试兜底：将 hunks 退化为全局精确 search/replace。
+                        // 说明：
+                        // - 仅在兜底能“额外应用更多块”时采用，避免降低标准 unified diff 的成功率。
+                        // - 兜底不会在多处匹配时强行选择（会失败并返回 candidateLines）。
+                        if (appliedCount < diffCount) {
+                            const legacyDiffs = convertUnifiedHunksToLegacyDiffs(parsed.hunks);
+                            const legacyApplied = applyLegacyDiffsBestEffort(originalContent, legacyDiffs, {
+                                errorSuffix:
+                                    '(unified fallback: applied via global exact search/replace; if ambiguous, add more context or provide start_line)'
+                            });
+
+                            if (legacyApplied.appliedCount > appliedCount) {
+                                diffCount = legacyDiffs.length;
+                                appliedCount = legacyApplied.appliedCount;
+                                failedCount = legacyApplied.failedCount;
+                                results = legacyApplied.results as any;
+                                blocks = legacyApplied.blocks;
+                                newContent = legacyApplied.newContent;
+                                rawDiffs = legacyDiffs as any[];
+                                fallbackMode = 'unified_hunks_search_replace';
+                            }
+                        }
+                    } catch (e) {
+                        const msg = e instanceof Error ? e.message : String(e);
+
+                        // “裸 @@”兜底：将 patch 退化为 legacy search/replace diffs（全局精确匹配）
+                        if (msg.startsWith('Invalid hunk header')) {
+                            const legacyDiffs = parseLooseUnifiedPatchToLegacyDiffs(patch);
+                            const looseApplied = applyLegacyDiffsBestEffort(originalContent, legacyDiffs, {
+                                errorSuffix:
+                                    '(loose @@ fallback: ensure the search block is unique, or use a full @@ -a,b +c,d @@ header)'
+                            });
+
+                            diffCount = legacyDiffs.length;
+                            appliedCount = looseApplied.appliedCount;
+                            failedCount = looseApplied.failedCount;
+                            results = looseApplied.results;
+                            blocks = looseApplied.blocks;
+                            newContent = looseApplied.newContent;
+                            rawDiffs = legacyDiffs as any[];
+                            fallbackMode = 'loose_hunk_search_replace';
+                        } else {
+                            throw e;
+                        }
+                    }
 
                     // 一个都没应用上：直接失败返回（不创建 pending diff）
                     if (appliedCount === 0) {
-                        const firstError = applied.results.find(r => !r.ok)?.error || 'All hunks failed';
+                        const firstError = results.find(r => !r.success)?.error || 'All hunks failed';
                         return {
                             success: false,
                             error: `Failed to apply any hunks: ${firstError}`,
@@ -334,7 +706,8 @@ ${descriptionSuffix}`,
                                 totalCount: diffCount,
                                 appliedCount: 0,
                                 failedCount: diffCount,
-                                results
+                                results,
+                                fallbackMode
                             }
                         };
                     }
@@ -342,21 +715,13 @@ ${descriptionSuffix}`,
                     // 创建待审阅的 diff
                     const diffManager = getDiffManager();
 
-                    const blocks: Array<{ index: number; startLine: number; endLine: number }> = applied.appliedHunks.map(h => ({
-                        index: h.index,
-                        startLine: h.startLine,
-                        endLine: h.endLine
-                    }));
-
-                    const rawHunks: UnifiedDiffHunk[] = parsed.hunks;
-
                     const pendingDiff = await diffManager.createPendingDiff(
                         filePath,
                         absolutePath,
                         originalContent,
-                        applied.newContent,
+                        newContent,
                         blocks,
-                        rawHunks as any[],
+                        rawDiffs,
                         context?.toolId
                     );
 
@@ -422,7 +787,7 @@ ${descriptionSuffix}`,
                         try {
                             const diffRef = await diffStorageManager.saveGlobalDiff({
                                 originalContent,
-                                newContent: applied.newContent,
+                                newContent,
                                 filePath
                             });
                             diffContentId = diffRef.diffId;
@@ -445,7 +810,8 @@ ${descriptionSuffix}`,
                                 appliedCount,
                                 failedCount,
                                 results,
-                                diffContentId
+                                diffContentId,
+                                fallbackMode
                             }
                         };
                     }
@@ -471,6 +837,7 @@ ${descriptionSuffix}`,
                             results,
                             userEditedContent,
                             diffContentId,
+                            fallbackMode,
                             pendingDiffId: pendingDiff.id
                         }
                     };

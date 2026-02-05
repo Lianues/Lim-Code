@@ -182,6 +182,11 @@ function buildPreviewContentsFromUnifiedPatch(patch: string): { originalContent:
       continue
     }
 
+    // 忽略纯空行（一般是 patch 末尾 split 出来的噪声）
+    if (line === '') {
+      continue
+    }
+
     const prefix = line[0]
     const content = line.length > 0 ? line.slice(1) : ''
 
@@ -192,6 +197,10 @@ function buildPreviewContentsFromUnifiedPatch(patch: string): { originalContent:
       oldBlock.push(content)
     } else if (prefix === '+') {
       newBlock.push(content)
+    } else {
+      // 兜底：AI 可能漏掉前缀，将其当作 context 行
+      oldBlock.push(line)
+      newBlock.push(line)
     }
   }
 
