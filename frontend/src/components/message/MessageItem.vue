@@ -701,7 +701,6 @@ function handleRestoreAndRetry(checkpointId: string) {
             :key="i"
             class="streaming-indicator__char"
             :class="{
-              'streaming-indicator__char--brand': i === 0,
               'streaming-indicator__char--underline': true
             }"
             :style="{ '--loading-delay': `${i * 0.16}s` }"
@@ -893,13 +892,6 @@ function handleRestoreAndRetry(checkpointId: string) {
   animation: loading-wave var(--loading-duration) ease-in-out infinite;
   animation-delay: var(--loading-delay);
   will-change: transform, color, opacity;
-}
-
-/* 突出 L：放大一号 + 花体字体（仅影响 L） */
-.streaming-indicator__char--brand {
-  font-size: calc(1em + 1px);
-  font-family: 'Segoe Script', 'Brush Script MT', 'Apple Chancery', 'Snell Roundhand', cursive;
-  font-weight: 600;
 }
 
 /* 下划线胶囊：跟随每个字母的波动 */

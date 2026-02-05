@@ -3,6 +3,12 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.0.76] - 2026-02-06
+
+### Improved
+  - 优化了编辑框的显示
+  - 去除了等待字体的首字母花体效果
+
 ## [1.0.75] - 2026-02-06
 
 ### Improved
