@@ -3,6 +3,11 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.0.77] - 2026-02-06
+
+### Fixed
+  - 修复读取非文本类文件时传入行号导致的问题
+
 ## [1.0.76] - 2026-02-06
 
 ### Improved

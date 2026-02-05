@@ -27,6 +27,9 @@ import {
     normalizeLineEndingsToLF
 } from '../utils';
 
+const LINE_RANGE_NOT_SUPPORTED_FOR_BINARY_ERROR =
+    'Line ranges (startLine/endLine) are only supported for text files. Do not provide them for binary/multimodal files (PDF/images/audio/video).';
+
 /**
  * 图片尺寸信息
  */
@@ -220,6 +223,19 @@ async function readSingleFile(
         };
     }
 
+    // 非文本（binary）文件不支持行号范围
+    // 注意：这是安全网。正常情况下 handler 会在调用 readSingleFile 之前拦截。
+    if (lineRange && isBinaryFile(filePath)) {
+        return {
+            result: {
+                path: filePath,
+                workspace: isMultiRoot ? workspace?.name : undefined,
+                success: false,
+                error: LINE_RANGE_NOT_SUPPORTED_FOR_BINARY_ERROR
+            }
+        };
+    }
+
     // 检查是否允许读取此文件
     if (!canReadFileWithCapability(filePath, capability)) {
         const readError = getReadFileErrorWithCapability(filePath, true, capability);
@@ -390,6 +406,10 @@ export function createReadFileTool(
     
     // 行范围说明
     const lineRangeNote = '\n\n**Line Range**: Each file can have its own `startLine` and `endLine`. ONLY use line range when you have PRECISE line numbers (e.g., from get_symbols, goto_definition, find_references, or previous read_file results). Do NOT guess line numbers - if uncertain, read the entire file without specifying line range.';
+
+    // 多模态/二进制行范围限制说明（多模态开启时强调）
+    const lineRangeBinaryRestrictionNote =
+        '\n\n**IMPORTANT**: Line ranges (`startLine`/`endLine`) are supported for TEXT files only. Do NOT provide them for PDF/images/audio/video or other binary files; the tool will return an error.';
     
     if (!multimodalEnabled) {
         // 未启用多模态时，只支持文本文件
@@ -401,11 +421,11 @@ export function createReadFileTool(
             description = 'Read the content of one or more files in the workspace. Supported types: text files.' + lineNumberNote + arrayFormatNote + lineRangeNote;
         } else {
             // OpenAI xml/json 模式只支持图片
-            description = 'Read the content of one or more files in the workspace. Supported types: text files, images (PNG/JPEG/WebP). Images are returned as multimodal data.' + lineNumberNote + arrayFormatNote + lineRangeNote;
+            description = 'Read the content of one or more files in the workspace. Supported types: text files, images (PNG/JPEG/WebP). Images are returned as multimodal data.' + lineNumberNote + arrayFormatNote + lineRangeNote + lineRangeBinaryRestrictionNote;
         }
     } else {
         // Gemini 和 Anthropic 全面支持
-        description = 'Read the content of one or more files in the workspace. Supported types: text files, images (PNG/JPEG/WebP), documents (PDF). Images and documents are returned as multimodal data.' + lineNumberNote + arrayFormatNote + lineRangeNote;
+        description = 'Read the content of one or more files in the workspace. Supported types: text files, images (PNG/JPEG/WebP), documents (PDF). Images and documents are returned as multimodal data.' + lineNumberNote + arrayFormatNote + lineRangeNote + lineRangeBinaryRestrictionNote;
     }
     
     // 多工作区说明
@@ -438,11 +458,11 @@ export function createReadFileTool(
                                 },
                                 startLine: {
                                     type: 'number',
-                                    description: 'Start line number (1-based, inclusive). Reads from this line to end of file, or to endLine if specified.'
+                                    description: 'Start line number (1-based, inclusive). TEXT FILES ONLY. Reads from this line to end of file, or to endLine if specified.'
                                 },
                                 endLine: {
                                     type: 'number',
-                                    description: 'End line number (1-based, inclusive). Reads from beginning (or startLine) to this line.'
+                                    description: 'End line number (1-based, inclusive). TEXT FILES ONLY. Reads from beginning (or startLine) to this line.'
                                 }
                             },
                             required: ['path']
@@ -483,6 +503,19 @@ export function createReadFileTool(
                         path: String(fileReq?.path || 'unknown'),
                         success: false,
                         error: 'Invalid file request: path is required'
+                    });
+                    failCount++;
+                    continue;
+                }
+
+                // 禁止对任何非文本（binary）文件使用行号范围
+                // 只要显式传入 startLine/endLine（包括 0/null/字符串等），就视为传入行号范围
+                const hasLineRangeParam = (fileReq as any).startLine != null || (fileReq as any).endLine != null;
+                if (hasLineRangeParam && isBinaryFile(fileReq.path)) {
+                    results.push({
+                        path: fileReq.path,
+                        success: false,
+                        error: LINE_RANGE_NOT_SUPPORTED_FOR_BINARY_ERROR
                     });
                     failCount++;
                     continue;

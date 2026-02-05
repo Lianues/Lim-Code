@@ -946,7 +946,11 @@ export class ChannelManager {
                     // 对 read_file 工具动态生成描述
                     if (tool.name === 'read_file') {
                         const dynamicTool = createReadFileTool(multimodalEnabled, channelType, toolMode);
-                        declaration = { ...declaration, description: dynamicTool.declaration.description };
+                        declaration = {
+                            ...declaration,
+                            description: dynamicTool.declaration.description,
+                            parameters: dynamicTool.declaration.parameters
+                        };
                     }
                     
                     // 对 generate_image 工具：
