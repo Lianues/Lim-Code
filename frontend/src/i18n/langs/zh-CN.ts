@@ -1504,6 +1504,7 @@ const zhCN: LanguageMessages = {
                     terminal: '终端',
                     lsp: '代码智能',
                     media: '媒体处理',
+                    todo: 'TODO',
                     other: '其他'
                 },
                 dependency: {

@@ -1504,6 +1504,7 @@ const en: LanguageMessages = {
                     terminal: 'Terminal',
                     lsp: 'Code Intelligence',
                     media: 'Media Processing',
+                    todo: 'TODO',
                     other: 'Other'
                 },
                 dependency: {

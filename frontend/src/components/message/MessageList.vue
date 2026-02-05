@@ -49,22 +49,6 @@ function normalizeTodoList(input: any): BuildTodoRaw[] {
   return out
 }
 
-function mergeTodoList(existing: BuildTodoRaw[], incoming: BuildTodoRaw[]): BuildTodoRaw[] {
-  const result = existing.map(t => ({ ...t }))
-  const indexById = new Map<string, number>()
-  for (let i = 0; i < result.length; i++) indexById.set(result[i].id, i)
-  for (const t of incoming) {
-    const idx = indexById.get(t.id)
-    if (idx === undefined) {
-      indexById.set(t.id, result.length)
-      result.push({ ...t })
-      continue
-    }
-    result[idx] = { ...result[idx], content: t.content, status: t.status }
-  }
-  return result
-}
-
 function applyTodoUpdateOps(existing: BuildTodoRaw[], opsInput: any): BuildTodoRaw[] {
   const result: Array<BuildTodoRaw | null> = existing.map(t => ({ ...t }))
   const indexById = new Map<string, number>()
@@ -151,11 +135,10 @@ const replayedBuildTodoList = computed(() => {
       // todo_write：仅限当前 Build 期间（或刚开始）发生的写入
       if (tool.name === 'todo_write') {
         if (startedAt && msg.timestamp && msg.timestamp < startedAt - 5000) continue
-        const merge = (tool.args as any)?.merge
         const incoming = normalizeTodoList((tool.args as any)?.todos)
         if (incoming.length === 0) continue
-        if (merge === true) list = mergeTodoList(list || [], incoming)
-        else list = incoming
+        // todo_write 已收敛为“全量替换”，忽略任何历史/遗留 merge 字段
+        list = incoming
         continue
       }
 

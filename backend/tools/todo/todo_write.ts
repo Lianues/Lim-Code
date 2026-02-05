@@ -135,7 +135,7 @@ function countByStatus(todos: TodoItem[]): Record<TodoStatus, number> {
 export function createTodoWriteToolDeclaration(): ToolDeclaration {
     return {
         name: 'todo_write',
-        description: 'Create (replace) or merge-update a per-conversation TODO list. IMPORTANT: Use this tool at the start to initialize the list. For incremental updates (status/content), prefer todo_update.',
+        description: 'Create/replace the per-conversation TODO list (ConversationMetadata.custom["todoList"]). IMPORTANT: Use this tool to initialize the list. For incremental updates (status/content), use todo_update.',
         category: 'todo',
         parameters: {
             type: 'object',
@@ -157,12 +157,8 @@ export function createTodoWriteToolDeclaration(): ToolDeclaration {
                         required: ['id', 'content', 'status']
                     }
                 },
-                merge: {
-                    type: 'boolean',
-                    description: 'true = merge/update by id; false = replace the entire list'
-                }
             },
-            required: ['todos', 'merge']
+            required: ['todos']
         }
     };
 }
@@ -181,31 +177,14 @@ async function todoWriteHandler(args: Record<string, unknown>, context?: ToolCon
         return { success: false, error: 'conversationStore is required in tool context' };
     }
 
-    const merge = (args as any).merge;
-    if (typeof merge !== 'boolean') {
-        return { success: false, error: 'merge must be a boolean' };
-    }
-
     const validated = validateTodos((args as any).todos);
     if (validated.ok === false) {
         return { success: false, error: validated.error };
     }
 
     try {
-        if (merge) {
-            const existing = await loadExistingTodos(context);
-            const merged = mergeTodos(existing, validated.todos);
-            await saveTodos(context, merged);
-            return {
-                success: true,
-                data: {
-                    total: merged.length,
-                    counts: countByStatus(merged)
-                }
-            };
-        }
-
-        // replace
+        // Always replace the entire list.
+        // Note: We intentionally ignore any extra args (e.g. legacy "merge") for compatibility.
         await saveTodos(context, validated.todos);
         return {
             success: true,

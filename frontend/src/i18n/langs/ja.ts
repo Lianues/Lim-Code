@@ -1504,6 +1504,7 @@ const ja: LanguageMessages = {
                     terminal: 'ターミナル',
                     lsp: 'コードインテリジェンス',
                     media: 'メディア処理',
+                    todo: 'TODO',
                     other: 'その他'
                 },
                 dependency: {
