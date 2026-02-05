@@ -3,6 +3,11 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.0.72] - 2026-02-05
+
+### Improved
+  - 优化了新diff格式的提示词，减少失败概率
+
 ## [1.0.71] - 2026-02-05
 
 ### Added

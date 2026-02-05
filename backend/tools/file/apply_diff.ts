@@ -225,12 +225,16 @@ ${descriptionSuffix}`,
             description: `Apply a unified diff patch (single-file) to a file and open a pending diff for user confirmation.
 
 Input format (simplified):
-- Provide ONLY unified diff hunks starting with @@ ... @@
+- Provide ONLY unified diff hunks.
+- Each hunk MUST start with a full header line:
+  @@ -oldStart,oldCount +newStart,newCount @@
+  (oldCount/newCount are optional, but oldStart/newStart are required)
 - Do NOT include file headers (---/+++), diff --git, index, etc.
+- Do NOT include bare "@@" lines. Every "@@" line must be a valid hunk header.
 
 Parameters:
 - path: Path to the file (relative to workspace root)
-- patch: Unified diff hunks text (must include @@ headers and lines starting with ' ', '+', '-')
+- patch: Unified diff hunks text (must include valid @@ headers and lines starting with ' ', '+', '-')
 
 Requirements:
 - patch must be a single-file patch (this tool call targets exactly one file via path)
@@ -254,7 +258,7 @@ ${descriptionSuffix}`,
                     },
                     patch: {
                         type: 'string',
-                        description: "Unified diff hunks only. Must start with @@ ... @@ and contain lines prefixed by ' ', '+', '-'. Do NOT include ---/+++ headers."
+                        description: "Unified diff hunks only. Each hunk header must be like '@@ -oldStart,oldCount +newStart,newCount @@'. Lines must be prefixed by ' ', '+', '-'. Do NOT include ---/+++ headers."
                     }
                 },
                 required: ['path', 'patch']
@@ -297,7 +301,7 @@ ${descriptionSuffix}`,
                     if (!patch || typeof patch !== 'string') {
                         return {
                             success: false,
-                            error: 'apply_diff is configured to use unified diff patch. Please provide { patch } containing unified diff hunks starting with @@ ... @@ (do not include ---/+++ headers).'
+                            error: 'apply_diff is configured to use unified diff patch. Please provide { patch } containing hunks with valid headers like @@ -oldStart,oldCount +newStart,newCount @@ (do not include ---/+++ headers).'
                         };
                     }
 

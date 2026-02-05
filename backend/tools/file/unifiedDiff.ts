@@ -132,7 +132,11 @@ export function parseUnifiedDiff(patch: string): ParsedUnifiedDiff {
             const header = line;
             const m = header.match(/^@@\s+-(\d+)(?:,(\d+))?\s+\+(\d+)(?:,(\d+))?\s+@@/);
             if (!m) {
-                throw new Error(`Invalid hunk header: ${header}`);
+                throw new Error(
+                    `Invalid hunk header: ${header}. ` +
+                    `Expected format: @@ -oldStart,oldCount +newStart,newCount @@ ` +
+                    `(oldCount/newCount optional, but start line numbers are required).`
+                );
             }
 
             const oldStart = parseInt(m[1], 10);
