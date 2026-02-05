@@ -66,7 +66,7 @@ const emit = defineEmits<{
 }>()
 
 const editorRef = ref<HTMLDivElement>()
-const currentRows = ref(props.minRows || 2)
+const currentRows = ref(props.minRows || 4)
 
 // 调整高度时的检测状态
 const cachedLineHeight = ref(0)
@@ -152,8 +152,8 @@ function adjustHeight() {
   if (!editorRef.value) return
 
   const editor = editorRef.value
-  const minRows = props.minRows || 2
-  const maxRows = props.maxRows || 6
+  const minRows = props.minRows || 4
+  const maxRows = props.maxRows || 8
 
   if (!cachedLineHeight.value) {
     cachedLineHeight.value = parseInt(getComputedStyle(editor).lineHeight) || 20
@@ -444,6 +444,12 @@ function handlePaste(e: ClipboardEvent) {
     const cleaned = text.replace(/\u200B/g, '')
     insertPlainTextWithLineBreaksAtCaret(editorRef.value, cleaned)
     handleInput()
+    // 粘贴后滚动到末尾
+    nextTick(() => {
+      if (editorRef.value) {
+        editorRef.value.scrollTop = editorRef.value.scrollHeight
+      }
+    })
   }
 }
 
@@ -713,7 +719,7 @@ defineExpose({
 /* contenteditable 编辑器 */
 .input-editor {
   width: 100%;
-  min-height: 56px; /* 至少两行视觉高度 */
+  min-height: 80px; /* 至少四行视觉高度 */
   max-height: 160px;
   padding: var(--spacing-sm, 8px);
   background: var(--vscode-input-background);
