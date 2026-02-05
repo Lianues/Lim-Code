@@ -3,6 +3,11 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.0.78] - 2026-02-06
+
+### Added
+  - 添加了聊天记录里 文件路径高亮，代码行号高亮和点击跳转功能
+
 ## [1.0.77] - 2026-02-06
 
 ### Fixed

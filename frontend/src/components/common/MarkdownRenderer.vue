@@ -20,7 +20,7 @@ import type StateCore from 'markdown-it/lib/rules_core/state_core.mjs'
 import hljs from 'highlight.js'
 import katex from 'katex'
 import mermaid from 'mermaid'
-import { sendToExtension } from '@/utils/vscode'
+import { sendToExtension, showNotification } from '@/utils/vscode'
 import { useI18n } from '@/i18n'
 
 // 初始化 Mermaid
@@ -241,6 +241,260 @@ async function renderMermaid() {
 // 图片加载状态
 const imageCache = new Map<string, string>()
 
+// ===================== 工作区文件引用（可点击跳转） =====================
+
+type WorkspaceFileRef = {
+  path: string
+  startLine?: number
+  endLine?: number
+}
+
+/**
+ * 允许识别为“文件”的扩展名列表（避免把域名 example.com 误判为文件）
+ */
+const WORKSPACE_FILE_EXT_RE =
+  '(?:ts|tsx|js|jsx|mjs|cjs|vue|json|md|css|scss|sass|less|py|go|rs|java|cs|cpp|c|h|hpp|yml|yaml|xml|txt|html|sql|sh|bat|ps1)'
+
+/**
+ * 查找文本中的文件引用（路径 + 可选行号/范围）
+ * - 支持：path:12 / path:12-34 / path#L12 / path#L12-L34
+ * - 只处理“看起来像工作区路径/文件名”的字符串；最终仍由扩展侧校验是否在工作区内
+ */
+/**
+ * 路径段字符：ASCII + Unicode 字母/数字 + 常见符号
+ * 使用 \p{L}\p{N} 支持中日韩等非 ASCII 字符的文件/目录名
+ */
+const _PS = String.raw`[\w\p{L}\p{N}@.+\-]`
+
+const WORKSPACE_FILE_REF_FIND_RE = new RegExp(
+  String.raw`(^|[^\w\p{L}\p{N}/\\.\-])(` +
+    String.raw`(?:[A-Za-z]:[\\/]|/)?(?:${_PS}+[\\/])*${_PS}+\.` +
+    WORKSPACE_FILE_EXT_RE +
+    String.raw`)` +
+    String.raw`(?:(?::(\d+)(?:-(\d+))?)|(?:#L(\d+)(?:-L(\d+))?))?` +
+    String.raw`(?![\w\p{L}\p{N}])`,
+  'gu'
+)
+
+const WORKSPACE_FILE_REF_EXACT_RE = new RegExp(
+  String.raw`^(` +
+    String.raw`(?:[A-Za-z]:[\\/]|/)?(?:${_PS}+[\\/])*${_PS}+\.` +
+    WORKSPACE_FILE_EXT_RE +
+    String.raw`)` +
+    String.raw`(?:(?::(\d+)(?:-(\d+))?)|(?:#L(\d+)(?:-L(\d+))?))?$`,
+  'iu'
+)
+
+function parsePositiveInt(value: string | null | undefined): number | undefined {
+  if (!value) return undefined
+  if (!/^\d+$/.test(value)) return undefined
+  const n = Number(value)
+  if (!Number.isFinite(n) || n <= 0) return undefined
+  return n
+}
+
+function decodeDataPath(encoded: string): string {
+  try {
+    return decodeURIComponent(atob(encoded))
+  } catch {
+    return encoded
+  }
+}
+
+function encodeDataPath(raw: string): string {
+  return btoa(encodeURIComponent(raw))
+}
+
+function normalizeWorkspaceFilePath(raw: string): string {
+  let p = (raw || '').trim()
+
+  // 去掉常见的包裹符号（例如括号/引号）
+  p = p.replace(/^["'`]+/, '').replace(/["'`]+$/, '')
+
+  // 仅对“相对路径”将反斜杠转为正斜杠（绝对盘符路径保持原样）
+  if (!/^[A-Za-z]:[\\/]/.test(p) && !/^(file:\/\/|vscode-remote:\/\/)/i.test(p)) {
+    p = p.replace(/\\/g, '/')
+  }
+
+  // 去掉相对路径前缀 ./ 或 .\
+  p = p.replace(/^(?:\.\/|\.\\)/, '')
+
+  return p
+}
+
+function parseWorkspaceFileRefExact(input: string): WorkspaceFileRef | null {
+  const raw = (input || '').trim()
+  const m = raw.match(WORKSPACE_FILE_REF_EXACT_RE)
+  if (!m) return null
+
+  const path = normalizeWorkspaceFilePath(m[1] || '')
+
+  const startLine = parsePositiveInt(m[2] || m[4])
+  const endLine = parsePositiveInt(m[3] || m[5]) ?? startLine
+
+  return {
+    path,
+    startLine,
+    endLine
+  }
+}
+
+function guessHighlightLanguageFromPath(filePath: string): string {
+  const p = filePath.toLowerCase()
+  if (p.endsWith('.ts') || p.endsWith('.tsx')) return 'typescript'
+  if (p.endsWith('.js') || p.endsWith('.jsx') || p.endsWith('.mjs') || p.endsWith('.cjs')) return 'javascript'
+  if (p.endsWith('.vue')) return 'vue'
+  if (p.endsWith('.json')) return 'json'
+  if (p.endsWith('.md')) return 'markdown'
+  if (p.endsWith('.css') || p.endsWith('.scss') || p.endsWith('.sass') || p.endsWith('.less')) return 'css'
+  if (p.endsWith('.py')) return 'python'
+  if (p.endsWith('.go')) return 'go'
+  if (p.endsWith('.rs')) return 'rust'
+  if (p.endsWith('.java')) return 'java'
+  if (p.endsWith('.cs')) return 'csharp'
+  if (p.endsWith('.cpp') || p.endsWith('.hpp') || p.endsWith('.h') || p.endsWith('.c')) return 'cpp'
+  if (p.endsWith('.yml') || p.endsWith('.yaml')) return 'yaml'
+  if (p.endsWith('.xml')) return 'xml'
+  if (p.endsWith('.html')) return 'xml'
+  if (p.endsWith('.sql')) return 'sql'
+  if (p.endsWith('.sh') || p.endsWith('.bat') || p.endsWith('.ps1')) return 'bash'
+  return ''
+}
+
+/**
+ * markdown-it 插件：把文本中的“工作区文件引用”转为可点击链接。
+ * 注意：仅做 UI/交互增强，是否能打开由扩展侧校验决定。
+ */
+function markdownItWorkspaceFileLinks(md: MarkdownIt) {
+  md.core.ruler.push('limcode_workspace_file_links', (state: any) => {
+    const TokenCtor = state.Token
+
+    for (const tok of state.tokens as any[]) {
+      if (tok.type !== 'inline' || !Array.isArray(tok.children)) continue
+
+      const children = tok.children as any[]
+      const out: any[] = []
+      let inLink = 0
+
+      for (const child of children) {
+        if (child.type === 'link_open') {
+          inLink += 1
+          out.push(child)
+          continue
+        }
+        if (child.type === 'link_close') {
+          inLink = Math.max(0, inLink - 1)
+          out.push(child)
+          continue
+        }
+
+        // 避免在已有链接内嵌套 <a>
+        if (inLink > 0) {
+          out.push(child)
+          continue
+        }
+
+        // 行内 code：如果内容“完全等于”一个文件引用，则包一层 <a>
+        if (child.type === 'code_inline') {
+          const ref = parseWorkspaceFileRefExact(child.content || '')
+          if (!ref) {
+            out.push(child)
+            continue
+          }
+
+          const linkOpen = new TokenCtor('link_open', 'a', 1)
+          linkOpen.attrs = [
+            ['href', '#'],
+            ['class', 'workspace-file-link'],
+            ['data-path', encodeDataPath(ref.path)]
+          ]
+          if (ref.startLine) linkOpen.attrs.push(['data-start-line', String(ref.startLine)])
+          if (ref.endLine) linkOpen.attrs.push(['data-end-line', String(ref.endLine)])
+
+          const linkClose = new TokenCtor('link_close', 'a', -1)
+
+          out.push(linkOpen, child, linkClose)
+          continue
+        }
+
+        if (child.type !== 'text') {
+          out.push(child)
+          continue
+        }
+
+        const text: string = child.content || ''
+        WORKSPACE_FILE_REF_FIND_RE.lastIndex = 0
+
+        let lastIndex = 0
+        let found = false
+        let m: RegExpExecArray | null
+
+        while ((m = WORKSPACE_FILE_REF_FIND_RE.exec(text))) {
+          found = true
+          const matchStart = m.index
+          const matchAll = m[0] || ''
+          const prefix = m[1] || ''
+          const rawPath = m[2] || ''
+
+          const startLine = parsePositiveInt(m[3] || m[5])
+          const endLine = parsePositiveInt(m[4] || m[6]) ?? startLine
+
+          const path = normalizeWorkspaceFilePath(rawPath)
+          const encodedPath = encodeDataPath(path)
+
+          const pathStart = matchStart + prefix.length
+          const matchEnd = matchStart + matchAll.length
+
+          // 1) 先输出“匹配前”的文本（包含 prefix）
+          if (pathStart > lastIndex) {
+            const before = text.slice(lastIndex, pathStart)
+            if (before) {
+              const t = new TokenCtor('text', '', 0)
+              t.content = before
+              out.push(t)
+            }
+          }
+
+          // 2) 输出可点击链接（显示原始文本，不改写样式）
+          const displayText = text.slice(pathStart, matchEnd)
+          const linkOpen = new TokenCtor('link_open', 'a', 1)
+          linkOpen.attrs = [
+            ['href', '#'],
+            ['class', 'workspace-file-link'],
+            ['data-path', encodedPath]
+          ]
+          if (startLine) linkOpen.attrs.push(['data-start-line', String(startLine)])
+          if (endLine) linkOpen.attrs.push(['data-end-line', String(endLine)])
+
+          const linkText = new TokenCtor('text', '', 0)
+          linkText.content = displayText
+
+          const linkClose = new TokenCtor('link_close', 'a', -1)
+
+          out.push(linkOpen, linkText, linkClose)
+
+          lastIndex = matchEnd
+        }
+
+        if (!found) {
+          out.push(child)
+          continue
+        }
+
+        // 3) 输出剩余文本
+        const rest = text.slice(lastIndex)
+        if (rest) {
+          const t = new TokenCtor('text', '', 0)
+          t.content = rest
+          out.push(t)
+        }
+      }
+
+      tok.children = out
+    }
+  })
+}
+
 /**
  * 创建并配置 markdown-it 实例
  */
@@ -263,6 +517,8 @@ function createMarkdownIt() {
   })
   // LaTeX (KaTeX) 支持：通过 markdown-it 规则解析 $...$ / $$...$$，避免 regex + 占位符的二次渲染问题
   md.use(markdownItKatex)
+  // 工作区文件引用：把路径/行号变成可点击链接
+  md.use(markdownItWorkspaceFileLinks)
   
   // 自定义链接渲染 - 外部链接在新标签页打开
   const defaultLinkRender = md.renderer.rules.link_open || function(
@@ -319,8 +575,20 @@ function createMarkdownIt() {
   md.renderer.rules.fence = function(tokens: Token[], idx: number, _options: Options, env: any, _self: Renderer) {
     const token = tokens[idx]
     const info = (token.info || '').trim()
-    const lang = info ? info.split(/\s+/g)[0] : ''
+    const firstWord = info ? info.split(/\s+/g)[0] : ''
     const code = token.content || ''
+
+    // 识别 “start:end:path” 的代码引用格式（用于在代码块标题处提供点击跳转）
+    const codeRefMatch = info.match(/^(\d+):(\d+):(.+)$/)
+    const codeRef: WorkspaceFileRef | null = codeRefMatch
+      ? {
+          path: normalizeWorkspaceFilePath(codeRefMatch[3] || ''),
+          startLine: parsePositiveInt(codeRefMatch[1]),
+          endLine: parsePositiveInt(codeRefMatch[2])
+        }
+      : null
+
+    const lang = codeRef?.path ? (guessHighlightLanguageFromPath(codeRef.path) || '') : firstWord
 
     // 为同一次 render 分配稳定序号（相同内容的多次渲染：顺序不变则 id 不变）
     if (!env.__limCode) env.__limCode = { codeBlockSeq: 0 }
@@ -361,9 +629,26 @@ function createMarkdownIt() {
     }).join('')
 
     const titleLabel = escapeHtml(lang || 'code')
+    const titleHtml = codeRef?.path
+      ? (() => {
+          const encodedPath = encodeDataPath(codeRef.path)
+          const startLine = codeRef.startLine
+          const endLine = codeRef.endLine ?? codeRef.startLine
+          const lineText = startLine ? `:L${startLine}${endLine && endLine !== startLine ? `-L${endLine}` : ''}` : ''
+          const display = escapeHtml(`${codeRef.path}${lineText}`)
+          const attrs = [
+            `href="#"`,
+            `class="code-block-title workspace-file-link"`,
+            `data-path="${encodedPath}"`
+          ]
+          if (startLine) attrs.push(`data-start-line="${startLine}"`)
+          if (endLine) attrs.push(`data-end-line="${endLine}"`)
+          return `<a ${attrs.join(' ')}>${display}</a>`
+        })()
+      : `<span class="code-block-title">${titleLabel}</span>`
 
     // 默认：自动换行；按钮 title 表示“点击后要切换到的模式”
-    return `<div class="code-block-container" data-block-id="${blockId}"><div class="code-block-header"><span class="code-block-title">${titleLabel}</span><div class="code-block-toolbar"><button class="code-tool-btn code-wrap-btn" data-action="toggle-wrap" data-title-nowrap="${escapeHtml(titleWrapEnable)}" data-title-wrap="${escapeHtml(titleWrapDisable)}" title="${escapeHtml(titleWrapDisable)}"><span class="wrap-icon">↩</span><span class="nowrap-icon">↔</span></button><button class="code-tool-btn code-copy-btn" data-code="${encodedCode}" title="${escapeHtml(titleCopy)}"><span class="copy-icon codicon codicon-copy"></span><span class="check-icon codicon codicon-check"></span></button></div></div><pre class="hljs code-block-wrapper"><code class="code-with-lines ${escapeHtml(langClass)}">${linesHtml}</code></pre></div>`
+    return `<div class="code-block-container" data-block-id="${blockId}"><div class="code-block-header">${titleHtml}<div class="code-block-toolbar"><button class="code-tool-btn code-wrap-btn" data-action="toggle-wrap" data-title-nowrap="${escapeHtml(titleWrapEnable)}" data-title-wrap="${escapeHtml(titleWrapDisable)}" title="${escapeHtml(titleWrapDisable)}"><span class="wrap-icon">↩</span><span class="nowrap-icon">↔</span></button><button class="code-tool-btn code-copy-btn" data-code="${encodedCode}" title="${escapeHtml(titleCopy)}"><span class="copy-icon codicon codicon-copy"></span><span class="check-icon codicon codicon-check"></span></button></div></div><pre class="hljs code-block-wrapper"><code class="code-with-lines ${escapeHtml(langClass)}">${linesHtml}</code></pre></div>`
   }
   
   return md
@@ -802,6 +1087,65 @@ async function handleImageClick(event: Event) {
 }
 
 /**
+ * 处理工作区文件链接点击（路径/行号 -> 打开文件并定位/高亮）
+ */
+async function handleWorkspaceFileLinkClick(event: Event) {
+  const target = event.target as HTMLElement
+
+  // 1) 优先处理我们生成的 workspace-file-link
+  const fileLink = target.closest('a.workspace-file-link') as HTMLAnchorElement | null
+
+  // 2) fallback：处理普通 <a href="relative/path.ts:12"> 这类 Markdown 链接，避免 webview 内导航
+  const link = (fileLink || target.closest('a')) as HTMLAnchorElement | null
+  if (!link) return
+
+  let ref: WorkspaceFileRef | null = null
+
+  if (fileLink) {
+    const encoded = fileLink.getAttribute('data-path')
+    if (encoded) {
+      const path = normalizeWorkspaceFilePath(decodeDataPath(encoded))
+      const startLine = parsePositiveInt(fileLink.getAttribute('data-start-line'))
+      const endLine = parsePositiveInt(fileLink.getAttribute('data-end-line')) ?? startLine
+      if (path) {
+        ref = { path, startLine, endLine }
+      }
+    }
+  }
+
+  if (!ref) {
+    let href = (link.getAttribute('href') || '').trim()
+    if (!href || href === '#' || href.startsWith('#')) return
+    if (/^(https?:\/\/|mailto:|tel:)/i.test(href)) return
+
+    // markdown-it 会对非 ASCII 字符做 percent-encode，先还原再解析
+    try { href = decodeURIComponent(href) } catch { /* ignore malformed */ }
+
+    // 先解析 href；不行再解析链接文本
+    ref = parseWorkspaceFileRefExact(href) || parseWorkspaceFileRefExact((link.textContent || '').trim())
+  }
+
+  if (!ref) return
+
+  event.preventDefault()
+  event.stopPropagation()
+
+  try {
+    await sendToExtension('openWorkspaceFileAt', {
+      path: ref.path,
+      startLine: ref.startLine,
+      endLine: ref.endLine,
+      highlight: true
+    })
+  } catch (err: any) {
+    const msg = typeof err?.message === 'string' && err.message.trim()
+      ? err.message
+      : '打开文件失败'
+    await showNotification(msg, 'error')
+  }
+}
+
+/**
  * 处理 Mermaid 图表点击放大
  */
 function handleMermaidClick(event: Event) {
@@ -825,6 +1169,7 @@ function handleMermaidClick(event: Event) {
 onMounted(() => {
   if (containerRef.value) {
     containerRef.value.addEventListener('click', handleCodeToolbarClick)
+    containerRef.value.addEventListener('click', handleWorkspaceFileLinkClick)
     containerRef.value.addEventListener('click', handleImageClick)
     containerRef.value.addEventListener('click', handleMermaidClick)
   }
@@ -843,6 +1188,7 @@ onUnmounted(()=> {
   clearRenderTimer()
   if (containerRef.value) {
     containerRef.value.removeEventListener('click', handleCodeToolbarClick)
+    containerRef.value.removeEventListener('click', handleWorkspaceFileLinkClick)
     containerRef.value.removeEventListener('click', handleImageClick)
     containerRef.value.removeEventListener('click', handleMermaidClick)
   }
