@@ -26,6 +26,7 @@ const chatStore = useChatStore()
 // ============ Build（Plan 执行）顶部卡片 ============
 type BuildTodoStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled'
 type BuildTodoItem = { id: string; text: string; status: BuildTodoStatus }
+type BuildTodoRaw = { id: string; content: string; status: BuildTodoStatus }
 
 const isBuildExpanded = ref(false)
 
@@ -34,45 +35,149 @@ function normalizeTodoStatus(value: any): BuildTodoStatus {
   return 'pending'
 }
 
-const latestTodoWrite = computed(() => {
+function normalizeTodoList(input: any): BuildTodoRaw[] {
+  if (!Array.isArray(input)) return []
+  const out: BuildTodoRaw[] = []
+  for (const item of input) {
+    const id = (item as any)?.id
+    const content = (item as any)?.content
+    const status = (item as any)?.status
+    if (typeof id !== 'string' || !id.trim()) continue
+    if (typeof content !== 'string') continue
+    out.push({ id: id.trim(), content, status: normalizeTodoStatus(status) })
+  }
+  return out
+}
+
+function mergeTodoList(existing: BuildTodoRaw[], incoming: BuildTodoRaw[]): BuildTodoRaw[] {
+  const result = existing.map(t => ({ ...t }))
+  const indexById = new Map<string, number>()
+  for (let i = 0; i < result.length; i++) indexById.set(result[i].id, i)
+  for (const t of incoming) {
+    const idx = indexById.get(t.id)
+    if (idx === undefined) {
+      indexById.set(t.id, result.length)
+      result.push({ ...t })
+      continue
+    }
+    result[idx] = { ...result[idx], content: t.content, status: t.status }
+  }
+  return result
+}
+
+function applyTodoUpdateOps(existing: BuildTodoRaw[], opsInput: any): BuildTodoRaw[] {
+  const result: Array<BuildTodoRaw | null> = existing.map(t => ({ ...t }))
+  const indexById = new Map<string, number>()
+  for (let i = 0; i < result.length; i++) {
+    const t = result[i]
+    if (t) indexById.set(t.id, i)
+  }
+
+  const ops = Array.isArray(opsInput) ? opsInput : []
+  for (const opAny of ops) {
+    const op = (opAny as any)?.op
+    const idRaw = (opAny as any)?.id
+    const id = typeof idRaw === 'string' ? idRaw.trim() : ''
+
+    if (op === 'add') {
+      const content = (opAny as any)?.content
+      if (!id || typeof content !== 'string') continue
+      const status = normalizeTodoStatus((opAny as any)?.status)
+      const idx = indexById.get(id)
+      if (idx === undefined) {
+        indexById.set(id, result.length)
+        result.push({ id, content, status })
+      } else {
+        const cur = result[idx]
+        if (!cur) continue
+        cur.content = content
+        cur.status = status
+      }
+      continue
+    }
+
+    if (!id) continue
+    const idx = indexById.get(id)
+    if (idx === undefined) continue
+    const cur = result[idx]
+    if (!cur) continue
+
+    if (op === 'set_status') {
+      cur.status = normalizeTodoStatus((opAny as any)?.status)
+      continue
+    }
+    if (op === 'set_content') {
+      const content = (opAny as any)?.content
+      if (typeof content === 'string') cur.content = content
+      continue
+    }
+    if (op === 'cancel') {
+      cur.status = 'cancelled'
+      continue
+    }
+    if (op === 'remove') {
+      result[idx] = null
+      indexById.delete(id)
+      continue
+    }
+  }
+
+  return result.filter((t): t is BuildTodoRaw => !!t)
+}
+
+const replayedBuildTodoList = computed(() => {
   const startedAt = chatStore.activeBuild?.startedAt || 0
   const planPath = chatStore.activeBuild?.planPath
   const all = chatStore.allMessages
-  for (let i = all.length - 1; i >= 0; i--) {
-    const msg = all[i]
-    // 对于 todo_write，仅限当前 Build 期间的更新
-    // 对于 create_plan，允许回溯到 Build 开始之前（以获取初始列表）
-    if (startedAt && typeof msg.timestamp === 'number' && msg.timestamp < startedAt - 600000) { // 允许回溯 10 分钟以防万一
-      break
-    }
+  const scopeStart = startedAt ? startedAt - 600000 : 0 // 允许回溯 10 分钟以获取初始计划
+
+  let list: BuildTodoRaw[] | null = null
+
+  for (const msg of all) {
     if (msg.role !== 'assistant' || !Array.isArray(msg.tools)) continue
-    for (let j = msg.tools.length - 1; j >= 0; j--) {
-      const tool = msg.tools[j]
+    if (scopeStart && typeof msg.timestamp === 'number' && msg.timestamp < scopeStart) continue
+
+    for (const tool of msg.tools) {
+      // create_plan：允许在 Build 开始前，用于初始化列表
+      if (tool.name === 'create_plan') {
+        const toolPath = (tool.args as any)?.path || (tool.result as any)?.data?.path
+        if (planPath && toolPath && toolPath !== planPath) continue
+        const todos = (tool.args as any)?.todos || (tool.result as any)?.data?.todos
+        const normalized = normalizeTodoList(todos)
+        if (normalized.length > 0) list = normalized
+        continue
+      }
+
+      // todo_write：仅限当前 Build 期间（或刚开始）发生的写入
       if (tool.name === 'todo_write') {
-        // todo_write 必须在 Build 开始后（或刚好开始时）
-        if (startedAt && msg.timestamp && msg.timestamp < startedAt - 5000) continue 
-        const todos = (tool.result as any)?.data?.todos
-        if (Array.isArray(todos)) return todos as Array<{ id: string; content: string; status: string }>
-      } else if (tool.name === 'create_plan') {
-        // create_plan 可以是在 Build 开始前
-        const todos = (tool.result as any)?.data?.todos
-        const path = (tool.result as any)?.data?.path || tool.args?.path
-        if (Array.isArray(todos) && (!planPath || path === planPath)) return todos as Array<{ id: string; content: string; status: string }>
+        if (startedAt && msg.timestamp && msg.timestamp < startedAt - 5000) continue
+        const merge = (tool.args as any)?.merge
+        const incoming = normalizeTodoList((tool.args as any)?.todos)
+        if (incoming.length === 0) continue
+        if (merge === true) list = mergeTodoList(list || [], incoming)
+        else list = incoming
+        continue
+      }
+
+      // todo_update：按 ops 增量更新
+      if (tool.name === 'todo_update') {
+        list = applyTodoUpdateOps(list || [], (tool.args as any)?.ops)
+        continue
       }
     }
   }
-  return null
+
+  return list
 })
 
 const buildTodoItems = computed<BuildTodoItem[]>(() => {
-  // 1) 优先显示 todo_write 的真实列表（最接近 Cursor 的 Build To-dos）
-  if (latestTodoWrite.value) {
-    return latestTodoWrite.value
-      .filter(t => typeof t?.id === 'string' && typeof (t as any)?.content === 'string')
+  // 1) 优先显示“重放后”的 todo 列表（兼容 todo_write 精简 result + todo_update 增量更新）
+  if (replayedBuildTodoList.value && replayedBuildTodoList.value.length > 0) {
+    return replayedBuildTodoList.value
       .map(t => ({
         id: String(t.id),
-        text: String((t as any).content || '').trim(),
-        status: normalizeTodoStatus((t as any).status)
+        text: String(t.content || '').trim(),
+        status: normalizeTodoStatus(t.status)
       }))
       .filter(t => t.text.length > 0)
   }

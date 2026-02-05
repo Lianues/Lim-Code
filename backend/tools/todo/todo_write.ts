@@ -126,10 +126,16 @@ function mergeTodos(existing: TodoItem[], incoming: TodoItem[]): TodoItem[] {
     return result;
 }
 
+function countByStatus(todos: TodoItem[]): Record<TodoStatus, number> {
+    const c: Record<TodoStatus, number> = { pending: 0, in_progress: 0, completed: 0, cancelled: 0 };
+    for (const t of todos) c[t.status]++;
+    return c;
+}
+
 export function createTodoWriteToolDeclaration(): ToolDeclaration {
     return {
         name: 'todo_write',
-        description: 'Create and update a per-conversation TODO list. IMPORTANT: Use this tool AT THE START of a complex task to outline your plan. Update it as you progress to let the user track your status.',
+        description: 'Create (replace) or merge-update a per-conversation TODO list. IMPORTANT: Use this tool at the start to initialize the list. For incremental updates (status/content), prefer todo_update.',
         category: 'todo',
         parameters: {
             type: 'object',
@@ -190,12 +196,24 @@ async function todoWriteHandler(args: Record<string, unknown>, context?: ToolCon
             const existing = await loadExistingTodos(context);
             const merged = mergeTodos(existing, validated.todos);
             await saveTodos(context, merged);
-            return { success: true, data: { todos: merged } };
+            return {
+                success: true,
+                data: {
+                    total: merged.length,
+                    counts: countByStatus(merged)
+                }
+            };
         }
 
         // replace
         await saveTodos(context, validated.todos);
-        return { success: true, data: { todos: validated.todos } };
+        return {
+            success: true,
+            data: {
+                total: validated.todos.length,
+                counts: countByStatus(validated.todos)
+            }
+        };
     } catch (e: any) {
         return { success: false, error: e?.message || String(e) };
     }

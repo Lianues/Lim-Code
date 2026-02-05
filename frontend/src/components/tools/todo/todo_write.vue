@@ -82,7 +82,6 @@ const total = computed(() => todos.value.length)
 const modeLabel = computed(() => {
   const merge = (props.args as any)?.merge
   if (merge === true) return 'merge'
-  if (merge === false) return 'replace'
   return ''
 })
 

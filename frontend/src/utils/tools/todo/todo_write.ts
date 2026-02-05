@@ -41,8 +41,8 @@ registerTool('todo_write', {
     const merge = (args as any)?.merge
     const todos = normalizeTodos((args as any)?.todos)
     const c = countByStatus(todos)
-    const mode = merge === true ? 'merge' : (merge === false ? 'replace' : '—')
-    return `${mode} · 待做 ${c.pending} · 进行中 ${c.in_progress} · 完成 ${c.completed}`
+    const prefix = merge === true ? 'merge · ' : ''
+    return `${prefix}待做 ${c.pending} · 进行中 ${c.in_progress} · 完成 ${c.completed}`
   },
 
   contentComponent: TodoWritePanel

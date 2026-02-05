@@ -8,6 +8,7 @@ import type { Tool, ToolRegistration } from '../types';
 
 // 导出各个工具的创建函数
 export { registerTodoWrite } from './todo_write';
+export { registerTodoUpdate } from './todo_update';
 
 // 导出 todo_write 模块的所有内容（方便外部引用）
 export * from './todo_write';
@@ -17,7 +18,8 @@ export * from './todo_write';
  */
 export function getTodoToolRegistrations(): ToolRegistration[] {
     const { registerTodoWrite } = require('./todo_write');
-    return [registerTodoWrite];
+    const { registerTodoUpdate } = require('./todo_update');
+    return [registerTodoWrite, registerTodoUpdate];
 }
 
 /**
@@ -25,5 +27,6 @@ export function getTodoToolRegistrations(): ToolRegistration[] {
  */
 export function getAllTodoTools(): Tool[] {
     const { registerTodoWrite } = require('./todo_write');
-    return [registerTodoWrite()];
+    const { registerTodoUpdate } = require('./todo_update');
+    return [registerTodoWrite(), registerTodoUpdate()];
 }

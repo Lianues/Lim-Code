@@ -20,6 +20,83 @@ import { getWorkspaceFileTree, getWorkspaceRoot, getWorkspacesDescription, getAl
 import { getGlobalSettingsManager } from '../../core/settingsContext'
 import { getSkillsManager } from '../skills'
 
+type TodoStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled'
+type NormalizedTodoItem = { id: string; content: string; status: TodoStatus }
+
+type DynamicRuntimeContext = {
+    /** ConversationMetadata.custom['todoList'] */
+    todoList?: unknown
+}
+
+function isTodoStatus(value: unknown): value is TodoStatus {
+    return value === 'pending' || value === 'in_progress' || value === 'completed' || value === 'cancelled'
+}
+
+function normalizeTodoList(raw: unknown): NormalizedTodoItem[] {
+    if (!Array.isArray(raw)) return []
+    const out: NormalizedTodoItem[] = []
+    for (const item of raw) {
+        if (!item || typeof item !== 'object') continue
+        const id = (item as any).id
+        const content = (item as any).content
+        const status = (item as any).status
+        if (typeof id !== 'string' || !id.trim()) continue
+        if (typeof content !== 'string') continue
+        if (!isTodoStatus(status)) continue
+        out.push({ id: id.trim(), content, status })
+    }
+    return out
+}
+
+function truncateText(s: string, maxLen: number): string {
+    const t = (s ?? '').replace(/\s+/g, ' ').trim()
+    if (t.length <= maxLen) return t
+    return t.slice(0, Math.max(0, maxLen - 1)) + '…'
+}
+
+function formatTodoListText(raw: unknown): string {
+    const todos = normalizeTodoList(raw)
+    if (todos.length === 0) return ''
+
+    const order: Record<TodoStatus, number> = {
+        in_progress: 0,
+        pending: 1,
+        completed: 2,
+        cancelled: 3
+    }
+    const sorted = [...todos].sort((a, b) => {
+        const oa = order[a.status] ?? 9
+        const ob = order[b.status] ?? 9
+        if (oa !== ob) return oa - ob
+        return a.id.localeCompare(b.id)
+    })
+
+    const counts: Record<TodoStatus, number> = {
+        pending: 0,
+        in_progress: 0,
+        completed: 0,
+        cancelled: 0
+    }
+    for (const t of todos) counts[t.status]++
+
+    const MAX_ITEMS = 50
+    const shown = sorted.slice(0, MAX_ITEMS)
+
+    const lines: string[] = []
+    lines.push(
+        `Total: ${todos.length} | pending: ${counts.pending} | in_progress: ${counts.in_progress} | completed: ${counts.completed} | cancelled: ${counts.cancelled}`
+    )
+    for (const t of shown) {
+        const content = truncateText(t.content, 200)
+        lines.push(`- [${t.status}] ${content}  \`#${t.id}\``)
+    }
+    if (sorted.length > shown.length) {
+        lines.push(`... and ${sorted.length - shown.length} more items.`)
+    }
+
+    return lines.join('\n')
+}
+
 /**
  * 系统提示词管理器
  * 
@@ -166,6 +243,7 @@ export class PromptManager {
      * 从动态模板生成上下文内容
      *
      * 支持的变量：
+     * - {{$TODO_LIST}} - 当前会话的 TODO 列表（来自 ConversationMetadata.custom['todoList']）
      * - {{$WORKSPACE_FILES}} - 工作区文件树
      * - {{$OPEN_TABS}} - 打开的标签页
      * - {{$ACTIVE_EDITOR}} - 当前活动编辑器
@@ -173,17 +251,24 @@ export class PromptManager {
      * - {{$PINNED_FILES}} - 固定文件内容
      * - {{$SKILLS}} - 启用的 Skills 内容
      */
-    private generateDynamicFromTemplate(template: string, contextConfig: any): string {
+    private generateDynamicFromTemplate(template: string, contextConfig: any, runtime?: DynamicRuntimeContext): string {
         const settingsManager = getGlobalSettingsManager()
         
         // 动态模块
         const modules: Record<string, string> = {
+            'TODO_LIST': '',
             'WORKSPACE_FILES': '',
             'OPEN_TABS': '',
             'ACTIVE_EDITOR': '',
             'DIAGNOSTICS': '',
             'PINNED_FILES': '',
             'SKILLS': ''
+        }
+
+        // TODO 列表（来自会话元数据）
+        const todoText = formatTodoListText(runtime?.todoList)
+        if (todoText) {
+            modules['TODO_LIST'] = this.wrapSection('TODO LIST', todoText)
         }
         
         // 工作区文件树
@@ -330,7 +415,7 @@ export class PromptManager {
      * 
      * @returns 动态上下文消息数组（一条 user 消息）
      */
-    getDynamicContextMessages(): Content[] {
+    getDynamicContextMessages(runtime?: DynamicRuntimeContext): Content[] {
         const settingsManager = getGlobalSettingsManager()
         const promptConfig = settingsManager?.getSystemPromptConfig()
         const contextConfig = settingsManager?.getContextAwarenessConfig()
@@ -344,7 +429,7 @@ export class PromptManager {
         // 获取当前模式的动态模板
         const dynamicTemplate = settingsManager?.getDynamicContextTemplate() || promptConfig?.dynamicTemplate || ''
         if (dynamicTemplate.trim()) {
-            const content = this.generateDynamicFromTemplate(dynamicTemplate, contextConfig)
+            const content = this.generateDynamicFromTemplate(dynamicTemplate, contextConfig, runtime)
             if (content) {
                 return [{
                     role: 'user' as const,
@@ -363,6 +448,12 @@ export class PromptManager {
         // 当前时间
         const now = new Date()
         sections.push(`Current Time: ${now.toISOString()}`)
+
+        // TODO 列表（来自会话元数据）
+        const todoText = formatTodoListText(runtime?.todoList)
+        if (todoText) {
+            sections.push(this.wrapSection('TODO LIST', todoText))
+        }
 
         // 工作区文件树
         if (contextConfig?.includeWorkspaceFiles ?? this.config.includeWorkspaceFiles) {
@@ -431,8 +522,8 @@ export class PromptManager {
      * 
      * @returns 动态上下文的纯文本，如果没有内容则返回空字符串
      */
-    getDynamicContextText(): string {
-        const messages = this.getDynamicContextMessages()
+    getDynamicContextText(runtime?: DynamicRuntimeContext): string {
+        const messages = this.getDynamicContextMessages(runtime)
         if (messages.length === 0) {
             return ''
         }

@@ -1718,6 +1718,8 @@ GUIDELINES
  */
 export const DEFAULT_DYNAMIC_CONTEXT_TEMPLATE = `This is the current turn's dynamic context information you can use. It may change between turns. Continue with the previous task if the information is not needed and ignore it.
 
+{{$TODO_LIST}}
+
 {{$WORKSPACE_FILES}}
 
 {{$OPEN_TABS}}
@@ -1917,6 +1919,7 @@ export const PLAN_PROMPT_MODE: PromptMode = {
         'find_references',
         'get_symbols',
         'todo_write',
+        'todo_update',
         'subagents',
         'create_plan',
         'execute_plan',

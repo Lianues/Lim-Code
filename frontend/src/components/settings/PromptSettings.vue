@@ -100,6 +100,19 @@ Additional tools from MCP servers:
 // 动态变量（作为上下文消息临时插入，不存储到历史记录）
 const DYNAMIC_CONTEXT_MODULES: PromptModule[] = [
   {
+    id: 'TODO_LIST',
+    name: 'TODO 列表',
+    description: '显示当前会话的 TODO 列表（来自 todo_write / todo_update / create_plan 持久化的 todoList 元数据）',
+    example: `====
+
+TODO LIST
+
+Total: 3 | pending: 1 | in_progress: 1 | completed: 1 | cancelled: 0
+- [in_progress] 实现 {{$TODO_LIST}} 注入  \`#inject-todo\`
+- [pending] 增量更新 todo_update  \`#todo-update\`
+- [completed] 精简 todo_write 工具响应  \`#slim-result\``
+  },
+  {
     id: 'WORKSPACE_FILES',
     name: '工作区文件树',
     description: '列出工作区中的文件和目录结构，受上下文感知设置中的深度和忽略模式影响',
@@ -314,6 +327,8 @@ const DEFAULT_TEMPLATE = CODE_MODE_TEMPLATE
 
 // 默认动态上下文模板
 const DEFAULT_DYNAMIC_TEMPLATE = `This is the current turn's dynamic context information you can use. It may change between turns. Continue with the previous task if the information is not needed and ignore it.
+
+{{$TODO_LIST}}
 
 {{$WORKSPACE_FILES}}
 

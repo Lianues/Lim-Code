@@ -39,6 +39,7 @@ import './subagents/subagents'
 
 // TODO 工具
 import './todo/todo_write'
+import './todo/todo_update'
 
 // Plan 工具
 import './plan/create_plan'

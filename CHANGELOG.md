@@ -3,6 +3,11 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.0.73] - 2026-02-05
+
+### Improved
+  - 优化了todo工具和实现方式，请务必重置一下**所有模式的动态上下文模板**，以便使用todo list
+
 ## [1.0.72] - 2026-02-05
 
 ### Improved

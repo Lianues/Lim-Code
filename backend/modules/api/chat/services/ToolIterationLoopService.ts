@@ -196,7 +196,14 @@ export class ToolIterationLoopService {
             // 动态部分包含：当前时间、文件树、标签页、活动编辑器、诊断、固定文件
             // 这些内容不存储到后端历史，仅在发送时临时插入到连续的最后一组用户主动发送消息之前
             // 插入位置由 formatter 内部计算，确保与处理后的 history 一致
-            const dynamicContextMessages = this.promptManager.getDynamicContextMessages();
+            let todoList: unknown = undefined;
+            try {
+                todoList = await this.conversationManager.getCustomMetadata(conversationId, 'todoList');
+            } catch {
+                todoList = undefined;
+            }
+
+            const dynamicContextMessages = this.promptManager.getDynamicContextMessages({ todoList });
 
             // 6. 记录请求开始时间
             const requestStartTime = Date.now();
@@ -465,10 +472,25 @@ export class ToolIterationLoopService {
                 historyOptions
             );
 
+            // 获取静态系统提示词（可被 API provider 缓存）
+            const dynamicSystemPrompt = this.promptManager.getSystemPrompt();
+
+            // 获取动态上下文消息（包含 TODO_LIST 等频繁变化的内容）
+            let todoList: unknown = undefined;
+            try {
+                todoList = await this.conversationManager.getCustomMetadata(conversationId, 'todoList');
+            } catch {
+                todoList = undefined;
+            }
+
+            const dynamicContextMessages = this.promptManager.getDynamicContextMessages({ todoList });
+
             // 调用 AI（非流式）
             const response = await this.channelManager.generate({
                 configId,
                 history,
+                dynamicSystemPrompt,
+                dynamicContextMessages,
                 modelOverride
             });
 

@@ -328,7 +328,13 @@ export class ContextTrimService {
         
         // 收集需要计算 token 的内容：系统提示词、动态上下文、缺失 token 数的用户消息
         const systemPrompt = this.promptManager.getSystemPrompt();
-        const dynamicContextText = this.promptManager.getDynamicContextText();
+        let todoList: unknown = undefined;
+        try {
+            todoList = await this.conversationManager.getCustomMetadata(conversationId, 'todoList');
+        } catch {
+            todoList = undefined;
+        }
+        const dynamicContextText = this.promptManager.getDynamicContextText({ todoList });
         
         // 查找缺失 token 数的用户消息
         const missingTokenMessages: Array<{ index: number; message: Content }> = [];
