@@ -7,16 +7,30 @@
 
 import * as vscode from 'vscode';
 import * as path from 'path';
+import * as fs from 'fs/promises';
 import type { Tool, ToolResult } from '../types';
 import { getWorkspaceRoot, getAllWorkspaces, parseWorkspacePath, toRelativePath, normalizeLineEndingsToLF } from '../utils';
 import { getGlobalSettingsManager } from '../../core/settingsContext';
 import { getDiffStorageManager } from '../../modules/conversation';
 import { getDiffManager } from '../file/diffManager';
+import { DEFAULT_SEARCH_IN_FILES_CONFIG } from '../../modules/settings/types';
+import type { SearchInFilesToolConfig } from '../../modules/settings/types';
 
 /**
  * 默认排除模式
  */
 const DEFAULT_EXCLUDE = '**/node_modules/**';
+
+/**
+ * 获取 search_in_files 工具配置（带默认值兜底）
+ */
+function getSearchInFilesConfig(): Readonly<SearchInFilesToolConfig> {
+    const settingsManager = getGlobalSettingsManager();
+    if (settingsManager) {
+        return settingsManager.getSearchInFilesConfig();
+    }
+    return DEFAULT_SEARCH_IN_FILES_CONFIG;
+}
 
 /**
  * 获取排除模式
@@ -25,16 +39,13 @@ const DEFAULT_EXCLUDE = '**/node_modules/**';
  * 将多个模式合并为单个 glob 模式（用大括号语法）
  */
 function getExcludePattern(): string {
-    const settingsManager = getGlobalSettingsManager();
-    if (settingsManager) {
-        const config = settingsManager.getSearchInFilesConfig();
-        if (config.excludePatterns && config.excludePatterns.length > 0) {
-            // 多个模式用 {} 语法组合
-            if (config.excludePatterns.length === 1) {
-                return config.excludePatterns[0];
-            }
-            return `{${config.excludePatterns.join(',')}}`;
+    const config = getSearchInFilesConfig();
+    if (config.excludePatterns && config.excludePatterns.length > 0) {
+        // 多个模式用 {} 语法组合
+        if (config.excludePatterns.length === 1) {
+            return config.excludePatterns[0];
         }
+        return `{${config.excludePatterns.join(',')}}`;
     }
     return DEFAULT_EXCLUDE;
 }
@@ -71,6 +82,208 @@ interface ReplaceResult {
     pendingDiffId?: string;
 }
 
+// ==================== 二进制/文本检测与输出裁剪辅助 ====================
+
+type TextEncoding = 'utf-8' | 'utf-16le' | 'utf-16be';
+
+interface TextDetectionResult {
+    isText: boolean;
+    encoding: TextEncoding;
+    /** BOM 字节数（需要跳过） */
+    bomLength: number;
+    reason?: string;
+}
+
+interface SearchBudget {
+    remainingChars: number;
+    truncated: boolean;
+}
+
+function clampNonNegativeNumber(value: unknown, fallback: number): number {
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+        return fallback;
+    }
+    return value < 0 ? 0 : value;
+}
+
+async function tryGetFileSizeBytes(uri: vscode.Uri): Promise<number | undefined> {
+    try {
+        const stat = await vscode.workspace.fs.stat(uri);
+        return typeof stat.size === 'number' ? stat.size : undefined;
+    } catch {
+        return undefined;
+    }
+}
+
+async function readHeaderBytes(uri: vscode.Uri, maxBytes: number): Promise<Uint8Array> {
+    const n = Math.max(0, Math.floor(maxBytes));
+    if (n <= 0) {
+        return new Uint8Array();
+    }
+
+    // 本地文件优先用 Node fs 做真正的“只读文件头”
+    if (uri.scheme === 'file' && uri.fsPath) {
+        try {
+            const handle = await fs.open(uri.fsPath, 'r');
+            try {
+                const buffer = Buffer.alloc(n);
+                const { bytesRead } = await handle.read(buffer, 0, n, 0);
+                return buffer.subarray(0, bytesRead);
+            } finally {
+                await handle.close();
+            }
+        } catch {
+            // 回退到 vscode fs
+        }
+    }
+
+    // 非 file scheme：无法保证部分读取，退化为读取后截取（有大小护栏即可）
+    const content = await vscode.workspace.fs.readFile(uri);
+    return content.subarray(0, Math.min(n, content.length));
+}
+
+function detectTextFromHeader(header: Uint8Array): TextDetectionResult {
+    if (!header || header.length === 0) {
+        return { isText: true, encoding: 'utf-8', bomLength: 0 };
+    }
+
+    // BOM 检测
+    if (header.length >= 3 && header[0] === 0xEF && header[1] === 0xBB && header[2] === 0xBF) {
+        return { isText: true, encoding: 'utf-8', bomLength: 3 };
+    }
+    if (header.length >= 2 && header[0] === 0xFF && header[1] === 0xFE) {
+        return { isText: true, encoding: 'utf-16le', bomLength: 2 };
+    }
+    if (header.length >= 2 && header[0] === 0xFE && header[1] === 0xFF) {
+        return { isText: true, encoding: 'utf-16be', bomLength: 2 };
+    }
+
+    // UTF-16（无 BOM）启发式：大量 NUL 且集中在偶/奇位
+    const sampleLen = Math.min(header.length, 1024);
+    let evenZeros = 0;
+    let oddZeros = 0;
+    for (let i = 0; i < sampleLen; i++) {
+        if (header[i] === 0x00) {
+            if (i % 2 === 0) evenZeros++;
+            else oddZeros++;
+        }
+    }
+    const evenCount = Math.ceil(sampleLen / 2);
+    const oddCount = Math.floor(sampleLen / 2) || 1;
+    const evenZeroRatio = evenZeros / (evenCount || 1);
+    const oddZeroRatio = oddZeros / oddCount;
+
+    if (oddZeroRatio > 0.3 && evenZeroRatio < 0.05) {
+        return { isText: true, encoding: 'utf-16le', bomLength: 0 };
+    }
+    if (evenZeroRatio > 0.3 && oddZeroRatio < 0.05) {
+        return { isText: true, encoding: 'utf-16be', bomLength: 0 };
+    }
+
+    // NUL 基本可判为二进制（非 UTF-16）
+    for (let i = 0; i < sampleLen; i++) {
+        if (header[i] === 0x00) {
+            return { isText: false, encoding: 'utf-8', bomLength: 0, reason: 'NUL byte detected' };
+        }
+    }
+
+    // 控制字符占比过高：倾向二进制
+    let suspicious = 0;
+    for (let i = 0; i < sampleLen; i++) {
+        const b = header[i];
+        const isAllowedWhitespace = b === 0x09 || b === 0x0A || b === 0x0D; // \t \n \r
+        const isControl =
+            (b < 0x20 && !isAllowedWhitespace) ||
+            b === 0x7F;
+        if (isControl) suspicious++;
+    }
+    const suspiciousRatio = suspicious / (sampleLen || 1);
+    if (suspiciousRatio > 0.3) {
+        return { isText: false, encoding: 'utf-8', bomLength: 0, reason: `High control-char ratio: ${suspiciousRatio.toFixed(2)}` };
+    }
+
+    return { isText: true, encoding: 'utf-8', bomLength: 0 };
+}
+
+function swapByteOrder16(data: Uint8Array): Uint8Array {
+    const len = data.length - (data.length % 2);
+    const out = new Uint8Array(len);
+    for (let i = 0; i < len; i += 2) {
+        out[i] = data[i + 1];
+        out[i + 1] = data[i];
+    }
+    return out;
+}
+
+function decodeTextBytes(bytes: Uint8Array, detection: TextDetectionResult): string {
+    const start = Math.max(0, detection.bomLength || 0);
+    const sliced = bytes.subarray(start);
+
+    if (detection.encoding === 'utf-16be') {
+        const swapped = swapByteOrder16(sliced);
+        return new TextDecoder('utf-16le').decode(swapped);
+    }
+
+    if (detection.encoding === 'utf-16le') {
+        return new TextDecoder('utf-16le').decode(sliced);
+    }
+
+    return new TextDecoder('utf-8').decode(sliced);
+}
+
+function truncateWithEllipsis(text: string, maxChars: number): string {
+    const limit = Math.max(0, Math.floor(maxChars));
+    if (limit <= 0) {
+        return '';
+    }
+    if (text.length <= limit) {
+        return text;
+    }
+    // 留一个字符给省略号
+    const sliceLen = Math.max(0, limit - 1);
+    return `${text.slice(0, sliceLen)}…`;
+}
+
+function createMatchLineSnippet(line: string, matchStart: number, matchLength: number, maxChars: number): string {
+    const limit = Math.max(0, Math.floor(maxChars));
+    if (limit <= 0) {
+        return '';
+    }
+    if (line.length <= limit) {
+        return line;
+    }
+
+    const start = Math.max(0, matchStart);
+    const end = Math.max(start, start + Math.max(0, matchLength));
+
+    // 让窗口尽量把 match 放在中间
+    const half = Math.floor(limit / 2);
+    let windowStart = Math.max(0, start - half);
+    let windowEnd = windowStart + limit;
+    if (windowEnd < end) {
+        windowEnd = Math.min(line.length, end + half);
+        windowStart = Math.max(0, windowEnd - limit);
+    }
+    if (windowEnd > line.length) {
+        windowEnd = line.length;
+        windowStart = Math.max(0, windowEnd - limit);
+    }
+
+    let snippet = line.slice(windowStart, windowEnd);
+    if (windowStart > 0) {
+        snippet = `…${snippet}`;
+    }
+    if (windowEnd < line.length) {
+        snippet = `${snippet}…`;
+    }
+    return snippet;
+}
+
+function estimateMatchCost(relativePath: string, matchText: string, context: string): number {
+    // 近似预算：路径 + match + context + 结构开销
+    return (relativePath?.length || 0) + (matchText?.length || 0) + (context?.length || 0) + 80;
+}
+
 /**
  * 在单个目录中搜索（仅搜索，不替换）
  */
@@ -80,25 +293,69 @@ async function searchInDirectory(
     searchRegex: RegExp,
     maxResults: number,
     workspaceName: string | null,
-    excludePattern: string
+    excludePattern: string,
+    config: Readonly<SearchInFilesToolConfig>,
+    budget?: SearchBudget
 ): Promise<SearchMatch[]> {
     const results: SearchMatch[] = [];
     
     const pattern = new vscode.RelativePattern(searchRoot, filePattern);
     const files = await vscode.workspace.findFiles(pattern, excludePattern, 1000);
+
+    const enableHeaderTextCheck = config.enableHeaderTextCheck !== false;
+    const headerSampleBytes = Math.max(64, clampNonNegativeNumber(config.headerSampleBytes, 4096));
+    const maxFileSizeBytes = clampNonNegativeNumber(config.maxFileSizeBytes, 5 * 1024 * 1024);
+    const contextBefore = Math.floor(clampNonNegativeNumber(config.contextLinesBefore, 1));
+    const contextAfter = Math.floor(clampNonNegativeNumber(config.contextLinesAfter, 1));
+    const maxLinePreviewChars = Math.floor(clampNonNegativeNumber(config.maxLinePreviewChars, 300));
+    const maxMatchPreviewChars = Math.floor(clampNonNegativeNumber(config.maxMatchPreviewChars, 220));
     
     for (const fileUri of files) {
         if (results.length >= maxResults) {
             break;
         }
+        if (budget && budget.remainingChars <= 0) {
+            budget.truncated = true;
+            break;
+        }
         
         try {
+            // 文件大小护栏（避免读入超大文件）
+            if (maxFileSizeBytes > 0) {
+                const size = await tryGetFileSizeBytes(fileUri);
+                if (typeof size === 'number' && size > maxFileSizeBytes) {
+                    continue;
+                }
+            }
+
+            // 文件头文本检测（跳过二进制）
+            let detection: TextDetectionResult = { isText: true, encoding: 'utf-8', bomLength: 0 };
+            if (enableHeaderTextCheck) {
+                try {
+                    const header = await readHeaderBytes(fileUri, headerSampleBytes);
+                    detection = detectTextFromHeader(header);
+                    if (!detection.isText) {
+                        continue;
+                    }
+                } catch {
+                    // header 检测失败时退化为旧行为（仍有大小/输出护栏）
+                    detection = { isText: true, encoding: 'utf-8', bomLength: 0 };
+                }
+            }
+
             const content = await vscode.workspace.fs.readFile(fileUri);
-            const text = normalizeLineEndingsToLF(new TextDecoder().decode(content));
+            const text = normalizeLineEndingsToLF(decodeTextBytes(content, detection));
             const lines = text.split('\n');
+
+            // 使用支持多工作区的相对路径（每文件只计算一次）
+            const relativePath = toRelativePath(fileUri, workspaceName !== null);
             
             for (let i = 0; i < lines.length; i++) {
                 if (results.length >= maxResults) {
+                    break;
+                }
+                if (budget && budget.remainingChars <= 0) {
+                    budget.truncated = true;
                     break;
                 }
                 
@@ -110,28 +367,58 @@ async function searchInDirectory(
                     if (results.length >= maxResults) {
                         break;
                     }
-                    
-                    // 获取上下文（前后各1行）
-                    const contextLines = [];
-                    if (i > 0) {
-                        contextLines.push(`${i}: ${lines[i - 1]}`);
-                    }
-                    contextLines.push(`${i + 1}: ${line}`);
-                    if (i < lines.length - 1) {
-                        contextLines.push(`${i + 2}: ${lines[i + 1]}`);
+                    if (budget && budget.remainingChars <= 0) {
+                        budget.truncated = true;
+                        break;
                     }
                     
-                    // 使用支持多工作区的相对路径
-                    const relativePath = toRelativePath(fileUri, workspaceName !== null);
+                    const rawMatchText = match[0] ?? '';
+                    const matchText = rawMatchText.length > maxMatchPreviewChars
+                        ? truncateWithEllipsis(rawMatchText, maxMatchPreviewChars)
+                        : rawMatchText;
+
+                    // 获取上下文（可配置行数，且对超长行做裁剪）
+                    const contextLines: string[] = [];
+
+                    const beforeStart = Math.max(0, i - contextBefore);
+                    for (let j = beforeStart; j < i; j++) {
+                        contextLines.push(`${j + 1}: ${truncateWithEllipsis(lines[j], maxLinePreviewChars)}`);
+                    }
+
+                    const matchLinePreview = createMatchLineSnippet(line, match.index ?? 0, rawMatchText.length, maxMatchPreviewChars);
+                    contextLines.push(`${i + 1}: ${matchLinePreview}`);
+
+                    const afterEnd = Math.min(lines.length - 1, i + contextAfter);
+                    for (let j = i + 1; j <= afterEnd; j++) {
+                        contextLines.push(`${j + 1}: ${truncateWithEllipsis(lines[j], maxLinePreviewChars)}`);
+                    }
+
+                    const context = contextLines.join('\n');
+
+                    // 输出预算护栏
+                    const cost = estimateMatchCost(relativePath, matchText, context);
+                    if (budget && budget.remainingChars - cost < 0) {
+                        budget.truncated = true;
+                        break;
+                    }
                     
                     results.push({
                         file: relativePath,
                         workspace: workspaceName || undefined,
                         line: i + 1,
                         column: match.index + 1,
-                        match: match[0],
-                        context: contextLines.join('\n')
+                        match: matchText,
+                        context
                     });
+
+                    if (budget) {
+                        budget.remainingChars -= cost;
+                    }
+
+                    // 防止空匹配导致死循环
+                    if ((match[0] ?? '').length === 0) {
+                        searchRegex.lastIndex++;
+                    }
                 }
             }
         } catch {
@@ -154,6 +441,7 @@ async function searchAndReplaceInDirectory(
     maxFiles: number,
     workspaceName: string | null,
     excludePattern: string,
+    config: Readonly<SearchInFilesToolConfig>,
     toolId?: string,
     abortSignal?: AbortSignal
 ): Promise<{
@@ -169,6 +457,11 @@ async function searchAndReplaceInDirectory(
     
     const pattern = new vscode.RelativePattern(searchRoot, filePattern);
     const files = await vscode.workspace.findFiles(pattern, excludePattern, 1000);
+
+    const enableHeaderTextCheck = config.enableHeaderTextCheck !== false;
+    const headerSampleBytes = Math.max(64, clampNonNegativeNumber(config.headerSampleBytes, 4096));
+    const maxReplaceFileSizeBytes = clampNonNegativeNumber(config.maxReplaceFileSizeBytes, 1 * 1024 * 1024);
+    const maxMatchPreviewChars = Math.floor(clampNonNegativeNumber(config.maxMatchPreviewChars, 220));
     
     let processedFiles = 0;
     const diffManager = getDiffManager();
@@ -185,8 +478,30 @@ async function searchAndReplaceInDirectory(
         }
         
         try {
+            // 文件大小护栏（替换模式更保守，避免生成超大 diff）
+            if (maxReplaceFileSizeBytes > 0) {
+                const size = await tryGetFileSizeBytes(fileUri);
+                if (typeof size === 'number' && size > maxReplaceFileSizeBytes) {
+                    continue;
+                }
+            }
+
+            // 文件头文本检测（跳过二进制）
+            let detection: TextDetectionResult = { isText: true, encoding: 'utf-8', bomLength: 0 };
+            if (enableHeaderTextCheck) {
+                try {
+                    const header = await readHeaderBytes(fileUri, headerSampleBytes);
+                    detection = detectTextFromHeader(header);
+                    if (!detection.isText) {
+                        continue;
+                    }
+                } catch {
+                    detection = { isText: true, encoding: 'utf-8', bomLength: 0 };
+                }
+            }
+
             const content = await vscode.workspace.fs.readFile(fileUri);
-            const originalText = normalizeLineEndingsToLF(new TextDecoder().decode(content));
+            const originalText = normalizeLineEndingsToLF(decodeTextBytes(content, detection));
             const lines = originalText.split('\n');
             
             // 检查是否有匹配
@@ -208,26 +523,27 @@ async function searchAndReplaceInDirectory(
                 searchRegex.lastIndex = 0;
                 
                 while ((match = searchRegex.exec(line)) !== null) {
-                    // 获取上下文（前后各1行）
-                    const contextLines = [];
-                    if (i > 0) {
-                        contextLines.push(`${i}: ${lines[i - 1]}`);
-                    }
-                    contextLines.push(`${i + 1}: ${line}`);
-                    if (i < lines.length - 1) {
-                        contextLines.push(`${i + 2}: ${lines[i + 1]}`);
-                    }
-                    
+                    const rawMatchText = match[0] ?? '';
+                    const matchText = rawMatchText.length > maxMatchPreviewChars
+                        ? truncateWithEllipsis(rawMatchText, maxMatchPreviewChars)
+                        : rawMatchText;
+
                     matches.push({
                         file: relativePath,
                         workspace: workspaceName || undefined,
                         line: i + 1,
                         column: match.index + 1,
-                        match: match[0],
-                        context: contextLines.join('\n')
+                        match: matchText,
+                        // 替换模式下不会在返回体中使用 context，这里置空避免无谓的字符串拼接
+                        context: ''
                     });
                     
                     fileReplacementCount++;
+
+                    // 防止空匹配导致死循环
+                    if ((match[0] ?? '').length === 0) {
+                        searchRegex.lastIndex++;
+                    }
                 }
             }
             
@@ -507,8 +823,13 @@ export function createSearchInFilesTool(): Tool {
                     ? new RegExp(query, flags)
                     : new RegExp(escapeRegex(query), flags);
                 
-                // 获取排除模式
-                const excludePattern = getExcludePattern();
+                // 获取配置与排除模式
+                const searchConfig = getSearchInFilesConfig();
+                const excludePattern = (searchConfig.excludePatterns && searchConfig.excludePatterns.length > 0)
+                    ? (searchConfig.excludePatterns.length === 1
+                        ? searchConfig.excludePatterns[0]
+                        : `{${searchConfig.excludePatterns.join(',')}}`)
+                    : DEFAULT_EXCLUDE;
                 
                 // 解析路径，确定搜索范围
                 const { workspace: targetWorkspace, relativePath, isExplicit } = parseWorkspacePath(searchPath);
@@ -535,6 +856,7 @@ export function createSearchInFilesTool(): Tool {
                             maxFiles,
                             workspaces.length > 1 ? targetWorkspace.name : null,
                             excludePattern,
+                            searchConfig,
                             context?.toolId,
                             context?.abortSignal
                         );
@@ -556,6 +878,7 @@ export function createSearchInFilesTool(): Tool {
                                 remainingFiles,
                                 ws.name,
                                 excludePattern,
+                                searchConfig,
                                 context?.toolId,
                                 context?.abortSignal
                             );
@@ -585,6 +908,7 @@ export function createSearchInFilesTool(): Tool {
                             maxFiles,
                             workspaces.length > 1 ? (targetWorkspace?.name || workspaces[0].name) : null,
                             excludePattern,
+                            searchConfig,
                             context?.toolId,
                             context?.abortSignal
                         );
@@ -616,6 +940,13 @@ export function createSearchInFilesTool(): Tool {
                 } else {
                     // 仅搜索模式
                     let allResults: SearchMatch[] = [];
+                    const configuredMaxTotal = searchConfig.maxTotalResultChars;
+                    const maxTotalChars = (typeof configuredMaxTotal === 'number' && Number.isFinite(configuredMaxTotal))
+                        ? Math.floor(configuredMaxTotal)
+                        : 200000;
+                    const budget: SearchBudget | undefined = maxTotalChars > 0
+                        ? { remainingChars: maxTotalChars, truncated: false }
+                        : undefined;
                     
                     if (isExplicit && targetWorkspace) {
                         // 显式指定了工作区，只搜索该工作区
@@ -630,12 +961,15 @@ export function createSearchInFilesTool(): Tool {
                             searchRegex,
                             maxResults,
                             workspaces.length > 1 ? targetWorkspace.name : null,
-                            excludePattern
+                            excludePattern,
+                            searchConfig,
+                            budget
                         );
                     } else if (searchPath === '.' && workspaces.length > 1) {
                         // 搜索所有工作区
                         for (const ws of workspaces) {
                             if (allResults.length >= maxResults) break;
+                            if (budget && budget.remainingChars <= 0) break;
                             
                             const remaining = maxResults - allResults.length;
                             const wsResults = await searchInDirectory(
@@ -644,7 +978,9 @@ export function createSearchInFilesTool(): Tool {
                                 searchRegex,
                                 remaining,
                                 ws.name,
-                                excludePattern
+                                excludePattern,
+                                searchConfig,
+                                budget
                             );
                             allResults.push(...wsResults);
                         }
@@ -662,7 +998,9 @@ export function createSearchInFilesTool(): Tool {
                             searchRegex,
                             maxResults,
                             workspaces.length > 1 ? (targetWorkspace?.name || workspaces[0].name) : null,
-                            excludePattern
+                            excludePattern,
+                            searchConfig,
+                            budget
                         );
                     }
 
@@ -671,7 +1009,7 @@ export function createSearchInFilesTool(): Tool {
                         data: {
                             results: allResults,
                             count: allResults.length,
-                            truncated: allResults.length >= maxResults,
+                            truncated: allResults.length >= maxResults || !!budget?.truncated,
                             multiRoot: workspaces.length > 1
                         }
                     };

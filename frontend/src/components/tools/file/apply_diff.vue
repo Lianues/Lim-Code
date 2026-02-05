@@ -138,7 +138,24 @@ const filePath = computed(() => {
 const diffList = computed((): DiffBlock[] => {
   const patch = props.args.patch as string | undefined
   if (patch && typeof patch === 'string' && patch.trim()) {
-    return parseUnifiedPatchToDiffBlocks(patch)
+    const blocks = parseUnifiedPatchToDiffBlocks(patch)
+    const data = props.result?.data as Record<string, any> | undefined
+    const results = (data?.results as Array<{ index: number; success?: boolean; error?: string; startLine?: number }> | undefined) || []
+
+    // 将后端 best-effort 的逐 hunk 结果叠加到展示块上
+    return blocks.map((b, i) => {
+      const r = results.find(x => x.index === i)
+      if (!r) {
+        return { ...b }
+      }
+      return {
+        ...b,
+        success: r.success,
+        error: r.error,
+        // 统一使用后端返回的 startLine（更接近真实应用位置）；没有则退回参数
+        start_line: (r.startLine as any) ?? b.start_line
+      }
+    })
   }
 
   const argsDiffs = (props.args.diffs as DiffBlock[] | undefined) || []

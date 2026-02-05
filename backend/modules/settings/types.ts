@@ -59,6 +59,66 @@ export interface SearchInFilesToolConfig {
      * 用于 vscode.workspace.findFiles 的 exclude 参数
      */
     excludePatterns: string[];
+    
+    /**
+     * 是否启用基于文件头的文本/二进制检测
+     *
+     * 启用后：在读取/搜索前先读取少量文件头字节进行启发式判断，
+     * 避免对 .db 等二进制文件进行字符串搜索导致结果爆炸。
+     *
+     * 默认 true
+     */
+    enableHeaderTextCheck?: boolean;
+    
+    /**
+     * 读取文件头的采样字节数（用于文本/二进制检测）
+     * 默认 4096
+     */
+    headerSampleBytes?: number;
+    
+    /**
+     * 搜索模式下允许读取并搜索的最大文件大小（字节）
+     * 超过该大小的文件将被跳过，避免内存/输出过大。
+     * 默认 5MB
+     */
+    maxFileSizeBytes?: number;
+    
+    /**
+     * 替换模式下允许处理（生成 diff）的最大文件大小（字节）
+     * 默认 1MB（更保守，避免生成超大 diff）
+     */
+    maxReplaceFileSizeBytes?: number;
+    
+    /**
+     * 上下文行数（匹配行之前的行数）
+     * 默认 1
+     */
+    contextLinesBefore?: number;
+    
+    /**
+     * 上下文行数（匹配行之后的行数）
+     * 默认 1
+     */
+    contextLinesAfter?: number;
+    
+    /**
+     * 上下文行/非匹配行的最大预览字符数（超出将截断）
+     * 默认 300
+     */
+    maxLinePreviewChars?: number;
+    
+    /**
+     * 匹配行的最大预览字符数（围绕 match 的窗口，超出将截断）
+     * 默认 220
+     */
+    maxMatchPreviewChars?: number;
+    
+    /**
+     * 搜索模式下返回结果的最大总字符预算（近似值）
+     * 达到预算后提前停止并标记 truncated，避免返回体爆炸。
+     * 默认 200000
+     */
+    maxTotalResultChars?: number;
     [key: string]: unknown;
 }
 
@@ -1363,7 +1423,16 @@ export const DEFAULT_SEARCH_IN_FILES_CONFIG: SearchInFilesToolConfig = {
         '**/.turbo/**',
         '**/coverage/**',
         '**/.nyc_output/**'
-    ]
+    ],
+    enableHeaderTextCheck: true,
+    headerSampleBytes: 4096,
+    maxFileSizeBytes: 5 * 1024 * 1024,
+    maxReplaceFileSizeBytes: 1 * 1024 * 1024,
+    contextLinesBefore: 1,
+    contextLinesAfter: 1,
+    maxLinePreviewChars: 300,
+    maxMatchPreviewChars: 220,
+    maxTotalResultChars: 200000
 };
 
 /**

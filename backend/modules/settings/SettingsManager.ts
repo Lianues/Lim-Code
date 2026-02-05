@@ -498,7 +498,12 @@ export class SettingsManager {
      * 获取 search_in_files 工具配置
      */
     getSearchInFilesConfig(): Readonly<SearchInFilesToolConfig> {
-        return this.settings.toolsConfig?.search_in_files || DEFAULT_SEARCH_IN_FILES_CONFIG;
+        // 与默认配置 merge，避免历史配置缺少新增字段（如二进制检测/输出裁剪参数）
+        const cfg = this.settings.toolsConfig?.search_in_files;
+        return {
+            ...DEFAULT_SEARCH_IN_FILES_CONFIG,
+            ...(cfg || {})
+        };
     }
     
     /**

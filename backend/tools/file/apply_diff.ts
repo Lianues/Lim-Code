@@ -12,7 +12,7 @@ import { getDiffManager } from './diffManager';
 import { resolveUriWithInfo, getAllWorkspaces } from '../utils';
 import { getDiffStorageManager } from '../../modules/conversation';
 import { getGlobalSettingsManager } from '../../core/settingsContext';
-import { applyUnifiedDiff, parseUnifiedDiff, type UnifiedDiffHunk } from './unifiedDiff';
+import { applyUnifiedDiffBestEffort, parseUnifiedDiff, type UnifiedDiffHunk } from './unifiedDiff';
 
 /**
  * Legacy：单个 search/replace diff（仍被 DiffManager 用于旧结构的块级 accept/reject 逻辑）
@@ -306,14 +306,43 @@ ${descriptionSuffix}`,
                     }
 
                     const parsed = parseUnifiedDiff(patch);
-                    const { newContent, appliedHunks } = applyUnifiedDiff(originalContent, parsed);
+                    const applied = applyUnifiedDiffBestEffort(originalContent, parsed);
 
                     const diffCount = parsed.hunks.length;
+                    const appliedCount = applied.results.filter(r => r.ok).length;
+                    const failedCount = diffCount - appliedCount;
+
+                    const results = applied.results.map(r => ({
+                        index: r.index,
+                        success: r.ok,
+                        error: r.error,
+                        startLine: r.startLine,
+                        endLine: r.endLine
+                    }));
+
+                    // 一个都没应用上：直接失败返回（不创建 pending diff）
+                    if (appliedCount === 0) {
+                        const firstError = applied.results.find(r => !r.ok)?.error || 'All hunks failed';
+                        return {
+                            success: false,
+                            error: `Failed to apply any hunks: ${firstError}`,
+                            data: {
+                                file: filePath,
+                                message: `Failed to apply any hunks to ${filePath}.`,
+                                status: 'rejected',
+                                diffCount,
+                                totalCount: diffCount,
+                                appliedCount: 0,
+                                failedCount: diffCount,
+                                results
+                            }
+                        };
+                    }
 
                     // 创建待审阅的 diff
                     const diffManager = getDiffManager();
 
-                    const blocks: Array<{ index: number; startLine: number; endLine: number }> = appliedHunks.map(h => ({
+                    const blocks: Array<{ index: number; startLine: number; endLine: number }> = applied.appliedHunks.map(h => ({
                         index: h.index,
                         startLine: h.startLine,
                         endLine: h.endLine
@@ -325,7 +354,7 @@ ${descriptionSuffix}`,
                         filePath,
                         absolutePath,
                         originalContent,
-                        newContent,
+                        applied.newContent,
                         blocks,
                         rawHunks as any[],
                         context?.toolId
@@ -393,7 +422,7 @@ ${descriptionSuffix}`,
                         try {
                             const diffRef = await diffStorageManager.saveGlobalDiff({
                                 originalContent,
-                                newContent,
+                                newContent: applied.newContent,
                                 filePath
                             });
                             diffContentId = diffRef.diffId;
@@ -412,15 +441,19 @@ ${descriptionSuffix}`,
                                 message: `Diff for ${filePath} was cancelled by user.`,
                                 status: 'rejected',
                                 diffCount,
-                                appliedCount: diffCount,
-                                failedCount: 0,
+                                totalCount: diffCount,
+                                appliedCount,
+                                failedCount,
+                                results,
                                 diffContentId
                             }
                         };
                     }
 
                     const message = wasAccepted
-                        ? `Diff applied and saved to ${filePath}`
+                        ? failedCount > 0
+                            ? `Partially applied hunks to ${filePath}: ${appliedCount} succeeded, ${failedCount} failed. Saved successfully.`
+                            : `Diff applied and saved to ${filePath}`
                         : finalDiff?.status === 'rejected'
                           ? `Diff was explicitly rejected by the user for ${filePath}. No changes were saved.`
                           : `Diff was not accepted for ${filePath}. No changes were saved.`;
@@ -432,8 +465,10 @@ ${descriptionSuffix}`,
                             message,
                             status: wasAccepted ? 'accepted' : 'rejected',
                             diffCount,
-                            appliedCount: diffCount,
-                            failedCount: 0,
+                            totalCount: diffCount,
+                            appliedCount,
+                            failedCount,
+                            results,
                             userEditedContent,
                             diffContentId,
                             pendingDiffId: pendingDiff.id

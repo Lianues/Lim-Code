@@ -56,8 +56,63 @@ export interface ApplyUnifiedDiffResult {
     appliedHunks: AppliedHunkRange[];
 }
 
+export interface UnifiedDiffHunkApplyResult {
+    /** hunk index（0-based） */
+    index: number;
+    ok: boolean;
+    /** 失败原因（仅 ok=false 时） */
+    error?: string;
+    /** 在“应用后的内容”中的范围（仅 ok=true 时） */
+    startLine?: number;
+    endLine?: number;
+}
+
+export interface ApplyUnifiedDiffBestEffortResult extends ApplyUnifiedDiffResult {
+    /** 每个 hunk 的应用结果（与 hunks 顺序一一对应） */
+    results: UnifiedDiffHunkApplyResult[];
+}
+
 function normalizeLineEndings(text: string): string {
     return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+}
+
+/**
+ * 对常见“AI 包裹/噪声行”做轻量去除，提升 unified diff 解析兼容性。
+ *
+ * 说明：
+ * - 只移除「列首对齐」的包裹行，避免误伤 hunk 内合法内容（合法内容一定以 ' ', '+', '-' 开头）。
+ * - 不做语义修复（如补全 @@ 行号）；只负责去掉明显不属于 unified diff 的外层壳。
+ */
+function sanitizeUnifiedDiffPatch(patch: string): string {
+    const normalized = normalizeLineEndings(patch);
+    const lines = normalized.split('\n');
+    const out: string[] = [];
+
+    for (const line of lines) {
+        // Markdown code fences（``` / ```diff / ```patch）
+        if (line.startsWith('```')) {
+            continue;
+        }
+
+        // 常见 ApplyPatch 风格包裹（*** Begin Patch / *** Update File: / *** End Patch 等）
+        if (line.startsWith('***')) {
+            if (
+                line === '***' ||
+                line.startsWith('*** Begin Patch') ||
+                line.startsWith('*** End Patch') ||
+                line.startsWith('*** Update File:') ||
+                line.startsWith('*** Add File:') ||
+                line.startsWith('*** Delete File:') ||
+                line.startsWith('*** End of File')
+            ) {
+                continue;
+            }
+        }
+
+        out.push(line);
+    }
+
+    return out.join('\n');
 }
 
 function splitLinesPreserveTrailing(text: string): { lines: string[]; endsWithNewline: boolean } {
@@ -89,7 +144,7 @@ function parseFileHeaderPath(line: string, prefix: '---' | '+++'): string {
  * 解析 unified diff patch（单文件）
  */
 export function parseUnifiedDiff(patch: string): ParsedUnifiedDiff {
-    const normalized = normalizeLineEndings(patch);
+    const normalized = sanitizeUnifiedDiffPatch(patch);
     const lines = normalized.split('\n');
 
     let oldFile: string | undefined;
@@ -301,4 +356,99 @@ export function applyUnifiedDiffHunks(
  */
 export function applyUnifiedDiff(originalContent: string, parsed: ParsedUnifiedDiff): ApplyUnifiedDiffResult {
     return applyUnifiedDiffHunks(originalContent, parsed.hunks);
+}
+
+/**
+ * best-effort：逐 hunk 尝试应用。
+ *
+ * - 每个 hunk 要么完整应用，要么完全不生效（原子回滚）
+ * - 不做模糊定位：仍使用 oldStart + 已应用 delta 定位
+ * - 用于“部分成功”的工具体验（避免 1 个 hunk 失败导致整次 apply_diff 失败）
+ */
+export function applyUnifiedDiffBestEffort(originalContent: string, parsed: ParsedUnifiedDiff): ApplyUnifiedDiffBestEffortResult {
+    const { lines, endsWithNewline } = splitLinesPreserveTrailing(originalContent);
+
+    let delta = 0;
+    const appliedHunks: AppliedHunkRange[] = [];
+    const results: UnifiedDiffHunkApplyResult[] = [];
+
+    for (let hunkIndex = 0; hunkIndex < parsed.hunks.length; hunkIndex++) {
+        const hunk = parsed.hunks[hunkIndex];
+        let snapshot: string[] | null = null;
+
+        try {
+            if (hunk.oldStart < 0) {
+                throw new Error(`Invalid hunk oldStart: ${hunk.oldStart}`);
+            }
+
+            // 统一 diff 的行号是 1-based；oldStart=0 只在特殊情况下出现，这里按插入到文件头处理
+            const baseOldStart = Math.max(1, hunk.oldStart);
+            const startIndex = baseOldStart - 1 + delta;
+
+            if (startIndex < 0 || startIndex > lines.length) {
+                throw new Error(`Hunk start is out of range. ${hunk.header}`);
+            }
+
+            // 原子性：本 hunk 若失败则回滚
+            snapshot = lines.slice();
+
+            let idx = startIndex;
+            let removed = 0;
+            let added = 0;
+
+            for (const line of hunk.lines) {
+                if (line.type === 'context') {
+                    const actual = lines[idx];
+                    if (actual !== line.content) {
+                        throw new Error(
+                            `Hunk context mismatch at ${hunk.header}.\nExpected: ${JSON.stringify(line.content)}\nActual:   ${JSON.stringify(actual)}`
+                        );
+                    }
+                    idx++;
+                    continue;
+                }
+
+                if (line.type === 'del') {
+                    const actual = lines[idx];
+                    if (actual !== line.content) {
+                        throw new Error(
+                            `Hunk delete mismatch at ${hunk.header}.\nExpected: ${JSON.stringify(line.content)}\nActual:   ${JSON.stringify(actual)}`
+                        );
+                    }
+                    lines.splice(idx, 1);
+                    removed++;
+                    continue;
+                }
+
+                // add
+                lines.splice(idx, 0, line.content);
+                idx++;
+                added++;
+            }
+
+            const newLen = computeHunkNewLen(hunk);
+            const startLine = startIndex + 1;
+            const endLine = startLine + Math.max(newLen, 1) - 1;
+            appliedHunks.push({ index: hunkIndex, startLine, endLine });
+
+            delta += added - removed;
+
+            results.push({ index: hunkIndex, ok: true, startLine, endLine });
+        } catch (e) {
+            if (snapshot) {
+                lines.splice(0, lines.length, ...snapshot);
+            }
+            results.push({
+                index: hunkIndex,
+                ok: false,
+                error: e instanceof Error ? e.message : String(e)
+            });
+        }
+    }
+
+    return {
+        newContent: joinLinesPreserveTrailing(lines, endsWithNewline),
+        appliedHunks,
+        results
+    };
 }
