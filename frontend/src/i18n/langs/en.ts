@@ -403,6 +403,7 @@ const en: LanguageMessages = {
                 result: 'Result',
                 error: 'Error',
                 paramCount: '{count} parameters',
+                streamingArgs: 'Generating arguments...',
                 confirmExecution: 'Click to confirm execution',
                 confirm: 'Confirm Execution',
                 saveAll: 'Save All',

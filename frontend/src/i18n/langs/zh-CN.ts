@@ -403,6 +403,7 @@ const zhCN: LanguageMessages = {
                 result: '结果',
                 error: '错误',
                 paramCount: '{count} 个参数',
+                streamingArgs: '正在生成参数...',
                 confirmExecution: '点击确认执行',
                 confirm: '确认执行',
                 saveAll: '全部保存',

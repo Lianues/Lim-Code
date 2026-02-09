@@ -306,6 +306,9 @@ export interface ToolUsage {
    */
   status?: 'streaming' | 'queued' | 'awaiting_approval' | 'executing' | 'awaiting_apply' | 'success' | 'error' | 'warning'
   
+  /** 流式响应中的原始参数片段（streaming 状态时可用） */
+  partialArgs?: string
+
   /** @deprecated 使用 status = awaiting_approval 代替 */
   awaitingConfirmation?: boolean
 }

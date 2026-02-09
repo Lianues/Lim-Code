@@ -332,6 +332,7 @@ export interface LanguageMessages {
                 result: string;
                 error: string;
                 paramCount: string;
+                streamingArgs: string;
                 confirmExecution: string;
                 confirm: string;
                 saveAll: string;

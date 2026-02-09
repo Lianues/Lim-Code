@@ -10,7 +10,7 @@
  * 5. 通过工具 ID 从 store 获取响应结果
  */
 
-import { ref, computed, Component, h, watchEffect, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, Component, h, watchEffect, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
 import type { ToolUsage, Message } from '../../types'
 import { getToolConfig } from '../../utils/toolRegistry'
 import { ensureMcpToolRegistered } from '../../utils/tools'
@@ -575,6 +575,17 @@ function getToolIcon(tool: ToolUsage): string {
 // 获取工具描述
 function getToolDescription(tool: ToolUsage): string {
   const config = getToolConfig(tool.name)
+
+  // 流式状态：如果 args 有数据（partialArgs 已成功解析），仍尝试用 formatter
+  // 否则显示 "正在生成参数..."
+  if (tool.status === 'streaming') {
+    const hasArgs = tool.args && Object.keys(tool.args).length > 0
+    if (hasArgs && config?.descriptionFormatter) {
+      return config.descriptionFormatter(tool.args)
+    }
+    return t('components.message.tool.streamingArgs')
+  }
+
   if (config?.descriptionFormatter) {
     return config.descriptionFormatter(tool.args)
   }
@@ -686,6 +697,44 @@ function getStatusClass(status?: string, awaitingConfirmation?: boolean): string
       return ''
   }
 }
+
+// --- 流式预览 ---
+
+// 判断是否应显示流式参数预览
+function shouldShowStreamingPreview(tool: ToolUsage): boolean {
+  return tool.status === 'streaming' && !!tool.partialArgs && tool.partialArgs.length > 0
+}
+
+// 流式预览元素引用（用于自动滚动到底部）
+const streamingPreviewRefs = new Map<string, HTMLElement>()
+
+function setStreamingPreviewRef(toolId: string) {
+  return (el: HTMLElement | null) => {
+    if (el) {
+      streamingPreviewRefs.set(toolId, el)
+    } else {
+      streamingPreviewRefs.delete(toolId)
+    }
+  }
+}
+
+// 监听 partialArgs 变化，自动滚动流式预览到底部
+watch(
+  () => props.tools.map(t => t.partialArgs?.length ?? 0),
+  () => {
+    nextTick(() => {
+      for (const tool of enhancedTools.value) {
+        if (shouldShowStreamingPreview(tool)) {
+          const el = streamingPreviewRefs.get(tool.id)
+          if (el) {
+            el.scrollTop = el.scrollHeight
+          }
+        }
+      }
+    })
+  },
+  { deep: true }
+)
 
 // 渲染工具内容
 function renderToolContent(tool: ToolUsage) {
@@ -817,6 +866,15 @@ function renderToolContent(tool: ToolUsage) {
             </button>
           </div>
         </div>
+      </div>
+
+      <!-- 流式参数预览 - streaming 状态时自动显示 -->
+      <div
+        v-if="shouldShowStreamingPreview(tool)"
+        class="streaming-preview"
+        :ref="setStreamingPreviewRef(tool.id)"
+      >
+        <pre class="streaming-preview-content">{{ tool.partialArgs }}</pre>
       </div>
 
       <!-- 工具详细内容 - 展开时显示（仅当可展开时） -->
@@ -1122,6 +1180,26 @@ function renderToolContent(tool: ToolUsage) {
 .diff-preview-btn:hover .diff-btn-arrow {
   transform: translateX(2px);
   opacity: 0.8;
+}
+
+/* 流式参数预览 */
+.streaming-preview {
+  max-height: 150px;
+  overflow-y: auto;
+  border-top: 1px solid var(--vscode-panel-border);
+  background: var(--vscode-editor-inactiveSelectionBackground);
+  padding: 4px var(--spacing-sm, 8px);
+}
+
+.streaming-preview-content {
+  margin: 0;
+  font-size: 11px;
+  font-family: var(--vscode-editor-font-family);
+  color: var(--vscode-foreground);
+  white-space: pre-wrap;
+  word-break: break-all;
+  line-height: 1.4;
+  opacity: 0.85;
 }
 
 .tool-content {

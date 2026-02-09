@@ -232,10 +232,9 @@ export function handleFunctionCallPart(part: any, message: Message): void {
     const canMergeByIndex =
       !sameId &&
       !incomingId &&
-      !lastId &&
       sameIndex &&
       (
-        incomingHasPartial ||
+        (incomingHasPartial && lastHasPartial) ||
         (lastHasPartial && incomingHasArgs)
       )
 

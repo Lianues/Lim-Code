@@ -296,6 +296,7 @@ const renderBlocks = computed<RenderBlock[]>(() => {
         id: stableToolId,
         name: part.functionCall.name,
         args: part.functionCall.args,
+        partialArgs: part.functionCall.partialArgs,
         status: existingTool?.status,
         result: existingTool?.result
       })

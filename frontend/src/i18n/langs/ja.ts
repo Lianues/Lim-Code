@@ -403,6 +403,7 @@ const ja: LanguageMessages = {
                 result: '結果',
                 error: 'エラー',
                 paramCount: '{count} 個のパラメータ',
+                streamingArgs: 'パラメータを生成中...',
                 confirmExecution: 'クリックして実行を確認',
                 confirm: '実行を確認',
                 saveAll: 'すべて保存',
