@@ -101,12 +101,10 @@ export function handleStreamChunk(
       
     case 'cancelled':
       handleCancelled(chunk, state)
-      nextTick(() => processQueue())
       break
       
     case 'error':
       handleError(chunk, state)
-      nextTick(() => processQueue())
       break
   }
 }

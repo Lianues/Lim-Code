@@ -124,6 +124,9 @@ export function createChatState(): ChatStoreState {
   /** 消息排队队列（候选区） */
   const messageQueue = ref<QueuedMessage[]>([])
 
+  /** 上一次被 cancelStream 取消的 streamingMessageId */
+  const _lastCancelledStreamId = ref<string | null>(null)
+
   // ============ 多对话标签页 ============
 
   /** 当前打开的标签页列表 */
@@ -173,6 +176,7 @@ export function createChatState(): ChatStoreState {
     activeBuild,
     pendingModelOverride,
     messageQueue,
+    _lastCancelledStreamId,
     openTabs,
     activeTabId,
     sessionSnapshots,

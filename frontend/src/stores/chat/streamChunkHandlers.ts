@@ -715,6 +715,20 @@ export function handleComplete(
   addCheckpoint: (checkpoint: CheckpointRecord) => void,
   updateConversationAfterMessage: () => Promise<void>
 ): void {
+  // 竞态检测：如果 cancelStream 已清理旧请求，而新请求已开始，
+  // 迟到的旧请求 complete chunk 不应该影响新请求的消息和状态
+  const lastCancelledId = state._lastCancelledStreamId.value
+  const isStaleCallback = !!(
+    lastCancelledId &&
+    state.streamingMessageId.value &&
+    state.streamingMessageId.value !== lastCancelledId
+  )
+
+  if (isStaleCallback) {
+    state._lastCancelledStreamId.value = null
+    return
+  }
+
   const messageIndex = state.allMessages.value.findIndex(m => m.id === state.streamingMessageId.value)
   if (messageIndex !== -1) {
     const message = state.allMessages.value[messageIndex]
@@ -758,6 +772,7 @@ export function handleComplete(
   state.isStreaming.value = false
   state.isWaitingForResponse.value = false  // 结束等待
   state.pendingModelOverride.value = null
+  state._lastCancelledStreamId.value = null
   
   // 流式完成后更新对话元数据
   updateConversationAfterMessage()
@@ -782,8 +797,34 @@ export function handleCheckpoints(
  * 处理 cancelled 类型
  */
 export function handleCancelled(chunk: StreamChunk, state: ChatStoreState): void {
-  // 用户取消了请求
-  // 尝试获取目标消息：优先使用 streamingMessageId，如果已清除则尝试寻找最后一条助手消息
+  // 竞态检测：判断这个 cancelled chunk 是否属于已被 cancelStream() 清理过的旧请求。
+  // 如果 cancelStream() 已经清理了状态并且新请求已经开始（streamingMessageId 已变为新 ID），
+  // 此时迟到的 cancelled chunk 不应该重置新请求的全局状态。
+  const lastCancelledId = state._lastCancelledStreamId.value
+  const isStaleCallback = !!(
+    lastCancelledId &&
+    state.streamingMessageId.value &&
+    state.streamingMessageId.value !== lastCancelledId
+  )
+
+  if (isStaleCallback) {
+    // 迟到的旧请求 cancelled chunk：只尝试清理旧消息的元数据，不重置全局状态
+    const oldMsgIndex = state.allMessages.value.findIndex(m => m.id === lastCancelledId)
+    if (oldMsgIndex !== -1) {
+      const msg = state.allMessages.value[oldMsgIndex]
+      if (msg.streaming) {
+        state.allMessages.value = [
+          ...state.allMessages.value.slice(0, oldMsgIndex),
+          { ...msg, streaming: false },
+          ...state.allMessages.value.slice(oldMsgIndex + 1)
+        ]
+      }
+    }
+    state._lastCancelledStreamId.value = null
+    return
+  }
+
+  // 正常的 cancelled 处理
   let messageIndex = -1
   if (state.streamingMessageId.value) {
     messageIndex = state.allMessages.value.findIndex(m => m.id === state.streamingMessageId.value)
@@ -867,12 +908,28 @@ export function handleCancelled(chunk: StreamChunk, state: ChatStoreState): void
   state.isStreaming.value = false
   state.isWaitingForResponse.value = false
   state.pendingModelOverride.value = null
+  state._lastCancelledStreamId.value = null
 }
 
 /**
  * 处理 error 类型
  */
 export function handleError(chunk: StreamChunk, state: ChatStoreState): void {
+  // 竞态检测：与 handleCancelled 相同的逻辑
+  const lastCancelledId = state._lastCancelledStreamId.value
+  const isStaleCallback = !!(
+    lastCancelledId &&
+    state.streamingMessageId.value &&
+    state.streamingMessageId.value !== lastCancelledId
+  )
+
+  if (isStaleCallback) {
+    // 迟到的旧请求 error chunk：不重置新请求的全局状态，仅记录错误
+    state._lastCancelledStreamId.value = null
+    console.warn('[streamChunkHandlers] Stale error chunk ignored (new request in progress)')
+    return
+  }
+
   state.error.value = chunk.error || {
     code: 'STREAM_ERROR',
     message: 'Stream error'
@@ -893,4 +950,5 @@ export function handleError(chunk: StreamChunk, state: ChatStoreState): void {
   state.isStreaming.value = false
   state.isWaitingForResponse.value = false  // 结束等待
   state.pendingModelOverride.value = null
+  state._lastCancelledStreamId.value = null
 }

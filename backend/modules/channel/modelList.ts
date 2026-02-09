@@ -116,13 +116,50 @@ export async function getOpenAIModels(config: ChannelConfig, proxyUrl?: string):
 }
 
 /**
- * 获取 Claude 模型列表
- * Anthropic 没有公开的模型列表 API，返回空列表
+ * 获取 Claude 模型列表（通过 Anthropic Models API）
  */
-export async function getClaudeModels(config: ChannelConfig): Promise<ModelInfo[]> {
-  // Anthropic 没有公开的模型列表 API，返回空列表
-  // 用户需要手动配置模型 ID
-  return [];
+export async function getClaudeModels(config: ChannelConfig, proxyUrl?: string): Promise<ModelInfo[]> {
+  const apiKey = (config as any).apiKey;
+  let url = (config as any).url || 'https://api.anthropic.com';
+  
+  if (url.endsWith('/')) {
+    url = url.slice(0, -1);
+  }
+  
+  // 移除末尾的 /v1/messages 等路径，只保留基础 URL
+  url = url.replace(/\/v1\/(messages|complete)$/i, '');
+  
+  if (!apiKey) {
+    throw new Error(t('modules.channel.modelList.errors.apiKeyRequired'));
+  }
+  
+  try {
+    const proxyFetch = createProxyFetch(proxyUrl);
+    const response = await proxyFetch(`${url}/v1/models`, {
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01'
+      }
+    });
+    
+    if (!response.ok) {
+      throw new Error(t('modules.channel.modelList.errors.fetchModelsFailed', { error: response.statusText }));
+    }
+    
+    const data = await response.json() as any;
+    
+    const models = data.data || [];
+    return models.map((m: any) => ({
+      id: m.id,
+      name: m.display_name || m.id,
+      description: m.display_name ? m.id : undefined,
+      contextWindow: m.input_token_limit,
+      maxOutputTokens: m.output_token_limit
+    }));
+  } catch (error) {
+    console.error('Failed to get Claude models:', error);
+    throw error;
+  }
 }
 
 /**
@@ -140,7 +177,7 @@ export async function getModels(config: ChannelConfig, proxyUrl?: string): Promi
       return getOpenAIModels(config, proxyUrl);
     
     case 'anthropic':
-      return getClaudeModels(config);
+      return getClaudeModels(config, proxyUrl);
     
     default:
       throw new Error(t('modules.channel.modelList.errors.unsupportedConfigType', { type: (config as any).type }));

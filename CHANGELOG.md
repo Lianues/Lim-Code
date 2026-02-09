@@ -6,7 +6,7 @@ All notable changes to the "Lim Code" extension will be documented in this file.
 ## [1.0.83] - 2026-02-10
 
 ### Added
-  - 添加了回合消息队列功能，在此基础上保留了立马发送消息功能和添加批注功能
+  - 初步添加了回合消息队列功能，在此基础上保留了立马发送消息功能和添加批注功能，可能有些bug
 
 ### Improved
   - 优化了路径高亮的显示，避免不存在的文件路径也显示可点击

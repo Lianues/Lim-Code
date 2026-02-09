@@ -182,6 +182,9 @@ export interface ChatStoreState {
   /** 消息排队队列（候选区） */
   messageQueue: Ref<QueuedMessage[]>
 
+  /** 上一次被 cancelStream 取消的 streamingMessageId（用于防止迟到的 cancelled/error chunk 误清新请求状态） */
+  _lastCancelledStreamId: Ref<string | null>
+
   // ============ 多对话标签页 ============
 
   /** 当前打开的标签页列表（有序） */

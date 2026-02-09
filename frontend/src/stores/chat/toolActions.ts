@@ -322,6 +322,9 @@ export async function cancelStreamAndRejectTools(
 ): Promise<void> {
   if (!state.currentConversationId.value) return
 
+  // 记录被取消的 streamingMessageId，防止迟到的 cancelled/error chunk 误清新请求状态
+  state._lastCancelledStreamId.value = state.streamingMessageId.value
+
   // 先让前端流式指示器立即消失（无论是否存在工具调用）
   stopStreamingMessage(state, state.streamingMessageId.value)
   // 如果是“完全空”的占位消息，立即删除，避免后续重试/删除产生索引错位
@@ -384,6 +387,9 @@ export async function cancelStream(
   state: ChatStoreState,
   _computed: ChatStoreComputed
 ): Promise<void> {
+  // 记录被取消的 streamingMessageId，防止后续迟到的 cancelled/error chunk 误清新请求状态
+  state._lastCancelledStreamId.value = state.streamingMessageId.value
+
   if (state.retryStatus.value) {
     state.retryStatus.value = null
   }
