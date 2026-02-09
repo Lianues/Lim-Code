@@ -478,17 +478,44 @@ export async function* proxyStreamFetch(
     
     const socket = await new Promise<tls.TLSSocket | import('net').Socket>((resolve, reject) => {
         const timeout = init.timeout || 120000;
+        let settled = false;
+        let proxyReq: http.ClientRequest | null = null;
+
+        const cleanupAbortListener = () => {
+            if (init.signal) {
+                init.signal.removeEventListener('abort', onAbort);
+            }
+        };
+
+        const finishResolve = (targetSocket: tls.TLSSocket | import('net').Socket) => {
+            if (settled) return;
+            settled = true;
+            cleanupAbortListener();
+            resolve(targetSocket);
+        };
+
+        const finishReject = (error: Error) => {
+            if (settled) return;
+            settled = true;
+            cleanupAbortListener();
+            reject(error);
+        };
         
         // 监听取消信号
         const onAbort = () => {
-            proxyReq.destroy();
-            reject(new Error('Request cancelled'));
+            proxyReq?.destroy();
+            finishReject(new Error('Request cancelled'));
         };
+
         if (init.signal) {
+            if (init.signal.aborted) {
+                onAbort();
+                return;
+            }
             init.signal.addEventListener('abort', onAbort, { once: true });
         }
         
-        const proxyReq = http.request({
+        proxyReq = http.request({
             hostname: proxyParsed.hostname,
             port: proxyParsed.port || 80,
             method: 'CONNECT',
@@ -499,7 +526,7 @@ export async function* proxyStreamFetch(
         proxyReq.on('connect', (res, socket) => {
             if (res.statusCode !== 200) {
                 socket.destroy();
-                reject(new Error(`Proxy CONNECT failed: ${res.statusCode}`));
+                finishReject(new Error(`Proxy CONNECT failed: ${res.statusCode}`));
                 return;
             }
             
@@ -509,24 +536,24 @@ export async function* proxyStreamFetch(
                     servername: targetHost,
                     rejectUnauthorized: false
                 }, () => {
-                    resolve(tlsSocket);
+                    finishResolve(tlsSocket);
                 });
                 
                 tlsSocket.on('error', (error: Error) => {
-                    reject(new Error(`TLS error: ${error.message}`));
+                    finishReject(new Error(`TLS error: ${error.message}`));
                 });
             } else {
-                resolve(socket);
+                finishResolve(socket);
             }
         });
         
         proxyReq.on('error', (error) => {
-            reject(new Error(`Proxy request failed: ${error.message}`));
+            finishReject(new Error(`Proxy request failed: ${error.message}`));
         });
         
         proxyReq.on('timeout', () => {
-            proxyReq.destroy();
-            reject(new Error('Proxy request timeout'));
+            proxyReq?.destroy();
+            finishReject(new Error('Proxy request timeout'));
         });
         
         proxyReq.end();
@@ -636,11 +663,33 @@ export async function* proxyStreamFetch(
         // 创建数据读取 Promise
         const readData = (): Promise<void> => {
             return new Promise((resolve, reject) => {
+                let settled = false;
+
+                const cleanup = () => {
+                    socket.removeListener('data', onData);
+                    socket.removeListener('end', onEnd);
+                    socket.removeListener('close', onClose);
+                    socket.removeListener('error', onError);
+                };
+
+                const finishResolve = () => {
+                    if (settled) return;
+                    settled = true;
+                    cleanup();
+                    resolve();
+                };
+
+                const finishReject = (error: Error) => {
+                    if (settled) return;
+                    settled = true;
+                    cleanup();
+                    reject(error);
+                };
+
                 const onData = (chunk: Buffer) => {
                     // 检查是否已取消
                     if (init.signal?.aborted) {
-                        cleanup();
-                        resolve();
+                        finishResolve();
                         return;
                     }
                     
@@ -669,8 +718,7 @@ export async function* proxyStreamFetch(
                                 } catch {
                                     parsedError = errorBody;
                                 }
-                                cleanup();
-                                reject(new ChannelError(
+                                finishReject(new ChannelError(
                                     ErrorType.API_ERROR,
                                     t('modules.channel.errors.apiError', { status: statusCode }),
                                     parsedError
@@ -705,26 +753,41 @@ export async function* proxyStreamFetch(
                 };
                 
                 const onEnd = () => {
-                    cleanup();
-                    resolve();
+                    if (init.signal?.aborted) {
+                        finishResolve();
+                        return;
+                    }
+                    if (!headersParsed) {
+                        finishReject(new Error('Connection closed before response headers received'));
+                        return;
+                    }
+                    finishResolve();
                 };
                 
                 const onClose = () => {
-                    cleanup();
-                    resolve();
+                    if (init.signal?.aborted) {
+                        finishResolve();
+                        return;
+                    }
+                    if (!headersParsed) {
+                        finishReject(new Error('Connection closed before response headers received'));
+                        return;
+                    }
+                    finishResolve();
                 };
                 
                 const onError = (err: Error) => {
-                    cleanup();
-                    reject(err);
+                    if (init.signal?.aborted) {
+                        finishResolve();
+                        return;
+                    }
+                    finishReject(err);
                 };
-                
-                const cleanup = () => {
-                    socket.removeListener('data', onData);
-                    socket.removeListener('end', onEnd);
-                    socket.removeListener('close', onClose);
-                    socket.removeListener('error', onError);
-                };
+
+                if (init.signal?.aborted) {
+                    finishResolve();
+                    return;
+                }
                 
                 socket.on('data', onData);
                 socket.on('end', onEnd);
@@ -736,12 +799,17 @@ export async function* proxyStreamFetch(
         // 数据队列
         const dataQueue: string[] = [];
         let readPromise: Promise<void> | null = null;
+        let readError: unknown = null;
         let isReading = true;
         
         // 启动后台数据读取
-        readPromise = readData().finally(() => {
-            isReading = false;
-        });
+        readPromise = readData()
+            .catch((err: unknown) => {
+                readError = err;
+            })
+            .finally(() => {
+                isReading = false;
+            });
         
         // 使用轮询方式 yield 数据，避免阻塞
         while (isReading || dataQueue.length > 0) {
@@ -757,7 +825,16 @@ export async function* proxyStreamFetch(
                 await new Promise(resolve => setTimeout(resolve, 10));
             }
         }
-        
+
+        // 等待读取完成
+        if (readPromise) {
+            await readPromise;
+        }
+
+        if (readError) {
+            throw readError;
+        }
+
         // 处理剩余数据
         if (!init.signal?.aborted) {
             if (isChunked && chunkedBuffer.length > 0) {
@@ -768,11 +845,6 @@ export async function* proxyStreamFetch(
             } else if (rawBuffer.length > 0) {
                 yield rawBuffer.toString('utf8');
             }
-        }
-        
-        // 等待读取完成
-        if (readPromise) {
-            await readPromise.catch(() => {});
         }
     } finally {
         // 移除取消信号监听

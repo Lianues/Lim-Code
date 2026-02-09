@@ -3,6 +3,11 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.0.79] - 2026-02-09
+
+### Improved
+  - 优化网络空回问题和报错
+
 ## [1.0.78] - 2026-02-06
 
 ### Added

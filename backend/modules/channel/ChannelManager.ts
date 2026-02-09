@@ -584,6 +584,8 @@ export class ChannelManager {
         }
         
         try {
+            let parsedChunkCount = 0;
+
             // 使用代理流式请求
             if (proxyUrl) {
                 let buffer = '';
@@ -608,6 +610,8 @@ export class ChannelManager {
                     // 处理流式响应
                     const result = this.parseStreamBuffer(buffer);
                     buffer = result.remaining;
+                    parsedChunkCount += result.chunks.length;
+
                     
                     for (const parsed of result.chunks) {
                         yield parsed;
@@ -617,6 +621,8 @@ export class ChannelManager {
                 // 处理剩余的 buffer
                 if (buffer.trim()) {
                     const result = this.parseStreamBuffer(buffer, true);
+                    parsedChunkCount += result.chunks.length;
+
                     for (const chunk of result.chunks) {
                         yield chunk;
                     }
@@ -677,6 +683,8 @@ export class ChannelManager {
                         // 处理流式响应
                         const result = this.parseStreamBuffer(buffer);
                         buffer = result.remaining;
+                        parsedChunkCount += result.chunks.length;
+
                         
                         for (const chunk of result.chunks) {
                             yield chunk;
@@ -686,6 +694,8 @@ export class ChannelManager {
                     // 处理剩余的 buffer
                     if (buffer.trim()) {
                         const result = this.parseStreamBuffer(buffer, true);
+                        parsedChunkCount += result.chunks.length;
+
                         for (const chunk of result.chunks) {
                             yield chunk;
                         }
@@ -701,6 +711,18 @@ export class ChannelManager {
                 } finally {
                     reader.releaseLock();
                 }
+            }
+
+            // 流式连接结束但未解析出任何有效 chunk：
+            // 常见于本地代理/抓包链路提前断开，被误判为“正常结束”。
+            // 显式抛网络错误，触发上层重试并避免前端出现空消息。
+            if (!externalSignal?.aborted && parsedChunkCount === 0) {
+                throw new ChannelError(
+                    ErrorType.NETWORK_ERROR,
+                    t('modules.channel.errors.streamRequestFailed', {
+                        error: t('modules.channel.errors.noResponseBody')
+                    })
+                );
             }
         } catch (error) {
             if (error instanceof ChannelError) {

@@ -11,6 +11,7 @@ import { StreamAbortManager } from './StreamAbortManager';
 import { StreamChunkProcessor } from './StreamChunkProcessor';
 import { t } from '../../backend/i18n';
 import { getDiffManager } from '../../backend/tools/file/diffManager';
+import { ChannelError, ErrorType } from '../../backend/modules/channel/types';
 
 export interface StreamHandlerDeps {
   chatHandler: ChatHandler;
@@ -30,7 +31,7 @@ export class StreamRequestHandler {
   private isAbortError(error: any): boolean {
     const name = error?.name
     const message = typeof error?.message === 'string' ? error.message : ''
-    return name === 'AbortError' || message.toLowerCase().includes('aborted')
+    return name === 'AbortError' || message.toLowerCase().includes('aborted') || message.toLowerCase().includes('cancelled')
   }
 
   private reportCancelled(processor: StreamChunkProcessor): void {
@@ -44,6 +45,23 @@ export class StreamRequestHandler {
     processor.sendError('NETWORK_ERROR', message)
     // 确保请求侧也有响应（即使前端已收到 started:true，这里也安全）
     this.deps.sendError(requestId, 'NETWORK_ERROR', message)
+  }
+
+  private serializeErrorDetails(details: unknown): string {
+    if (details === undefined || details === null) return ''
+    if (typeof details === 'string') return details.trim()
+    try {
+      return JSON.stringify(details, null, 2)
+    } catch {
+      return String(details)
+    }
+  }
+
+  private normalizeErrorMessage(error: any): string {
+    if (typeof error?.message === 'string' && error.message.trim()) {
+      return error.message.trim()
+    }
+    return t('errors.unknown')
   }
 
   /**
@@ -238,10 +256,33 @@ export class StreamRequestHandler {
    * 处理流式错误
    */
   private handleStreamError(error: any, processor: StreamChunkProcessor, requestId: string): void {
-    const errorMessage = error?.message || t('errors.unknown');
-    processor.sendError('STREAM_ERROR', t('core.channel.errors.streamRequestFailed', { error: errorMessage }));
-    
+    if (error instanceof ChannelError) {
+      if (error.type === ErrorType.CANCELLED_ERROR) {
+        this.reportCancelled(processor)
+        return
+      }
+
+      const details = this.serializeErrorDetails(error.details)
+      const message = details ? `${error.message}\n${details}` : error.message
+
+      if (error.type === ErrorType.NETWORK_ERROR || error.type === ErrorType.TIMEOUT_ERROR) {
+        const networkMessage = message || t('errors.networkError')
+        processor.sendError('NETWORK_ERROR', networkMessage)
+        this.deps.sendError(requestId, 'NETWORK_ERROR', networkMessage)
+        return
+      }
+
+      const errorCode = error.type || 'STREAM_ERROR'
+      const fallbackMessage = message || t('errors.unknown')
+      processor.sendError(errorCode, fallbackMessage)
+      this.deps.sendError(requestId, errorCode, fallbackMessage)
+      return
+    }
+
+    const errorMessage = this.normalizeErrorMessage(error)
+    processor.sendError('STREAM_ERROR', t('core.channel.errors.streamRequestFailed', { error: errorMessage }))
+
     // 同时发送请求错误响应，确保前端 await sendToExtension 能够返回
-    this.deps.sendError(requestId, 'STREAM_ERROR', errorMessage);
+    this.deps.sendError(requestId, 'STREAM_ERROR', errorMessage)
   }
 }
