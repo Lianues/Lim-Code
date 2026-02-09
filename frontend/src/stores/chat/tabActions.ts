@@ -10,7 +10,7 @@ import type { StreamHandlerContext } from './streamHandler'
 import { handleStreamChunk } from './streamHandler'
 
 /** 最大标签页数量 */
-const MAX_TABS = 10
+const MAX_TABS = 100
 
 /** 生成标签页 ID */
 function generateTabId(): string {
