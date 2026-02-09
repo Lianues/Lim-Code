@@ -93,6 +93,9 @@ import {
   clearMessages as clearMessagesFn
 } from './chat/messageActions'
 
+import type { SendMessageOptions } from './chat/messageActions'
+import type { BuildSession } from './chat/types'
+
 // 重新导出类型
 export type { Conversation, WorkspaceFilter } from './chat/types'
 
@@ -121,7 +124,7 @@ export const useChatStore = defineStore('chat', () => {
 
   // ============ 消息操作 ============
   
-  const sendMessage = (messageText: string, attachments?: Attachment[], options?: { modelOverride?: string }) =>
+  const sendMessage = (messageText: string, attachments?: Attachment[], options?: SendMessageOptions) =>
     sendMessageFn(state, computed, messageText, attachments, options)
   
   const retryLastMessage = () => retryLastMessageFn(state, computed, cancelStream)
@@ -156,6 +159,38 @@ export const useChatStore = defineStore('chat', () => {
   const setWorkspaceFilter = (filter: 'current' | 'all') => setWorkspaceFilterAction(state, filter)
   const setInputValue = (value: string) => setInputValueAction(state, value)
   const clearInputValue = () => clearInputValueAction(state)
+
+  // ============ Build（Plan 执行）============
+
+  async function setActiveBuild(
+    build: BuildSession | null,
+    options?: { persist?: boolean }
+  ): Promise<void> {
+    const conversationId = state.currentConversationId.value || ''
+    const normalizedBuild = build && conversationId
+      ? { ...build, conversationId: build.conversationId || conversationId }
+      : build
+
+    state.activeBuild.value = normalizedBuild
+
+    if (options?.persist === false) return
+    if (!conversationId) return
+
+    // 防止把 A 对话的 Build 误写到 B 对话（切换竞态）
+    if (normalizedBuild && normalizedBuild.conversationId !== conversationId) {
+      return
+    }
+
+    try {
+      await sendToExtension('conversation.setCustomMetadata', {
+        conversationId,
+        key: 'activeBuild',
+        value: normalizedBuild
+      })
+    } catch (error) {
+      console.error('[chatStore] Failed to persist activeBuild:', error)
+    }
+  }
   
   // ============ 检查点操作 ============
   
@@ -313,6 +348,7 @@ export const useChatStore = defineStore('chat', () => {
 
     // Build（Plan 执行）
     activeBuild: state.activeBuild,
+    setActiveBuild,
     pendingModelOverride: state.pendingModelOverride,
     
     // 上下文总结

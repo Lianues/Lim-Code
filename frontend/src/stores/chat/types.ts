@@ -71,6 +71,7 @@ export type BuildStatus = 'running' | 'done'
 
 export interface BuildSession {
   id: string
+  conversationId: string
   title: string
   planContent: string
   planPath?: string

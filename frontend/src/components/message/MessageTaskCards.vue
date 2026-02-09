@@ -24,6 +24,25 @@ const chatStore = useChatStore()
 
 type CardStatus = 'pending' | 'running' | 'success' | 'error'
 
+type PlanEntry = {
+  path: string
+  content: string
+  success?: boolean
+  executionPrompt?: string
+}
+
+type PlanCardItem = {
+  key: string
+  status: CardStatus
+  title: string
+  path: string
+  content: string
+  badge?: string
+  toolId: string
+  toolName: string
+  isExecuted: boolean
+}
+
 // ============ 渠道选择相关 ============
 const channelConfigs = ref<any[]>([])
 const selectedChannelId = ref('')
@@ -133,9 +152,10 @@ function getPlanTitle(planContent: string, planPath?: string): string {
   return 'Plan'
 }
 
-async function executePlan(planContent: string, planPath?: string) {
-  if (isExecutingPlan.value || !planContent.trim()) return
+async function executePlan(card: PlanCardItem) {
+  if (isExecutingPlan.value || card.isExecuted || !card.content.trim()) return
   isExecutingPlan.value = true
+  let latestPlanContent = card.content
   
   const originalConfigId = chatStore.configId
   const switchedConfig = !!selectedChannelId.value && selectedChannelId.value !== originalConfigId
@@ -152,27 +172,38 @@ async function executePlan(planContent: string, planPath?: string) {
       prompt: string
       planContent: string
     }>('plan.confirmExecution', {
-      path: planPath,
-      originalContent: planContent
+      path: card.path,
+      originalContent: card.content
     })
 
     const prompt = confirmResult.prompt
-    planContent = confirmResult.planContent || planContent
+    latestPlanContent = confirmResult.planContent || card.content
 
     // 启动 Build 顶部卡片（Cursor-like）
-    chatStore.activeBuild = {
+    await chatStore.setActiveBuild({
       id: generateId(),
-      title: getPlanTitle(planContent, planPath),
-      planContent,
-      planPath,
+      conversationId: chatStore.currentConversationId || '',
+      title: getPlanTitle(latestPlanContent, card.path),
+      planContent: latestPlanContent,
+      planPath: card.path,
       channelId: selectedChannelId.value || undefined,
       modelId: selectedModelId.value || undefined,
       startedAt: Date.now(),
       status: 'running'
-    }
+    })
 
-    await chatStore.sendMessage(prompt, undefined, {
-      modelOverride: selectedModelId.value || undefined
+    // 不创建新的可见 user 消息：把确认信息追加到 create_plan 的 functionResponse 字段里再继续对话
+    await chatStore.sendMessage('', undefined, {
+      modelOverride: selectedModelId.value || undefined,
+      hidden: {
+        functionResponse: {
+          id: card.toolId,
+          name: card.toolName,
+          response: {
+            planExecutionPrompt: prompt
+          }
+        }
+      }
     })
   } catch (error) {
     console.error('Failed to execute plan:', error)
@@ -198,12 +229,31 @@ watch(
 )
 
 // ============ 工具状态映射 ============
+function getToolResult(tool: ToolUsage): any {
+  const fromTool = tool.result && typeof tool.result === 'object'
+    ? tool.result as any
+    : undefined
+
+  const fromResponse = tool.id
+    ? chatStore.getToolResponseById(tool.id) as any
+    : undefined
+
+  // 优先融合 functionResponse（包含 reload 后的真实结果、以及执行计划确认字段）
+  if (fromTool && fromResponse && typeof fromResponse === 'object') {
+    return { ...fromTool, ...fromResponse }
+  }
+  if (fromResponse && typeof fromResponse === 'object') {
+    return fromResponse
+  }
+  return fromTool
+}
+
 function mapToolStatus(tool: ToolUsage): CardStatus {
   if (tool.status === 'executing' || tool.status === 'streaming' || tool.status === 'queued') return 'running'
   if (tool.status === 'success') return 'success'
   if (tool.status === 'error') return 'error'
 
-  const r = tool.result as any
+  const r = getToolResult(tool)
   if (!r) return 'pending'
   if (r.success === true) return 'success'
   if (r.success === false) return 'error'
@@ -211,11 +261,11 @@ function mapToolStatus(tool: ToolUsage): CardStatus {
 }
 
 // ============ Plan 数据提取 ============
-function getWriteFilePlanEntries(tool: ToolUsage): Array<{ path: string; content: string; success?: boolean }> {
+function getWriteFilePlanEntries(tool: ToolUsage): PlanEntry[] {
   const args = tool.args as any
   const files = Array.isArray(args?.files) ? args.files : []
 
-  const result = tool.result as any
+  const result = getToolResult(tool)
   const resultList = Array.isArray(result?.data?.results) ? result.data.results : []
   const successByPath = new Map<string, boolean>()
   for (const r of resultList) {
@@ -224,7 +274,7 @@ function getWriteFilePlanEntries(tool: ToolUsage): Array<{ path: string; content
     }
   }
 
-  const entries: Array<{ path: string; content: string; success?: boolean }> = []
+  const entries: PlanEntry[] = []
   for (const f of files) {
     const path = f?.path
     const content = f?.content
@@ -235,9 +285,9 @@ function getWriteFilePlanEntries(tool: ToolUsage): Array<{ path: string; content
   return entries
 }
 
-function getCreatePlanEntries(tool: ToolUsage): Array<{ path: string; content: string; success?: boolean }> {
+function getCreatePlanEntries(tool: ToolUsage): PlanEntry[] {
   const args = tool.args as any
-  const result = tool.result as any
+  const result = getToolResult(tool)
 
   const path = (result?.data?.path || args?.path) as string | undefined
   const content = (result?.data?.content || args?.plan) as string | undefined
@@ -246,18 +296,14 @@ function getCreatePlanEntries(tool: ToolUsage): Array<{ path: string; content: s
   if (!isPlanDocPath(path)) return []
 
   const success = typeof result?.success === 'boolean' ? result.success : undefined
-  return [{ path, content, success }]
+  const executionPrompt = typeof result?.planExecutionPrompt === 'string' && result.planExecutionPrompt.trim()
+    ? result.planExecutionPrompt
+    : undefined
+  return [{ path, content, success, executionPrompt }]
 }
 
-const planCards = computed(() => {
-  const cards: Array<{
-    key: string
-    status: CardStatus
-    title: string
-    path: string
-    content: string
-    badge?: string
-  }> = []
+const planCards = computed<PlanCardItem[]>(() => {
+  const cards: PlanCardItem[] = []
 
   for (const tool of props.tools) {
     const entries = tool.name === 'write_file'
@@ -268,7 +314,9 @@ const planCards = computed(() => {
     if (entries.length === 0) continue
 
     for (const entry of entries) {
-      const status: CardStatus = typeof entry.success === 'boolean'
+      const status: CardStatus = entry.executionPrompt
+        ? 'success'
+        : typeof entry.success === 'boolean'
         ? (entry.success ? 'success' : 'error')
         : mapToolStatus(tool)
 
@@ -278,7 +326,10 @@ const planCards = computed(() => {
         title: 'Plan',
         path: entry.path,
         content: entry.content,
-        badge: props.messageModelVersion || ''
+        badge: props.messageModelVersion || '',
+        toolId: tool.id,
+        toolName: tool.name,
+        isExecuted: !!entry.executionPrompt
       })
     }
   }
@@ -345,12 +396,14 @@ const hasAny = computed(() => planCards.value.length > 0)
         </div>
         <button
           class="execute-btn"
-          :disabled="isExecutingPlan || !selectedChannelId || !selectedModelId"
-          @click="executePlan(c.content, c.path)"
+          :class="{ done: c.isExecuted }"
+          :disabled="isExecutingPlan || c.isExecuted || !selectedChannelId || !selectedModelId"
+          @click="executePlan(c)"
         >
-          <span v-if="isExecutingPlan" class="codicon codicon-loading codicon-modifier-spin"></span>
+          <span v-if="c.isExecuted" class="codicon codicon-check"></span>
+          <span v-else-if="isExecutingPlan" class="codicon codicon-loading codicon-modifier-spin"></span>
           <span v-else class="codicon codicon-play"></span>
-          <span class="btn-text">{{ isExecutingPlan ? '执行中...' : '执行计划' }}</span>
+          <span class="btn-text">{{ c.isExecuted ? '已执行' : (isExecutingPlan ? '执行中...' : '执行计划') }}</span>
         </button>
       </div>
     </div>
@@ -511,9 +564,25 @@ const hasAny = computed(() => planCards.value.length > 0)
   background: var(--vscode-button-hoverBackground);
 }
 
+.execute-btn.done {
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+  opacity: 0.85;
+}
+
+.execute-btn.done:hover:not(:disabled) {
+  background: var(--vscode-button-secondaryBackground);
+}
+
 .execute-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.execute-btn.done:disabled {
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+  opacity: 0.7;
 }
 
 .btn-text {

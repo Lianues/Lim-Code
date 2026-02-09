@@ -37,6 +37,20 @@ export interface AttachmentData {
 }
 
 /**
+ * 隐藏 functionResponse 负载（用于“无可见用户消息”的继续对话）
+ */
+export interface HiddenFunctionResponseData {
+    /** 对应的工具调用 ID（可选） */
+    id?: string;
+
+    /** 工具名称 */
+    name: string;
+
+    /** 函数响应对象 */
+    response: Record<string, unknown>;
+}
+
+/**
  * 对话请求数据
  */
 export interface ChatRequestData {
@@ -61,6 +75,11 @@ export interface ChatRequestData {
     
     /** 取消信号 */
     abortSignal?: AbortSignal;
+
+    /**
+     * 隐藏 functionResponse：存在时，不创建可见 user 文本消息，改为写入 functionResponse 后继续循环
+     */
+    hiddenFunctionResponse?: HiddenFunctionResponseData;
 }
 
 // ==================== 响应数据 ====================

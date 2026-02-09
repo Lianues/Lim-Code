@@ -147,8 +147,9 @@ async function executePlan(planContent: string, planPath?: string) {
     }
     
     // 启动 Build 顶部卡片（Cursor-like）
-    chatStore.activeBuild = {
+    await chatStore.setActiveBuild({
       id: generateId(),
+      conversationId: chatStore.currentConversationId || '',
       title: getPlanTitle(planContent, planPath),
       planContent,
       planPath,
@@ -156,7 +157,7 @@ async function executePlan(planContent: string, planPath?: string) {
       modelId: selectedModelId.value || undefined,
       startedAt: Date.now(),
       status: 'running'
-    }
+    })
 
     // 发送 Plan 内容作为新消息
     const prompt = `请按照以下计划执行：\n\n${planContent}`

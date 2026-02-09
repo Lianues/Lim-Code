@@ -86,11 +86,83 @@ export class ChatFlowService {
     await this.conversationManager.getHistory(conversationId);
   }
 
+  private mergeResponseWithCleanup(
+    existing: Record<string, unknown> | undefined,
+    patch: Record<string, unknown>
+  ): Record<string, unknown> {
+    return {
+      ...(existing && typeof existing === 'object' ? existing : {}),
+      ...(patch || {})
+    };
+  }
+
+  /**
+   * 写入（或替换）一条隐藏 functionResponse。
+   *
+   * 用途：前端需要“继续对话”但不创建可见 user 文本消息（例如 Plan 执行确认）。
+   *
+   * 规则：
+   * 1) 若提供 id，优先在历史中按 functionResponse.id 精确匹配并替换；
+   * 2) 否则（或未匹配到）追加一条 isFunctionResponse 的 user 消息。
+   */
+  private async upsertHiddenFunctionResponse(
+    conversationId: string,
+    hidden: NonNullable<ChatRequestData['hiddenFunctionResponse']>,
+  ): Promise<void> {
+    const targetId = typeof hidden.id === 'string' && hidden.id.trim() ? hidden.id.trim() : undefined;
+
+    if (targetId) {
+      const history = await this.conversationManager.getHistoryRef(conversationId);
+
+      for (let i = history.length - 1; i >= 0; i--) {
+        const msg = history[i];
+        if (msg.role !== 'user' || !Array.isArray(msg.parts) || msg.parts.length === 0) continue;
+
+        let matched = false;
+        const nextParts: ContentPart[] = msg.parts.map((part) => {
+          if (!part.functionResponse) return part;
+          if (part.functionResponse.id !== targetId) return part;
+
+          matched = true;
+          return {
+            ...part,
+            functionResponse: {
+              ...part.functionResponse,
+              id: targetId,
+              name: hidden.name,
+              response: this.mergeResponseWithCleanup(part.functionResponse.response, hidden.response),
+            },
+          };
+        });
+
+        if (matched) {
+          await this.conversationManager.updateMessage(conversationId, i, {
+            parts: nextParts,
+            isFunctionResponse: true,
+          });
+          return;
+        }
+      }
+    }
+
+    await this.conversationManager.addContent(conversationId, {
+      role: 'user',
+      parts: [{
+        functionResponse: {
+          id: targetId,
+          name: hidden.name,
+          response: hidden.response,
+        },
+      }],
+      isFunctionResponse: true,
+    });
+  }
+
   /**
    * 非流式 Chat 流程
    */
   async handleChat(request: ChatRequestData): Promise<ChatSuccessData | ChatErrorData> {
-    const { conversationId, configId, message, modelOverride } = request;
+    const { conversationId, configId, message, modelOverride, hiddenFunctionResponse } = request;
 
     // 1. 确保对话存在（自动创建）
     await this.ensureConversation(conversationId);
@@ -117,11 +189,15 @@ export class ChatFlowService {
       };
     }
 
-    // 3. 添加用户消息到历史（包含附件）
-    const userParts = this.messageBuilderService.buildUserMessageParts(message, request.attachments);
-    await this.conversationManager.addMessage(conversationId, 'user', userParts, {
-      isUserInput: true
-    });
+    // 3. 添加输入到历史
+    if (hiddenFunctionResponse) {
+      await this.upsertHiddenFunctionResponse(conversationId, hiddenFunctionResponse);
+    } else {
+      const userParts = this.messageBuilderService.buildUserMessageParts(message, request.attachments);
+      await this.conversationManager.addMessage(conversationId, 'user', userParts, {
+        isUserInput: true
+      });
+    }
 
     // 4. 工具调用循环（委托给 ToolIterationLoopService，非流式）
     const maxToolIterations = this.getMaxToolIterations();
@@ -312,7 +388,7 @@ export class ChatFlowService {
   async *handleChatStream(
     request: ChatRequestData,
   ): AsyncGenerator<ChatStreamOutput> {
-    const { conversationId, configId, message, modelOverride } = request;
+    const { conversationId, configId, message, modelOverride, hiddenFunctionResponse } = request;
 
     // 1. 确保对话存在
     await this.ensureConversation(conversationId);
@@ -349,42 +425,49 @@ export class ChatFlowService {
     // 这确保 functionResponse 会被插入到工具调用消息之后，用户消息之前
     await this.conversationManager.rejectAllPendingToolCalls(conversationId);
 
-    // 4. 为用户消息创建存档点（如果配置了执行前）
-    const beforeUserCheckpoint = await this.checkpointService.createUserMessageCheckpoint(
-      conversationId,
-      'before',
-    );
-    if (beforeUserCheckpoint) {
-      // 立即发送用户消息前存档点到前端
-      yield {
+    // 4/5/6. 写入输入到历史：
+    // - 普通模式：用户文本消息 + before/after checkpoint
+    // - 隐藏模式：写入（或替换）functionResponse，不创建可见 user 文本消息，也不创建用户消息 checkpoint
+    if (!hiddenFunctionResponse) {
+      // 4. 为用户消息创建存档点（如果配置了执行前）
+      const beforeUserCheckpoint = await this.checkpointService.createUserMessageCheckpoint(
         conversationId,
-        checkpoints: [beforeUserCheckpoint],
-        checkpointOnly: true as const,
-      } satisfies ChatStreamCheckpointsData;
-    }
+        'before',
+      );
+      if (beforeUserCheckpoint) {
+        // 立即发送用户消息前存档点到前端
+        yield {
+          conversationId,
+          checkpoints: [beforeUserCheckpoint],
+          checkpointOnly: true as const,
+        } satisfies ChatStreamCheckpointsData;
+      }
 
-    // 5. 添加用户消息到历史（包含附件）
-    const userParts = this.messageBuilderService.buildUserMessageParts(message, request.attachments);
-    await this.conversationManager.addMessage(conversationId, 'user', userParts, {
-      isUserInput: true
-    });
+      // 5. 添加用户消息到历史（包含附件）
+      const userParts = this.messageBuilderService.buildUserMessageParts(message, request.attachments);
+      await this.conversationManager.addMessage(conversationId, 'user', userParts, {
+        isUserInput: true
+      });
+
+      // 注：用户消息的 token 计数将在 ContextTrimService.getHistoryWithContextTrimInfo 中
+      // 与系统提示词、动态上下文一起并行计算，节省时间
+
+      // 6. 为用户消息创建存档点（如果配置了执行后）
+      const afterUserCheckpoint = await this.checkpointService.createUserMessageCheckpoint(
+        conversationId,
+        'after',
+      );
+      if (afterUserCheckpoint) {
+        yield {
+          conversationId,
+          checkpoints: [afterUserCheckpoint],
+          checkpointOnly: true as const,
+        } satisfies ChatStreamCheckpointsData;
+      }
+    } else {
+      await this.upsertHiddenFunctionResponse(conversationId, hiddenFunctionResponse);
+    }
     
-    // 注：用户消息的 token 计数将在 ContextTrimService.getHistoryWithContextTrimInfo 中
-    // 与系统提示词、动态上下文一起并行计算，节省时间
-
-    // 6. 为用户消息创建存档点（如果配置了执行后）
-    const afterUserCheckpoint = await this.checkpointService.createUserMessageCheckpoint(
-      conversationId,
-      'after',
-    );
-    if (afterUserCheckpoint) {
-      yield {
-        conversationId,
-        checkpoints: [afterUserCheckpoint],
-        checkpointOnly: true as const,
-      } satisfies ChatStreamCheckpointsData;
-    }
-
     // 7. 重置中断标记
     this.diffInterruptService.resetUserInterrupt();
 

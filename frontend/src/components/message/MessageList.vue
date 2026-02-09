@@ -201,7 +201,7 @@ watch(
   () => chatStore.isWaitingForResponse,
   (waiting) => {
     if (!waiting && chatStore.activeBuild && chatStore.activeBuild.status === 'running') {
-      chatStore.activeBuild = { ...chatStore.activeBuild, status: 'done' }
+      void chatStore.setActiveBuild({ ...chatStore.activeBuild, status: 'done' })
     }
   }
 )
@@ -211,13 +211,13 @@ async function stopBuild() {
     await chatStore.cancelStream()
   } finally {
     if (chatStore.activeBuild) {
-      chatStore.activeBuild = { ...chatStore.activeBuild, status: 'done' }
+      await chatStore.setActiveBuild({ ...chatStore.activeBuild, status: 'done' })
     }
   }
 }
 
 function dismissBuild() {
-  chatStore.activeBuild = null
+  void chatStore.setActiveBuild(null)
   isBuildExpanded.value = false
 }
 

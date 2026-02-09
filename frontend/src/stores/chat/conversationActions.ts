@@ -4,7 +4,7 @@
  * 包含对话的 CRUD 操作
  */
 
-import type { ChatStoreState, Conversation, CheckpointRecord } from './types'
+import type { ChatStoreState, Conversation, CheckpointRecord, BuildSession } from './types'
 import { sendToExtension } from '../../utils/vscode'
 import { contentToMessageEnhanced } from './parsers'
 import type { Content } from '../../types'
@@ -69,6 +69,42 @@ async function mapWithConcurrency<T, R>(
  */
 export type CancelStreamAndRejectToolsCallback = () => Promise<void>
 
+function parsePersistedBuildSession(raw: any, conversationId: string): BuildSession | null {
+  if (!raw || typeof raw !== 'object') return null
+
+  const id = typeof raw.id === 'string' ? raw.id : ''
+  const title = typeof raw.title === 'string' ? raw.title : ''
+  const planContent = typeof raw.planContent === 'string' ? raw.planContent : ''
+  const startedAt = typeof raw.startedAt === 'number' ? raw.startedAt : 0
+  const status: BuildSession['status'] = raw.status === 'running' ? 'running' : 'done'
+
+  if (!id || !title || !planContent || !startedAt) return null
+
+  return {
+    id,
+    conversationId,
+    title,
+    planContent,
+    planPath: typeof raw.planPath === 'string' ? raw.planPath : undefined,
+    channelId: typeof raw.channelId === 'string' ? raw.channelId : undefined,
+    modelId: typeof raw.modelId === 'string' ? raw.modelId : undefined,
+    startedAt,
+    status
+  }
+}
+
+async function loadConversationBuildSession(conversationId: string): Promise<BuildSession | null> {
+  try {
+    const metadata = await sendToExtension<any>('conversation.getConversationMetadata', {
+      conversationId
+    })
+    return parsePersistedBuildSession(metadata?.custom?.activeBuild, conversationId)
+  } catch (error) {
+    console.error('[conversationActions] Failed to load activeBuild from metadata:', error)
+    return null
+  }
+}
+
 /**
  * 创建新对话（仅清空消息，不创建对话记录）
  *
@@ -92,6 +128,7 @@ export async function createNewConversation(
   state.foldedMessageCount.value = 0
   state.checkpoints.value = []  // 清空检查点
   state.error.value = null
+  state.activeBuild.value = null
   
   // 清除所有加载和流式状态
   state.isLoading.value = false
@@ -398,6 +435,7 @@ export async function switchConversation(
   }
   
   // 清除状态
+  state.activeBuild.value = null
   state.currentConversationId.value = id
   state.allMessages.value = []
   state.windowStartIndex.value = 0
@@ -419,6 +457,11 @@ export async function switchConversation(
     
     // 更新对话的消息数量（在加载后才有准确数据）
     conv.messageCount = state.totalMessages.value || state.allMessages.value.length
+
+    // 恢复该对话的 Build 会话（用于重进应用后显示顶部 Build 卡片）
+    state.activeBuild.value = await loadConversationBuildSession(id)
+  } else {
+    state.activeBuild.value = null
   }
 }
 

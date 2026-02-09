@@ -69,6 +69,7 @@ export function createChatComputed(state: ChatStoreState): ChatStoreComputed {
    * 例外：如果工具返回了 requiresUserConfirmation（如 create_plan），
    * 说明工具主动要求暂停循环等待用户操作（如点击"执行计划"），
    * 此时不应显示此提示。
+   * 但若该工具已被确认执行（response 中已有 planExecutionPrompt），则恢复显示"继续"提示。
    */
   const needsContinueButton = computed(() => {
     if (state.allMessages.value.length === 0) return false
@@ -81,9 +82,21 @@ export function createChatComputed(state: ChatStoreState): ChatStoreComputed {
 
     // 检查是否有工具要求暂停等待用户确认（如 create_plan 的 requiresUserConfirmation）
     // 此时计划卡片会显示"执行计划"按钮，不需要额外的"继续"提示
-    if (lastMessage.parts?.some(p =>
-      (p.functionResponse?.response as any)?.requiresUserConfirmation
-    )) {
+    const hasPendingUserConfirmation = lastMessage.parts?.some(p => {
+      const response = (p.functionResponse?.response as any)
+      if (!response?.requiresUserConfirmation) return false
+
+      // 如果已经写入执行确认提示（执行计划完成态），说明“确认阶段”已结束；
+      // 这时若对话被中断，应显示底部“继续对话”提示用于恢复。
+      const executedPrompt =
+        typeof response?.planExecutionPrompt === 'string'
+          ? response.planExecutionPrompt.trim()
+          : ''
+
+      return executedPrompt.length === 0
+    })
+
+    if (hasPendingUserConfirmation) {
       return false
     }
 

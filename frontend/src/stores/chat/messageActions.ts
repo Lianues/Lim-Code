@@ -19,6 +19,20 @@ import { syncTotalMessagesFromWindow, setTotalMessagesFromWindow, trimWindowFrom
 export type CancelStreamCallback = () => Promise<void>
 
 /**
+ * 隐藏发送（不创建可见 user 消息）时，写入的一条 functionResponse
+ */
+export interface HiddenFunctionResponsePayload {
+  id?: string
+  name: string
+  response: Record<string, unknown>
+}
+
+export interface SendMessageOptions {
+  modelOverride?: string
+  hidden?: { functionResponse: HiddenFunctionResponsePayload }
+}
+
+/**
  * 计算后端消息索引
  *
  * 当前实现：前端的 allMessages 会存储所有消息（包括 functionResponse 消息），
@@ -56,14 +70,86 @@ function isLocalOnlyAssistant(msg: Message | undefined): boolean {
 /**
  * 发送消息
  */
+function mergeResponseWithCleanup(
+  existing: Record<string, unknown> | undefined,
+  patch: Record<string, unknown>
+): Record<string, unknown> {
+  return {
+    ...(existing && typeof existing === 'object' ? existing : {}),
+    ...(patch || {})
+  }
+}
+
+function upsertHiddenFunctionResponseMessage(
+  state: ChatStoreState,
+  payload: HiddenFunctionResponsePayload
+): void {
+  const all = state.allMessages.value
+
+  // 1) 优先按 id 定位并替换已有 functionResponse（如 create_plan 的原始响应）
+  if (payload.id) {
+    for (let i = all.length - 1; i >= 0; i--) {
+      const msg = all[i]
+      if (!msg.isFunctionResponse || !msg.parts || msg.parts.length === 0) continue
+
+      let matched = false
+      const nextParts = msg.parts.map(part => {
+        const fr = part.functionResponse
+        if (!fr) return part
+        if (fr.id !== payload.id) return part
+
+        matched = true
+        return {
+          ...part,
+          functionResponse: {
+            ...fr,
+            id: payload.id || fr.id,
+            name: payload.name,
+            response: mergeResponseWithCleanup(fr.response as Record<string, unknown> | undefined, payload.response)
+          }
+        }
+      })
+
+      if (matched) {
+        state.allMessages.value = [
+          ...all.slice(0, i),
+          { ...msg, parts: nextParts },
+          ...all.slice(i + 1)
+        ]
+        return
+      }
+    }
+  }
+
+  // 2) 如果未命中，追加一条隐藏 functionResponse 消息
+  const responseMessage: Message = {
+    id: generateId(),
+    role: 'user',
+    content: '',
+    timestamp: Date.now(),
+    backendIndex: getNextBackendIndex(state),
+    isFunctionResponse: true,
+    parts: [{
+      functionResponse: {
+        id: payload.id,
+        name: payload.name,
+        response: payload.response
+      }
+    }]
+  }
+  state.allMessages.value.push(responseMessage)
+}
+
 export async function sendMessage(
   state: ChatStoreState,
   computed: ChatStoreComputed,
   messageText: string,
   attachments?: Attachment[],
-  options?: { modelOverride?: string }
+  options?: SendMessageOptions
 ): Promise<void> {
-  if (!messageText.trim() && (!attachments || attachments.length === 0)) return
+  const hiddenFunctionResponse = options?.hidden?.functionResponse
+  const isHiddenSend = !!hiddenFunctionResponse
+  if (!isHiddenSend && !messageText.trim() && (!attachments || attachments.length === 0)) return
   
   state.error.value = null
   if (state.isWaitingForResponse.value) return
@@ -80,15 +166,20 @@ export async function sendMessage(
       }
     }
     
-    const userMessage: Message = {
-      id: generateId(),
-      role: 'user',
-      content: messageText,
-      timestamp: Date.now(),
-      backendIndex: getNextBackendIndex(state),
-      attachments: attachments && attachments.length > 0 ? attachments : undefined
+    if (hiddenFunctionResponse) {
+      // 隐藏模式：不创建可见 user 消息，改为 functionResponse（可用于计划确认等场景）
+      upsertHiddenFunctionResponseMessage(state, hiddenFunctionResponse)
+    } else {
+      const userMessage: Message = {
+        id: generateId(),
+        role: 'user',
+        content: messageText,
+        timestamp: Date.now(),
+        backendIndex: getNextBackendIndex(state),
+        attachments: attachments && attachments.length > 0 ? attachments : undefined
+      }
+      state.allMessages.value.push(userMessage)
     }
-    state.allMessages.value.push(userMessage)
     
     const assistantMessageId = generateId()
     const displayModelVersion = options?.modelOverride || computed.currentModelName.value
@@ -116,7 +207,9 @@ export async function sendMessage(
       const knownTotal = Math.max(state.totalMessages.value, state.windowStartIndex.value + state.allMessages.value.length)
       state.totalMessages.value = knownTotal
       conv.messageCount = knownTotal
-      conv.preview = messageText.slice(0, 50)
+      if (!hiddenFunctionResponse) {
+        conv.preview = messageText.slice(0, 50)
+      }
     }
     
     state.toolCallBuffer.value = ''
@@ -125,6 +218,7 @@ export async function sendMessage(
     
     const attachmentData: AttachmentData[] | undefined = attachments && attachments.length > 0
       ? attachments.map(att => ({
+          // 隐藏模式默认不带附件（这里保留原有结构以兼容调用）
           id: att.id,
           name: att.name,
           type: att.type,
@@ -139,10 +233,11 @@ export async function sendMessage(
       conversationId: state.currentConversationId.value,
       configId: state.configId.value,
       message: messageText,
-      attachments: attachmentData,
-      modelOverride: options?.modelOverride
+      attachments: hiddenFunctionResponse ? undefined : attachmentData,
+      modelOverride: options?.modelOverride,
+      hiddenFunctionResponse
     })
-    
+
   } catch (err: any) {
     if (state.isStreaming.value) {
       state.error.value = {
