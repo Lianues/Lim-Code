@@ -40,11 +40,15 @@ export class StreamChunkProcessor {
         pendingToolCalls: chunk.pendingToolCalls,
         toolsExecuting: true
       });
+      // 工具状态变更立即刷新，确保前端实时反映执行进度（不等 setTimeout(0) 批处理）
+      this.flush();
     } else if ('toolStatus' in chunk && chunk.toolStatus) {
       this.enqueue('toolStatus', {
         tool: chunk.tool,
         toolStatus: true
       });
+      // 工具状态变更立即刷新，确保前端实时反映执行进度（不等 setTimeout(0) 批处理）
+      this.flush();
     } else if ('awaitingConfirmation' in chunk && chunk.awaitingConfirmation) {
       this.enqueue('awaitingConfirmation', {
         content: chunk.content,

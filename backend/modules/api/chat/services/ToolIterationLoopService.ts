@@ -311,6 +311,19 @@ export class ToolIterationLoopService {
             let executionResult: ToolExecutionFullResult | undefined;
 
             if (autoPrefix.length > 0) {
+                // 在执行循环开始前，立即发送包含所有待执行工具的初始 toolsExecuting
+                // 让前端尽早看到完整的工具队列（第一个为 executing，其余为 queued）
+                yield {
+                    conversationId,
+                    content: finalContent,
+                    toolsExecuting: true as const,
+                    pendingToolCalls: autoPrefix.map(c => ({
+                        id: c.id,
+                        name: c.name,
+                        args: c.args
+                    }))
+                } satisfies ChatStreamToolsExecutingData;
+
                 const currentHistory = await this.conversationManager.getHistoryRef(conversationId);
                 const messageIndex = currentHistory.length - 1;
 
@@ -333,16 +346,20 @@ export class ToolIterationLoopService {
                     const event = value as ToolExecutionProgressEvent;
 
                     if (event.type === 'start') {
-                        // 工具执行前先发送计时信息（让前端立即显示）
+                        // 计算当前工具及所有剩余待执行工具
+                        const currentIndex = autoPrefix.findIndex(c => c.id === event.call.id);
+                        const remaining = currentIndex !== -1 ? autoPrefix.slice(currentIndex) : [event.call];
+
+                        // 工具执行前发送剩余队列信息（让前端实时显示执行进度）
                         yield {
                             conversationId,
                             content: finalContent,
                             toolsExecuting: true as const,
-                            pendingToolCalls: [{
-                                id: event.call.id,
-                                name: event.call.name,
-                                args: event.call.args
-                            }]
+                            pendingToolCalls: remaining.map(c => ({
+                                id: c.id,
+                                name: c.name,
+                                args: c.args
+                            }))
                         } satisfies ChatStreamToolsExecutingData;
                         continue;
                     }
