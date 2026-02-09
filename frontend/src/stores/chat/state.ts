@@ -134,6 +134,9 @@ export function createChatState(): ChatStoreState {
   /** 后台对话的流式缓冲区 */
   const backgroundStreamBuffers = ref<Map<string, StreamChunk[]>>(new Map())
 
+  /** 工具响应缓存：toolCallId -> response，避免 O(M) 线性扫描 */
+  const toolResponseCache = ref<Map<string, Record<string, unknown>>>(new Map())
+
   return {
     conversations,
     persistedConversationIds,
@@ -168,6 +171,7 @@ export function createChatState(): ChatStoreState {
     openTabs,
     activeTabId,
     sessionSnapshots,
-    backgroundStreamBuffers
+    backgroundStreamBuffers,
+    toolResponseCache
   }
 }

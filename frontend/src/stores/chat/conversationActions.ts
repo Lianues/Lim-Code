@@ -139,6 +139,7 @@ export async function createNewConversation(
   state.historyFolded.value = false
   state.foldedMessageCount.value = 0
   state.checkpoints.value = []  // 清空检查点
+  state.toolResponseCache.value = new Map()  // 清空工具响应缓存
   state.error.value = null
   state.activeBuild.value = null
   
@@ -456,6 +457,7 @@ export async function switchConversation(
   state.historyFolded.value = false
   state.foldedMessageCount.value = 0
   state.checkpoints.value = []
+  state.toolResponseCache.value = new Map()
   state.error.value = null
   state.isLoading.value = false
   state.isStreaming.value = false

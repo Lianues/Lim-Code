@@ -179,6 +179,9 @@ export interface ChatStoreState {
 
   /** 后台对话的流式缓冲区（conversationId -> chunks） */
   backgroundStreamBuffers: Ref<Map<string, import('../../types').StreamChunk[]>>
+
+  /** 工具响应缓存：toolCallId -> response，避免 getToolResponseById 的 O(M) 线性扫描 */
+  toolResponseCache: Ref<Map<string, Record<string, unknown>>>
 }
 
 /**

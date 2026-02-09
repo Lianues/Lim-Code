@@ -14,6 +14,7 @@ import {
   handleChunkType,
   handleToolsExecuting,
   handleToolStatus,
+  handleToolStatusBatch,
   handleAwaitingConfirmation,
   handleToolIteration,
   handleComplete,
@@ -41,7 +42,7 @@ export interface StreamHandlerContext {
 }
 
 /**
- * 处理流式响应
+ * 处理单条流式响应
  */
 export function handleStreamChunk(
   chunk: StreamChunk,
@@ -101,5 +102,53 @@ export function handleStreamChunk(
     case 'error':
       handleError(chunk, state)
       break
+  }
+}
+
+/**
+ * 批量处理多条流式响应（性能优化）。
+ *
+ * 将连续的 toolStatus chunk 合并为一次 allMessages 替换，
+ * 其余类型仍逐条处理。整个批量在同一同步上下文中完成，
+ * Vue 会自动将所有响应式变更合并为一次组件更新。
+ */
+export function handleStreamChunkBatch(
+  chunks: StreamChunk[],
+  ctx: StreamHandlerContext
+): void {
+  const { state } = ctx
+  let i = 0
+  while (i < chunks.length) {
+    const chunk = chunks[i]
+
+    // 对连续的 toolStatus chunk，收集为一组批量处理
+    if (
+      chunk.type === 'toolStatus' &&
+      chunk.conversationId === state.currentConversationId.value
+    ) {
+      const batch: StreamChunk[] = [chunk]
+      let j = i + 1
+      while (
+        j < chunks.length &&
+        chunks[j].type === 'toolStatus' &&
+        chunks[j].conversationId === state.currentConversationId.value
+      ) {
+        batch.push(chunks[j])
+        j++
+      }
+
+      if (batch.length > 1) {
+        // 批量标签页状态更新（只取最后一条）
+        updateTabStreamingStatus(state, batch[batch.length - 1])
+        handleToolStatusBatch(batch, state)
+      } else {
+        // 只有一条，走常规路径
+        handleStreamChunk(chunk, ctx)
+      }
+      i = j
+    } else {
+      handleStreamChunk(chunk, ctx)
+      i++
+    }
   }
 }

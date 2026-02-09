@@ -188,11 +188,19 @@ function filterToolCallMarkers(text: string): string {
 /**
  * 将 parts 转换为渲染块，保持原始顺序
  *
- * 连续的 text 块会合并，连续的 functionCall 块会合并成一个 tools 块
+ * 连续的 text 块会合并，连续的 functionCall 块会合并成一个 tools 块。
+ *
+ * 性能优化：对 text/thought 类型的 block 做引用稳定化——
+ * 当仅工具状态变更（message.tools 变化而 parts 不变）导致 computed 重算时，
+ * text/thought block 的内容不会变化。通过复用上一次的对象引用，
+ * 避免下游 MarkdownRenderer 的 watch 被触发。
  */
+let _prevRenderBlocks: RenderBlock[] = []
+
 const renderBlocks = computed<RenderBlock[]>(() => {
   const parts = props.message.parts
   if (!parts || parts.length === 0) {
+    _prevRenderBlocks = []
     return []
   }
   
@@ -301,6 +309,24 @@ const renderBlocks = computed<RenderBlock[]>(() => {
   flushThought()
   flushText()
   flushTools()
+
+  // 引用稳定化：复用上一次内容相同的 text/thought block 的对象引用，
+  // 避免仅因工具状态变更而触发下游 MarkdownRenderer 的无效重渲染
+  const prev = _prevRenderBlocks
+  if (prev.length === blocks.length) {
+    for (let i = 0; i < blocks.length; i++) {
+      const cur = blocks[i]
+      const old = prev[i]
+      if (
+        cur.type === old.type &&
+        (cur.type === 'text' || cur.type === 'thought') &&
+        cur.text === old.text
+      ) {
+        blocks[i] = old
+      }
+    }
+  }
+  _prevRenderBlocks = blocks
   
   return blocks
 })

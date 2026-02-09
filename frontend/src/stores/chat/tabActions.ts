@@ -81,6 +81,7 @@ export function resetConversationState(state: ChatStoreState): void {
   state.windowStartIndex.value = 0
   state.totalMessages.value = 0
   state.isLoadingMoreMessages.value = false
+  state.toolResponseCache.value = new Map()
   state.isStreaming.value = false
   state.isLoading.value = false
   state.streamingMessageId.value = null

@@ -283,6 +283,74 @@ export function handleToolStatus(chunk: StreamChunk, state: ChatStoreState): voi
 }
 
 /**
+ * 批量处理多个 toolStatus 更新（性能优化）。
+ * 将多个 toolStatus chunk 的更新合并后只替换一次 allMessages，
+ * 避免 N 次数组展开复制和 N 次 Vue 响应式通知。
+ */
+export function handleToolStatusBatch(chunks: StreamChunk[], state: ChatStoreState): void {
+  if (chunks.length === 0) return
+
+  // 收集所有 tool 更新，按目标消息分组
+  interface ToolUpdate { status: any; result: any }
+  const updatesByMessageIndex = new Map<number, Map<string, ToolUpdate>>()
+  const all = state.allMessages.value
+
+  for (const chunk of chunks) {
+    if (!chunk.toolStatus || !chunk.tool) continue
+    const toolUpdate = chunk.tool
+
+    // 查找目标消息
+    let messageIndex = -1
+    if (state.streamingMessageId.value) {
+      const idx = all.findIndex(m => m.id === state.streamingMessageId.value)
+      if (idx !== -1) {
+        const m = all[idx]
+        if (m.role === 'assistant' && m.tools?.some(t => t.id === toolUpdate.id)) {
+          messageIndex = idx
+        }
+      }
+    }
+    if (messageIndex === -1) {
+      for (let i = all.length - 1; i >= 0; i--) {
+        const m = all[i]
+        if (m.role === 'assistant' && m.tools?.some(t => t.id === toolUpdate.id)) {
+          messageIndex = i
+          break
+        }
+      }
+    }
+    if (messageIndex === -1) continue
+
+    if (!updatesByMessageIndex.has(messageIndex)) {
+      updatesByMessageIndex.set(messageIndex, new Map())
+    }
+    updatesByMessageIndex.get(messageIndex)!.set(toolUpdate.id, {
+      status: toolUpdate.status,
+      result: toolUpdate.result
+    })
+  }
+
+  if (updatesByMessageIndex.size === 0) return
+
+  // 一次性构建新的 allMessages 数组
+  const newAll = [...all]
+  for (const [msgIdx, toolUpdates] of updatesByMessageIndex) {
+    const message = newAll[msgIdx]
+    const updatedTools = message.tools?.map(t => {
+      const update = toolUpdates.get(t.id)
+      if (!update) return t
+      return {
+        ...t,
+        status: update.status as any,
+        result: (update.result as any) ?? t.result
+      }
+    })
+    newAll[msgIdx] = { ...message, tools: updatedTools }
+  }
+  state.allMessages.value = newAll
+}
+
+/**
  * 处理 awaitingConfirmation 类型
  */
 export function handleAwaitingConfirmation(
@@ -407,6 +475,16 @@ export function handleAwaitingConfirmation(
       state.allMessages.value.push(responseMessage)
       syncTotalMessagesFromWindow(state)
       trimWindowFromTop(state)
+
+      // 同步填充工具响应缓存，加速后续 getToolResponseById 查询
+      for (const p of newParts) {
+        if (p.functionResponse.id && p.functionResponse.response) {
+          state.toolResponseCache.value.set(
+            p.functionResponse.id,
+            p.functionResponse.response as Record<string, unknown>
+          )
+        }
+      }
     }
   }
 
@@ -553,6 +631,16 @@ export function handleToolIteration(
       state.allMessages.value.push(responseMessage)
       syncTotalMessagesFromWindow(state)
       trimWindowFromTop(state)
+
+      // 同步填充工具响应缓存
+      for (const p of parts) {
+        if (p.functionResponse.id && p.functionResponse.response) {
+          state.toolResponseCache.value.set(
+            p.functionResponse.id,
+            p.functionResponse.response as Record<string, unknown>
+          )
+        }
+      }
     }
   }
   

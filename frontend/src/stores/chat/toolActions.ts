@@ -14,15 +14,20 @@ import { syncTotalMessagesFromWindow, trimWindowFromTop } from './windowUtils'
 const duplicateFunctionResponseWarned = new Set<string>()
 
 /**
- * 根据工具调用 ID 获取工具响应
+ * 根据工具调用 ID 获取工具响应。
+ * 优先从 toolResponseCache 中 O(1) 查询，cache miss 时回退到线性扫描并回填缓存。
  */
 export function getToolResponseById(
   state: ChatStoreState,
   toolCallId: string
 ): Record<string, unknown> | null {
+  // 1) 优先查缓存
+  const cached = state.toolResponseCache.value.get(toolCallId)
+  if (cached !== undefined) return cached
+
+  // 2) 缓存未命中：线性扫描
   let latest: Record<string, unknown> | null = null
   let matchCount = 0
-  // 从后往前找，优先使用最新的 functionResponse（便于覆盖/追加字段）
   for (let i = state.allMessages.value.length - 1; i >= 0; i--) {
     const message = state.allMessages.value[i]
     if (message.isFunctionResponse && message.parts) {
@@ -43,6 +48,11 @@ export function getToolResponseById(
       toolCallId,
       matchCount
     })
+  }
+
+  // 3) 回填缓存（包括 null，避免重复扫描）
+  if (latest !== null) {
+    state.toolResponseCache.value.set(toolCallId, latest)
   }
 
   return latest

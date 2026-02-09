@@ -37,6 +37,7 @@ export class StreamRequestHandler {
   private reportCancelled(processor: StreamChunkProcessor): void {
     // 确保前端一定能收到 cancelled 事件以清理占位消息
     processor.processChunk({ cancelled: true })
+    processor.flush()
   }
 
   private reportNetworkAbort(error: any, processor: StreamChunkProcessor, requestId: string): void {
@@ -91,6 +92,8 @@ export class StreamRequestHandler {
         const isError = processor.processChunk(chunk);
         if (isError) break;
       }
+      // 流结束后刷新缓冲区，确保所有消息都已发送
+      processor.flush();
     } catch (error: any) {
       // AbortError 可能来自：用户点击中断 / 网络抖动 / 上游直接抛 abort
       // 关键：无论哪种情况，都必须给前端一个明确的 stream 结尾事件，避免残留空占位消息。
@@ -131,6 +134,7 @@ export class StreamRequestHandler {
         const isError = processor.processChunk(chunk);
         if (isError) break;
       }
+      processor.flush();
     } catch (error: any) {
       if (controller.signal.aborted) {
         this.reportCancelled(processor)
@@ -172,6 +176,7 @@ export class StreamRequestHandler {
         const isError = processor.processChunk(chunk);
         if (isError) break;
       }
+      processor.flush();
     } catch (error: any) {
       if (controller.signal.aborted) {
         this.reportCancelled(processor)
@@ -213,6 +218,7 @@ export class StreamRequestHandler {
         const isError = processor.processChunk(chunk);
         if (isError) break;
       }
+      processor.flush();
     } catch (error: any) {
       if (controller.signal.aborted) {
         this.reportCancelled(processor)

@@ -915,6 +915,9 @@ const renderedContent = shallowRef('')
 
 const STREAM_RENDER_DEBOUNCE_MS = 120
 let renderTimer: number | null = null
+/** 上一次实际渲染时使用的内容快照，用于跳过无变化的重渲染 */
+let lastRenderedSource = ''
+let lastRenderedLatexOnly = false
 
 function clearRenderTimer() {
   if (renderTimer !== null) {
@@ -928,6 +931,18 @@ function scheduleRender() {
   clearRenderTimer()
 
   renderTimer = window.setTimeout(async () => {
+    // 跳过无变化的重渲染：当工具状态变更导致 renderBlocks 重算时，
+    // text block 的内容引用可能变化但值相同，此时无需重新渲染 Markdown
+    if (
+      props.content === lastRenderedSource &&
+      props.latexOnly === lastRenderedLatexOnly &&
+      renderedContent.value !== ''
+    ) {
+      return
+    }
+
+    lastRenderedSource = props.content
+    lastRenderedLatexOnly = props.latexOnly
     renderedContent.value = renderContent(props.content, props.latexOnly)
 
     // Mermaid / workspace images 需要基于最新 DOM 执行

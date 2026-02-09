@@ -33,7 +33,7 @@ import { sendToExtension, onMessageFromExtension } from '../utils/vscode'
 // 导入模块
 import { createChatState } from './chat/state'
 import { createChatComputed } from './chat/computed'
-import { handleStreamChunk } from './chat/streamHandler'
+import { handleStreamChunk, handleStreamChunkBatch } from './chat/streamHandler'
 import { formatTime } from './chat/utils'
 
 import {
@@ -359,6 +359,10 @@ export const useChatStore = defineStore('chat', () => {
     onMessageFromExtension((message) => {
       if (message.type === 'streamChunk') {
         handleStreamChunkWrapper(message.data)
+      } else if (message.type === 'streamChunkBatch') {
+        // 批量处理：对连续 toolStatus 做合并优化，其余逐条处理。
+        // 整个批量在同一同步上下文完成，Vue 自动合并响应式更新。
+        handleStreamChunkBatch(message.data as StreamChunk[], streamHandlerCtx)
       } else if (message.type === 'workspaceUri') {
         setCurrentWorkspaceUri(state, message.data)
       } else if (message.type === 'retryStatus') {
@@ -385,6 +389,7 @@ export const useChatStore = defineStore('chat', () => {
     state.isLoadingMoreMessages.value = false
     state.historyFolded.value = false
     state.foldedMessageCount.value = 0
+    state.toolResponseCache.value = new Map()
 
     // 初始化标签页：创建第一个空白标签页
     const initialTabId = createTabAction(state, { title: 'New Chat' })

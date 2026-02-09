@@ -717,6 +717,7 @@ export function clearMessages(state: ChatStoreState): void {
   state.windowStartIndex.value = 0
   state.totalMessages.value = 0
   state.isLoadingMoreMessages.value = false
+  state.toolResponseCache.value = new Map()
   state.historyFolded.value = false
   state.foldedMessageCount.value = 0
   state.activeBuild.value = null
