@@ -124,7 +124,11 @@ const en: LanguageMessages = {
                 restoreToUserMessage: 'Restore to before user message',
                 restoreToAssistantMessage: 'Restore to before assistant message',
                 restoreToToolBatch: 'Restore to before batch tool execution',
-                restoreToTool: 'Restore to before {toolName} execution'
+                restoreToTool: 'Restore to before {toolName} execution',
+                restoreToAfterUserMessage: 'Restore to after user message',
+                restoreToAfterAssistantMessage: 'Restore to after assistant message',
+                restoreToAfterToolBatch: 'Restore to after batch tool execution',
+                restoreToAfterTool: 'Restore to after {toolName} execution'
             },
             editDialog: {
                 title: 'Edit Message',
@@ -136,7 +140,11 @@ const en: LanguageMessages = {
                 restoreToUserMessage: 'Restore to before user message',
                 restoreToAssistantMessage: 'Restore to before assistant message',
                 restoreToToolBatch: 'Restore to before batch tool execution',
-                restoreToTool: 'Restore to before {toolName} execution'
+                restoreToTool: 'Restore to before {toolName} execution',
+                restoreToAfterUserMessage: 'Restore to after user message',
+                restoreToAfterAssistantMessage: 'Restore to after assistant message',
+                restoreToAfterToolBatch: 'Restore to after batch tool execution',
+                restoreToAfterTool: 'Restore to after {toolName} execution'
             },
             retryDialog: {
                 title: 'Retry Message',
@@ -147,7 +155,11 @@ const en: LanguageMessages = {
                 restoreToUserMessage: 'Restore to before user message',
                 restoreToAssistantMessage: 'Restore to before assistant message',
                 restoreToToolBatch: 'Restore to before batch tool execution',
-                restoreToTool: 'Restore to before {toolName} execution'
+                restoreToTool: 'Restore to before {toolName} execution',
+                restoreToAfterUserMessage: 'Restore to after user message',
+                restoreToAfterAssistantMessage: 'Restore to after assistant message',
+                restoreToAfterToolBatch: 'Restore to after batch tool execution',
+                restoreToAfterTool: 'Restore to after {toolName} execution'
             },
             dependencyWarning: {
                 title: 'Dependencies Required',

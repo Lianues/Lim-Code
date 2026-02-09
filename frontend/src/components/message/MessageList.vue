@@ -579,15 +579,19 @@ function cancelDelete() {
 }
 
 // 获取用于删除消息的最新检查点
-// 返回该消息及之前所有消息的 before 阶段检查点
+// 之前消息的存档点：包含所有阶段（before/after），因为这些代表已完成的操作状态
+// 当前消息的存档点：只包含 before 阶段，因为用户要撤销的是这条消息的效果
 // 与重试使用相同的策略
 const deleteCheckpoints = computed<CheckpointRecord[]>(() => {
   if (pendingDeleteBackendIndex.value === null) return []
   const messageIndex = pendingDeleteBackendIndex.value
   
-  // 返回所有 messageIndex <= 当前消息 且 phase === 'before' 的检查点
   return chatStore.checkpoints
-    .filter(cp => cp.messageIndex <= messageIndex && cp.phase === 'before')
+    .filter(cp => {
+      if (cp.messageIndex < messageIndex) return true          // 之前的消息：包含所有阶段
+      if (cp.messageIndex === messageIndex && cp.phase === 'before') return true  // 当前消息：只包含 before
+      return false
+    })
 })
 
 // 处理回档并删除

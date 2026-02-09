@@ -394,11 +394,16 @@ watch(
   { immediate: true }
 )
 
-// 获取当前消息及之前所有消息的 before 阶段检查点
-// 这样重试时可以回档到之前任意一个工具执行前的状态
+// 获取当前消息及之前所有消息的检查点
+// 之前消息的存档点：包含所有阶段（before/after），因为这些代表已完成的操作状态
+// 当前消息的存档点：只包含 before 阶段，因为用户要撤销的是这条消息的效果
 const availableCheckpoints = computed<CheckpointRecord[]>(() => {
   return chatStore.checkpoints
-    .filter(cp => cp.messageIndex <= props.messageIndex && cp.phase === 'before')
+    .filter(cp => {
+      if (cp.messageIndex < props.messageIndex) return true          // 之前的消息：包含所有阶段
+      if (cp.messageIndex === props.messageIndex && cp.phase === 'before') return true  // 当前消息：只包含 before
+      return false
+    })
 })
 
 // 获取用于编辑用户消息的最新检查点

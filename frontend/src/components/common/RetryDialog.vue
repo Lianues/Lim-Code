@@ -47,15 +47,24 @@ const latestCheckpoint = computed(() => {
 /** 格式化检查点描述 */
 function formatCheckpointDesc(checkpoint: CheckpointRecord): string {
   const toolName = checkpoint.toolName || 'tool'
+  const isAfter = checkpoint.phase === 'after'
   // 对于消息类型，显示更友好的描述
   if (toolName === 'user_message') {
-    return t('components.common.retryDialog.restoreToUserMessage')
+    return isAfter
+      ? t('components.common.retryDialog.restoreToAfterUserMessage')
+      : t('components.common.retryDialog.restoreToUserMessage')
   } else if (toolName === 'model_message') {
-    return t('components.common.retryDialog.restoreToAssistantMessage')
+    return isAfter
+      ? t('components.common.retryDialog.restoreToAfterAssistantMessage')
+      : t('components.common.retryDialog.restoreToAssistantMessage')
   } else if (toolName === 'tool_batch') {
-    return t('components.common.retryDialog.restoreToToolBatch')
+    return isAfter
+      ? t('components.common.retryDialog.restoreToAfterToolBatch')
+      : t('components.common.retryDialog.restoreToToolBatch')
   }
-  return t('components.common.retryDialog.restoreToTool').replace('{toolName}', toolName)
+  return isAfter
+    ? t('components.common.retryDialog.restoreToAfterTool').replace('{toolName}', toolName)
+    : t('components.common.retryDialog.restoreToTool').replace('{toolName}', toolName)
 }
 
 function handleCancel() {

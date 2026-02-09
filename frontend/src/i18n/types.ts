@@ -147,6 +147,10 @@ export interface LanguageMessages {
                 restoreToAssistantMessage: string;
                 restoreToToolBatch: string;
                 restoreToTool: string;
+                restoreToAfterUserMessage: string;
+                restoreToAfterAssistantMessage: string;
+                restoreToAfterToolBatch: string;
+                restoreToAfterTool: string;
             };
             editDialog: {
                 title: string;
@@ -159,6 +163,10 @@ export interface LanguageMessages {
                 restoreToAssistantMessage: string;
                 restoreToToolBatch: string;
                 restoreToTool: string;
+                restoreToAfterUserMessage: string;
+                restoreToAfterAssistantMessage: string;
+                restoreToAfterToolBatch: string;
+                restoreToAfterTool: string;
             };
             retryDialog: {
                 title: string;
@@ -170,6 +178,10 @@ export interface LanguageMessages {
                 restoreToAssistantMessage: string;
                 restoreToToolBatch: string;
                 restoreToTool: string;
+                restoreToAfterUserMessage: string;
+                restoreToAfterAssistantMessage: string;
+                restoreToAfterToolBatch: string;
+                restoreToAfterTool: string;
             };
             dependencyWarning: {
                 title: string;

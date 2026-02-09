@@ -124,7 +124,11 @@ const ja: LanguageMessages = {
                 restoreToUserMessage: 'ユーザーメッセージ前に復元',
                 restoreToAssistantMessage: 'アシスタントメッセージ前に復元',
                 restoreToToolBatch: 'バッチツール実行前に復元',
-                restoreToTool: '{toolName} 実行前に復元'
+                restoreToTool: '{toolName} 実行前に復元',
+                restoreToAfterUserMessage: 'ユーザーメッセージ後に復元',
+                restoreToAfterAssistantMessage: 'アシスタントメッセージ後に復元',
+                restoreToAfterToolBatch: 'バッチツール実行後に復元',
+                restoreToAfterTool: '{toolName} 実行後に復元'
             },
             editDialog: {
                 title: 'メッセージを編集',
@@ -136,7 +140,11 @@ const ja: LanguageMessages = {
                 restoreToUserMessage: 'ユーザーメッセージ前に復元',
                 restoreToAssistantMessage: 'アシスタントメッセージ前に復元',
                 restoreToToolBatch: 'バッチツール実行前に復元',
-                restoreToTool: '{toolName} 実行前に復元'
+                restoreToTool: '{toolName} 実行前に復元',
+                restoreToAfterUserMessage: 'ユーザーメッセージ後に復元',
+                restoreToAfterAssistantMessage: 'アシスタントメッセージ後に復元',
+                restoreToAfterToolBatch: 'バッチツール実行後に復元',
+                restoreToAfterTool: '{toolName} 実行後に復元'
             },
             retryDialog: {
                 title: 'メッセージを再試行',
@@ -147,7 +155,11 @@ const ja: LanguageMessages = {
                 restoreToUserMessage: 'ユーザーメッセージ前に復元',
                 restoreToAssistantMessage: 'アシスタントメッセージ前に復元',
                 restoreToToolBatch: 'バッチツール実行前に復元',
-                restoreToTool: '{toolName} 実行前に復元'
+                restoreToTool: '{toolName} 実行前に復元',
+                restoreToAfterUserMessage: 'ユーザーメッセージ後に復元',
+                restoreToAfterAssistantMessage: 'アシスタントメッセージ後に復元',
+                restoreToAfterToolBatch: 'バッチツール実行後に復元',
+                restoreToAfterTool: '{toolName} 実行後に復元'
             },
             dependencyWarning: {
                 title: '依存関係が必要です',

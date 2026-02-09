@@ -124,7 +124,11 @@ const zhCN: LanguageMessages = {
                 restoreToUserMessage: '回档到用户消息前',
                 restoreToAssistantMessage: '回档到助手消息前',
                 restoreToToolBatch: '回档到批量工具执行前',
-                restoreToTool: '回档到 {toolName} 执行前'
+                restoreToTool: '回档到 {toolName} 执行前',
+                restoreToAfterUserMessage: '回档到用户消息后',
+                restoreToAfterAssistantMessage: '回档到助手消息后',
+                restoreToAfterToolBatch: '回档到批量工具执行后',
+                restoreToAfterTool: '回档到 {toolName} 执行后'
             },
             editDialog: {
                 title: '编辑消息',
@@ -136,7 +140,11 @@ const zhCN: LanguageMessages = {
                 restoreToUserMessage: '回档到用户消息前',
                 restoreToAssistantMessage: '回档到助手消息前',
                 restoreToToolBatch: '回档到批量工具执行前',
-                restoreToTool: '回档到 {toolName} 执行前'
+                restoreToTool: '回档到 {toolName} 执行前',
+                restoreToAfterUserMessage: '回档到用户消息后',
+                restoreToAfterAssistantMessage: '回档到助手消息后',
+                restoreToAfterToolBatch: '回档到批量工具执行后',
+                restoreToAfterTool: '回档到 {toolName} 执行后'
             },
             retryDialog: {
                 title: '重试消息',
@@ -147,7 +155,11 @@ const zhCN: LanguageMessages = {
                 restoreToUserMessage: '回档到用户消息前',
                 restoreToAssistantMessage: '回档到助手消息前',
                 restoreToToolBatch: '回档到批量工具执行前',
-                restoreToTool: '回档到 {toolName} 执行前'
+                restoreToTool: '回档到 {toolName} 执行前',
+                restoreToAfterUserMessage: '回档到用户消息后',
+                restoreToAfterAssistantMessage: '回档到助手消息后',
+                restoreToAfterToolBatch: '回档到批量工具执行后',
+                restoreToAfterTool: '回档到 {toolName} 执行后'
             },
             dependencyWarning: {
                 title: '需要安装依赖',

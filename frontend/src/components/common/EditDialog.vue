@@ -109,14 +109,23 @@ const latestCheckpoint = computed(() => {
 /** 格式化检查点描述 */
 function formatCheckpointDesc(checkpoint: CheckpointRecord): string {
   const toolName = checkpoint.toolName || 'tool'
+  const isAfter = checkpoint.phase === 'after'
   if (toolName === 'user_message') {
-    return t('components.common.editDialog.restoreToUserMessage')
+    return isAfter
+      ? t('components.common.editDialog.restoreToAfterUserMessage')
+      : t('components.common.editDialog.restoreToUserMessage')
   } else if (toolName === 'model_message') {
-    return t('components.common.editDialog.restoreToAssistantMessage')
+    return isAfter
+      ? t('components.common.editDialog.restoreToAfterAssistantMessage')
+      : t('components.common.editDialog.restoreToAssistantMessage')
   } else if (toolName === 'tool_batch') {
-    return t('components.common.editDialog.restoreToToolBatch')
+    return isAfter
+      ? t('components.common.editDialog.restoreToAfterToolBatch')
+      : t('components.common.editDialog.restoreToToolBatch')
   }
-  return t('components.common.editDialog.restoreToTool').replace('{toolName}', toolName)
+  return isAfter
+    ? t('components.common.editDialog.restoreToAfterTool').replace('{toolName}', toolName)
+    : t('components.common.editDialog.restoreToTool').replace('{toolName}', toolName)
 }
 
 function handleCancel() {
