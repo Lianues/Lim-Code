@@ -52,7 +52,14 @@ class DiffPreviewContentProvider implements vscode.TextDocumentContentProvider, 
     public onDidChange = this.onDidChangeEmitter.event;
     
     public setContent(uri: string, content: string): void {
+        const prev = this.contents.get(uri);
         this.contents.set(uri, content);
+
+        // 关键：当同一个 diff 预览标签已打开时，必须主动触发 onDidChange，
+        // 否则 VSCode 不会重新拉取 provideTextDocumentContent，看起来像“按钮没反应”。
+        if (prev !== content) {
+            this.onDidChangeEmitter.fire(vscode.Uri.parse(uri));
+        }
     }
     
     public provideTextDocumentContent(uri: vscode.Uri): string {

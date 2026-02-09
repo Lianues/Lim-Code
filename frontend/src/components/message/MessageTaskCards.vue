@@ -5,14 +5,15 @@
  * 风格和 write_file 工具面板保持一致
  */
 import { computed, ref, onMounted, watch } from 'vue'
-import { sendToExtension } from '@/utils/vscode'
+import { sendToExtension, loadState, saveState } from '@/utils/vscode'
 import type { ToolUsage } from '../../types'
 import { MarkdownRenderer, CustomScrollbar } from '../common'
+import ModeSelector, { type PromptMode } from '../input/ModeSelector.vue'
 import ChannelSelector, { type ChannelOption } from '../input/ChannelSelector.vue'
 import ModelSelector, { type ModelInfo } from '../input/ModelSelector.vue'
 import { extractPreviewText, isPlanDocPath } from '../../utils/taskCards'
 import { generateId } from '../../utils/format'
-import { useChatStore } from '@/stores'
+import { useChatStore, useSettingsStore } from '@/stores'
 import * as configService from '@/services/config'
 import { useI18n } from '../../i18n'
 
@@ -22,6 +23,7 @@ const props = defineProps<{
 }>()
 
 const chatStore = useChatStore()
+const settingsStore = useSettingsStore()
 
 const { t } = useI18n()
 
@@ -46,12 +48,17 @@ type PlanCardItem = {
   isExecuted: boolean
 }
 
+const PLAN_EXECUTION_MODE_STATE_KEY = 'planExecution.preferredModeId'
+
 // ============ 渠道选择相关 ============
 const channelConfigs = ref<any[]>([])
 const selectedChannelId = ref('')
+const selectedModeId = ref('code')
 const selectedModelId = ref('')
 const modelOptions = ref<ModelInfo[]>([])
 const isLoadingChannels = ref(false)
+const isLoadingModes = ref(false)
+const promptModeOptions = ref<PromptMode[]>([])
 const isLoadingModels = ref(false)
 const isExecutingPlan = ref(false)
 const expandedPlans = ref<Set<string>>(new Set())
@@ -67,6 +74,48 @@ const channelOptions = computed<ChannelOption[]>(() =>
       type: config.type
     }))
 )
+
+
+function openModeSettings() {
+  settingsStore.showSettings('prompt')
+}
+
+function resolvePreferredModeId(modes: PromptMode[], currentModeId?: string): string {
+  const persisted = String(loadState<string>(PLAN_EXECUTION_MODE_STATE_KEY, '') || '').trim()
+  if (persisted && modes.some(mode => mode.id === persisted)) return persisted
+
+  if (modes.some(mode => mode.id === 'code')) return 'code'
+
+  const current = String(currentModeId || '').trim()
+  if (current && modes.some(mode => mode.id === current)) return current
+
+  return modes[0]?.id || 'code'
+}
+
+function handleModeChange(modeId: string) {
+  const normalized = String(modeId || '').trim()
+  if (!normalized) return
+  selectedModeId.value = normalized
+  saveState(PLAN_EXECUTION_MODE_STATE_KEY, normalized)
+}
+
+async function loadPromptModes() {
+  isLoadingModes.value = true
+  try {
+    const result = await configService.getPromptModes()
+    const modes = Array.isArray(result?.modes) ? result.modes : []
+    promptModeOptions.value = modes
+
+    const preferredModeId = resolvePreferredModeId(modes, result?.currentModeId)
+    selectedModeId.value = preferredModeId
+    saveState(PLAN_EXECUTION_MODE_STATE_KEY, preferredModeId)
+  } catch (error) {
+    console.error('[plan] Failed to load prompt modes for plan execution:', error)
+    selectedModeId.value = 'code'
+  } finally {
+    isLoadingModes.value = false
+  }
+}
 
 async function loadChannels() {
   isLoadingChannels.value = true
@@ -190,6 +239,17 @@ async function executePlan(card: PlanCardItem) {
     latestPlanContent = confirmResult.planContent || card.content
     const todosFromPlan = Array.isArray(confirmResult.todos) ? confirmResult.todos : []
 
+
+    // 确认执行后，切换到用户选择的模式，确保后续请求按目标模式运行
+    try {
+      const targetModeId = String(selectedModeId.value || 'code').trim() || 'code'
+      await configService.setCurrentPromptMode(targetModeId)
+      saveState(PLAN_EXECUTION_MODE_STATE_KEY, targetModeId)
+    } catch (modeError) {
+      // 模式切换失败不阻塞执行
+      console.error('[plan] Failed to switch prompt mode before execution:', modeError)
+    }
+
     // 启动 Build 顶部卡片（Cursor-like）
     await chatStore.setActiveBuild({
       id: generateId(),
@@ -248,6 +308,7 @@ async function autoOpenPendingPlanTabs(cards: PlanCardItem[]) {
 
 onMounted(() => {
   loadChannels()
+  void loadPromptModes()
   void autoOpenPendingPlanTabs(planCards.value)
 })
 
@@ -422,6 +483,15 @@ const hasAny = computed(() => planCards.value.length > 0)
       <div class="plan-execute">
         <div class="execute-selector">
           <span class="execute-label">{{ t('components.message.tool.planCard.executeLabel') }}</span>
+          <ModeSelector
+            v-model="selectedModeId"
+            :options="promptModeOptions"
+            :drop-up="true"
+            :disabled="isLoadingModes || isExecutingPlan"
+            class="mode-select"
+            @update:model-value="handleModeChange"
+            @open-settings="openModeSettings"
+          />
           <ChannelSelector
             v-model="selectedChannelId"
             :options="channelOptions"
@@ -438,7 +508,7 @@ const hasAny = computed(() => planCards.value.length > 0)
         <button
           class="execute-btn"
           :class="{ done: c.isExecuted }"
-          :disabled="isExecutingPlan || c.isExecuted || !selectedChannelId || !selectedModelId"
+          :disabled="isExecutingPlan || c.isExecuted || !selectedModeId || !selectedChannelId || !selectedModelId"
           @click="executePlan(c)"
         >
           <span v-if="c.isExecuted" class="codicon codicon-check"></span>
@@ -572,6 +642,11 @@ const hasAny = computed(() => planCards.value.length > 0)
   font-size: 10px;
   color: var(--vscode-descriptionForeground);
   white-space: nowrap;
+}
+
+.mode-select {
+  flex: 0 0 auto;
+  min-width: 100px;
 }
 
 .channel-select {

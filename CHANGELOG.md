@@ -3,6 +3,12 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.0.81] - 2026-02-09
+
+### Added
+  - 当点击plan工具的执行计划按钮时，自动切换到选择的模式，默认使用code模式，且后续会记住选择的模式
+  - 优化了diff工具同一标签页的预览，避免不刷新
+
 ## [1.0.80] - 2026-02-09
 
 ### Improved
