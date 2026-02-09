@@ -711,7 +711,8 @@ function formatCheckpointTime(timestamp: number): string {
       </div>
     </div>
 
-    <CustomScrollbar ref="scrollbarRef" sticky-bottom show-jump-buttons>
+    <div class="message-scroll-area">
+      <CustomScrollbar ref="scrollbarRef" sticky-bottom show-jump-buttons>
       <div class="messages-container">
         <!-- 自动加载更多指示器 -->
         <div v-if="hasMore" class="load-more-container">
@@ -833,7 +834,8 @@ function formatCheckpointTime(timestamp: number): string {
           </div>
         </div>
       </div>
-    </CustomScrollbar>
+      </CustomScrollbar>
+    </div>
     
     <!-- 删除确认对话框 -->
     <DeleteDialog
@@ -860,10 +862,19 @@ function formatCheckpointTime(timestamp: number): string {
 
 <style scoped>
 .message-list {
+  display: flex;
+  flex-direction: column;
   flex: 1;
+  min-height: 0;
   height: 100%;
   overflow: hidden;
   background: var(--vscode-editor-background);
+}
+
+.message-scroll-area {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 
 /* ============ Build 顶部卡片（Cursor-like，保持 LimCode 面板风格） ============ */

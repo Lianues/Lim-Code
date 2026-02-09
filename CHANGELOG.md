@@ -7,6 +7,9 @@ All notable changes to the "Lim Code" extension will be documented in this file.
 
 ### Improved
   - 优化网络空回问题和报错
+  
+### Fixed
+  - 修复todo列表导致的消息列表无法正确滚动到底部问题
 
 ## [1.0.78] - 2026-02-06
 
