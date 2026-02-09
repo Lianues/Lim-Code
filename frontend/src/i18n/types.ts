@@ -770,6 +770,7 @@ export interface LanguageMessages {
                     terminal: string;
                     lsp: string;
                     media: string;
+                    plan: string;
                     mcp: string;
                     other: string;
                 };
@@ -1542,7 +1543,9 @@ export interface LanguageMessages {
                     search: string;
                     terminal: string;
                     lsp: string;
+                    todo: string;
                     media: string;
+                    plan: string;
                     other: string;
                 };
                 dependency: {

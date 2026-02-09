@@ -65,6 +65,10 @@ export function createChatComputed(state: ChatStoreState): ChatStoreComputed {
    * 当最后一条消息是 functionResponse（工具执行结果），
    * 且不在流式响应状态、没有错误、没有正在重试时，
    * 说明对话被中断，需要显示继续按钮
+   *
+   * 例外：如果工具返回了 requiresUserConfirmation（如 create_plan），
+   * 说明工具主动要求暂停循环等待用户操作（如点击"执行计划"），
+   * 此时不应显示此提示。
    */
   const needsContinueButton = computed(() => {
     if (state.allMessages.value.length === 0) return false
@@ -73,7 +77,17 @@ export function createChatComputed(state: ChatStoreState): ChatStoreComputed {
     if (state.retryStatus.value?.isRetrying) return false  // 正在重试
     
     const lastMessage = state.allMessages.value[state.allMessages.value.length - 1]
-    return lastMessage.isFunctionResponse === true
+    if (!lastMessage.isFunctionResponse) return false
+
+    // 检查是否有工具要求暂停等待用户确认（如 create_plan 的 requiresUserConfirmation）
+    // 此时计划卡片会显示"执行计划"按钮，不需要额外的"继续"提示
+    if (lastMessage.parts?.some(p =>
+      (p.functionResponse?.response as any)?.requiresUserConfirmation
+    )) {
+      return false
+    }
+
+    return true
   })
   
   /** Token 使用百分比 */

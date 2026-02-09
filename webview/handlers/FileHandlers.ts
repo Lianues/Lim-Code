@@ -860,6 +860,67 @@ export const showNotification: MessageHandler = async (data, requestId, ctx) => 
   }
 };
 
+// ========== Plan 执行确认 ==========
+
+export const planConfirmExecution: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const { path: planPath, originalContent } = data;
+
+    if (!planPath || typeof planPath !== 'string') {
+      // No path, just confirm
+      ctx.sendResponse(requestId, {
+        success: true,
+        prompt: 'User confirmed this plan.',
+        planContent: originalContent || ''
+      });
+      return;
+    }
+
+    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+    if (!workspaceFolder) {
+      ctx.sendResponse(requestId, {
+        success: true,
+        prompt: 'User confirmed this plan.',
+        planContent: originalContent || ''
+      });
+      return;
+    }
+
+    try {
+      const fileUri = vscode.Uri.joinPath(workspaceFolder.uri, planPath);
+      const bytes = await vscode.workspace.fs.readFile(fileUri);
+      const currentContent = Buffer.from(bytes).toString('utf-8');
+
+      const currentTrimmed = (currentContent || '').trim();
+      const originalTrimmed = (originalContent || '').trim();
+
+      if (currentTrimmed !== originalTrimmed) {
+        // User modified the plan file
+        ctx.sendResponse(requestId, {
+          success: true,
+          prompt: `User modified this plan and provided a new execution plan. Please execute accordingly:\n\n${currentContent}`,
+          planContent: currentContent
+        });
+      } else {
+        ctx.sendResponse(requestId, {
+          success: true,
+          prompt: 'User confirmed this plan.',
+          planContent: originalContent || ''
+        });
+      }
+    } catch {
+      // File read failed, fallback to confirm
+      ctx.sendResponse(requestId, {
+        success: true,
+        prompt: 'User confirmed this plan.',
+        planContent: originalContent || ''
+      });
+    }
+  } catch (error: any) {
+    ctx.sendError(requestId, 'PLAN_CONFIRM_ERROR', error.message || 'Failed to confirm plan execution');
+  }
+};
+
 /**
  * 注册文件处理器
  */
@@ -900,4 +961,7 @@ export function registerFileHandlers(registry: Map<string, MessageHandler>): voi
   
   // 通知
   registry.set('showNotification', showNotification);
+  
+  // Plan 执行确认
+  registry.set('plan.confirmExecution', planConfirmExecution);
 }

@@ -133,6 +133,7 @@ function getCategoryName(category: string): string {
     'terminal': 'components.settings.toolsSettings.categories.terminal',
     'lsp': 'components.settings.toolsSettings.categories.lsp',
     'media': 'components.settings.toolsSettings.categories.media',
+    'plan': 'components.settings.toolsSettings.categories.plan',
     'todo': 'components.settings.toolsSettings.categories.todo',
     '其他': 'components.settings.toolsSettings.categories.other'
   }
@@ -146,6 +147,7 @@ const categoryIcons: Record<string, string> = {
   'terminal': 'codicon-terminal',
   'lsp': 'codicon-symbol-class',
   'media': 'codicon-file-media',
+  'plan': 'codicon-notebook',
   'todo': 'codicon-checklist',
   '其他': 'codicon-extensions'
 }

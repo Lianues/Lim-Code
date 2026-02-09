@@ -29,18 +29,16 @@ export function extractPreviewText(input: string, opts: PreviewTextOptions): str
 }
 
 export interface SubAgentRuntimeMeta {
-  channelId: string
+  channelName: string
   modelId?: string
-  modelVersion?: string
 }
 
 /**
- * Format a compact runtime badge like: "channelId · modelVersion".
- * Prefer modelVersion (actual) over modelId (configured).
+ * Format a compact runtime badge like: "channelName · modelId".
  */
 export function formatSubAgentRuntimeBadge(meta: SubAgentRuntimeMeta): string {
-  const channel = (meta.channelId || '').trim()
-  const model = (meta.modelVersion || meta.modelId || '').trim()
+  const channel = (meta.channelName || '').trim()
+  const model = (meta.modelId || '').trim()
 
   if (!channel && !model) return ''
   if (channel && model) return `${channel} · ${model}`

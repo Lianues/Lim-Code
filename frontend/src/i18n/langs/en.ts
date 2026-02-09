@@ -620,6 +620,7 @@ const en: LanguageMessages = {
                     terminal: 'Terminal',
                     lsp: 'Code Intelligence',
                     media: 'Media Processing',
+                    plan: 'Plan',
                     mcp: 'MCP Tools',
                     other: 'Other'
                 },
@@ -1504,6 +1505,7 @@ const en: LanguageMessages = {
                     terminal: 'Terminal',
                     lsp: 'Code Intelligence',
                     media: 'Media Processing',
+                    plan: 'Plan',
                     todo: 'TODO',
                     other: 'Other'
                 },

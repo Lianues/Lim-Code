@@ -1546,8 +1546,7 @@ export const DEFAULT_CHECKPOINT_CONFIG: CheckpointConfig = {
  */
 export const DEFAULT_TOOL_AUTO_EXEC_CONFIG: ToolAutoExecConfig = {
     delete_file: false,      // 需要确认
-  execute_command: false,  // 需要确认
-  execute_plan: false      // 需要确认（Plan 两阶段门闸）
+  execute_command: false   // 需要确认
 };
 
 /**
@@ -1915,7 +1914,7 @@ PLAN MODE
 - When you need to understand the codebase, use read_file to examine specific files or search_in_files to find relevant code patterns.
 - Use create_plan to write the plan document in .limcode/plans/**.md.
 - **MANDATORY: When calling create_plan, you MUST provide the "todos" argument.** This will automatically create a TaskCard for the user to track your progress.
-- After creating the plan, ALWAYS call execute_plan and wait for the user's approval before doing any implementation work.
+- After creating the plan, STOP and wait for the user to review and confirm the plan before doing any implementation work. The user will click the "Execute Plan" button on the plan card to confirm.
 - You can use subagents for focused planning sub-tasks, but stay within the allowed tools and do not modify code.
 - Focus on creating detailed implementation plans and task breakdowns.
 - Do not modify actual code files directly. Only create plan documents.
@@ -1990,9 +1989,7 @@ export const PLAN_PROMPT_MODE: PromptMode = {
         'todo_write',
         'todo_update',
         'subagents',
-        'create_plan',
-        'execute_plan',
-        'write_file'
+        'create_plan'
     ]
 };
 

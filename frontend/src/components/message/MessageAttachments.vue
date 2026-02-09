@@ -12,7 +12,7 @@ import type { Attachment } from '../../types'
 
 const { t } = useI18n()
 
-const props = withDefaults(defineProps<{
+withDefaults(defineProps<{
   attachments: Attachment[]
   /** 是否为只读模式（不显示删除按钮） */
   readonly?: boolean

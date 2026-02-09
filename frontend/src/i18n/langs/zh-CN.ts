@@ -620,6 +620,7 @@ const zhCN: LanguageMessages = {
                     terminal: '终端',
                     lsp: '代码智能',
                     media: '媒体处理',
+                    plan: '计划',
                     mcp: 'MCP 工具',
                     other: '其他'
                 },
@@ -1504,6 +1505,7 @@ const zhCN: LanguageMessages = {
                     terminal: '终端',
                     lsp: '代码智能',
                     media: '媒体处理',
+                    plan: '计划',
                     todo: 'TODO',
                     other: '其他'
                 },

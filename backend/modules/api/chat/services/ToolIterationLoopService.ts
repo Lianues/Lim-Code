@@ -412,7 +412,8 @@ export class ToolIterationLoopService {
             // 14. 没有需要确认的工具，说明所有工具均已自动执行完成
             if (executionResult) {
                 const hasCancelled = executionResult.toolResults.some(r => (r.result as any).cancelled);
-                if (hasCancelled) {
+                const hasUserConfirmation = executionResult.toolResults.some(r => (r.result as any).requiresUserConfirmation);
+                if (hasCancelled || hasUserConfirmation) {
                     yield {
                         conversationId,
                         content: finalContent,

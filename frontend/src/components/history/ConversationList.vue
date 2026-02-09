@@ -11,7 +11,7 @@ import { sendToExtension } from '../../utils/vscode'
 import type { Conversation } from '../../stores'
 import { t } from '../../i18n'
 
-const props = defineProps<{
+defineProps<{
   conversations: Conversation[]
   currentId: string | null
   /** 初始加载（整页 loading） */

@@ -26,19 +26,16 @@ const cardStatus = computed<'pending' | 'running' | 'success' | 'error'>(() => {
 })
 
 const runtimeBadge = computed(() => {
-  const channelId = resultData.value.channelId as string | undefined
+  const channelName = resultData.value.channelName as string | undefined
   const modelId = resultData.value.modelId as string | undefined
-  const modelVersion = resultData.value.modelVersion as string | undefined
-  if (!channelId) return ''
-  return formatSubAgentRuntimeBadge({ channelId, modelId, modelVersion })
+  if (!channelName) return ''
+  return formatSubAgentRuntimeBadge({ channelName, modelId })
 })
 
 const chips = computed(() => {
   const list: string[] = []
   const steps = resultData.value.steps
-  const toolCalls = resultData.value.toolCalls
   if (typeof steps === 'number') list.push(`Steps: ${steps}`)
-  if (Array.isArray(toolCalls)) list.push(`Tools: ${toolCalls.length}`)
   return list
 })
 

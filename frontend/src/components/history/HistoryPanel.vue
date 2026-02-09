@@ -9,7 +9,7 @@ import ConversationList from './ConversationList.vue'
 import type { Conversation } from '../../stores'
 import { t } from '../../i18n'
 
-const props = defineProps<{
+defineProps<{
   modelValue: boolean
   conversations: Conversation[]
   currentId: string | null

@@ -8,7 +8,7 @@
 import type { Tool, ToolResult, ToolContext, ToolDeclaration } from '../types';
 import type { SubAgentRequest, SubAgentResult, SubAgentConfig } from './types';
 import { subAgentRegistry } from './registry';
-import { getGlobalToolRegistry, getGlobalMcpManager, getGlobalSettingsManager } from '../../core/settingsContext';
+import { getGlobalToolRegistry, getGlobalMcpManager, getGlobalSettingsManager, getGlobalConfigManager } from '../../core/settingsContext';
 
 /**
  * 获取可用的子代理名称列表
@@ -201,107 +201,60 @@ async function subAgentsHandler(args: Record<string, any>, context?: ToolContext
     const prompt = args.prompt as string;
     const additionalContext = args.context as string | undefined;
     
-    // 验证参数
-    if (!agentName) {
-        return {
-            success: false,
-            error: 'agentName is required'
-        };
+    if (!agentName || !prompt) {
+        return { success: false, error: `${!agentName ? 'agentName' : 'prompt'} is required` };
     }
     
-    if (!prompt) {
-        return {
-            success: false,
-            error: 'prompt is required'
-        };
-    }
-    
-    // 根据名称查找子代理
     const agentEntry = subAgentRegistry.getByName(agentName);
     if (!agentEntry) {
         const availableNames = getAvailableAgentNames();
-        return {
-            success: false,
-            error: `SubAgent "${agentName}" not found. Available agents: ${availableNames.length > 0 ? availableNames.join(', ') : 'none'}`
-        };
+        return { success: false, error: `SubAgent "${agentName}" not found. Available agents: ${availableNames.length > 0 ? availableNames.join(', ') : 'none'}` };
     }
     
-    // 检查是否有执行器
     if (!agentEntry.executor) {
-        return {
-            success: false,
-            error: `SubAgent "${agentName}" has no executor. Please ensure the executor context is initialized.`
-        };
+        return { success: false, error: `SubAgent "${agentName}" has no executor. Please ensure the executor context is initialized.` };
     }
     
-    // 检查是否已取消
     const abortSignal = context?.abortSignal;
     if (abortSignal?.aborted) {
-        return {
-            success: false,
-            error: 'User cancelled the sub-agent execution. Please wait for user\'s next instruction.',
-            cancelled: true
-        };
+        return { success: false, error: 'User cancelled the sub-agent execution. Please wait for user\'s next instruction.', cancelled: true };
     }
     
     try {
-        // 构建请求
-        const request: SubAgentRequest = {
+        const result = await agentEntry.executor({
             agentType: agentEntry.config.type,
             prompt,
             context: additionalContext
-        };
+        }, abortSignal);
         
-        // 执行子代理
-        const result: SubAgentResult = await agentEntry.executor(
-            request,
-            abortSignal
-        );
-        
-        // 检查执行过程中是否被取消
         if (result.cancelled || abortSignal?.aborted) {
-            return {
-                success: false,
-                error: 'User cancelled the sub-agent execution. Please wait for user\'s next instruction.',
-                cancelled: true
-            };
+            return { success: false, error: 'User cancelled the sub-agent execution. Please wait for user\'s next instruction.', cancelled: true };
         }
         
-        if (result.success) {
-            return {
-                success: true,
-                data: {
-                    agentName,
-                    response: result.response,
-                    // 子代理实际运行信息（用于 UI 展示）
-                    channelId: agentEntry.config.channel.channelId,
-                    modelId: agentEntry.config.channel.modelId,
-                    modelVersion: result.modelVersion,
-                    steps: result.steps,
-                    toolCalls: result.toolCalls || []
-                }
-            };
-        } else {
-            return {
-                success: false,
-                error: result.error || 'SubAgent execution failed',
-                data: {
-                    agentName,
-                    partialResponse: result.response,
-                    // 子代理实际运行信息（用于 UI 展示）
-                    channelId: agentEntry.config.channel.channelId,
-                    modelId: agentEntry.config.channel.modelId,
-                    modelVersion: result.modelVersion,
-                    steps: result.steps,
-                    toolCalls: result.toolCalls || []
-                }
-            };
+        // 构建公共 data：子代理运行信息
+        // channelName / modelId / steps 仅供前端 UI 展示，cleanFunctionResponseForAPI 会将其过滤掉不发给 AI
+        
+        // 通过 ConfigManager 获取渠道显示名称（channelId 是随机分配的，对前端无意义）
+        let channelName = '';
+        const configManager = getGlobalConfigManager();
+        if (configManager) {
+            const channelConfig = await configManager.getConfig(agentEntry.config.channel.channelId);
+            channelName = channelConfig?.name || agentEntry.config.channel.channelId;
         }
-    } catch (error) {
-        return {
-            success: false,
-            error: `SubAgent execution error: ${error instanceof Error ? error.message : String(error)}`
+        
+        const data: Record<string, unknown> = {
+            agentName,
+            [result.success ? 'response' : 'partialResponse']: result.response,
+            channelName,
+            modelId: agentEntry.config.channel.modelId,
+            steps: result.steps
         };
+        
+        return result.success
+            ? { success: true, data }
+            : { success: false, error: result.error || 'SubAgent execution failed', data };
+    } catch (error) {
+        return { success: false, error: `SubAgent execution error: ${error instanceof Error ? error.message : String(error)}` };
     }
 }
 

@@ -620,6 +620,7 @@ const ja: LanguageMessages = {
                     terminal: 'ターミナル',
                     lsp: 'コードインテリジェンス',
                     media: 'メディア処理',
+                    plan: 'プラン',
                     mcp: 'MCP ツール',
                     other: 'その他'
                 },
@@ -1504,6 +1505,7 @@ const ja: LanguageMessages = {
                     terminal: 'ターミナル',
                     lsp: 'コードインテリジェンス',
                     media: 'メディア処理',
+                    plan: 'プラン',
                     todo: 'TODO',
                     other: 'その他'
                 },

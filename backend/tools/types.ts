@@ -1,3 +1,4 @@
+
 /**
  * LimCode - 工具系统类型定义
  * 
@@ -191,6 +192,13 @@ export interface ToolResult {
     
     /** 是否被用户取消（可选） */
     cancelled?: boolean;
+    
+    /**
+     * 工具执行成功后，要求暂停 AI 的工具迭代循环，等待用户手动操作后再继续。
+     * 与 autoExec 不同：autoExec 控制"是否自动执行工具"（执行前的门闸），
+     * 而此字段控制"工具执行后是否继续 AI 循环"（执行后的门闸）。
+     */
+    requiresUserConfirmation?: boolean;
 }
 
 /**

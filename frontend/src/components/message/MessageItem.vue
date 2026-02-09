@@ -602,13 +602,6 @@ function handleRestoreAndRetry(checkpointId: string) {
           :attachments="message.attachments"
         />
 
-        <!-- Cursor 风格任务卡片（方案B）：Plan/SubAgent 缩略预览，可滚动可展开 -->
-        <MessageTaskCards
-          v-if="!isUser && message.tools && message.tools.length > 0"
-          :tools="message.tools"
-          :message-model-version="modelVersion"
-        />
-        
         <!-- 显示模式 -->
         <div class="message-content">
         <!-- 有 parts 时：按 parts 原始顺序渲染内容块 -->
@@ -739,6 +732,14 @@ function handleRestoreAndRetry(checkpointId: string) {
           </div>
         </div>
         </div>
+
+        <!-- Cursor 风格任务卡片：Plan/SubAgent 缩略预览，放在消息内容下方 -->
+        <MessageTaskCards
+          v-if="!isUser && message.tools && message.tools.length > 0"
+          :tools="message.tools"
+          :message-model-version="modelVersion"
+        />
+
       </template>
     </div>
   </div>

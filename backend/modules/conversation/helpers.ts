@@ -294,7 +294,8 @@ export function createMultiTextMessage(
  *
  * 过滤的字段包括：
  * - 顶层：diffContentId, diffId, diffs, pendingDiffId
- * - data 字段中的：diffContentId, diffId, diffs, pendingDiffId, toolId, terminalId, multiRoot, command, cwd, shell
+ * - data 字段中的：diffContentId, diffId, diffs, pendingDiffId, toolId, terminalId, multiRoot, command, cwd, shell,
+ *                   channelName, modelId, steps（subagents 运行时元数据，仅供 UI 展示）
  * - data.results 数组中的：diffContentId, pendingDiffId
  *
  * 保留的字段：killed, duration（AI 需要知道命令执行状态）
@@ -326,6 +327,10 @@ export function cleanFunctionResponseForAPI(
             command: dataCommand,
             cwd: dataCwd,
             shell: dataShell,
+            // subagents 运行时元数据（仅供前端 UI 展示，不发给 AI）
+            channelName: dataChannelName,
+            modelId: dataModelId,
+            steps: dataSteps,
             ...dataRest
         } = rest.data as Record<string, unknown>;
         

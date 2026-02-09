@@ -57,7 +57,7 @@ export function createCreatePlanToolDeclaration(): ToolDeclaration {
     name: 'create_plan',
     description:
       'Create a plan document (markdown) and write it under .limcode/plans/**.md. This tool only creates the plan; it does NOT execute it.',
-    category: 'file',
+    category: 'plan',
     parameters: {
       type: 'object',
       properties: {
@@ -138,6 +138,7 @@ export function createCreatePlanTool(): Tool {
 
         return {
           success: true,
+          requiresUserConfirmation: true,
           data: {
             path: outPath,
             content,

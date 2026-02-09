@@ -7,7 +7,6 @@
 
 import { computed, ref, onBeforeUnmount } from 'vue'
 import CustomScrollbar from '../../common/CustomScrollbar.vue'
-import { useI18n } from '@/composables'
 
 type TodoStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled'
 
@@ -16,8 +15,6 @@ interface TodoItem {
   content: string
   status: TodoStatus
 }
-
-const { t } = useI18n()
 
 const props = defineProps<{
   args: Record<string, unknown>

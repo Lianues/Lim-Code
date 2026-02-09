@@ -449,6 +449,11 @@ export function handleToolIteration(
     }
   }
   const hasCancelledTools = cancelledToolIds.size > 0
+
+  // 检查是否有工具要求暂停循环（如 create_plan 要求用户确认执行）
+  const hasUserConfirmation = chunk.toolResults?.some(
+    r => (r.result as any)?.requiresUserConfirmation
+  ) ?? false
   
   if (messageIndex !== -1) {
     const message = state.allMessages.value[messageIndex]
@@ -558,8 +563,9 @@ export function handleToolIteration(
     }
   }
   
-  // 如果有工具被取消，结束 streaming 状态，不继续后续 AI 响应
-  if (hasCancelledTools) {
+  // 如果有工具被取消 或 有工具要求用户确认后再继续，结束 streaming 状态
+  // requiresUserConfirmation: 工具执行后的门闸（如 create_plan），等待用户点击"执行计划"后才继续
+  if (hasCancelledTools || hasUserConfirmation) {
     state.streamingMessageId.value = null
     state.isStreaming.value = false
     state.isWaitingForResponse.value = false

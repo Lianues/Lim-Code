@@ -68,6 +68,7 @@ const categoryIcons: Record<string, string> = {
   'terminal': 'codicon-terminal',
   'lsp': 'codicon-symbol-class',
   'media': 'codicon-file-media',
+  'plan': 'codicon-notebook',
   'mcp': 'codicon-plug',
   '其他': 'codicon-extensions'
 }
@@ -172,7 +173,7 @@ function getCategoryIcon(category: string): string {
 
 // 检查工具是否是危险工具（默认需要确认）
 function isDangerousTool(toolName: string): boolean {
-  const dangerousTools = ['delete_file', 'execute_command']
+  const dangerousTools = ['delete_file', 'execute_command', 'create_plan']
   return dangerousTools.includes(toolName)
 }
 

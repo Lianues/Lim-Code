@@ -9,7 +9,7 @@ import AttachmentItem from './AttachmentItem.vue'
 import AttachmentPreview from './AttachmentPreview.vue'
 import type { Attachment } from '../../types'
 
-const props = defineProps<{
+defineProps<{
   attachments: Attachment[]
   compact?: boolean  // 紧凑模式
 }>()
