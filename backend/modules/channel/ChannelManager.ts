@@ -229,10 +229,11 @@ export class ChannelManager {
         const retryEnabled = request.skipRetry ? false : ((config as any).retryEnabled ?? true);  // 默认启用重试
         const maxRetries = (config as any).retryCount ?? 3;         // 默认3次
         const retryInterval = (config as any).retryInterval ?? 3000;  // 默认3秒
+        const totalAttempts = retryEnabled ? (maxRetries + 1) : 1;
         
         // 8. 执行 HTTP 调用（带重试）
         let lastError: any;
-        for (let attempt = 1; attempt <= (retryEnabled ? maxRetries : 1); attempt++) {
+        for (let attempt = 1; attempt <= totalAttempts; attempt++) {
             // 在每次重试前检查是否已取消
             if (request.abortSignal?.aborted) {
                 throw new ChannelError(
@@ -257,7 +258,7 @@ export class ChannelManager {
                 if (attempt > 1 && this.retryStatusCallback) {
                     this.retryStatusCallback({
                         type: 'retrySuccess',
-                        attempt,
+                        attempt: attempt - 1,
                         maxAttempts: maxRetries
                     });
                 }
@@ -280,12 +281,12 @@ export class ChannelManager {
                 const errorDetails = error instanceof ChannelError ? error.details : undefined;
                 
                 // 检查是否可重试
-                if (!retryEnabled || !this.isRetryableError(error) || attempt >= maxRetries) {
+                if (!retryEnabled || !this.isRetryableError(error) || attempt >= totalAttempts) {
                     // 不能重试或已达到最大重试次数
                     if (attempt > 1 && this.retryStatusCallback) {
                         this.retryStatusCallback({
                             type: 'retryFailed',
-                            attempt,
+                            attempt: Math.min(maxRetries, attempt - 1),
                             maxAttempts: maxRetries,
                             error: errorMessage,
                             errorDetails
@@ -306,7 +307,7 @@ export class ChannelManager {
                 if (this.retryStatusCallback) {
                     this.retryStatusCallback({
                         type: 'retrying',
-                        attempt: attempt + 1,
+                        attempt,
                         maxAttempts: maxRetries,
                         error: errorMessage,
                         errorDetails,
@@ -383,10 +384,11 @@ export class ChannelManager {
         const retryEnabled = request.skipRetry ? false : ((config as any).retryEnabled ?? true);  // 默认启用重试
         const maxRetries = (config as any).retryCount ?? 3;         // 默认3次
         const retryInterval = (config as any).retryInterval ?? 3000;  // 默认3秒
+        const totalAttempts = retryEnabled ? (maxRetries + 1) : 1;
         
         // 7. 执行流式请求（带重试）
         let lastError: any;
-        for (let attempt = 1; attempt <= (retryEnabled ? maxRetries : 1); attempt++) {
+        for (let attempt = 1; attempt <= totalAttempts; attempt++) {
             try {
                 const stream = await this.executeStreamRequest(httpRequest, request.abortSignal);
                 
@@ -394,7 +396,7 @@ export class ChannelManager {
                 if (attempt > 1 && this.retryStatusCallback) {
                     this.retryStatusCallback({
                         type: 'retrySuccess',
-                        attempt,
+                        attempt: attempt - 1,
                         maxAttempts: maxRetries
                     });
                 }
@@ -423,12 +425,12 @@ export class ChannelManager {
                 const errorDetails = error instanceof ChannelError ? error.details : undefined;
                 
                 // 检查是否可重试
-                if (!retryEnabled || !this.isRetryableError(error) || attempt >= maxRetries) {
+                if (!retryEnabled || !this.isRetryableError(error) || attempt >= totalAttempts) {
                     // 不能重试或已达到最大重试次数
                     if (attempt > 1 && this.retryStatusCallback) {
                         this.retryStatusCallback({
                             type: 'retryFailed',
-                            attempt,
+                            attempt: Math.min(maxRetries, attempt - 1),
                             maxAttempts: maxRetries,
                             error: errorMessage,
                             errorDetails
@@ -449,7 +451,7 @@ export class ChannelManager {
                 if (this.retryStatusCallback) {
                     this.retryStatusCallback({
                         type: 'retrying',
-                        attempt: attempt + 1,
+                        attempt,
                         maxAttempts: maxRetries,
                         error: errorMessage,
                         errorDetails,
