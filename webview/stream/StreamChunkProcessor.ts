@@ -34,6 +34,8 @@ export class StreamChunkProcessor {
       this.enqueue('checkpoints', { checkpoints: chunk.checkpoints });
     } else if ('chunk' in chunk && chunk.chunk) {
       this.enqueue('chunk', { chunk: chunk.chunk });
+      // 内容块立即刷新，确保前端实时逐词显示（不等 setTimeout(0) 批处理）
+      this.flush();
     } else if ('toolsExecuting' in chunk && chunk.toolsExecuting) {
       this.enqueue('toolsExecuting', {
         content: chunk.content,

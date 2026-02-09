@@ -49,7 +49,8 @@ export function addFunctionCallToMessage(
     name: call.name,
     args: call.args,
     // 刚从流式内容里解析/拼接出来的工具调用，视为“AI 还在输出/完善工具内容”
-    status: 'streaming'
+    // 有 partialArgs 说明参数仍在流式累积中；无 partialArgs 说明已拿到完整参数
+    status: typeof call.partialArgs === 'string' ? 'streaming' : 'queued'
   })
   
   // 更新 parts（用于渲染）
@@ -223,7 +224,7 @@ export function handleFunctionCallPart(part: any, message: Message): void {
   if (lastPart && lastPart.functionCall) {
     const lastFc = lastPart.functionCall
     const lastId = typeof lastFc.id === 'string' && lastFc.id.trim() ? lastFc.id.trim() : ''
-    const lastHasPartial = typeof lastFc.partialArgs === 'string' && lastFc.partialArgs.length > 0
+    const lastHasPartial = typeof lastFc.partialArgs === 'string'
     
     // 只在“明显仍是同一次工具调用增量”时合并，避免把后续独立工具调用误并到上一条。
     const sameId = incomingId && lastId && incomingId === lastId
@@ -231,12 +232,9 @@ export function handleFunctionCallPart(part: any, message: Message): void {
 
     const canMergeByIndex =
       !sameId &&
-      !incomingId &&
       sameIndex &&
-      (
-        (incomingHasPartial && lastHasPartial) ||
-        (lastHasPartial && incomingHasArgs)
-      )
+      lastHasPartial &&
+      (incomingHasPartial || incomingHasArgs)
 
     const canMergeLegacyPartial =
       !sameId &&
@@ -244,7 +242,17 @@ export function handleFunctionCallPart(part: any, message: Message): void {
       fc.index === undefined &&
       incomingHasPartial
 
-    const canMerge = !!(sameId || canMergeByIndex || canMergeLegacyPartial)
+    // OpenAI Responses API 模式：初始 chunk { name, id, index: null } 后跟
+    // 数据 chunk { index: N, partialArgs }。初始 chunk 无 partialArgs 也无 args，
+    // 需要特殊处理把首个数据 chunk 合并到刚创建的工具上。
+    const lastIsFreshTool = !lastHasPartial && (!lastFc.args || Object.keys(lastFc.args).length === 0)
+    const canMergeAsFreshToolData =
+      !sameId &&
+      !incomingId &&
+      incomingHasPartial &&
+      lastIsFreshTool
+
+    const canMerge = !!(sameId || canMergeByIndex || canMergeLegacyPartial || canMergeAsFreshToolData)
     
     if (canMerge) {
       if (isTodoToolName(fc.name) || isTodoToolName(lastFc.name)) {
@@ -264,9 +272,12 @@ export function handleFunctionCallPart(part: any, message: Message): void {
         })
       }
 
-      // 合并名称和 ID
+      // 合并名称、ID 和 index
       if (fc.name && !lastFc.name) lastFc.name = fc.name
       if (fc.id && !lastFc.id) lastFc.id = fc.id
+      if (typeof fc.index === 'number' && (lastFc.index === undefined || lastFc.index === null)) {
+        lastFc.index = fc.index
+      }
       
       // 合并参数
       if (incomingHasPartial) {
@@ -284,6 +295,16 @@ export function handleFunctionCallPart(part: any, message: Message): void {
         // 清理残留 partialArgs，避免后续相同 index 的新工具调用被误合并。
         if (lastFc.partialArgs) {
           delete lastFc.partialArgs
+        }
+      }
+
+      // 工具参数接收完毕：同步 message.tools 状态和 args
+      const resolvedId = lastFc.id
+      if (resolvedId && !lastFc.partialArgs && lastFc.args && Object.keys(lastFc.args).length > 0) {
+        const toolEntry = message.tools?.find(t => t.id === resolvedId)
+        if (toolEntry && toolEntry.status === 'streaming') {
+          toolEntry.status = 'queued'
+          toolEntry.args = lastFc.args
         }
       }
       

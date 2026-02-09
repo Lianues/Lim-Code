@@ -7,11 +7,15 @@ All notable changes to the "Lim Code" extension will be documented in this file.
 
 ### Added
   - 添加了对话标签页功能，现在可以同时开多个对话任务
-  - 
+  - 添加了流式工具响应的显示功能
+
 ### Improved
   - 优化工具的处理和排队显示
   - 优化多工具响应时的显示性能消耗
   - 优化回退时，回退到的存档点的判断
+
+### Fixed
+  - 修复了diff保存时的竞态问题导致的显示内容不一致问题
 
 ## [1.0.81] - 2026-02-09
 

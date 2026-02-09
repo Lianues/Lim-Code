@@ -10,7 +10,7 @@
  * 5. 通过工具 ID 从 store 获取响应结果
  */
 
-import { ref, computed, Component, h, watchEffect, watch, nextTick, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, Component, h, watchEffect, watch, nextTick, onMounted, onBeforeUnmount, type ComponentPublicInstance } from 'vue'
 import type { ToolUsage, Message } from '../../types'
 import { getToolConfig } from '../../utils/toolRegistry'
 import { ensureMcpToolRegistered } from '../../utils/tools'
@@ -709,9 +709,9 @@ function shouldShowStreamingPreview(tool: ToolUsage): boolean {
 const streamingPreviewRefs = new Map<string, HTMLElement>()
 
 function setStreamingPreviewRef(toolId: string) {
-  return (el: HTMLElement | null) => {
-    if (el) {
-      streamingPreviewRefs.set(toolId, el)
+  return (ref: Element | ComponentPublicInstance | null) => {
+    if (ref && ref instanceof HTMLElement) {
+      streamingPreviewRefs.set(toolId, ref)
     } else {
       streamingPreviewRefs.delete(toolId)
     }

@@ -141,6 +141,22 @@ export function handleChunkType(chunk: StreamChunk, state: ChatStoreState): void
     // 如果是最后一个 chunk（done=true），更新 token 信息
     // 注意：modelVersion 保持创建时的值，不从 API 响应更新
     if (chunk.chunk.done) {
+      // 兜底：AI 输出结束，所有 streaming 工具应已完成参数输出
+      if (message.tools) {
+        for (const tool of message.tools) {
+          if (tool.status === 'streaming') {
+            tool.status = 'queued'
+            // 从 parts 同步最终 args
+            const matchingPart = message.parts?.find(
+              p => p.functionCall && p.functionCall.id === tool.id
+            )
+            if (matchingPart?.functionCall?.args) {
+              tool.args = matchingPart.functionCall.args
+            }
+          }
+        }
+      }
+
       if (chunk.chunk.usage) {
         message.metadata.usageMetadata = chunk.chunk.usage
         message.metadata.thoughtsTokenCount = chunk.chunk.usage.thoughtsTokenCount

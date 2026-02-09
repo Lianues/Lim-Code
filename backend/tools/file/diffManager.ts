@@ -655,13 +655,42 @@ export class DiffManager {
      */
     private async showDiffView(diff: PendingDiff): Promise<void> {
         const fileUri = vscode.Uri.file(diff.absolutePath);
+
+        const isPending = () => diff.status === 'pending';
+
+        const restoreToOriginalBestEffort = async (): Promise<void> => {
+            try {
+                const doc = vscode.workspace.textDocuments.find(d => d.uri.fsPath === diff.absolutePath);
+                const targetDoc = doc || (await vscode.workspace.openTextDocument(fileUri));
+                const edit = new vscode.WorkspaceEdit();
+                const fullRange = new vscode.Range(
+                    targetDoc.positionAt(0),
+                    targetDoc.positionAt(targetDoc.getText().length)
+                );
+                edit.replace(fileUri, fullRange, diff.originalContent);
+                await vscode.workspace.applyEdit(edit);
+            } catch {
+                // ignore
+            }
+        };
+
+        // 如果在进入 showDiffView 之前就已被处理（例如 cancelAllPending 先一步发生），直接短路
+        if (!isPending()) {
+            return;
+        }
         
         // 1. 打开并修改目标文件（不保存）
         const document = await vscode.workspace.openTextDocument(fileUri);
+        if (!isPending()) {
+            return;
+        }
         const editor = await vscode.window.showTextDocument(document, {
             preview: false,
             preserveFocus: false
         });
+        if (!isPending()) {
+            return;
+        }
         
         // 应用修改
         const fullRange = new vscode.Range(
@@ -672,15 +701,41 @@ export class DiffManager {
         await editor.edit((editBuilder) => {
             editBuilder.replace(fullRange, diff.newContent);
         });
+
+        // 若在 apply edit 过程中被取消/拒绝，立即恢复原始内容并退出，避免留下脏文档
+        if (!isPending()) {
+            await restoreToOriginalBestEffort();
+            try {
+                await this.closeDiffTab(diff.absolutePath);
+            } catch {
+                // ignore
+            }
+            return;
+        }
         
         // 2. 创建原始内容的虚拟 URI
         const originalUri = vscode.Uri.parse(`gemini-diff-original:${diff.id}/${path.basename(diff.filePath)}`);
         
         // 4. 打开 diff 视图
         const title = t('tools.file.diffManager.diffTitle', { filePath: diff.filePath });
+        if (!isPending()) {
+            await restoreToOriginalBestEffort();
+            return;
+        }
         await vscode.commands.executeCommand('vscode.diff', originalUri, fileUri, title, {
             preview: false
         });
+
+        // 若在打开 diff 视图期间被取消/拒绝，关闭 diff 并恢复原始内容，避免 UI 残留
+        if (!isPending()) {
+            try {
+                await this.closeDiffTab(diff.absolutePath);
+            } catch {
+                // ignore
+            }
+            await restoreToOriginalBestEffort();
+            return;
+        }
         
         // 5. 监听文档保存事件
         const saveListener = vscode.workspace.onDidSaveTextDocument(async (savedDoc) => {
@@ -727,6 +782,27 @@ export class DiffManager {
                 saveListener.dispose();
             }
         });
+
+        // 若在注册监听器期间被取消/拒绝，立即释放监听器并恢复内容，避免残留订阅造成后续错乱
+        if (!isPending()) {
+            try {
+                saveListener.dispose();
+            } catch {
+                // ignore
+            }
+            try {
+                closeListener.dispose();
+            } catch {
+                // ignore
+            }
+            try {
+                await this.closeDiffTab(diff.absolutePath);
+            } catch {
+                // ignore
+            }
+            await restoreToOriginalBestEffort();
+            return;
+        }
         
         this.saveListeners.set(diff.id, saveListener);
         this.closeListeners.set(diff.id, closeListener);
@@ -812,12 +888,55 @@ export class DiffManager {
                 contentToSave = currentContent;
             }
             
-            // 保存文档
-            const saved = await doc.save();
-            
-            if (!saved) {
-                // 如果 VSCode API 保存失败，尝试直接写入文件
+            const normalizeToLF = (text: string): string => text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
+            const revertOpenDocumentToDisk = async (): Promise<void> => {
+                try {
+                    // 关键：使用 revert 丢弃脏状态并从磁盘重新加载，避免 VSCode “文件内容较新”保存冲突提示
+                    await vscode.window.showTextDocument(doc, { preview: false, preserveFocus: true });
+                    await vscode.commands.executeCommand('workbench.action.files.revert');
+                } catch {
+                    // ignore
+                }
+            };
+
+            // 读取磁盘内容，用于判断是否需要绕过 doc.save（doc.save 在磁盘变更时会触发 VSCode 冲突提示）
+            let diskContent: string | undefined;
+            try {
+                diskContent = fs.readFileSync(diff.absolutePath, 'utf8');
+            } catch {
+                diskContent = undefined;
+            }
+
+            const saveNormalized = normalizeToLF(contentToSave);
+            const diskNormalized = diskContent !== undefined ? normalizeToLF(diskContent) : undefined;
+            const originalNormalized = normalizeToLF(diff.originalContent);
+
+            // 1) 若磁盘内容已经等于要保存的内容：无需保存，直接 revert 清理 dirty（避免冲突提示）
+            if (diskNormalized !== undefined && diskNormalized === saveNormalized) {
+                if (doc.isDirty) {
+                    await revertOpenDocumentToDisk();
+                }
+            }
+            // 2) 若磁盘内容已不同于 diff 创建时的 originalContent：说明中途被外部写入/回滚，绕过 doc.save 强制写入后再 revert
+            else if (diskNormalized !== undefined && diskNormalized !== originalNormalized) {
                 fs.writeFileSync(diff.absolutePath, contentToSave, 'utf8');
+                await revertOpenDocumentToDisk();
+            }
+            // 3) 磁盘仍为 originalContent：走 doc.save 快路径（保留 VSCode 的编码/换行等保存策略）
+            else {
+                let saved = false;
+                try {
+                    saved = await doc.save();
+                } catch {
+                    saved = false;
+                }
+
+                if (!saved) {
+                    // 如果 VSCode API 保存失败，尝试直接写入文件
+                    fs.writeFileSync(diff.absolutePath, contentToSave, 'utf8');
+                    await revertOpenDocumentToDisk();
+                }
             }
             
             diff.status = 'accepted';

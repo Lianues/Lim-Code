@@ -57,7 +57,7 @@ async function handleOpenDiffPreview(
   },
   ctx: HandlerContext
 ): Promise<void> {
-  const { toolName, args, result } = data;
+  const { toolId, toolName, args, result } = data;
   
   const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
   if (!workspaceFolder) {
@@ -65,11 +65,11 @@ async function handleOpenDiffPreview(
   }
   
   if (toolName === 'apply_diff') {
-    await handleApplyDiffPreview(args, result, ctx);
+    await handleApplyDiffPreview(args, result, ctx, toolId);
   } else if (toolName === 'search_in_files') {
-    await handleSearchInFilesPreview(result, ctx);
+    await handleSearchInFilesPreview(result, ctx, toolId);
   } else if (toolName === 'write_file') {
-    await handleWriteFilePreview(args, result, ctx);
+    await handleWriteFilePreview(args, result, ctx, toolId);
   } else {
     throw new Error(t('webview.errors.unsupportedToolType', { toolName }));
   }
@@ -81,7 +81,8 @@ async function handleOpenDiffPreview(
 async function handleApplyDiffPreview(
   args: Record<string, unknown>,
   result: Record<string, unknown> | undefined,
-  ctx: HandlerContext
+  ctx: HandlerContext,
+  toolId?: string
 ): Promise<void> {
   const filePath = args.path as string;
   const patch = args.patch as string | undefined;
@@ -130,7 +131,8 @@ async function handleApplyDiffPreview(
     diffTitle = t('webview.messages.historyDiffPreview', { filePath });
   }
   
-  await openDiffView(filePath, originalContent, newContent, diffTitle, ctx);
+  const previewId = diffContentId || toolId || `${filePath}:${Date.now()}`;
+  await openDiffView(filePath, originalContent, newContent, diffTitle, ctx, previewId);
 }
 
 function buildPreviewContentsFromUnifiedPatch(patch: string): { originalContent: string; newContent: string } {
@@ -218,7 +220,8 @@ function buildPreviewContentsFromUnifiedPatch(patch: string): { originalContent:
  */
 async function handleSearchInFilesPreview(
   result: Record<string, unknown> | undefined,
-  ctx: HandlerContext
+  ctx: HandlerContext,
+  toolId?: string
 ): Promise<void> {
   const resultData = result?.data as Record<string, unknown> | undefined;
   const isReplaceMode = resultData?.isReplaceMode as boolean | undefined;
@@ -246,7 +249,8 @@ async function handleSearchInFilesPreview(
       const loadedContent = await ctx.diffStorageManager.loadGlobalDiff(replaceResult.diffContentId);
       if (loadedContent) {
         const diffTitle = t('webview.messages.searchReplaceDiffPreview', { filePath: replaceResult.file });
-        await openDiffView(replaceResult.file, loadedContent.originalContent, loadedContent.newContent, diffTitle, ctx);
+        const previewId = replaceResult.diffContentId || toolId || `${replaceResult.file}:${Date.now()}`;
+        await openDiffView(replaceResult.file, loadedContent.originalContent, loadedContent.newContent, diffTitle, ctx, previewId);
       }
     } catch (e) {
       console.warn('Failed to load diff content for search_in_files:', e);
@@ -260,7 +264,8 @@ async function handleSearchInFilesPreview(
 async function handleWriteFilePreview(
   args: Record<string, unknown>,
   result: Record<string, unknown> | undefined,
-  ctx: HandlerContext
+  ctx: HandlerContext,
+  toolId?: string
 ): Promise<void> {
   const files = args.files as Array<{ path: string; content: string }>;
   
@@ -308,7 +313,8 @@ async function handleWriteFilePreview(
       diffTitle = t('webview.messages.newFileContentPreview', { filePath: file.path });
     }
     
-    await openDiffView(file.path, originalContent, newContent, diffTitle, ctx);
+    const previewId = diffContentId || (toolId ? `${toolId}:${file.path}` : `${file.path}:${Date.now()}`);
+    await openDiffView(file.path, originalContent, newContent, diffTitle, ctx, previewId);
   }
 }
 
@@ -320,10 +326,12 @@ async function openDiffView(
   originalContent: string,
   newContent: string,
   diffTitle: string,
-  ctx: HandlerContext
+  ctx: HandlerContext,
+  previewId?: string
 ): Promise<void> {
-  const originalUri = vscode.Uri.parse(`limcode-diff-preview:original/${encodeURIComponent(filePath)}`);
-  const newUri = vscode.Uri.parse(`limcode-diff-preview:modified/${encodeURIComponent(filePath)}`);
+  const id = previewId && String(previewId).trim() ? String(previewId).trim() : `${filePath}:${Date.now()}`;
+  const originalUri = vscode.Uri.parse(`limcode-diff-preview:original/${encodeURIComponent(filePath)}?id=${encodeURIComponent(id)}`);
+  const newUri = vscode.Uri.parse(`limcode-diff-preview:modified/${encodeURIComponent(filePath)}?id=${encodeURIComponent(id)}`);
   
   ctx.diffPreviewProvider.setContent(originalUri.toString(), originalContent);
   ctx.diffPreviewProvider.setContent(newUri.toString(), newContent);
