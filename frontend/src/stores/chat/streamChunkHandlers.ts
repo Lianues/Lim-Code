@@ -732,6 +732,8 @@ export function handleComplete(
   const messageIndex = state.allMessages.value.findIndex(m => m.id === state.streamingMessageId.value)
   if (messageIndex !== -1) {
     const message = state.allMessages.value[messageIndex]
+    // 保存原有的 tools 信息（complete 阶段的 content 通常只含文本，不含 functionCall）
+    const existingTools = message.tools
     // 刷新工具调用缓冲区
     flushToolCallBuffer(message, state)
     // 保存原有的 modelVersion（使用创建时的模型，不从 API 响应更新）
@@ -750,7 +752,11 @@ export function handleComplete(
       ...finalMessage,
       streaming: false,
       // complete 代表后端已持久化该模型消息
-      localOnly: false
+      localOnly: false,
+      // 保留已有的 tools（finalMessage.tools 通常为 undefined，会覆盖已积累的工具信息）
+      tools: finalMessage.tools && finalMessage.tools.length > 0
+        ? finalMessage.tools
+        : existingTools
     }
     
     // 用新对象替换数组中的旧对象，确保 Vue 响应式更新

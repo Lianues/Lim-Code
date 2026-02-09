@@ -3,6 +3,11 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.0.84] - 2026-02-10
+
+### Fixed
+  - 修复了plan模式下，执行计划后todo list消失问题
+
 ## [1.0.83] - 2026-02-10
 
 ### Added
