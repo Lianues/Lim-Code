@@ -65,8 +65,8 @@ function findAllExactMatchLineNumbers(
 
         result.push(currentLine);
 
-        // 继续往后找（允许重叠匹配，尽量保守）
-        fromIndex = pos + 1;
+        // 继续往后找（按非重叠匹配推进，避免候选行噪声）
+        fromIndex = pos + Math.max(1, normalizedSearch.length);
     }
 
     return result;
@@ -206,6 +206,12 @@ function parseLooseUnifiedPatchToLegacyDiffs(patch: string): LegacyDiffBlock[] {
 
 function convertUnifiedHunksToLegacyDiffs(hunks: UnifiedDiffHunk[]): LegacyDiffBlock[] {
     return hunks.map(h => {
+        // 为 unified fallback 提供行号锚点，避免全局 search 在重复上下文中出现“多处匹配”歧义。
+        // 这里使用 oldStart（1-based）作为起点提示：
+        // - 与 hunk 在原文件中的定位语义一致
+        // - 即使 search 很短（如仅 "}"），也能优先命中预期区域的首个匹配
+        const startLineHint = Number.isFinite(h.oldStart) ? Math.max(1, h.oldStart) : undefined;
+
         const searchLines: string[] = [];
         const replaceLines: string[] = [];
 
@@ -227,7 +233,8 @@ function convertUnifiedHunksToLegacyDiffs(hunks: UnifiedDiffHunk[]): LegacyDiffB
 
         return {
             search: searchLines.join('\n'),
-            replace: replaceLines.join('\n')
+            replace: replaceLines.join('\n'),
+            start_line: startLineHint
         };
     });
 }
