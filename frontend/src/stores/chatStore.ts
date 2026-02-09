@@ -96,8 +96,19 @@ import {
 import type { SendMessageOptions } from './chat/messageActions'
 import type { BuildSession } from './chat/types'
 
+import {
+  createTab as createTabAction,
+  closeTab as closeTabAction,
+  switchTab as switchTabAction,
+  findTabByConversationId,
+  updateTabTitle,
+  updateTabConversationId
+} from './chat/tabActions'
+
+import type { StreamHandlerContext } from './chat/streamHandler'
+
 // 重新导出类型
-export type { Conversation, WorkspaceFilter } from './chat/types'
+export type { Conversation, WorkspaceFilter, TabInfo } from './chat/types'
 
 export const useChatStore = defineStore('chat', () => {
   // ============ 状态 ============
@@ -141,11 +152,63 @@ export const useChatStore = defineStore('chat', () => {
 
   // ============ 对话操作 ============
   
-  const createNewConversation = () => createNewConvAction(state, cancelStreamAndRejectTools)
+  /**
+   * 创建新对话 - 标签页感知
+   *
+   * 如果当前标签页是空白的（无对话），直接复用；否则创建新标签页
+   */
+  const createNewConversation = async () => {
+    // 如果当前标签页已经是空白的，直接在当前标签页创建
+    if (!state.currentConversationId.value && state.allMessages.value.length === 0) {
+      await createNewConvAction(state, cancelStreamAndRejectTools)
+      return
+    }
+
+    // 创建新标签页
+    const tabId = createTabAction(state, { title: 'New Chat' })
+    if (tabId) {
+      // 如果该标签页已存在（重复对话），直接切换
+      const existingTab = state.openTabs.value.find(t => t.id === tabId)
+      if (existingTab && existingTab.conversationId) {
+        switchTabWrapped(tabId)
+        return
+      }
+      switchTabWrapped(tabId)
+    }
+  }
+
   const loadConversations = () => loadConvsAction(state)
   const loadMoreConversations = () => loadMoreConvsAction(state)
   const loadOlderMessagesPage = (options?: { pageSize?: number }) => loadOlderMessagesPageAction(state, options)
-  const switchConversation = (id: string) => switchConvAction(state, id, cancelStreamAndRejectTools)
+
+  /**
+   * 切换对话 - 标签页感知
+   *
+   * 如果对话已在某个标签页中打开，切换到该标签页；
+   * 否则在当前标签页中加载该对话
+   */
+  const switchConversation = async (id: string) => {
+    // 检查对话是否已在某个标签页中打开
+    const existingTab = findTabByConversationId(state, id)
+    if (existingTab) {
+      // 直接切换到已打开的标签页
+      switchTabWrapped(existingTab.id)
+      return
+    }
+
+    // 在当前标签页中加载该对话
+    await switchConvAction(state, id, cancelStreamAndRejectTools)
+
+    // 更新当前标签页的信息
+    if (state.activeTabId.value) {
+      updateTabConversationId(state, state.activeTabId.value, id)
+      const conv = state.conversations.value.find(c => c.id === id)
+      if (conv) {
+        updateTabTitle(state, state.activeTabId.value, conv.title)
+      }
+    }
+  }
+
   const deleteConversation = (id: string) => deleteConvAction(
     state,
     id,
@@ -216,14 +279,78 @@ export const useChatStore = defineStore('chat', () => {
   const summarizeContext = () => summarizeContextFn(state, () => loadHistory(state))
 
   // ============ 流式处理 ============
+
+  /** 流式处理器上下文（供标签页切换时回放缓冲区使用） */
+  const streamHandlerCtx: StreamHandlerContext = {
+    state,
+    currentModelName: () => computed.currentModelName.value,
+    addCheckpoint,
+    updateConversationAfterMessage: () => updateConversationAfterMessage(state)
+  }
   
   function handleStreamChunkWrapper(chunk: StreamChunk): void {
-    handleStreamChunk(chunk, {
-      state,
-      currentModelName: () => computed.currentModelName.value,
-      addCheckpoint,
-      updateConversationAfterMessage: () => updateConversationAfterMessage(state)
+    handleStreamChunk(chunk, streamHandlerCtx)
+  }
+
+  // ============ 标签页操作 ============
+
+  /**
+   * 创建新标签页
+   */
+  function createNewTab(): string | null {
+    const tabId = createTabAction(state, { title: 'New Chat' })
+    if (tabId) {
+      switchTabWrapped(tabId)
+    }
+    return tabId
+  }
+
+  /**
+   * 关闭标签页
+   */
+  function closeTabWrapped(tabId: string): void {
+    closeTabAction(state, tabId, cancelStreamAndRejectTools, streamHandlerCtx)
+  }
+
+  /**
+   * 切换标签页
+   */
+  function switchTabWrapped(tabId: string): void {
+    switchTabAction(state, tabId, cancelStreamAndRejectTools, streamHandlerCtx)
+  }
+
+  /**
+   * 从历史打开对话（在新标签页或当前空白标签页中）
+   */
+  async function openConversationInTab(conversationId: string): Promise<void> {
+    // 如果已在某个标签页中打开，直接切换
+    const existingTab = findTabByConversationId(state, conversationId)
+    if (existingTab) {
+      switchTabWrapped(existingTab.id)
+      return
+    }
+
+    // 如果当前标签页是空白的，在当前标签页中加载
+    if (!state.currentConversationId.value && state.allMessages.value.length === 0) {
+      await switchConversation(conversationId)
+      return
+    }
+
+    // 创建新标签页并在其中加载对话
+    const conv = state.conversations.value.find(c => c.id === conversationId)
+    const tabId = createTabAction(state, {
+      conversationId,
+      title: conv?.title || 'Chat'
     })
+    if (tabId) {
+      switchTabWrapped(tabId)
+      // 切换后需要从后端加载历史
+      await switchConvAction(state, conversationId, cancelStreamAndRejectTools)
+      // 更新标签页信息
+      if (conv) {
+        updateTabTitle(state, tabId, conv.title)
+      }
+    }
   }
 
   // ============ 初始化 ============
@@ -258,6 +385,12 @@ export const useChatStore = defineStore('chat', () => {
     state.isLoadingMoreMessages.value = false
     state.historyFolded.value = false
     state.foldedMessageCount.value = 0
+
+    // 初始化标签页：创建第一个空白标签页
+    const initialTabId = createTabAction(state, { title: 'New Chat' })
+    if (initialTabId) {
+      state.activeTabId.value = initialTabId
+    }
   }
 
   // ============ 返回 ============
@@ -362,6 +495,14 @@ export const useChatStore = defineStore('chat', () => {
     
     // 上下文总结
     summarizeContext,
+
+    // 标签页
+    openTabs: state.openTabs,
+    activeTabId: state.activeTabId,
+    createNewTab,
+    closeTab: closeTabWrapped,
+    switchTab: switchTabWrapped,
+    openConversationInTab,
     
     // 初始化
     initialize

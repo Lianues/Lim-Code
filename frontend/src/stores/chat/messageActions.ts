@@ -9,6 +9,7 @@ import type { ChatStoreState, ChatStoreComputed, AttachmentData } from './types'
 import { sendToExtension } from '../../utils/vscode'
 import { generateId } from '../../utils/format'
 import { createAndPersistConversation, MESSAGES_PAGE_SIZE, loadCheckpoints, refreshCurrentConversationBuildSession } from './conversationActions'
+import { updateTabConversationId, updateTabTitle } from './tabActions'
 import { clearCheckpointsFromIndex } from './checkpointActions'
 import { contentToMessageEnhanced } from './parsers'
 import { syncTotalMessagesFromWindow, setTotalMessagesFromWindow, trimWindowFromTop } from './windowUtils'
@@ -163,6 +164,12 @@ export async function sendMessage(
       const newId = await createAndPersistConversation(state, messageText)
       if (!newId) {
         throw new Error('Failed to create conversation')
+      }
+      // 更新当前标签页的 conversationId 和标题
+      if (state.activeTabId.value) {
+        updateTabConversationId(state, state.activeTabId.value, newId)
+        const title = messageText.slice(0, 30) + (messageText.length > 30 ? '...' : '')
+        updateTabTitle(state, state.activeTabId.value, title)
       }
     }
     

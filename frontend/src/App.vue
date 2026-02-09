@@ -10,6 +10,7 @@ import { InputArea } from './components/input'
 import { WelcomePanel } from './components/home'
 import { HistoryPage } from './components/history'
 import { SettingsPanel } from './components/settings'
+import { ConversationTabs } from './components/tabs'
 import { CustomScrollbar } from './components/common'
 import { useChatStore, useSettingsStore, useTerminalStore } from './stores'
 import { useAttachments } from './composables'
@@ -41,6 +42,12 @@ const {
 // 处理新建对话
 function handleNewChat() {
   chatStore.createNewConversation()
+  settingsStore.showChat()
+}
+
+// 处理新建标签页
+function handleNewTab() {
+  chatStore.createNewTab()
   settingsStore.showChat()
 }
 
@@ -246,6 +253,15 @@ onMounted(async () => {
     
     <!-- 聊天视图 - 使用 v-show 避免销毁组件，保持滚动位置 -->
     <div v-show="languageLoaded && settingsStore.currentView === 'chat'" class="chat-view">
+      <!-- 多对话标签页栏 -->
+      <ConversationTabs
+        :tabs="chatStore.openTabs"
+        :active-tab-id="chatStore.activeTabId"
+        @switch-tab="chatStore.switchTab"
+        @close-tab="chatStore.closeTab"
+        @new-tab="handleNewTab"
+      />
+
       <!-- 主聊天区域 -->
       <div class="chat-area">
         <!-- 初始状态：显示欢迎面板+历史对话列表 -->

@@ -196,6 +196,12 @@ const en: LanguageMessages = {
             channel: 'Channel'
         },
 
+        tabs: {
+            newChat: 'New Chat',
+            newTab: 'New Tab',
+            closeTab: 'Close Tab'
+        },
+
         history: {
             title: 'Chat History',
             empty: 'No conversations yet',
@@ -1416,7 +1422,7 @@ const en: LanguageMessages = {
                 appInfo: {
                     title: 'Application Info',
                     name: 'Lim Code - Vibe Coding Assistant',
-                    version: 'Version: 1.0.81',
+                    version: 'Version: 1.0.82',
                     repository: 'Repository',
                     developer: 'Developer'
                 }

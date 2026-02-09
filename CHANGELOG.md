@@ -3,6 +3,11 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.0.82] - 2026-02-10
+
+### Added
+  - 添加了对话标签页功能，现在可以同时开多个对话任务
+
 ## [1.0.81] - 2026-02-09
 
 ### Added

@@ -165,6 +165,20 @@ export interface ChatStoreState {
    * 用于：Plan 执行时选择“渠道 + 模型”，并在 toolConfirmation 时保持一致。
    */
   pendingModelOverride: Ref<string | null>
+
+  // ============ 多对话标签页 ============
+
+  /** 当前打开的标签页列表（有序） */
+  openTabs: Ref<TabInfo[]>
+
+  /** 当前激活的标签页 ID */
+  activeTabId: Ref<string | null>
+
+  /** 后台标签页的会话快照（tabId -> snapshot） */
+  sessionSnapshots: Ref<Map<string, ConversationSessionSnapshot>>
+
+  /** 后台对话的流式缓冲区（conversationId -> chunks） */
+  backgroundStreamBuffers: Ref<Map<string, import('../../types').StreamChunk[]>>
 }
 
 /**
@@ -197,6 +211,66 @@ export interface ChatStoreComputed {
   hasPendingToolConfirmation: ComputedRef<boolean>
   /** 待确认的工具列表 */
   pendingToolCalls: ComputedRef<import('../../types').ToolUsage[]>
+}
+
+// ============ 多对话标签页相关 ============
+
+/**
+ * 对话会话快照 - 切换标签页时保存/恢复的每对话状态
+ */
+export interface ConversationSessionSnapshot {
+  /** 对话 ID */
+  conversationId: string | null
+  /** 消息列表 */
+  allMessages: Message[]
+  /** 窗口起始索引 */
+  windowStartIndex: number
+  /** 总消息数 */
+  totalMessages: number
+  /** 是否正在加载更多消息 */
+  isLoadingMoreMessages: boolean
+  /** 是否流式中 */
+  isStreaming: boolean
+  /** 是否加载中 */
+  isLoading: boolean
+  /** 流式消息 ID */
+  streamingMessageId: string | null
+  /** 是否等待响应 */
+  isWaitingForResponse: boolean
+  /** 检查点列表 */
+  checkpoints: CheckpointRecord[]
+  /** Build 会话 */
+  activeBuild: BuildSession | null
+  /** 错误信息 */
+  error: ErrorInfo | null
+  /** 重试状态 */
+  retryStatus: RetryStatus | null
+  /** 是否已折叠 */
+  historyFolded: boolean
+  /** 折叠消息数 */
+  foldedMessageCount: number
+  /** 工具调用缓冲区 */
+  toolCallBuffer: string
+  /** 工具调用标记 */
+  inToolCall: 'xml' | 'json' | null
+  /** 输入框内容 */
+  inputValue: string
+  /** 模型覆盖 */
+  pendingModelOverride: string | null
+}
+
+/**
+ * 标签页信息
+ */
+export interface TabInfo {
+  /** 标签页唯一 ID */
+  id: string
+  /** 关联的对话 ID（null 表示新空白对话） */
+  conversationId: string | null
+  /** 显示标题 */
+  title: string
+  /** 是否正在流式响应中 */
+  isStreaming: boolean
 }
 
 // ============ 常量 ============

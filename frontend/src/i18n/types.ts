@@ -219,6 +219,13 @@ export interface LanguageMessages {
             channel: string;
         };
 
+        /** tabs 目录 - 多对话标签页 */
+        tabs: {
+            newChat: string;
+            newTab: string;
+            closeTab: string;
+        };
+
         /** history 目录 */
         history: {
             title: string;

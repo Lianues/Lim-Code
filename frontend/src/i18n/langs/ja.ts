@@ -196,6 +196,12 @@ const ja: LanguageMessages = {
             channel: 'チャンネル'
         },
 
+        tabs: {
+            newChat: '新しい会話',
+            newTab: '新しいタブ',
+            closeTab: 'タブを閉じる'
+        },
+
         history: {
             title: '会話履歴',
             empty: '会話履歴がありません',
@@ -1416,7 +1422,7 @@ const ja: LanguageMessages = {
                 appInfo: {
                     title: 'アプリケーション情報',
                     name: 'Lim Code - Vibe Coding アシスタント',
-                    version: 'バージョン：1.0.81',
+                    version: 'バージョン：1.0.82',
                     repository: 'リポジトリ',
                     developer: '開発者'
                 }

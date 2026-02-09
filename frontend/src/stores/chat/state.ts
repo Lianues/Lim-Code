@@ -5,13 +5,16 @@
 import { ref } from 'vue'
 import type { Message, ErrorInfo } from '../../types'
 import type { CheckpointRecord } from '../../types'
+import type { StreamChunk } from '../../types'
 import type {
   Conversation,
   WorkspaceFilter,
   RetryStatus,
   ConfigInfo,
   BuildSession,
-  ChatStoreState
+  ChatStoreState,
+  TabInfo,
+  ConversationSessionSnapshot
 } from './types'
 
 /**
@@ -117,6 +120,20 @@ export function createChatState(): ChatStoreState {
   /** 当前回合模型覆盖（用于 Plan 执行的“渠道 + 模型”选择） */
   const pendingModelOverride = ref<string | null>(null)
 
+  // ============ 多对话标签页 ============
+
+  /** 当前打开的标签页列表 */
+  const openTabs = ref<TabInfo[]>([])
+
+  /** 当前激活的标签页 ID */
+  const activeTabId = ref<string | null>(null)
+
+  /** 后台标签页的会话快照 */
+  const sessionSnapshots = ref<Map<string, ConversationSessionSnapshot>>(new Map())
+
+  /** 后台对话的流式缓冲区 */
+  const backgroundStreamBuffers = ref<Map<string, StreamChunk[]>>(new Map())
+
   return {
     conversations,
     persistedConversationIds,
@@ -147,6 +164,10 @@ export function createChatState(): ChatStoreState {
     inputValue,
     workspaceFilter,
     activeBuild,
-    pendingModelOverride
+    pendingModelOverride,
+    openTabs,
+    activeTabId,
+    sessionSnapshots,
+    backgroundStreamBuffers
   }
 }

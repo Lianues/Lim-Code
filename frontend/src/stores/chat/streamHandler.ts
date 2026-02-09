@@ -8,6 +8,7 @@
 
 import type { StreamChunk } from '../../types'
 import type { ChatStoreState, CheckpointRecord } from './types'
+import { bufferBackgroundChunk, updateTabStreamingStatus } from './tabActions'
 
 import {
   handleChunkType,
@@ -48,10 +49,15 @@ export function handleStreamChunk(
 ): void {
   const { state, currentModelName, addCheckpoint, updateConversationAfterMessage } = ctx
   
-  // 只处理当前对话的流式响应
+  // 非当前活跃对话的流式响应 -> 缓冲到后台并更新标签页状态
   if (chunk.conversationId !== state.currentConversationId.value) {
+    bufferBackgroundChunk(state, chunk)
+    updateTabStreamingStatus(state, chunk)
     return
   }
+
+  // 更新当前活跃标签页的流式状态
+  updateTabStreamingStatus(state, chunk)
   
   switch (chunk.type) {
     case 'chunk':
