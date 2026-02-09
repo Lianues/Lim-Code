@@ -60,16 +60,49 @@ const todoBarItems = computed<BuildTodoItem[]>(() => {
 
 const isTodoExpanded = ref(false)
 
+
+function isExecutedCreatePlanTool(tool: any): boolean {
+  if (!tool || tool.name !== 'create_plan') return false
+
+  const fromTool = tool.result && typeof tool.result === 'object' ? tool.result as Record<string, unknown> : undefined
+  const fromResponseRaw = typeof tool.id === 'string' && tool.id
+    ? chatStore.getToolResponseById(tool.id)
+    : undefined
+  const fromResponse = fromResponseRaw && typeof fromResponseRaw === 'object'
+    ? fromResponseRaw as Record<string, unknown>
+    : undefined
+  const merged = {
+    ...(fromTool || {}),
+    ...(fromResponse || {})
+  }
+
+  const prompt = (merged as any)?.planExecutionPrompt
+  return typeof prompt === 'string' && prompt.trim().length > 0
+}
+
+function isTodoInitToolForSticky(tool: any): boolean {
+  if (!tool) return false
+  if (tool.name === 'todo_write') return true
+  if (tool.name === 'create_plan') return isExecutedCreatePlanTool(tool)
+  return false
+}
+
 const hasTodoInitTool = computed(() => {
   return chatStore.allMessages.some(msg =>
     msg.role === 'assistant' &&
     Array.isArray(msg.tools) &&
-    msg.tools.some(tool => tool.name === 'create_plan' || tool.name === 'todo_write')
+    msg.tools.some(tool => isTodoInitToolForSticky(tool))
   )
 })
 
 // 仅保留一个会话级 TODO 条；有 activeBuild 时沿用 Build 条展示，避免双条重叠。
-const showTodoBar = computed(() => !showBuildBar.value && hasTodoInitTool.value && replayedBuildTodoState.value.todos !== null)
+const showTodoBar = computed(() => {
+  return (
+    !showBuildBar.value &&
+    hasTodoInitTool.value &&
+    todoBarItems.value.length > 0
+  )
+})
 
 const todoInitAnchorBackendIndex = computed<number | null>(() => {
   // 使用“最新一次初始化（create_plan / todo_write）”作为锚点，
@@ -77,7 +110,7 @@ const todoInitAnchorBackendIndex = computed<number | null>(() => {
   for (let i = chatStore.allMessages.length - 1; i >= 0; i--) {
     const msg = chatStore.allMessages[i]
     if (msg.role !== 'assistant' || !Array.isArray(msg.tools)) continue
-    const hasInitTool = msg.tools.some(tool => tool.name === 'create_plan' || tool.name === 'todo_write')
+    const hasInitTool = msg.tools.some(tool => isTodoInitToolForSticky(tool))
     if (!hasInitTool) continue
 
     if (typeof msg.backendIndex === 'number' && Number.isFinite(msg.backendIndex)) {
@@ -112,7 +145,7 @@ const todoPanelName = computed(() => {
   for (let i = chatStore.allMessages.length - 1; i >= 0; i--) {
     const msg = chatStore.allMessages[i]
     if (msg.role !== 'assistant' || !Array.isArray(msg.tools)) continue
-    const initTool = msg.tools.find(tool => tool.name === 'create_plan' || tool.name === 'todo_write')
+    const initTool = msg.tools.find(tool => isTodoInitToolForSticky(tool))
     if (!initTool) continue
 
     if (initTool.name === 'create_plan') {
@@ -171,7 +204,15 @@ const buildTodoItems = computed<BuildTodoItem[]>(() => {
   }))
 })
 
-const showBuildBar = computed(() => !!chatStore.activeBuild)
+const showBuildBar = computed(() => {
+  const build = chatStore.activeBuild
+  if (!build) return false
+
+  // 运行中始终展示；已结束时仅在存在可展示 TODO 时展示，
+  // 避免回退后出现“暂无 TODO”的空 Build 壳。
+  if (build.status === 'running') return true
+  return buildTodoItems.value.length > 0
+})
 
 const buildAnchorBackendIndex = computed<number | null>(() => {
   const build = chatStore.activeBuild
@@ -208,8 +249,6 @@ const buildCurrentText = computed(() => {
   return ''
 })
 
-const isBuildRunning = computed(() => !!chatStore.activeBuild && chatStore.activeBuild.status === 'running')
-
 watch(
   () => chatStore.activeBuild?.id,
   (id, prev) => {
@@ -242,21 +281,6 @@ watch(showTodoBar, (visible, prev) => {
     isTodoExpanded.value = true
   }
 })
-
-async function stopBuild() {
-  try {
-    await chatStore.cancelStream()
-  } finally {
-    if (chatStore.activeBuild) {
-      await chatStore.setActiveBuild({ ...chatStore.activeBuild, status: 'done' })
-    }
-  }
-}
-
-function dismissBuild() {
-  void chatStore.setActiveBuild(null)
-  isBuildExpanded.value = false
-}
 
 // 消息分页显示逻辑：解决消息过多导致的输入卡顿
 const VISIBLE_INCREMENT = 40
@@ -753,23 +777,6 @@ function formatCheckpointTime(timestamp: number): string {
                 <div class="build-actions">
                   <span v-if="buildTotal > 0" class="build-progress">{{ buildCompleted }}/{{ buildTotal }}</span>
                   <span v-else class="build-progress">—</span>
-
-                  <button
-                    v-if="chatStore.activeBuild && isBuildRunning"
-                    class="build-btn"
-                    :title="t('common.stop')"
-                    @click.stop="stopBuild"
-                  >
-                    <i class="codicon codicon-debug-stop"></i>
-                  </button>
-                  <button
-                    v-else-if="chatStore.activeBuild"
-                    class="build-btn"
-                    :title="t('common.close')"
-                    @click.stop="dismissBuild"
-                  >
-                    <i class="codicon codicon-close"></i>
-                  </button>
 
                   <button
                     class="build-btn"

@@ -8,7 +8,9 @@ import * as fs from 'fs';
 import * as os from 'os';
 import { t } from '../../backend/i18n';
 import type { HandlerContext, MessageHandler } from '../types';
+import { resolveUriWithInfo } from '../../backend/tools/utils';
 import { validateFileInWorkspace, checkFileExists, getRelativePathFromAbsolute } from '../utils/WorkspaceUtils';
+import { extractPlanTodoListFromContent } from '../../backend/tools/plan/todoListSection';
 
 // ========== 工作区信息 ==========
 
@@ -864,57 +866,64 @@ export const showNotification: MessageHandler = async (data, requestId, ctx) => 
 
 export const planConfirmExecution: MessageHandler = async (data, requestId, ctx) => {
   try {
-    const { path: planPath, originalContent } = data;
+    const { path: planPath, originalContent, conversationId } = data || {};
+    const confirmedPrompt = 'User confirmed this plan.';
+    const originalText = typeof originalContent === 'string' ? originalContent : '';
+
+    const syncTodosFromPlanContent = async (planContent: string) => {
+      const todos = extractPlanTodoListFromContent(planContent || '');
+
+      if (typeof conversationId === 'string' && conversationId.trim()) {
+        try {
+          await ctx.conversationManager.setCustomMetadata(conversationId.trim(), 'todoList', todos);
+        } catch (todoError) {
+          console.error('[plan.confirmExecution] Failed to sync todos from plan document:', todoError);
+        }
+      }
+
+      return todos;
+    };
+
+    const replyWithPlan = async (prompt: string, planContent: string) => {
+      const todos = await syncTodosFromPlanContent(planContent);
+      ctx.sendResponse(requestId, {
+        success: true,
+        prompt,
+        planContent,
+        todos
+      });
+    };
 
     if (!planPath || typeof planPath !== 'string') {
-      // No path, just confirm
-      ctx.sendResponse(requestId, {
-        success: true,
-        prompt: 'User confirmed this plan.',
-        planContent: originalContent || ''
-      });
+      await replyWithPlan(confirmedPrompt, originalText);
       return;
     }
 
-    const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
-    if (!workspaceFolder) {
-      ctx.sendResponse(requestId, {
-        success: true,
-        prompt: 'User confirmed this plan.',
-        planContent: originalContent || ''
-      });
-      return;
-    }
+    const { uri } = resolveUriWithInfo(planPath);
+    if (!uri) return await replyWithPlan(confirmedPrompt, originalText);
 
     try {
-      const fileUri = vscode.Uri.joinPath(workspaceFolder.uri, planPath);
-      const bytes = await vscode.workspace.fs.readFile(fileUri);
+      const bytes = await vscode.workspace.fs.readFile(uri);
       const currentContent = Buffer.from(bytes).toString('utf-8');
 
       const currentTrimmed = (currentContent || '').trim();
-      const originalTrimmed = (originalContent || '').trim();
+      const originalTrimmed = originalText.trim();
 
       if (currentTrimmed !== originalTrimmed) {
-        // User modified the plan file
-        ctx.sendResponse(requestId, {
-          success: true,
-          prompt: `User modified this plan and provided a new execution plan. Please execute accordingly:\n\n${currentContent}`,
-          planContent: currentContent
-        });
+        await replyWithPlan(
+          `User modified this plan and provided a new execution plan. Please execute accordingly:\n\n${currentContent}`,
+          currentContent
+        );
       } else {
-        ctx.sendResponse(requestId, {
-          success: true,
-          prompt: 'User confirmed this plan.',
-          planContent: originalContent || ''
-        });
+        // 即使内容未变，也同步一次文档中的 TODO LIST（用户可能仅做了不影响 trim 的微调）
+        await replyWithPlan(
+          confirmedPrompt,
+          originalText || currentContent || ''
+        );
       }
     } catch {
       // File read failed, fallback to confirm
-      ctx.sendResponse(requestId, {
-        success: true,
-        prompt: 'User confirmed this plan.',
-        planContent: originalContent || ''
-      });
+      await replyWithPlan(confirmedPrompt, originalText);
     }
   } catch (error: any) {
     ctx.sendError(requestId, 'PLAN_CONFIRM_ERROR', error.message || 'Failed to confirm plan execution');

@@ -55,6 +55,7 @@ const isLoadingChannels = ref(false)
 const isLoadingModels = ref(false)
 const isExecutingPlan = ref(false)
 const expandedPlans = ref<Set<string>>(new Set())
+const autoOpenedPlanCardKeys = ref<Set<string>>(new Set())
 
 const channelOptions = computed<ChannelOption[]>(() =>
   channelConfigs.value
@@ -174,13 +175,20 @@ async function executePlan(card: PlanCardItem) {
       success: boolean
       prompt: string
       planContent: string
+      todos?: Array<{
+        id: string
+        content: string
+        status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
+      }>
     }>('plan.confirmExecution', {
       path: card.path,
-      originalContent: card.content
+      originalContent: card.content,
+      conversationId: chatStore.currentConversationId
     })
 
     const prompt = confirmResult.prompt
     latestPlanContent = confirmResult.planContent || card.content
+    const todosFromPlan = Array.isArray(confirmResult.todos) ? confirmResult.todos : []
 
     // 启动 Build 顶部卡片（Cursor-like）
     await chatStore.setActiveBuild({
@@ -203,7 +211,8 @@ async function executePlan(card: PlanCardItem) {
           id: card.toolId,
           name: card.toolName,
           response: {
-            planExecutionPrompt: prompt
+            planExecutionPrompt: prompt,
+            todos: todosFromPlan
           }
         }
       }
@@ -218,8 +227,28 @@ async function executePlan(card: PlanCardItem) {
   }
 }
 
+async function autoOpenPendingPlanTabs(cards: PlanCardItem[]) {
+  for (const card of cards) {
+    if (!card?.path) continue
+    if (card.isExecuted) continue
+    if (card.status === 'error') continue
+    if (autoOpenedPlanCardKeys.value.has(card.key)) continue
+
+    autoOpenedPlanCardKeys.value.add(card.key)
+    try {
+      await sendToExtension('openWorkspaceFileAt', {
+        path: card.path,
+        highlight: false
+      })
+    } catch (error) {
+      console.error(t('components.message.tool.planCard.executePlanFailed'), error)
+    }
+  }
+}
+
 onMounted(() => {
   loadChannels()
+  void autoOpenPendingPlanTabs(planCards.value)
 })
 
 watch(
@@ -230,6 +259,7 @@ watch(
     await loadModelsForChannel(id)
   }
 )
+
 
 // ============ 工具状态映射 ============
 function getToolResult(tool: ToolUsage): any {
@@ -338,6 +368,14 @@ const planCards = computed<PlanCardItem[]>(() => {
   }
   return cards
 })
+
+
+watch(
+  () => planCards.value,
+  (cards) => {
+    void autoOpenPendingPlanTabs(cards)
+  }
+)
 
 const hasAny = computed(() => planCards.value.length > 0)
 </script>

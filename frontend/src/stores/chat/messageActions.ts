@@ -615,6 +615,9 @@ export async function deleteMessage(
     }
     state.isStreaming.value = false
     state.isWaitingForResponse.value = false
+
+    // 本地占位删除后也刷新一次 activeBuild，避免残留旧 Build 壳
+    await refreshCurrentConversationBuildSession(state)
     return
   }
   
@@ -709,6 +712,7 @@ export function clearMessages(state: ChatStoreState): void {
   state.isLoadingMoreMessages.value = false
   state.historyFolded.value = false
   state.foldedMessageCount.value = 0
+  state.activeBuild.value = null
   state.error.value = null
   state.streamingMessageId.value = null
   state.isWaitingForResponse.value = false

@@ -187,9 +187,17 @@ export function replayTodoStateFromMessages(
         }
 
         if (tool.name === 'create_plan') {
-          const todosInput = Array.isArray((tool.args as any)?.todos)
-            ? (tool.args as any)?.todos
-            : (mergedResult as any)?.data?.todos
+          const hasPlanExecutionPrompt = typeof (mergedResult as any)?.planExecutionPrompt === 'string' &&
+            String((mergedResult as any)?.planExecutionPrompt).trim().length > 0
+          if (!hasPlanExecutionPrompt) continue
+
+          const todosInput = Array.isArray((mergedResult as any)?.todos)
+            ? (mergedResult as any)?.todos
+            : Array.isArray((mergedResult as any)?.data?.todos)
+              ? (mergedResult as any)?.data?.todos
+              : Array.isArray((tool.args as any)?.todos)
+                ? (tool.args as any)?.todos
+                : undefined
           if (Array.isArray(todosInput)) {
             list = normalizeTodoList(todosInput)
             markTouched()

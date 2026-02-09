@@ -210,8 +210,30 @@ export class ChatFlowService {
     return responded.has(normalized);
   }
 
+  private collectFunctionResponseById(history: Content[]): Map<string, Record<string, unknown>> {
+    const out = new Map<string, Record<string, unknown>>();
+
+    for (const msg of history) {
+      if (msg.role !== 'user' || !Array.isArray(msg.parts)) continue;
+      for (const part of msg.parts) {
+        const response = part.functionResponse?.response;
+        const idRaw = part.functionResponse?.id;
+        if (typeof idRaw !== 'string' || !idRaw.trim()) continue;
+        if (!response || typeof response !== 'object') continue;
+
+        const id = idRaw.trim();
+        const current = response as Record<string, unknown>;
+        const prev = out.get(id);
+        out.set(id, this.mergeResponseWithCleanup(prev, current));
+      }
+    }
+
+    return out;
+  }
+
   private replayTodoListFromHistory(history: Content[], respondedToolCallIds?: Set<string>): TodoItemValue[] | null {
     const responded = respondedToolCallIds || this.collectRespondedToolCallIds(history);
+    const responseById = this.collectFunctionResponseById(history);
 
     let touched = false;
     let list: TodoItemValue[] = [];
@@ -225,11 +247,26 @@ export class ChatFlowService {
 
         if (!this.isToolCallResponded(call.id, responded)) continue;
 
+        const mergedResponse = (() => {
+          if (typeof call.id !== 'string' || !call.id.trim()) return undefined;
+          return responseById.get(call.id.trim());
+        })();
+
         const args = call.args && typeof call.args === 'object' ? call.args as Record<string, unknown> : {};
 
         if (call.name === 'create_plan' || call.name === 'todo_write') {
-          if (!Array.isArray((args as any).todos)) continue;
-          list = this.normalizeTodoList((args as any).todos);
+          if (call.name === 'create_plan') {
+            const prompt = (mergedResponse as any)?.planExecutionPrompt;
+            if (typeof prompt !== 'string' || !prompt.trim()) continue;
+          }
+
+          const todosInput = Array.isArray((mergedResponse as any)?.todos)
+            ? (mergedResponse as any)?.todos
+            : Array.isArray((mergedResponse as any)?.data?.todos)
+              ? (mergedResponse as any)?.data?.todos
+              : (args as any).todos;
+          if (!Array.isArray(todosInput)) continue;
+          list = this.normalizeTodoList(todosInput);
           touched = true;
           continue;
         }
