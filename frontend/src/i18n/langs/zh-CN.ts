@@ -394,7 +394,53 @@ const zhCN: LanguageMessages = {
                 rejected: '已拒绝',
                 viewDiff: '查看差异',
                 viewDiffInVSCode: '在 VSCode 中查看差异',
-                openDiffFailed: '打开 diff 预览失败'
+                openDiffFailed: '打开 diff 预览失败',
+                todoWrite: {
+                    label: 'TODO',
+                    labelWithCount: 'TODO · {count}',
+                    mergePrefix: '合并 · ',
+                    description: '待做 {pending} · 进行中 {inProgress} · 完成 {completed}'
+                },
+                todoUpdate: {
+                    label: 'TODO 更新',
+                    labelWithCount: 'TODO 更新 · {count}',
+                    description: '新增 {add} · 状态 {setStatus} · 描述 {setContent} · 取消 {cancel} · 移除 {remove}'
+                },
+                createPlan: {
+                    label: '创建计划',
+                    fallbackTitle: '计划'
+                },
+                todoPanel: {
+                    title: 'TODO 列表',
+                    modePlan: '计划',
+                    modeUpdate: '更新',
+                    modeMerge: '合并',
+                    sourceCurrentInput: '本次工具输入',
+                    sourceSnapshot: '当时快照',
+                    statusPending: '待做',
+                    statusInProgress: '进行中',
+                    statusCompleted: '完成',
+                    statusCancelled: '取消',
+                    totalItems: '共 {count} 项',
+                    copyAsMarkdown: '复制为 Markdown',
+                    copyMarkdown: '复制 Markdown',
+                    copied: '已复制',
+                    empty: '暂无 TODO',
+                    markdownCancelledSuffix: '（已取消）',
+                    markdownInProgressSuffix: '（进行中）',
+                    copyFailed: '复制失败'
+                },
+                planCard: {
+                    title: '计划',
+                    executeLabel: '执行：',
+                    executed: '已执行',
+                    executing: '执行中...',
+                    executePlan: '执行计划',
+                    loadChannelsFailed: '加载渠道失败',
+                    loadModelsFailed: '加载模型失败',
+                    executePlanFailed: '执行计划失败',
+                    promptPrefix: '请按照以下计划执行：\n\n{plan}'
+                }
             },
             attachment: {
                 clickToPreview: '点击预览',
@@ -1370,7 +1416,7 @@ const zhCN: LanguageMessages = {
                 appInfo: {
                     title: '应用信息',
                     name: 'Lim Code - Vibe Coding助手',
-                    version: '版本：1.0.79',
+                    version: '版本：1.0.80',
                     repository: '项目仓库',
                     developer: '开发者'
                 }

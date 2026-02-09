@@ -394,7 +394,53 @@ const en: LanguageMessages = {
                 rejected: 'Rejected',
                 viewDiff: 'View Diff',
                 viewDiffInVSCode: 'View diff in VSCode',
-                openDiffFailed: 'Failed to open diff preview'
+                openDiffFailed: 'Failed to open diff preview',
+                todoWrite: {
+                    label: 'TODO',
+                    labelWithCount: 'TODO · {count}',
+                    mergePrefix: 'Merge · ',
+                    description: 'Pending {pending} · In Progress {inProgress} · Completed {completed}'
+                },
+                todoUpdate: {
+                    label: 'TODO Update',
+                    labelWithCount: 'TODO Update · {count}',
+                    description: 'Add {add} · Status {setStatus} · Content {setContent} · Cancel {cancel} · Remove {remove}'
+                },
+                createPlan: {
+                    label: 'Create Plan',
+                    fallbackTitle: 'Plan'
+                },
+                todoPanel: {
+                    title: 'TODO List',
+                    modePlan: 'plan',
+                    modeUpdate: 'update',
+                    modeMerge: 'merge',
+                    sourceCurrentInput: 'Current tool input',
+                    sourceSnapshot: 'Snapshot at that time',
+                    statusPending: 'Pending',
+                    statusInProgress: 'In Progress',
+                    statusCompleted: 'Completed',
+                    statusCancelled: 'Cancelled',
+                    totalItems: '{count} items',
+                    copyAsMarkdown: 'Copy as Markdown',
+                    copyMarkdown: 'Copy Markdown',
+                    copied: 'Copied',
+                    empty: 'No TODOs',
+                    markdownCancelledSuffix: ' (cancelled)',
+                    markdownInProgressSuffix: ' (in progress)',
+                    copyFailed: 'Copy failed'
+                },
+                planCard: {
+                    title: 'Plan',
+                    executeLabel: 'Execute:',
+                    executed: 'Executed',
+                    executing: 'Executing...',
+                    executePlan: 'Execute Plan',
+                    loadChannelsFailed: 'Failed to load channels',
+                    loadModelsFailed: 'Failed to load models',
+                    executePlanFailed: 'Failed to execute plan',
+                    promptPrefix: 'Please execute the following plan:\n\n{plan}'
+                }
             },
             attachment: {
                 clickToPreview: 'Click to preview',
@@ -1370,7 +1416,7 @@ const en: LanguageMessages = {
                 appInfo: {
                     title: 'Application Info',
                     name: 'Lim Code - Vibe Coding Assistant',
-                    version: 'Version: 1.0.79',
+                    version: 'Version: 1.0.80',
                     repository: 'Repository',
                     developer: 'Developer'
                 }

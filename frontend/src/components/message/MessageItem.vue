@@ -78,6 +78,14 @@ interface RenderBlock {
 // 思考内容展开状态
 const isThoughtExpanded = ref(false)
 
+
+const todoDebugPrinted = new Set<string>()
+function debugTodoOnce(key: string, data: Record<string, unknown>) {
+  if (todoDebugPrinted.has(key)) return
+  todoDebugPrinted.add(key)
+  console.debug('[todo-debug][MessageItem]', data)
+}
+
 // 实时思考时间（用于动态更新显示）
 const elapsedThinkingTime = ref(0)
 let thinkingTimer: ReturnType<typeof setInterval> | null = null
@@ -193,6 +201,9 @@ const renderBlocks = computed<RenderBlock[]>(() => {
   let currentToolBlock: ToolUsage[] = []
   let currentThoughtBlock: string[] = []
   
+  const messageTools = props.message.tools || []
+  let functionCallOrdinal = 0
+
   // 辅助函数：刷新文本块
   const flushText = () => {
     if (currentTextBlock.length > 0) {
@@ -247,17 +258,41 @@ const renderBlocks = computed<RenderBlock[]>(() => {
       flushText()
       flushThought()
       
-      // 从 message.tools 中查找对应的工具状态
-      const toolId = part.functionCall.id || ''
-      const existingTool = props.message.tools?.find(t => t.id === toolId)
+      // 从 message.tools 中查找对应的工具状态。
+      // 优先按 functionCall.id 匹配；若 part 里没有 id（某些模型/模式下会缺失），
+      // 回退到同序位工具，确保每条工具消息都能拿到稳定 toolId（用于 TODO 快照锚定）。
+      const toolIdFromPart = typeof part.functionCall.id === 'string' ? part.functionCall.id : ''
+      let existingTool: ToolUsage | undefined
+      if (toolIdFromPart) {
+        existingTool = messageTools.find(t => t.id === toolIdFromPart)
+      } else if (functionCallOrdinal < messageTools.length) {
+        existingTool = messageTools[functionCallOrdinal]
+      }
+
+      const stableToolId =
+        toolIdFromPart ||
+        existingTool?.id ||
+        `${props.message.id}:tool:${functionCallOrdinal}`
       
+      debugTodoOnce(`function-call-${props.message.id}-${functionCallOrdinal}-${stableToolId}`, {
+        messageId: props.message.id,
+        messageBackendIndex: props.message.backendIndex,
+        functionCallOrdinal,
+        functionCallName: part.functionCall.name,
+        functionCallIdFromPart: toolIdFromPart || null,
+        resolvedToolId: stableToolId,
+        existingToolId: existingTool?.id || null
+      })
+
       currentToolBlock.push({
-        id: toolId,
+        id: stableToolId,
         name: part.functionCall.name,
         args: part.functionCall.args,
         status: existingTool?.status,
         result: existingTool?.result
       })
+
+      functionCallOrdinal += 1
     }
     // 忽略其他类型（如 inlineData、fileData 等，后续可扩展）
   }
@@ -268,6 +303,15 @@ const renderBlocks = computed<RenderBlock[]>(() => {
   flushTools()
   
   return blocks
+})
+
+
+/**
+ * 主内容区渲染块
+ */
+const contentRenderBlocks = computed<RenderBlock[]>(() => {
+  // 不隐藏任何工具，按原始渲染块完整展示
+  return renderBlocks.value
 })
 
 // 判断是否正在思考中（有思考块但没有普通文本块也没有工具调用块，且消息正在流式输出，且没有最终的思考时间）
@@ -604,9 +648,9 @@ function handleRestoreAndRetry(checkpointId: string) {
 
         <!-- 显示模式 -->
         <div class="message-content">
-        <!-- 有 parts 时：按 parts 原始顺序渲染内容块 -->
+        <!-- 有 parts 时渲染内容块（TODO 工具块会下沉到消息底部） -->
         <template v-if="renderBlocks.length > 0">
-          <template v-for="(block, index) in renderBlocks" :key="index">
+          <template v-for="(block, index) in contentRenderBlocks" :key="index">
             <!-- 思考块：可折叠显示 -->
             <div v-if="block.type === 'thought'" class="thought-block">
               <div
@@ -650,6 +694,7 @@ function handleRestoreAndRetry(checkpointId: string) {
             
             <!-- 工具调用块 -->
             <ToolMessage
+              :message-backend-index="message.backendIndex"
               v-else-if="block.type === 'tool'"
               :tools="block.tools!"
             />
@@ -731,7 +776,6 @@ function handleRestoreAndRetry(checkpointId: string) {
             </span>
           </div>
         </div>
-        </div>
 
         <!-- Cursor 风格任务卡片：Plan/SubAgent 缩略预览，放在消息内容下方 -->
         <MessageTaskCards
@@ -739,6 +783,7 @@ function handleRestoreAndRetry(checkpointId: string) {
           :tools="message.tools"
           :message-model-version="modelVersion"
         />
+        </div>
 
       </template>
     </div>
@@ -859,6 +904,13 @@ function handleRestoreAndRetry(checkpointId: string) {
 
 .message-content {
   position: relative;
+}
+
+.todo-tool-blocks {
+  margin-top: var(--spacing-sm, 8px);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm, 8px);
 }
 
 .empty-response {

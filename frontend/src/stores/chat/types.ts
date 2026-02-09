@@ -78,6 +78,7 @@ export interface BuildSession {
   channelId?: string
   modelId?: string
   startedAt: number
+  anchorBackendIndex?: number
   status: BuildStatus
 }
 

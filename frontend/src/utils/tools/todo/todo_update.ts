@@ -3,6 +3,8 @@
  */
 
 import { registerTool } from '../../toolRegistry'
+import { t } from '../../../i18n'
+import TodoWritePanel from '../../../components/tools/todo/todo_write.vue'
 
 type OpName = 'add' | 'set_status' | 'set_content' | 'cancel' | 'remove'
 
@@ -26,18 +28,25 @@ function countOps(ops: Array<{ op: OpName }>): Record<OpName, number> {
 
 registerTool('todo_update', {
   name: 'todo_update',
-  label: 'TODO Update',
+  label: t('components.message.tool.todoUpdate.label'),
   icon: 'codicon-edit',
 
   labelFormatter: (args) => {
     const ops = normalizeOps((args as any)?.ops)
-    return ops.length > 0 ? `TODO Update · ${ops.length}` : 'TODO Update'
+    return ops.length > 0 ? t('components.message.tool.todoUpdate.labelWithCount', { count: ops.length }) : t('components.message.tool.todoUpdate.label')
   },
 
   descriptionFormatter: (args) => {
     const ops = normalizeOps((args as any)?.ops)
     const c = countOps(ops)
-    return `新增 ${c.add} · 状态 ${c.set_status} · 描述 ${c.set_content} · 取消 ${c.cancel} · 移除 ${c.remove}`
-  }
+    return t('components.message.tool.todoUpdate.description', {
+      add: c.add,
+      setStatus: c.set_status,
+      setContent: c.set_content,
+      cancel: c.cancel,
+      remove: c.remove
+    })
+  },
+  contentComponent: TodoWritePanel
 })
 

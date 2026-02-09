@@ -41,6 +41,13 @@ export const deleteSingleMessage: MessageHandler = async (data, requestId, ctx) 
   const { conversationId, targetIndex } = data;
   try {
     await ctx.conversationManager.deleteMessage(conversationId, targetIndex);
+
+    // 删除单条消息后刷新派生元数据（todoList / activeBuild），
+    // 避免删除 todo/create_plan 轨迹后历史会话残留无效 Build 壳。
+    if (ctx.chatHandler) {
+      await ctx.chatHandler.refreshDerivedMetadataAfterHistoryMutation(conversationId);
+    }
+
     ctx.sendResponse(requestId, { success: true });
   } catch (error: any) {
     ctx.sendError(requestId, 'DELETE_SINGLE_MESSAGE_ERROR', error.message || t('webview.errors.deleteMessageFailed'));

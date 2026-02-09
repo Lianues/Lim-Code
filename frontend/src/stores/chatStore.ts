@@ -167,8 +167,17 @@ export const useChatStore = defineStore('chat', () => {
     options?: { persist?: boolean }
   ): Promise<void> {
     const conversationId = state.currentConversationId.value || ''
+    const defaultAnchorBackendIndex = state.windowStartIndex.value + state.allMessages.value.length
+
     const normalizedBuild = build && conversationId
-      ? { ...build, conversationId: build.conversationId || conversationId }
+      ? {
+          ...build,
+          conversationId: build.conversationId || conversationId,
+          anchorBackendIndex:
+            typeof build.anchorBackendIndex === 'number'
+              ? build.anchorBackendIndex
+              : defaultAnchorBackendIndex
+        }
       : build
 
     state.activeBuild.value = normalizedBuild

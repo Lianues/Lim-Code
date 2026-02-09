@@ -9,6 +9,7 @@ All notable changes to the "Lim Code" extension will be documented in this file.
   - 优化了subagent不必要的字段，不再发给ai
   - 优化了subagent的显示，不再显示外部面板
   - 优化了plan工具相关的交互
+  - 优化了todolist的语言翻译问题
 
 ## [1.0.79] - 2026-02-09
 

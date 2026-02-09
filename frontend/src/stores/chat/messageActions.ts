@@ -8,7 +8,7 @@ import type { Message, Attachment, Content } from '../../types'
 import type { ChatStoreState, ChatStoreComputed, AttachmentData } from './types'
 import { sendToExtension } from '../../utils/vscode'
 import { generateId } from '../../utils/format'
-import { createAndPersistConversation, MESSAGES_PAGE_SIZE, loadCheckpoints } from './conversationActions'
+import { createAndPersistConversation, MESSAGES_PAGE_SIZE, loadCheckpoints, refreshCurrentConversationBuildSession } from './conversationActions'
 import { clearCheckpointsFromIndex } from './checkpointActions'
 import { contentToMessageEnhanced } from './parsers'
 import { syncTotalMessagesFromWindow, setTotalMessagesFromWindow, trimWindowFromTop } from './windowUtils'
@@ -631,6 +631,7 @@ export async function deleteMessage(
       state.allMessages.value = state.allMessages.value.slice(0, targetIndex)
       clearCheckpointsFromIndex(state, backendIndex)
       setTotalMessagesFromWindow(state)
+      await refreshCurrentConversationBuildSession(state)
     } else {
       const err = response?.error
       state.error.value = {
@@ -688,6 +689,7 @@ export async function deleteSingleMessage(
       state.foldedMessageCount.value = 0
 
       await loadCheckpoints(state)
+      await refreshCurrentConversationBuildSession(state)
     }
   } catch (err: any) {
     state.error.value = {

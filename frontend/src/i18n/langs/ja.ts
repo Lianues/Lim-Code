@@ -394,7 +394,53 @@ const ja: LanguageMessages = {
                 rejected: '拒否済み',
                 viewDiff: '差分を表示',
                 viewDiffInVSCode: 'VSCode で差分を表示',
-                openDiffFailed: 'diff プレビューを開くのに失敗しました'
+                openDiffFailed: 'diff プレビューを開くのに失敗しました',
+                todoWrite: {
+                    label: 'TODO',
+                    labelWithCount: 'TODO · {count}',
+                    mergePrefix: 'マージ · ',
+                    description: '未着手 {pending} · 進行中 {inProgress} · 完了 {completed}'
+                },
+                todoUpdate: {
+                    label: 'TODO 更新',
+                    labelWithCount: 'TODO 更新 · {count}',
+                    description: '追加 {add} · 状態 {setStatus} · 内容 {setContent} · キャンセル {cancel} · 削除 {remove}'
+                },
+                createPlan: {
+                    label: 'プランを作成',
+                    fallbackTitle: 'プラン'
+                },
+                todoPanel: {
+                    title: 'TODO リスト',
+                    modePlan: 'プラン',
+                    modeUpdate: '更新',
+                    modeMerge: 'マージ',
+                    sourceCurrentInput: '今回のツール入力',
+                    sourceSnapshot: '当時のスナップショット',
+                    statusPending: '未着手',
+                    statusInProgress: '進行中',
+                    statusCompleted: '完了',
+                    statusCancelled: 'キャンセル',
+                    totalItems: '合計 {count} 件',
+                    copyAsMarkdown: 'Markdown としてコピー',
+                    copyMarkdown: 'Markdown をコピー',
+                    copied: 'コピー済み',
+                    empty: 'TODO はありません',
+                    markdownCancelledSuffix: '（キャンセル）',
+                    markdownInProgressSuffix: '（進行中）',
+                    copyFailed: 'コピーに失敗しました'
+                },
+                planCard: {
+                    title: 'プラン',
+                    executeLabel: '実行:',
+                    executed: '実行済み',
+                    executing: '実行中...',
+                    executePlan: 'プランを実行',
+                    loadChannelsFailed: 'チャンネルの読み込みに失敗しました',
+                    loadModelsFailed: 'モデルの読み込みに失敗しました',
+                    executePlanFailed: 'プランの実行に失敗しました',
+                    promptPrefix: '以下のプランに従って実行してください:\n\n{plan}'
+                }
             },
             attachment: {
                 clickToPreview: 'クリックしてプレビュー',
@@ -1370,7 +1416,7 @@ const ja: LanguageMessages = {
                 appInfo: {
                     title: 'アプリケーション情報',
                     name: 'Lim Code - Vibe Coding アシスタント',
-                    version: 'バージョン：1.0.79',
+                    version: 'バージョン：1.0.80',
                     repository: 'リポジトリ',
                     developer: '開発者'
                 }

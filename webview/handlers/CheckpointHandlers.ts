@@ -51,6 +51,12 @@ export const restoreCheckpoint: MessageHandler = async (data, requestId, ctx) =>
   try {
     const { conversationId, checkpointId } = data;
     const result = await ctx.checkpointManager.restoreCheckpoint(conversationId, checkpointId);
+
+    // 回退后刷新派生元数据（todoList / activeBuild），确保后续发给模型的 TODO_LIST 不过期。
+    if (result?.success && ctx.chatHandler) {
+      await ctx.chatHandler.refreshDerivedMetadataAfterHistoryMutation(conversationId);
+    }
+
     ctx.sendResponse(requestId, result);
   } catch (error: any) {
     ctx.sendError(requestId, 'RESTORE_CHECKPOINT_ERROR', error.message || t('webview.errors.restoreCheckpointFailed'));

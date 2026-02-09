@@ -11,6 +11,8 @@ import { generateId } from '../../utils/format'
 import { calculateBackendIndex } from './messageActions'
 import { syncTotalMessagesFromWindow, trimWindowFromTop } from './windowUtils'
 
+const duplicateFunctionResponseWarned = new Set<string>()
+
 /**
  * 根据工具调用 ID 获取工具响应
  */
@@ -18,6 +20,8 @@ export function getToolResponseById(
   state: ChatStoreState,
   toolCallId: string
 ): Record<string, unknown> | null {
+  let latest: Record<string, unknown> | null = null
+  let matchCount = 0
   // 从后往前找，优先使用最新的 functionResponse（便于覆盖/追加字段）
   for (let i = state.allMessages.value.length - 1; i >= 0; i--) {
     const message = state.allMessages.value[i]
@@ -25,12 +29,23 @@ export function getToolResponseById(
       for (let j = message.parts.length - 1; j >= 0; j--) {
         const part = message.parts[j]
         if (part.functionResponse && part.functionResponse.id === toolCallId) {
-          return part.functionResponse.response
+          matchCount += 1
+          if (!latest) {
+            latest = part.functionResponse.response
+          }
         }
       }
     }
   }
-  return null
+  if (matchCount > 1 && !duplicateFunctionResponseWarned.has(toolCallId)) {
+    duplicateFunctionResponseWarned.add(toolCallId)
+    console.warn('[todo-debug][toolActions] duplicate functionResponse id detected', {
+      toolCallId,
+      matchCount
+    })
+  }
+
+  return latest
 }
 
 /**

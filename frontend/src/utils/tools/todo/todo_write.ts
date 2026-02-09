@@ -3,6 +3,7 @@
  */
 
 import { registerTool } from '../../toolRegistry'
+import { t } from '../../../i18n'
 import TodoWritePanel from '../../../components/tools/todo/todo_write.vue'
 
 type TodoStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled'
@@ -29,20 +30,24 @@ function countByStatus(todos: Array<{ status: TodoStatus }>): Record<TodoStatus,
 
 registerTool('todo_write', {
   name: 'todo_write',
-  label: 'TODO',
+  label: t('components.message.tool.todoWrite.label'),
   icon: 'codicon-list-unordered',
 
   labelFormatter: (args) => {
     const todos = normalizeTodos((args as any)?.todos)
-    return todos.length > 0 ? `TODO · ${todos.length}` : 'TODO'
+    return todos.length > 0 ? t('components.message.tool.todoWrite.labelWithCount', { count: todos.length }) : t('components.message.tool.todoWrite.label')
   },
 
   descriptionFormatter: (args) => {
     const merge = (args as any)?.merge
     const todos = normalizeTodos((args as any)?.todos)
     const c = countByStatus(todos)
-    const prefix = merge === true ? 'merge · ' : ''
-    return `${prefix}待做 ${c.pending} · 进行中 ${c.in_progress} · 完成 ${c.completed}`
+    const prefix = merge === true ? t('components.message.tool.todoWrite.mergePrefix') : ''
+    return `${prefix}${t('components.message.tool.todoWrite.description', {
+      pending: c.pending,
+      inProgress: c.in_progress,
+      completed: c.completed
+    })}`
   },
 
   contentComponent: TodoWritePanel

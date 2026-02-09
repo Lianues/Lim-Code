@@ -5,47 +5,78 @@
  * 风格完全继承自 write_file.vue
  */
 
-import { computed, ref, onBeforeUnmount } from 'vue'
+import { computed, ref, onBeforeUnmount, watchEffect } from 'vue'
 import CustomScrollbar from '../../common/CustomScrollbar.vue'
-
-type TodoStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled'
-
-interface TodoItem {
-  id: string
-  content: string
-  status: TodoStatus
-}
+import { useChatStore } from '@/stores'
+import {
+  normalizeTodoList,
+  replayTodoStateFromMessages,
+  type TodoStatus,
+  type TodoItem
+} from '../../../utils/todoList'
+import { useI18n } from '../../../i18n'
 
 const props = defineProps<{
   args: Record<string, unknown>
   result?: Record<string, unknown>
   error?: string
+  toolId?: string
+  toolName?: string
+  messageBackendIndex?: number
 }>()
+
+const chatStore = useChatStore()
+
+const { t } = useI18n()
 
 // 复制状态
 const copiedMarkdown = ref(false)
 let copyTimer: ReturnType<typeof setTimeout> | null = null
 
-function normalizeTodos(input: unknown): TodoItem[] {
-  if (!Array.isArray(input)) return []
-  const out: TodoItem[] = []
-  for (const item of input) {
-    const id = (item as any)?.id
-    const content = (item as any)?.content
-    const status = (item as any)?.status
-    if (typeof id !== 'string' || typeof content !== 'string') continue
-    if (status !== 'pending' && status !== 'in_progress' && status !== 'completed' && status !== 'cancelled') continue
-    out.push({ id, content, status })
-  }
-  return out
+
+
+const todoDebugPrinted = new Set<string>()
+function debugTodoOnce(key: string, data: Record<string, unknown>) {
+  if (todoDebugPrinted.has(key)) return
+  todoDebugPrinted.add(key)
+  console.debug('[todo-debug][todo_write.vue]', data)
 }
 
 const resultData = computed(() => (props.result as any)?.data || {})
 
+const snapshotTodoState = computed(() =>
+  replayTodoStateFromMessages(chatStore.allMessages, {
+    resolveToolResponseById: (toolCallId) => chatStore.getToolResponseById(toolCallId),
+    stopAtBackendIndex:
+      typeof props.messageBackendIndex === 'number' && Number.isFinite(props.messageBackendIndex)
+        ? props.messageBackendIndex : undefined,
+    stopAtToolId: typeof props.toolId === 'string'
+      ? props.toolId
+      : undefined
+  })
+)
+
+const isTodoInitTool = computed(() => {
+  return props.toolName === 'todo_write' || props.toolName === 'create_plan'
+})
+
 const todos = computed<TodoItem[]>(() => {
-  const fromResult = normalizeTodos(resultData.value?.todos || resultData.value?.todoList)
+  // 初始化工具消息（todo_write / create_plan）优先展示“本次输入/结果”，
+  // 避免后续新建 TODO 列表后把旧初始化消息看起来“覆盖成新列表”。
+  if (isTodoInitTool.value) {
+    const fromResult = normalizeTodoList(resultData.value?.todos || resultData.value?.todoList)
+    if (fromResult.length > 0) return fromResult
+    const fromArgs = normalizeTodoList((props.args as any)?.todos)
+    if (fromArgs.length > 0) return fromArgs
+  }
+
+  if (snapshotTodoState.value.todos !== null) {
+    return snapshotTodoState.value.todos
+  }
+
+  const fromResult = normalizeTodoList(resultData.value?.todos || resultData.value?.todoList)
   if (fromResult.length > 0) return fromResult
-  return normalizeTodos((props.args as any)?.todos)
+  return normalizeTodoList((props.args as any)?.todos)
 })
 
 const sortedTodos = computed(() => {
@@ -77,9 +108,45 @@ const counts = computed(() => {
 const total = computed(() => todos.value.length)
 
 const modeLabel = computed(() => {
+  if (props.toolName === 'create_plan') return t('components.message.tool.todoPanel.modePlan')
+  if (props.toolName === 'todo_update') return t('components.message.tool.todoPanel.modeUpdate')
+
   const merge = (props.args as any)?.merge
-  if (merge === true) return 'merge'
+  if (merge === true) return t('components.message.tool.todoPanel.modeMerge')
   return ''
+})
+
+const sourceLabel = computed(() =>
+  isTodoInitTool.value
+    ? t('components.message.tool.todoPanel.sourceCurrentInput')
+    : (snapshotTodoState.value.todos !== null
+      ? t('components.message.tool.todoPanel.sourceSnapshot')
+      : t('components.message.tool.todoPanel.sourceCurrentInput'))
+)
+
+
+watchEffect(() => {
+  const toolId = typeof props.toolId === 'string' ? props.toolId : ''
+  const todoSnapshot = snapshotTodoState.value.todos || []
+  const ids = todoSnapshot.map(t => t.id)
+  const statuses = todoSnapshot.map(t => `${t.id}:${t.status}`)
+  const key = `panel-${toolId || 'no-tool-id'}-${ids.join('|')}-${statuses.join('|')}`
+
+  debugTodoOnce(key, {
+    message: 'Todo panel snapshot resolved',
+    toolId: toolId || null,
+    toolName: props.toolName || null,
+    source: isTodoInitTool.value ? 'init_tool_args_or_result' : (snapshotTodoState.value.todos !== null ? 'replay_snapshot' : 'result_or_args_fallback'),
+    todoCount: todoSnapshot.length,
+    todoIds: ids,
+    todoStatuses: statuses,
+    messageBackendIndex: props.messageBackendIndex ?? null,
+    anchorBackendIndex: snapshotTodoState.value.anchorBackendIndex
+  })
+
+  if (!toolId) {
+    console.warn('[todo-debug][todo_write.vue] Missing toolId for todo panel', { toolName: props.toolName || null })
+  }
 })
 
 function getStatusIcon(status: TodoStatus): string {
@@ -98,13 +165,13 @@ function getStatusIcon(status: TodoStatus): string {
 function getStatusLabel(status: TodoStatus): string {
   switch (status) {
     case 'pending':
-      return '待做'
+      return t('components.message.tool.todoPanel.statusPending')
     case 'in_progress':
-      return '进行中'
+      return t('components.message.tool.todoPanel.statusInProgress')
     case 'completed':
-      return '完成'
+      return t('components.message.tool.todoPanel.statusCompleted')
     case 'cancelled':
-      return '取消'
+      return t('components.message.tool.todoPanel.statusCancelled')
   }
 }
 
@@ -112,7 +179,7 @@ function toMarkdownList(items: TodoItem[]): string {
   return items
     .map(i => {
       const box = i.status === 'completed' ? '[x]' : '[ ]'
-      const suffix = i.status === 'cancelled' ? ' (cancelled)' : (i.status === 'in_progress' ? ' (in progress)' : '')
+      const suffix = i.status === 'cancelled' ? t('components.message.tool.todoPanel.markdownCancelledSuffix') : (i.status === 'in_progress' ? t('components.message.tool.todoPanel.markdownInProgressSuffix') : '')
       return `- ${box} ${i.content}${suffix}  \`#${i.id}\``
     })
     .join('\n')
@@ -130,7 +197,7 @@ async function copyMarkdown() {
       copyTimer = null
     }, 1000)
   } catch (e) {
-    console.error('复制失败:', e)
+    console.error(t('components.message.tool.todoPanel.copyFailed'), e)
   }
 }
 
@@ -145,8 +212,9 @@ onBeforeUnmount(() => {
     <div class="panel-header">
       <div class="header-info">
         <span class="codicon codicon-checklist todo-icon"></span>
-        <span class="title">TODO 列表</span>
+        <span class="title">{{ t('components.message.tool.todoPanel.title') }}</span>
         <span v-if="modeLabel" class="mode-badge">{{ modeLabel }}</span>
+        <span class="source-label">{{ sourceLabel }}</span>
       </div>
       <div class="header-stats">
         <span v-if="counts.in_progress > 0" class="stat progress">
@@ -161,7 +229,7 @@ onBeforeUnmount(() => {
           <span class="codicon codicon-close"></span>
           {{ counts.cancelled }}
         </span>
-        <span class="stat total">共 {{ total }} 项</span>
+        <span class="stat total">{{ t('components.message.tool.todoPanel.totalItems', { count: total }) }}</span>
       </div>
     </div>
 
@@ -201,11 +269,11 @@ onBeforeUnmount(() => {
         <button
           class="action-btn"
           :class="{ 'copied': copiedMarkdown }"
-          :title="copiedMarkdown ? '已复制' : '复制为 Markdown'"
+          :title="copiedMarkdown ? t('components.message.tool.todoPanel.copied') : t('components.message.tool.todoPanel.copyAsMarkdown')"
           @click="copyMarkdown"
         >
           <span :class="['codicon', copiedMarkdown ? 'codicon-check' : 'codicon-copy']"></span>
-          <span class="btn-text">{{ copiedMarkdown ? '已复制' : '复制 Markdown' }}</span>
+          <span class="btn-text">{{ copiedMarkdown ? t('components.message.tool.todoPanel.copied') : t('components.message.tool.todoPanel.copyMarkdown') }}</span>
         </button>
       </div>
     </div>
@@ -213,7 +281,7 @@ onBeforeUnmount(() => {
     <!-- 空状态 -->
     <div v-else class="panel-empty">
       <span class="codicon codicon-info"></span>
-      <span>暂无 TODO</span>
+      <span>{{ t('components.message.tool.todoPanel.empty') }}</span>
     </div>
   </div>
 </template>
@@ -258,6 +326,14 @@ onBeforeUnmount(() => {
   color: var(--vscode-badge-foreground);
   margin-left: var(--spacing-xs, 4px);
   font-weight: 500;
+}
+
+.source-label {
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+  opacity: 0.8;
+  margin-left: var(--spacing-xs, 4px);
+  white-space: nowrap;
 }
 
 .header-stats {

@@ -23,9 +23,18 @@ const { t } = useI18n()
 
 const props = defineProps<{
   tools: ToolUsage[]
+  messageBackendIndex?: number
 }>()
 
 const chatStore = useChatStore()
+
+
+const todoDebugPrinted = new Set<string>()
+function debugToolOnce(key: string, data: Record<string, unknown>) {
+  if (todoDebugPrinted.has(key)) return
+  todoDebugPrinted.add(key)
+  console.debug('[todo-debug][ToolMessage]', data)
+}
 
 
 // --- Apply Diff 确认逻辑 ---
@@ -318,6 +327,29 @@ watchEffect(() => {
 
 // 增强后的工具列表，包含从 store 获取的响应
 const enhancedTools = computed<ToolUsage[]>(() => {
+  // TODO 排查：检测同一 ToolMessage 内是否出现重复 toolId
+  const toolIds = props.tools.map(t => t.id).filter(id => typeof id === 'string' && id.trim())
+  const duplicateToolIds = toolIds.filter((id, idx) => toolIds.indexOf(id) !== idx)
+  if (duplicateToolIds.length > 0) {
+    const key = `dup-${duplicateToolIds.join('|')}-${props.tools.map(t => t.name).join('|')}`
+    debugToolOnce(key, {
+      message: 'Duplicate tool ids found in ToolMessage props.tools',
+      duplicateToolIds,
+      toolNames: props.tools.map(t => t.name),
+      toolStatuses: props.tools.map(t => t.status || null)
+    })
+    console.warn('[todo-debug][ToolMessage] duplicate tool ids in props.tools', {
+      duplicateToolIds,
+      tools: props.tools.map(t => ({ id: t.id, name: t.name, status: t.status }))
+    })
+  }
+
+  debugToolOnce(`tools-${props.tools.map(t => `${t.id}:${t.name}`).join('|')}`, {
+    message: 'Render tools in ToolMessage',
+    toolCount: props.tools.length,
+    tools: props.tools.map(t => ({ id: t.id, name: t.name, status: t.status || null }))
+  })
+
   return props.tools.map((tool) => {
     // 获取响应结果
     let response: Record<string, unknown> | null | undefined = tool.result
@@ -558,6 +590,14 @@ function isExpandable(tool: ToolUsage): boolean {
   return config?.expandable !== false
 }
 
+function canToggleExpand(tool: ToolUsage): boolean {
+  return isExpandable(tool)
+}
+
+function shouldShowToolContent(tool: ToolUsage): boolean {
+  return isExpandable(tool) && isExpanded(tool.id)
+}
+
 // 检查工具是否支持 diff 预览
 function hasDiffPreview(tool: ToolUsage): boolean {
   const config = getToolConfig(tool.name)
@@ -658,7 +698,9 @@ function renderToolContent(tool: ToolUsage) {
       result: tool.result,
       error: tool.error,
       status: tool.status,
-      toolId: tool.id
+      toolId: tool.id,
+      toolName: tool.name,
+      messageBackendIndex: props.messageBackendIndex
     })
   }
   
@@ -695,13 +737,13 @@ function renderToolContent(tool: ToolUsage) {
     >
       <!-- 工具头部 - 可点击展开/收起（如果可展开） -->
       <div
-        :class="['tool-header', { 'not-expandable': !isExpandable(tool) }]"
-        @click="isExpandable(tool) && toggleExpand(tool.id)"
+        :class="['tool-header', { 'not-expandable': !canToggleExpand(tool) }]"
+        @click="canToggleExpand(tool) && toggleExpand(tool.id)"
       >
         <div class="tool-info">
           <!-- 展开/收起图标（仅当可展开时显示） -->
           <span
-            v-if="isExpandable(tool)"
+            v-if="canToggleExpand(tool)"
             :class="[
               'expand-icon',
               'codicon',
@@ -778,7 +820,7 @@ function renderToolContent(tool: ToolUsage) {
       </div>
 
       <!-- 工具详细内容 - 展开时显示（仅当可展开时） -->
-      <div v-if="isExpandable(tool) && isExpanded(tool.id)" class="tool-content">
+      <div v-if="shouldShowToolContent(tool)" class="tool-content">
         <component :is="() => renderToolContent(tool)" />
       </div>
 

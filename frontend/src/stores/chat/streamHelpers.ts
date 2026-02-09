@@ -15,6 +15,18 @@ import {
 } from './types'
 import { parseXMLToolCall, parseJSONToolCall } from './parsers'
 
+
+const todoDebugPrinted = new Set<string>()
+function debugTodoOnce(key: string, data: Record<string, unknown>) {
+  if (todoDebugPrinted.has(key)) return
+  todoDebugPrinted.add(key)
+  console.debug('[todo-debug][streamHelpers]', data)
+}
+
+function isTodoToolName(name: unknown): boolean {
+  return name === 'todo_write' || name === 'todo_update' || name === 'create_plan'
+}
+
 /**
  * 添加 functionCall 到消息
  */
@@ -201,23 +213,64 @@ export function flushToolCallBuffer(message: Message, state: ChatStoreState): vo
 export function handleFunctionCallPart(part: any, message: Message): void {
   const fc = part.functionCall
   const lastPart = message.parts![message.parts!.length - 1]
+
+  const incomingId = typeof fc.id === 'string' && fc.id.trim() ? fc.id.trim() : ''
+  const incomingHasPartial = typeof fc.partialArgs === 'string'
+  const incomingHasArgs = !!(fc.args && Object.keys(fc.args).length > 0)
   
   // 尝试合并到最后一个工具调用块
   let merged = false
   if (lastPart && lastPart.functionCall) {
     const lastFc = lastPart.functionCall
+    const lastId = typeof lastFc.id === 'string' && lastFc.id.trim() ? lastFc.id.trim() : ''
+    const lastHasPartial = typeof lastFc.partialArgs === 'string' && lastFc.partialArgs.length > 0
     
-    // OpenAI 模式：使用 index 匹配，或者如果没有 index 且是增量
-    const canMerge = (fc.index !== undefined && lastFc.index === fc.index) ||
-                     (fc.index === undefined && !fc.id && fc.partialArgs !== undefined)
+    // 只在“明显仍是同一次工具调用增量”时合并，避免把后续独立工具调用误并到上一条。
+    const sameId = incomingId && lastId && incomingId === lastId
+    const sameIndex = fc.index !== undefined && lastFc.index === fc.index
+
+    const canMergeByIndex =
+      !sameId &&
+      !incomingId &&
+      !lastId &&
+      sameIndex &&
+      (
+        incomingHasPartial ||
+        (lastHasPartial && incomingHasArgs)
+      )
+
+    const canMergeLegacyPartial =
+      !sameId &&
+      !incomingId &&
+      fc.index === undefined &&
+      incomingHasPartial
+
+    const canMerge = !!(sameId || canMergeByIndex || canMergeLegacyPartial)
     
     if (canMerge) {
+      if (isTodoToolName(fc.name) || isTodoToolName(lastFc.name)) {
+        debugTodoOnce(`merge-${message.id}-${lastFc.id || 'no-last-id'}-${fc.id || 'no-id'}-${String(fc.name || lastFc.name)}`, {
+          messageId: message.id,
+          action: 'merge_function_call_part',
+          incomingName: fc.name || null,
+          incomingId: incomingId || null,
+          incomingIndex: fc.index ?? null,
+          incomingHasPartial,
+          incomingHasArgs,
+          lastName: lastFc.name || null,
+          lastId: lastId || null,
+          lastIndex: lastFc.index ?? null,
+          canMerge,
+          canMergeReason: sameId ? 'sameId' : (canMergeByIndex ? 'sameIndexWithPartial' : (canMergeLegacyPartial ? 'legacyPartial' : 'none'))
+        })
+      }
+
       // 合并名称和 ID
       if (fc.name && !lastFc.name) lastFc.name = fc.name
       if (fc.id && !lastFc.id) lastFc.id = fc.id
       
       // 合并参数
-      if (fc.partialArgs !== undefined) {
+      if (incomingHasPartial) {
         lastFc.partialArgs = (lastFc.partialArgs || '') + fc.partialArgs
         // 尝试更新解析后的 args 用于预览
         if (lastFc.partialArgs.trim()) {
@@ -227,6 +280,12 @@ export function handleFunctionCallPart(part: any, message: Message): void {
         }
       } else if (fc.args && Object.keys(fc.args).length > 0) {
         lastFc.args = { ...lastFc.args, ...fc.args }
+
+        // 收到完整 args 后，认为该次增量拼接已收束，
+        // 清理残留 partialArgs，避免后续相同 index 的新工具调用被误合并。
+        if (lastFc.partialArgs) {
+          delete lastFc.partialArgs
+        }
       }
       
       merged = true
@@ -234,6 +293,18 @@ export function handleFunctionCallPart(part: any, message: Message): void {
   }
   
   if (!merged) {
+    if (isTodoToolName(fc.name)) {
+      debugTodoOnce(`append-${message.id}-${fc.id || 'no-id'}-${String(fc.name)}`, {
+        messageId: message.id,
+        action: 'append_new_function_call_part',
+        incomingName: fc.name,
+        incomingId: typeof fc.id === 'string' ? fc.id : null,
+        incomingIndex: fc.index ?? null,
+        hasPartial: typeof fc.partialArgs === 'string',
+        hasArgs: !!(fc.args && Object.keys(fc.args).length > 0)
+      })
+    }
+
     // 找不到可合并的，添加新块
     addFunctionCallToMessage(message, {
       id: fc.id || generateId(),

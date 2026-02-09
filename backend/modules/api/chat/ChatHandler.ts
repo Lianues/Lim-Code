@@ -546,6 +546,17 @@ export class ChatHandler {
             };
         }
     }
+
+    /**
+     * 在外部进行历史删除/回退后，刷新派生元数据（todoList / activeBuild 等）
+     */
+    async refreshDerivedMetadataAfterHistoryMutation(conversationId: string): Promise<void> {
+        try {
+            await this.chatFlowService.refreshDerivedMetadataAfterHistoryMutation(conversationId);
+        } catch (error) {
+            console.error('[ChatHandler] Failed to refresh derived metadata:', error);
+        }
+    }
     
     /**
      * 确保对话存在（不存在则创建）

@@ -13,6 +13,12 @@ import { formatTime } from '../../utils/format'
 import { useI18n } from '../../i18n'
 import type { Message, CheckpointRecord, Attachment } from '../../types'
 import { extractTodosFromPlan } from '../../utils/taskCards'
+import {
+  normalizeTodoStatus,
+  replayTodoStateFromMessages,
+
+  type TodoStatus as BuildTodoStatus
+} from '../../utils/todoList'
 
 const { t } = useI18n()
 
@@ -24,133 +30,117 @@ const props = defineProps<{
 const chatStore = useChatStore()
 
 // ============ Build（Plan 执行）顶部卡片 ============
-type BuildTodoStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled'
 type BuildTodoItem = { id: string; text: string; status: BuildTodoStatus }
-type BuildTodoRaw = { id: string; content: string; status: BuildTodoStatus }
-
 const isBuildExpanded = ref(false)
 
-function normalizeTodoStatus(value: any): BuildTodoStatus {
-  if (value === 'in_progress' || value === 'completed' || value === 'cancelled') return value
-  return 'pending'
-}
 
-function normalizeTodoList(input: any): BuildTodoRaw[] {
-  if (!Array.isArray(input)) return []
-  const out: BuildTodoRaw[] = []
-  for (const item of input) {
-    const id = (item as any)?.id
-    const content = (item as any)?.content
-    const status = (item as any)?.status
-    if (typeof id !== 'string' || !id.trim()) continue
-    if (typeof content !== 'string') continue
-    out.push({ id: id.trim(), content, status: normalizeTodoStatus(status) })
-  }
-  return out
-}
 
-function applyTodoUpdateOps(existing: BuildTodoRaw[], opsInput: any): BuildTodoRaw[] {
-  const result: Array<BuildTodoRaw | null> = existing.map(t => ({ ...t }))
-  const indexById = new Map<string, number>()
-  for (let i = 0; i < result.length; i++) {
-    const t = result[i]
-    if (t) indexById.set(t.id, i)
-  }
-
-  const ops = Array.isArray(opsInput) ? opsInput : []
-  for (const opAny of ops) {
-    const op = (opAny as any)?.op
-    const idRaw = (opAny as any)?.id
-    const id = typeof idRaw === 'string' ? idRaw.trim() : ''
-
-    if (op === 'add') {
-      const content = (opAny as any)?.content
-      if (!id || typeof content !== 'string') continue
-      const status = normalizeTodoStatus((opAny as any)?.status)
-      const idx = indexById.get(id)
-      if (idx === undefined) {
-        indexById.set(id, result.length)
-        result.push({ id, content, status })
-      } else {
-        const cur = result[idx]
-        if (!cur) continue
-        cur.content = content
-        cur.status = status
-      }
-      continue
-    }
-
-    if (!id) continue
-    const idx = indexById.get(id)
-    if (idx === undefined) continue
-    const cur = result[idx]
-    if (!cur) continue
-
-    if (op === 'set_status') {
-      cur.status = normalizeTodoStatus((opAny as any)?.status)
-      continue
-    }
-    if (op === 'set_content') {
-      const content = (opAny as any)?.content
-      if (typeof content === 'string') cur.content = content
-      continue
-    }
-    if (op === 'cancel') {
-      cur.status = 'cancelled'
-      continue
-    }
-    if (op === 'remove') {
-      result[idx] = null
-      indexById.delete(id)
-      continue
-    }
-  }
-
-  return result.filter((t): t is BuildTodoRaw => !!t)
-}
+const replayedBuildTodoState = computed(() => {
+  return replayTodoStateFromMessages(chatStore.allMessages, {
+    resolveToolResponseById: (toolCallId) => chatStore.getToolResponseById(toolCallId)
+  })
+})
 
 const replayedBuildTodoList = computed(() => {
-  const startedAt = chatStore.activeBuild?.startedAt || 0
-  const planPath = chatStore.activeBuild?.planPath
-  const all = chatStore.allMessages
-  const scopeStart = startedAt ? startedAt - 600000 : 0 // 允许回溯 10 分钟以获取初始计划
+  return replayedBuildTodoState.value.todos
+})
 
-  let list: BuildTodoRaw[] | null = null
+const todoBarItems = computed<BuildTodoItem[]>(() => {
+  const list = replayedBuildTodoList.value
+  if (!list || list.length === 0) return []
 
-  for (const msg of all) {
+  return list
+    .map(t => ({
+      id: String(t.id),
+      text: String(t.content || '').trim(),
+      status: normalizeTodoStatus(t.status)
+    }))
+    .filter(t => t.text.length > 0)
+})
+
+const isTodoExpanded = ref(false)
+
+const hasTodoInitTool = computed(() => {
+  return chatStore.allMessages.some(msg =>
+    msg.role === 'assistant' &&
+    Array.isArray(msg.tools) &&
+    msg.tools.some(tool => tool.name === 'create_plan' || tool.name === 'todo_write')
+  )
+})
+
+// 仅保留一个会话级 TODO 条；有 activeBuild 时沿用 Build 条展示，避免双条重叠。
+const showTodoBar = computed(() => !showBuildBar.value && hasTodoInitTool.value && replayedBuildTodoState.value.todos !== null)
+
+const todoInitAnchorBackendIndex = computed<number | null>(() => {
+  // 使用“最新一次初始化（create_plan / todo_write）”作为锚点，
+  // 避免新建 TODO 列表时仍覆盖在旧锚点位置。
+  for (let i = chatStore.allMessages.length - 1; i >= 0; i--) {
+    const msg = chatStore.allMessages[i]
     if (msg.role !== 'assistant' || !Array.isArray(msg.tools)) continue
-    if (scopeStart && typeof msg.timestamp === 'number' && msg.timestamp < scopeStart) continue
+    const hasInitTool = msg.tools.some(tool => tool.name === 'create_plan' || tool.name === 'todo_write')
+    if (!hasInitTool) continue
 
-    for (const tool of msg.tools) {
-      // create_plan：允许在 Build 开始前，用于初始化列表
-      if (tool.name === 'create_plan') {
-        const toolPath = (tool.args as any)?.path || (tool.result as any)?.data?.path
-        if (planPath && toolPath && toolPath !== planPath) continue
-        const todos = (tool.args as any)?.todos || (tool.result as any)?.data?.todos
-        const normalized = normalizeTodoList(todos)
-        if (normalized.length > 0) list = normalized
-        continue
-      }
-
-      // todo_write：仅限当前 Build 期间（或刚开始）发生的写入
-      if (tool.name === 'todo_write') {
-        if (startedAt && msg.timestamp && msg.timestamp < startedAt - 5000) continue
-        const incoming = normalizeTodoList((tool.args as any)?.todos)
-        if (incoming.length === 0) continue
-        // todo_write 已收敛为“全量替换”，忽略任何历史/遗留 merge 字段
-        list = incoming
-        continue
-      }
-
-      // todo_update：按 ops 增量更新
-      if (tool.name === 'todo_update') {
-        list = applyTodoUpdateOps(list || [], (tool.args as any)?.ops)
-        continue
-      }
+    if (typeof msg.backendIndex === 'number' && Number.isFinite(msg.backendIndex)) {
+      return msg.backendIndex + 1
     }
   }
 
-  return list
+  return null
+})
+
+const todoAnchorBackendIndex = computed<number | null>(() => {
+  if (!showTodoBar.value) return null
+
+  if (todoInitAnchorBackendIndex.value !== null) {
+    return todoInitAnchorBackendIndex.value
+  }
+
+  const anchor = replayedBuildTodoState.value.anchorBackendIndex
+  if (typeof anchor === 'number' && Number.isFinite(anchor)) return anchor
+
+  const firstIndexed = chatStore.allMessages.find(m => typeof m.backendIndex === 'number')
+  if (typeof firstIndexed?.backendIndex === 'number') return firstIndexed.backendIndex
+
+  const lastIndexed = [...chatStore.allMessages].reverse().find(m => typeof m.backendIndex === 'number')
+  if (typeof lastIndexed?.backendIndex === 'number') return lastIndexed.backendIndex + 1
+
+  return chatStore.windowStartIndex + chatStore.allMessages.length
+})
+
+const todoPanelName = computed(() => {
+  // 名称跟随“最新一次初始化工具”
+  for (let i = chatStore.allMessages.length - 1; i >= 0; i--) {
+    const msg = chatStore.allMessages[i]
+    if (msg.role !== 'assistant' || !Array.isArray(msg.tools)) continue
+    const initTool = msg.tools.find(tool => tool.name === 'create_plan' || tool.name === 'todo_write')
+    if (!initTool) continue
+
+    if (initTool.name === 'create_plan') {
+      const title = typeof (initTool.args as any)?.title === 'string' ? (initTool.args as any).title.trim() : ''
+      if (title) return title
+      const path = typeof (initTool.args as any)?.path === 'string' ? (initTool.args as any).path.trim() : ''
+      if (path) {
+        const normalized = path.replace(/\\/g, '/')
+        const name = normalized.split('/').filter(Boolean).pop() || path
+        return name.replace(/\.md$/i, '')
+      }
+      return t('components.message.tool.createPlan.fallbackTitle')
+    }
+
+    return t('components.message.tool.todoWrite.label')
+  }
+
+  return t('components.message.tool.todoWrite.label')
+})
+
+const todoTotal = computed(() => todoBarItems.value.filter(t => t.status !== 'cancelled').length)
+const todoCompleted = computed(() => todoBarItems.value.filter(t => t.status === 'completed').length)
+const todoCurrentText = computed(() => {
+  const inProgress = todoBarItems.value.find(t => t.status === 'in_progress')
+  if (inProgress) return inProgress.text
+  const next = todoBarItems.value.find(t => t.status === 'pending')
+  if (next) return next.text
+  return ''
 })
 
 const buildTodoItems = computed<BuildTodoItem[]>(() => {
@@ -165,15 +155,47 @@ const buildTodoItems = computed<BuildTodoItem[]>(() => {
       .filter(t => t.text.length > 0)
   }
 
-  // 2) fallback：从 Plan markdown checklist 解析
+  // 2) 若确实没有任何 todo 工具轨迹，且仍处于 Build 运行中，则临时 fallback 到计划 markdown
+  // （避免刚启动执行时列表短暂为空）
+  if (chatStore.activeBuild?.status !== 'running') {
+    return []
+  }
+
   const planContent = chatStore.activeBuild?.planContent || ''
   const planTodos = extractTodosFromPlan(planContent)
+
   return planTodos.map((t, idx) => ({
     id: `plan:${idx}`,
     text: t.text,
     status: t.completed ? 'completed' : 'pending'
   }))
 })
+
+const showBuildBar = computed(() => !!chatStore.activeBuild)
+
+const buildAnchorBackendIndex = computed<number | null>(() => {
+  const build = chatStore.activeBuild
+
+  if (!build) return null
+
+  if (typeof build.anchorBackendIndex === 'number' && Number.isFinite(build.anchorBackendIndex)) {
+    return build.anchorBackendIndex
+  }
+
+  const startedAt = typeof build.startedAt === 'number' ? build.startedAt : 0
+  const firstAfterStart = chatStore.allMessages.find(m =>
+    typeof m.backendIndex === 'number' &&
+    (startedAt <= 0 || (typeof m.timestamp === 'number' && m.timestamp >= startedAt))
+  )
+  if (typeof firstAfterStart?.backendIndex === 'number') return firstAfterStart.backendIndex
+
+  const lastIndexed = [...chatStore.allMessages].reverse().find(m => typeof m.backendIndex === 'number')
+  if (typeof lastIndexed?.backendIndex === 'number') return lastIndexed.backendIndex + 1
+  return chatStore.windowStartIndex + chatStore.allMessages.length
+})
+
+const buildPanelLabel = computed(() => 'Build')
+const buildPanelName = computed(() => chatStore.activeBuild?.title || '')
 
 const buildTotal = computed(() => buildTodoItems.value.filter(t => t.status !== 'cancelled').length)
 const buildCompleted = computed(() => buildTodoItems.value.filter(t => t.status === 'completed').length)
@@ -205,6 +227,21 @@ watch(
     }
   }
 )
+
+watch(showBuildBar, (visible) => {
+  if (!visible) isBuildExpanded.value = false
+})
+
+
+watch(showTodoBar, (visible, prev) => {
+  if (!visible) {
+    isTodoExpanded.value = false
+    return
+  }
+  if (!prev) {
+    isTodoExpanded.value = true
+  }
+})
 
 async function stopBuild() {
   try {
@@ -271,6 +308,51 @@ const enhancedVisibleMessages = computed<EnhancedMessage[]>(() => {
       afterCheckpoints: cpGroup?.after || []
     }
   })
+})
+
+
+type RenderRow =
+  | { kind: 'build'; key: 'build-bar' }
+  | { kind: 'message'; key: string; item: EnhancedMessage }
+  | { kind: 'todo'; key: 'todo-bar' }
+
+function shouldInsertSticky(anchor: number | null, idx: number): boolean {
+  return anchor === null || (typeof idx === 'number' && idx >= 0 && idx >= anchor)
+}
+
+const messageRenderRows = computed<RenderRow[]>(() => {
+  const visible = enhancedVisibleMessages.value
+  const rows: RenderRow[] = []
+  const buildAnchor = buildAnchorBackendIndex.value
+  const todoAnchor = todoAnchorBackendIndex.value
+
+  let buildInserted = !showBuildBar.value
+  let todoInserted = !showTodoBar.value
+
+  for (const item of visible) {
+    const idx = item.backendIndex
+    if (!buildInserted && shouldInsertSticky(buildAnchor, idx)) {
+      rows.push({ kind: 'build', key: 'build-bar' })
+      buildInserted = true
+    }
+
+    if (!todoInserted && shouldInsertSticky(todoAnchor, idx)) {
+      rows.push({ kind: 'todo', key: 'todo-bar' })
+      todoInserted = true
+    }
+
+    rows.push({ kind: 'message', key: item.message.id, item })
+  }
+
+  if (!buildInserted && showBuildBar.value) {
+    rows.push({ kind: 'build', key: 'build-bar' })
+  }
+
+  if (!todoInserted && showTodoBar.value) {
+    rows.push({ kind: 'todo', key: 'todo-bar' })
+  }
+
+  return rows
 })
 
 // 是否正在加载更多（用于节流）
@@ -646,71 +728,6 @@ function formatCheckpointTime(timestamp: number): string {
 
 <template>
   <div class="message-list">
-    <!-- Build 顶部卡片（Plan 执行时显示） -->
-    <div v-if="chatStore.activeBuild" class="build-bar" :class="{ expanded: isBuildExpanded }">
-      <div class="build-header" @click="isBuildExpanded = !isBuildExpanded">
-        <div class="build-title">
-          <i class="codicon codicon-tools build-icon"></i>
-          <span class="build-label">Build</span>
-          <span class="build-sep">·</span>
-          <span class="build-name">{{ chatStore.activeBuild.title }}</span>
-        </div>
-
-        <div class="build-actions">
-          <span v-if="buildTotal > 0" class="build-progress">{{ buildCompleted }}/{{ buildTotal }}</span>
-          <span v-else class="build-progress">—</span>
-
-          <button
-            v-if="isBuildRunning"
-            class="build-btn"
-            title="停止"
-            @click.stop="stopBuild"
-          >
-            <i class="codicon codicon-debug-stop"></i>
-          </button>
-          <button
-            v-else
-            class="build-btn"
-            title="关闭"
-            @click.stop="dismissBuild"
-          >
-            <i class="codicon codicon-close"></i>
-          </button>
-
-          <button
-            class="build-btn"
-            :title="isBuildExpanded ? '收起' : '展开'"
-            @click.stop="isBuildExpanded = !isBuildExpanded"
-          >
-            <i class="codicon" :class="isBuildExpanded ? 'codicon-chevron-up' : 'codicon-chevron-down'"></i>
-          </button>
-        </div>
-      </div>
-
-      <div v-if="!isBuildExpanded && buildCurrentText" class="build-current">
-        {{ buildCurrentText }}
-      </div>
-
-      <div v-if="isBuildExpanded" class="build-body">
-        <div v-if="buildTodoItems.length === 0" class="build-empty">
-          <i class="codicon codicon-info"></i>
-          <span>暂无 To-dos</span>
-        </div>
-
-        <div v-else class="build-todos">
-          <div
-            v-for="t in buildTodoItems"
-            :key="t.id"
-            class="build-todo"
-            :class="`status-${t.status}`"
-          >
-            <span class="todo-dot" :class="t.status"></span>
-            <span class="todo-text">{{ t.text }}</span>
-          </div>
-        </div>
-      </div>
-    </div>
-
     <div class="message-scroll-area">
       <CustomScrollbar ref="scrollbarRef" sticky-bottom show-jump-buttons>
       <div class="messages-container">
@@ -722,67 +739,89 @@ function formatCheckpointTime(timestamp: number): string {
           </span>
         </div>
 
-        <template v-for="item in enhancedVisibleMessages" :key="item.message.id">
-          <!-- 消息前的检查点（或合并显示） -->
-          <template v-if="item.beforeCheckpoints.length > 0">
-            <div
-              v-for="cp in item.beforeCheckpoints"
-              :key="cp.id"
-              class="checkpoint-bar"
-              :class="shouldMergeForTool(item.backendIndex, cp.toolName) ? 'checkpoint-merged' : 'checkpoint-before'"
-            >
-              <div class="checkpoint-icon">
-                <i class="codicon" :class="shouldMergeForTool(item.backendIndex, cp.toolName) ? 'codicon-check' : 'codicon-archive'"></i>
+        <template v-for="row in messageRenderRows" :key="row.key">
+          <div v-if="row.kind === 'build'" class="build-sticky-shell">
+            <div class="build-bar" :class="{ expanded: isBuildExpanded }">
+              <div class="build-header" @click="isBuildExpanded = !isBuildExpanded">
+                <div class="build-title">
+                  <i class="codicon codicon-tools build-icon"></i>
+                  <span class="build-label">{{ buildPanelLabel }}</span>
+                  <span class="build-sep">·</span>
+                  <span class="build-name">{{ buildPanelName }}</span>
+                </div>
+
+                <div class="build-actions">
+                  <span v-if="buildTotal > 0" class="build-progress">{{ buildCompleted }}/{{ buildTotal }}</span>
+                  <span v-else class="build-progress">—</span>
+
+                  <button
+                    v-if="chatStore.activeBuild && isBuildRunning"
+                    class="build-btn"
+                    :title="t('common.stop')"
+                    @click.stop="stopBuild"
+                  >
+                    <i class="codicon codicon-debug-stop"></i>
+                  </button>
+                  <button
+                    v-else-if="chatStore.activeBuild"
+                    class="build-btn"
+                    :title="t('common.close')"
+                    @click.stop="dismissBuild"
+                  >
+                    <i class="codicon codicon-close"></i>
+                  </button>
+
+                  <button
+                    class="build-btn"
+                    :title="isBuildExpanded ? t('common.collapse') : t('common.expand')"
+                    @click.stop="isBuildExpanded = !isBuildExpanded"
+                  >
+                    <i class="codicon" :class="isBuildExpanded ? 'codicon-chevron-up' : 'codicon-chevron-down'"></i>
+                  </button>
+                </div>
               </div>
-              <div class="checkpoint-info">
-                <span class="checkpoint-label">
-                  {{ shouldMergeForTool(item.backendIndex, cp.toolName) ? getMergedLabel(cp) : getCheckpointLabel(cp, 'before') }}
-                </span>
-                <span class="checkpoint-meta">{{ t('components.message.checkpoint.fileCount', { count: cp.fileCount }) }}</span>
+
+              <div v-if="!isBuildExpanded && buildCurrentText" class="build-current">
+                {{ buildCurrentText }}
               </div>
-              <span class="checkpoint-time">{{ formatCheckpointTime(cp.timestamp) }}</span>
-              <Tooltip :text="t('components.message.checkpoint.restoreTooltip')">
-                <button class="checkpoint-action" @click="restoreCheckpoint(cp)">
-                  <i class="codicon codicon-discard"></i>
-                </button>
-              </Tooltip>
+
+              <div v-if="isBuildExpanded" class="build-body">
+                <div v-if="buildTodoItems.length === 0" class="build-empty">
+                  <i class="codicon codicon-info"></i>
+                  <span>{{ t('components.message.tool.todoPanel.empty') }}</span>
+                </div>
+
+                <div v-else class="build-todos">
+                  <div
+                    v-for="t in buildTodoItems"
+                    :key="t.id"
+                    class="build-todo"
+                    :class="`status-${t.status}`"
+                  >
+                    <span class="todo-dot" :class="t.status"></span>
+                    <span class="todo-text">{{ t.text }}</span>
+                  </div>
+                </div>
+              </div>
             </div>
-          </template>
-          
-          <!-- 总结消息使用专用组件 -->
-          <SummaryMessage
-            v-if="item.message.isSummary"
-            :message="item.message"
-          :message-index="item.backendIndex"
-          />
-          
-          <!-- 普通消息使用 MessageItem -->
-          <MessageItem
-            v-else
-            :message="item.message"
-          :message-index="item.backendIndex"
-            @edit="handleEdit"
-            @delete="handleDelete"
-            @retry="handleRetry"
-            @copy="handleCopy"
-            @restore-checkpoint="handleRestoreCheckpoint"
-            @restore-and-retry="handleRestoreAndRetry"
-            @restore-and-edit="handleRestoreAndEdit"
-          />
-          
-          <!-- 消息后的检查点（仅当该工具的内容有变化时显示） -->
-          <template v-if="item.afterCheckpoints.length > 0">
-            <template v-for="cp in item.afterCheckpoints" :key="cp.id">
-              <!-- 只有当该工具没有被合并时才显示 after 检查点 -->
+          </div>
+
+          <template v-else-if="row.kind === 'message'">
+            <!-- 消息前的检查点（或合并显示） -->
+            <template v-if="row.item.beforeCheckpoints.length > 0">
               <div
-                v-if="!shouldMergeForTool(item.backendIndex, cp.toolName)"
-                class="checkpoint-bar checkpoint-after"
+                v-for="cp in row.item.beforeCheckpoints"
+                :key="cp.id"
+                class="checkpoint-bar"
+                :class="shouldMergeForTool(row.item.backendIndex, cp.toolName) ? 'checkpoint-merged' : 'checkpoint-before'"
               >
                 <div class="checkpoint-icon">
-                  <i class="codicon codicon-archive"></i>
+                  <i class="codicon" :class="shouldMergeForTool(row.item.backendIndex, cp.toolName) ? 'codicon-check' : 'codicon-archive'"></i>
                 </div>
                 <div class="checkpoint-info">
-                  <span class="checkpoint-label">{{ getCheckpointLabel(cp, 'after') }}</span>
+                  <span class="checkpoint-label">
+                    {{ shouldMergeForTool(row.item.backendIndex, cp.toolName) ? getMergedLabel(cp) : getCheckpointLabel(cp, 'before') }}
+                  </span>
                   <span class="checkpoint-meta">{{ t('components.message.checkpoint.fileCount', { count: cp.fileCount }) }}</span>
                 </div>
                 <span class="checkpoint-time">{{ formatCheckpointTime(cp.timestamp) }}</span>
@@ -793,7 +832,97 @@ function formatCheckpointTime(timestamp: number): string {
                 </Tooltip>
               </div>
             </template>
+            
+            <!-- 总结消息使用专用组件 -->
+            <SummaryMessage
+              v-if="row.item.message.isSummary"
+              :message="row.item.message"
+            :message-index="row.item.backendIndex"
+            />
+            
+            <!-- 普通消息使用 MessageItem -->
+            <MessageItem
+              v-else
+              :message="row.item.message"
+            :message-index="row.item.backendIndex"
+              @edit="handleEdit"
+              @delete="handleDelete"
+              @retry="handleRetry"
+              @copy="handleCopy"
+              @restore-checkpoint="handleRestoreCheckpoint"
+              @restore-and-retry="handleRestoreAndRetry"
+              @restore-and-edit="handleRestoreAndEdit"
+            />
+            
+            <!-- 消息后的检查点（仅当该工具的内容有变化时显示） -->
+            <template v-if="row.item.afterCheckpoints.length > 0">
+              <template v-for="cp in row.item.afterCheckpoints" :key="cp.id">
+                <!-- 只有当该工具没有被合并时才显示 after 检查点 -->
+                <div
+                  v-if="!shouldMergeForTool(row.item.backendIndex, cp.toolName)"
+                  class="checkpoint-bar checkpoint-after"
+                >
+                  <div class="checkpoint-icon">
+                    <i class="codicon codicon-archive"></i>
+                  </div>
+                  <div class="checkpoint-info">
+                    <span class="checkpoint-label">{{ getCheckpointLabel(cp, 'after') }}</span>
+                    <span class="checkpoint-meta">{{ t('components.message.checkpoint.fileCount', { count: cp.fileCount }) }}</span>
+                  </div>
+                  <span class="checkpoint-time">{{ formatCheckpointTime(cp.timestamp) }}</span>
+                  <Tooltip :text="t('components.message.checkpoint.restoreTooltip')">
+                    <button class="checkpoint-action" @click="restoreCheckpoint(cp)">
+                      <i class="codicon codicon-discard"></i>
+                    </button>
+                  </Tooltip>
+                </div>
+              </template>
+            </template>
           </template>
+
+          <div v-else-if="row.kind === 'todo'" class="todo-sticky-shell">
+            <div class="build-bar todo-snapshot-bar" :class="{ expanded: isTodoExpanded }">
+              <div class="build-header" @click="isTodoExpanded = !isTodoExpanded">
+                <div class="build-title">
+                  <i class="codicon codicon-checklist build-icon todo-snapshot-icon"></i>
+                  <span class="build-label">{{ t('components.message.tool.todoWrite.label') }}</span>
+                  <span class="build-sep">·</span>
+                  <span class="build-name">{{ todoPanelName }}</span>
+                </div>
+
+                <div class="build-actions">
+                  <span v-if="todoTotal > 0" class="build-progress">{{ todoCompleted }}/{{ todoTotal }}</span>
+                  <span v-else class="build-progress">—</span>
+
+                  <button
+                    class="build-btn"
+                    :title="isTodoExpanded ? t('common.collapse') : t('common.expand')"
+                    @click.stop="isTodoExpanded = !isTodoExpanded"
+                  >
+                    <i class="codicon" :class="isTodoExpanded ? 'codicon-chevron-up' : 'codicon-chevron-down'"></i>
+                  </button>
+                </div>
+              </div>
+
+              <div v-if="!isTodoExpanded && todoCurrentText" class="build-current">
+                {{ todoCurrentText }}
+              </div>
+
+              <div v-if="isTodoExpanded" class="build-body">
+                <div v-if="todoBarItems.length === 0" class="build-empty">
+                  <i class="codicon codicon-info"></i>
+                  <span>{{ t('components.message.tool.todoPanel.empty') }}</span>
+                </div>
+
+                <div v-else class="build-todos">
+                  <div v-for="t in todoBarItems" :key="t.id" class="build-todo" :class="`status-${t.status}`">
+                    <span class="todo-dot" :class="t.status"></span>
+                    <span class="todo-text">{{ t.text }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
         </template>
         
         <!-- 继续对话提示 - 当最后一条是工具响应时显示 -->
@@ -878,8 +1007,29 @@ function formatCheckpointTime(timestamp: number): string {
 }
 
 /* ============ Build 顶部卡片（Cursor-like，保持 LimCode 面板风格） ============ */
+.build-sticky-shell {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  padding: 8px var(--spacing-md, 16px) 0;
+  background: var(--vscode-editor-background);
+}
+
+
+.todo-sticky-shell {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  padding: 8px var(--spacing-md, 16px) 0;
+  background: var(--vscode-editor-background);
+}
+
+.todo-snapshot-icon {
+  color: var(--vscode-charts-blue, #3794ff);
+}
+
 .build-bar {
-  margin: 8px var(--spacing-md, 16px) 0;
+  margin: 0;
   border: 1px solid var(--vscode-panel-border);
   border-radius: var(--radius-sm, 2px);
   overflow: hidden;

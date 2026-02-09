@@ -323,6 +323,52 @@ export interface LanguageMessages {
                 viewDiff: string;
                 viewDiffInVSCode: string;
                 openDiffFailed: string;
+                todoWrite: {
+                    label: string;
+                    labelWithCount: string;
+                    mergePrefix: string;
+                    description: string;
+                };
+                todoUpdate: {
+                    label: string;
+                    labelWithCount: string;
+                    description: string;
+                };
+                createPlan: {
+                    label: string;
+                    fallbackTitle: string;
+                };
+                todoPanel: {
+                    title: string;
+                    modePlan: string;
+                    modeUpdate: string;
+                    modeMerge: string;
+                    sourceCurrentInput: string;
+                    sourceSnapshot: string;
+                    statusPending: string;
+                    statusInProgress: string;
+                    statusCompleted: string;
+                    statusCancelled: string;
+                    totalItems: string;
+                    copyAsMarkdown: string;
+                    copyMarkdown: string;
+                    copied: string;
+                    empty: string;
+                    markdownCancelledSuffix: string;
+                    markdownInProgressSuffix: string;
+                    copyFailed: string;
+                };
+                planCard: {
+                    title: string;
+                    executeLabel: string;
+                    executed: string;
+                    executing: string;
+                    executePlan: string;
+                    loadChannelsFailed: string;
+                    loadModelsFailed: string;
+                    executePlanFailed: string;
+                    promptPrefix: string;
+                };
             };
             attachment: {
                 clickToPreview: string;

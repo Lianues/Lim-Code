@@ -68,7 +68,7 @@ async function loadChannels() {
       selectedChannelId.value = loaded[0].id
     }
   } catch (error) {
-    console.error('Failed to load channels:', error)
+    console.error(t('components.message.tool.planCard.loadChannelsFailed'), error)
   } finally {
     isLoadingChannels.value = false
   }
@@ -101,7 +101,7 @@ async function loadModelsForChannel(configId: string) {
       selectedModelId.value = current || models[0]?.id || ''
     }
   } catch (error) {
-    console.error('Failed to load models:', error)
+    console.error(t('components.message.tool.planCard.loadModelsFailed'), error)
     const current = (getSelectedChannelConfig()?.model || '').trim()
     modelOptions.value = current ? [{ id: current, name: current }] : []
     if (!selectedModelId.value) selectedModelId.value = current
@@ -129,10 +129,10 @@ function getPlanTitle(planContent: string, planPath?: string): string {
   if (planPath) {
     const parts = planPath.replace(/\\/g, '/').split('/')
     const file = parts[parts.length - 1] || planPath
-    return file.replace(/\.md$/i, '') || 'Plan'
+    return file.replace(/\.md$/i, '') || t('components.message.tool.planCard.title')
   }
 
-  return 'Plan'
+  return t('components.message.tool.planCard.title')
 }
 
 async function executePlan(planContent: string, planPath?: string) {
@@ -160,12 +160,12 @@ async function executePlan(planContent: string, planPath?: string) {
     })
 
     // 发送 Plan 内容作为新消息
-    const prompt = `请按照以下计划执行：\n\n${planContent}`
+    const prompt = t('components.message.tool.planCard.promptPrefix', { plan: planContent })
     await chatStore.sendMessage(prompt, undefined, {
       modelOverride: selectedModelId.value || undefined
     })
   } catch (error) {
-    console.error('Failed to execute plan:', error)
+    console.error(t('components.message.tool.planCard.executePlanFailed'), error)
   } finally {
     isExecutingPlan.value = false
   }
@@ -701,7 +701,7 @@ onBeforeUnmount(() => {
           <div class="plan-actions">
             <button
               class="action-btn"
-              :title="isPlanExpanded(file.path) ? '收起' : '展开'"
+              :title="isPlanExpanded(file.path) ? t('common.collapse') : t('common.expand')"
               @click="togglePlanExpand(file.path)"
             >
               <span :class="['codicon', isPlanExpanded(file.path) ? 'codicon-chevron-up' : 'codicon-chevron-down']"></span>
@@ -724,7 +724,7 @@ onBeforeUnmount(() => {
         <!-- Plan 执行区域 -->
         <div class="plan-execute">
           <div class="execute-selector">
-            <span class="execute-label">执行：</span>
+            <span class="execute-label">{{ t('components.message.tool.planCard.executeLabel') }}</span>
             <ChannelSelector
               v-model="selectedChannelId"
               :options="channelOptions"
@@ -745,7 +745,7 @@ onBeforeUnmount(() => {
           >
             <span v-if="isExecutingPlan" class="codicon codicon-loading codicon-modifier-spin"></span>
             <span v-else class="codicon codicon-play"></span>
-            <span class="btn-text">{{ isExecutingPlan ? '执行中...' : '执行计划' }}</span>
+            <span class="btn-text">{{ isExecutingPlan ? t('components.message.tool.planCard.executing') : t('components.message.tool.planCard.executePlan') }}</span>
           </button>
         </div>
       </div>

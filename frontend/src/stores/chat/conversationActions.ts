@@ -69,13 +69,14 @@ async function mapWithConcurrency<T, R>(
  */
 export type CancelStreamAndRejectToolsCallback = () => Promise<void>
 
-function parsePersistedBuildSession(raw: any, conversationId: string): BuildSession | null {
+export function parsePersistedBuildSession(raw: any, conversationId: string): BuildSession | null {
   if (!raw || typeof raw !== 'object') return null
 
   const id = typeof raw.id === 'string' ? raw.id : ''
   const title = typeof raw.title === 'string' ? raw.title : ''
   const planContent = typeof raw.planContent === 'string' ? raw.planContent : ''
   const startedAt = typeof raw.startedAt === 'number' ? raw.startedAt : 0
+  const anchorBackendIndex = typeof raw.anchorBackendIndex === 'number' ? raw.anchorBackendIndex : undefined
   const status: BuildSession['status'] = raw.status === 'running' ? 'running' : 'done'
 
   if (!id || !title || !planContent || !startedAt) return null
@@ -89,11 +90,12 @@ function parsePersistedBuildSession(raw: any, conversationId: string): BuildSess
     channelId: typeof raw.channelId === 'string' ? raw.channelId : undefined,
     modelId: typeof raw.modelId === 'string' ? raw.modelId : undefined,
     startedAt,
+    anchorBackendIndex,
     status
   }
 }
 
-async function loadConversationBuildSession(conversationId: string): Promise<BuildSession | null> {
+export async function loadConversationBuildSession(conversationId: string): Promise<BuildSession | null> {
   try {
     const metadata = await sendToExtension<any>('conversation.getConversationMetadata', {
       conversationId
@@ -103,6 +105,16 @@ async function loadConversationBuildSession(conversationId: string): Promise<Bui
     console.error('[conversationActions] Failed to load activeBuild from metadata:', error)
     return null
   }
+}
+
+/**
+ * 刷新当前对话的 Build 会话（从元数据重载）
+ */
+export async function refreshCurrentConversationBuildSession(state: ChatStoreState): Promise<void> {
+  const conversationId = state.currentConversationId.value
+  if (!conversationId) return
+
+  state.activeBuild.value = await loadConversationBuildSession(conversationId)
 }
 
 /**

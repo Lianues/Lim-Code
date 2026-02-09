@@ -57,6 +57,9 @@ export type ChatStreamOutput =
   | ChatStreamToolsExecutingData
   | ChatStreamToolStatusData;
 
+type TodoStatusValue = 'pending' | 'in_progress' | 'completed' | 'cancelled';
+type TodoItemValue = { id: string; content: string; status: TodoStatusValue };
+
 export class ChatFlowService {
   constructor(
     private configManager: ConfigManager,
@@ -94,6 +97,167 @@ export class ChatFlowService {
       ...(existing && typeof existing === 'object' ? existing : {}),
       ...(patch || {})
     };
+  }
+
+  private normalizeTodoStatus(value: unknown): TodoStatusValue {
+    if (value === 'in_progress' || value === 'completed' || value === 'cancelled') return value;
+    return 'pending';
+  }
+
+  private normalizeTodoList(raw: unknown): TodoItemValue[] {
+    if (!Array.isArray(raw)) return [];
+    const out: TodoItemValue[] = [];
+
+    for (const item of raw) {
+      const id = (item as any)?.id;
+      const content = (item as any)?.content;
+      const status = (item as any)?.status;
+      if (typeof id !== 'string' || !id.trim()) continue;
+      if (typeof content !== 'string') continue;
+
+      out.push({
+        id: id.trim(),
+        content,
+        status: this.normalizeTodoStatus(status),
+      });
+    }
+
+    return out;
+  }
+
+  private applyTodoUpdateOps(existing: TodoItemValue[], rawOps: unknown): TodoItemValue[] {
+    const result: Array<TodoItemValue | null> = existing.map((t) => ({ ...t }));
+    const indexById = new Map<string, number>();
+
+    for (let i = 0; i < result.length; i++) {
+      const t = result[i];
+      if (t) indexById.set(t.id, i);
+    }
+
+    const ops = Array.isArray(rawOps) ? rawOps : [];
+    for (const opAny of ops) {
+      const op = (opAny as any)?.op;
+      const idRaw = (opAny as any)?.id;
+      const id = typeof idRaw === 'string' ? idRaw.trim() : '';
+
+      if (op === 'add') {
+        const content = (opAny as any)?.content;
+        if (!id || typeof content !== 'string') continue;
+        const status = this.normalizeTodoStatus((opAny as any)?.status);
+        const idx = indexById.get(id);
+
+        if (idx === undefined) {
+          indexById.set(id, result.length);
+          result.push({ id, content, status });
+        } else {
+          const current = result[idx];
+          if (!current) continue;
+          current.content = content;
+          current.status = status;
+        }
+        continue;
+      }
+
+      if (!id) continue;
+      const idx = indexById.get(id);
+      if (idx === undefined) continue;
+      const current = result[idx];
+      if (!current) continue;
+
+      if (op === 'set_status') {
+        current.status = this.normalizeTodoStatus((opAny as any)?.status);
+        continue;
+      }
+
+      if (op === 'set_content') {
+        const content = (opAny as any)?.content;
+        if (typeof content === 'string') current.content = content;
+        continue;
+      }
+
+      if (op === 'cancel') {
+        current.status = 'cancelled';
+        continue;
+      }
+
+      if (op === 'remove') {
+        result[idx] = null;
+        indexById.delete(id);
+      }
+    }
+
+    return result.filter((t): t is TodoItemValue => !!t);
+  }
+
+  private collectRespondedToolCallIds(history: Content[]): Set<string> {
+    const responded = new Set<string>();
+    for (const msg of history) {
+      if (msg.role !== 'user' || !Array.isArray(msg.parts)) continue;
+      for (const part of msg.parts) {
+        const id = part.functionResponse?.id;
+        if (typeof id === 'string' && id.trim()) {
+          responded.add(id.trim());
+        }
+      }
+    }
+    return responded;
+  }
+
+  private isToolCallResponded(callId: string | undefined, responded: Set<string>): boolean {
+    if (!callId) return true;
+    const normalized = callId.trim();
+    if (!normalized) return true;
+    return responded.has(normalized);
+  }
+
+  private replayTodoListFromHistory(history: Content[], respondedToolCallIds?: Set<string>): TodoItemValue[] | null {
+    const responded = respondedToolCallIds || this.collectRespondedToolCallIds(history);
+
+    let touched = false;
+    let list: TodoItemValue[] = [];
+
+    for (const msg of history) {
+      if (msg.role !== 'model' || !Array.isArray(msg.parts)) continue;
+
+      for (const part of msg.parts) {
+        const call = part.functionCall;
+        if (!call || call.rejected) continue;
+
+        if (!this.isToolCallResponded(call.id, responded)) continue;
+
+        const args = call.args && typeof call.args === 'object' ? call.args as Record<string, unknown> : {};
+
+        if (call.name === 'create_plan' || call.name === 'todo_write') {
+          if (!Array.isArray((args as any).todos)) continue;
+          list = this.normalizeTodoList((args as any).todos);
+          touched = true;
+          continue;
+        }
+
+        if (call.name === 'todo_update') {
+          if (!Array.isArray((args as any).ops)) continue;
+          list = this.applyTodoUpdateOps(list, (args as any).ops);
+          touched = true;
+        }
+      }
+    }
+
+    return touched ? list : null;
+  }
+
+  private async rebuildTodoListMetadataFromHistory(conversationId: string): Promise<void> {
+    const history = await this.conversationManager.getHistoryRef(conversationId);
+    const replayed = this.replayTodoListFromHistory(history);
+
+    await this.conversationManager.setCustomMetadata(conversationId, 'todoList', replayed || []);
+
+    // 回退/删除后不再从历史“恢复 Build 壳”，避免出现 Recovered Build。
+    // activeBuild 仅由真实的计划执行流程维护。
+    await this.conversationManager.setCustomMetadata(conversationId, 'activeBuild', null);
+  }
+
+  async refreshDerivedMetadataAfterHistoryMutation(conversationId: string): Promise<void> {
+    await this.rebuildTodoListMetadataFromHistory(conversationId);
   }
 
   /**
@@ -352,6 +516,7 @@ export class ChatFlowService {
     if (messageIndex + 1 < historyRef.length) {
       await this.checkpointService.deleteCheckpointsFromIndex(conversationId, messageIndex + 1);
       await this.conversationManager.deleteToMessage(conversationId, messageIndex + 1);
+      await this.rebuildTodoListMetadataFromHistory(conversationId);
     }
     
     // 5.5 清除裁剪状态（编辑后应重新计算裁剪）
@@ -672,6 +837,7 @@ export class ChatFlowService {
     const historyRef = await this.conversationManager.getHistoryRef(conversationId);
     if (messageIndex + 1 < historyRef.length) {
       await this.conversationManager.deleteToMessage(conversationId, messageIndex + 1);
+      await this.rebuildTodoListMetadataFromHistory(conversationId);
     }
     
     // 8.5 清除裁剪状态（编辑后应重新计算裁剪）
@@ -1132,6 +1298,9 @@ export class ChatFlowService {
 
       // 6. 删除消息
       const deletedCount = await this.conversationManager.deleteToMessage(conversationId, targetIndex);
+
+      // 6.5 根据剩余历史重放 todo 工具，修正 ConversationMetadata.custom.todoList
+      await this.rebuildTodoListMetadataFromHistory(conversationId);
       
       // 7. 清除裁剪状态（回退后应重新计算裁剪）
       await this.toolIterationLoopService.clearTrimState(conversationId);

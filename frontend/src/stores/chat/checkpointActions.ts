@@ -10,6 +10,7 @@ import { sendToExtension } from '../../utils/vscode'
 import { generateId } from '../../utils/format'
 import { calculateBackendIndex } from './messageActions'
 import { syncTotalMessagesFromWindow, setTotalMessagesFromWindow, trimWindowFromTop } from './windowUtils'
+import { refreshCurrentConversationBuildSession } from './conversationActions'
 
 /**
  * 根据消息索引获取关联的检查点
@@ -60,7 +61,12 @@ export async function restoreCheckpoint(
       }
     )
     
-    return result || { success: false, restored: 0, error: 'Unknown error' }
+    const normalized = result || { success: false, restored: 0, error: 'Unknown error' }
+    if (normalized.success) {
+      // 回退后同步会话元数据（activeBuild/todoList）到前端，避免继续显示旧的 Build 壳。
+      await refreshCurrentConversationBuildSession(state)
+    }
+    return normalized
   } catch (err: any) {
     return { success: false, restored: 0, error: err.message || 'Restore failed' }
   }
@@ -228,6 +234,9 @@ export async function restoreAndDelete(
       })
       if (!resp?.success) {
         console.error('[checkpointActions] restoreAndDelete: backend deleteMessage returned error:', resp)
+      } else {
+        // 删除/回滚后刷新 activeBuild，避免展示旧的 Build 壳
+        await refreshCurrentConversationBuildSession(state)
       }
     } catch (err) {
       console.error('Failed to delete messages from backend:', err)
