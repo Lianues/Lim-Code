@@ -261,6 +261,14 @@ const zhCN: LanguageMessages = {
             tokenUsage: '使用量',
             context: '上下文',
             fileNotExists: '文件不存在',
+            queue: {
+                title: '排队消息',
+                sendNow: '立即发送',
+                remove: '移除',
+                queued: '已加入队列',
+                drag: '拖拽排序',
+                edit: '编辑'
+            },
             mode: {
                 selectMode: '选择模式',
                 manageMode: '管理模式',

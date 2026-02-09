@@ -6,13 +6,9 @@
 
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
 import CustomScrollbar from './CustomScrollbar.vue'
+import type { SelectOption } from './types'
 
-export interface SelectOption {
-  value: string
-  label: string
-  description?: string
-  icon?: string
-}
+export type { SelectOption }
 
 const props = withDefaults(defineProps<{
   modelValue: string

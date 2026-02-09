@@ -96,13 +96,21 @@ export function extractTodosFromPlan(content: string): PlanTodoItem[] {
   const todos: PlanTodoItem[] = []
   let hasCheckbox = false
 
+  // Strip optional [status] prefix and trailing `#id` from task text
+  function cleanTaskText(raw: string): string {
+    return raw
+      .replace(/^\[(pending|in_progress|completed|cancelled)\]\s*/i, '')
+      .replace(/`#[^`]*`\s*$/, '')
+      .trim()
+  }
+
   // 1. First pass: try to find standard markdown checkboxes
   for (const line of lines) {
     const m = line.match(/^\s*[-*+]\s+\[( |x|X)\]\s+(.*)$/)
     if (m) {
       hasCheckbox = true
       const mark = (m[1] || '').toLowerCase()
-      const text = (m[2] || '').trim()
+      const text = cleanTaskText(m[2] || '')
       if (text) {
         todos.push({
           text,
@@ -120,7 +128,7 @@ export function extractTodosFromPlan(content: string): PlanTodoItem[] {
       // - item, * item, + item, 1. item
       const m = line.match(/^\s*(?:[-*+]|\d+\.)\s+(.*)$/)
       if (m) {
-        const text = (m[1] || '').trim()
+        const text = cleanTaskText(m[1] || '')
         if (text) {
           todos.push({
             text,

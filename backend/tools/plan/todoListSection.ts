@@ -64,7 +64,7 @@ export function renderPlanTodoListSection(todosInput: unknown): string {
   const todos = normalizePlanTodoList(todosInput);
   const lines = todos.map((todo) => {
     const checkbox = toCheckbox(todo.status);
-    return `- [${checkbox}] [${todo.status}] ${todo.content}  \`#${todo.id}\``;
+    return `- [${checkbox}] ${todo.content}  \`#${todo.id}\``;
   });
 
   const body = lines.length > 0 ? lines.join('\n') : '<!-- no todos -->';

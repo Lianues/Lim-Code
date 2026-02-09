@@ -11,11 +11,9 @@ import { useSearchableDropdown } from '../../composables'
 
 const { t } = useI18n()
 
-export interface ModelInfo {
-  id: string
-  name?: string
-  description?: string
-}
+import type { ModelInfo } from './types'
+
+export type { ModelInfo }
 
 const props = withDefaults(defineProps<{
   models: ModelInfo[]
@@ -40,6 +38,7 @@ const { isOpen, toggle, close, inputRef, searchQuery, filteredItems, highlighted
   filter: (m, q) => m.id.toLowerCase().includes(q) || (m.name || '').toLowerCase().includes(q)
 })
 
+void inputRef // used in template via ref="inputRef"
 const filteredModels = computed(() => filteredItems.value)
 
 function selectModel(model: ModelInfo) {

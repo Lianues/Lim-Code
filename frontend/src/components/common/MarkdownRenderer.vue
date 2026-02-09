@@ -397,7 +397,7 @@ function markdownItWorkspaceFileLinks(md: MarkdownIt) {
         // 行内 code：如果内容“完全等于”一个文件引用，则包一层 <a>
         if (child.type === 'code_inline') {
           const ref = parseWorkspaceFileRefExact(child.content || '')
-          if (!ref) {
+          if (!ref || fileExistenceCache.get(ref.path) !== true) {
             out.push(child)
             continue
           }
@@ -444,6 +444,18 @@ function markdownItWorkspaceFileLinks(md: MarkdownIt) {
 
           const pathStart = matchStart + prefix.length
           const matchEnd = matchStart + matchAll.length
+
+          // 未确认存在 → 作为纯文本输出，不生成链接
+          if (fileExistenceCache.get(path) !== true) {
+            const plainText = text.slice(lastIndex, matchEnd)
+            if (plainText) {
+              const t = new TokenCtor('text', '', 0)
+              t.content = plainText
+              out.push(t)
+            }
+            lastIndex = matchEnd
+            continue
+          }
 
           // 1) 先输出“匹配前”的文本（包含 prefix）
           if (pathStart > lastIndex) {
@@ -631,6 +643,10 @@ function createMarkdownIt() {
     const titleLabel = escapeHtml(lang || 'code')
     const titleHtml = codeRef?.path
       ? (() => {
+          // 未确认存在 → 不生成链接，仅显示普通标题
+          if (fileExistenceCache.get(codeRef.path) !== true) {
+            return `<span class="code-block-title">${escapeHtml(`${codeRef.path}`)}</span>`
+          }
           const encodedPath = encodeDataPath(codeRef.path)
           const startLine = codeRef.startLine
           const endLine = codeRef.endLine ?? codeRef.startLine
@@ -918,6 +934,8 @@ let renderTimer: number | null = null
 /** 上一次实际渲染时使用的内容快照，用于跳过无变化的重渲染 */
 let lastRenderedSource = ''
 let lastRenderedLatexOnly = false
+/** 后处理（图片/Mermaid/链接校验）是否已对当前内容完成 */
+let postProcessedSource = ''
 
 function clearRenderTimer() {
   if (renderTimer !== null) {
@@ -931,31 +949,43 @@ function scheduleRender() {
   clearRenderTimer()
 
   renderTimer = window.setTimeout(async () => {
-    // 跳过无变化的重渲染：当工具状态变更导致 renderBlocks 重算时，
-    // text block 的内容引用可能变化但值相同，此时无需重新渲染 Markdown
-    if (
+    // 判断内容是否变化：变了才需要重新渲染 HTML
+    const contentChanged = !(
       props.content === lastRenderedSource &&
       props.latexOnly === lastRenderedLatexOnly &&
       renderedContent.value !== ''
-    ) {
-      return
+    )
+
+    // 需要后处理（图片/Mermaid）且尚未完成
+    const needsPostProcess = !props.isStreaming && postProcessedSource !== props.content
+
+    if (contentChanged || needsPostProcess) {
+      // 非流式阶段：渲染前预校验文件路径，写入缓存供 markdown-it 插件查询
+      // 这样不存在的路径从一开始就不会生成 <a> 标签，无闪烁
+      if (!props.isStreaming) {
+        await prevalidateFilePaths(props.content)
+      }
+
+      lastRenderedSource = props.content
+      lastRenderedLatexOnly = props.latexOnly
+      renderedContent.value = renderContent(props.content, props.latexOnly)
+
+      // Mermaid / workspace images 需要基于最新 DOM 执行
+      await nextTick()
+
+      // 回填代码块换行状态（流式阶段也需要保持）
+      applyCodeBlockWrapStates()
     }
-
-    lastRenderedSource = props.content
-    lastRenderedLatexOnly = props.latexOnly
-    renderedContent.value = renderContent(props.content, props.latexOnly)
-
-    // Mermaid / workspace images 需要基于最新 DOM 执行
-    await nextTick()
-
-    // 回填代码块换行状态（流式阶段也需要保持）
-    applyCodeBlockWrapStates()
 
     // 流式阶段跳过重操作（仍保留 Markdown/LaTeX 实时渲染）
     if (props.isStreaming) return
 
+    if (!contentChanged && !needsPostProcess) return
+
     await loadWorkspaceImages()
     await renderMermaid()
+
+    postProcessedSource = props.content
   }, delay)
 }
 
@@ -1037,6 +1067,72 @@ function handleCodeToolbarClick(event: Event) {
   }).catch(err => {
     console.error('复制失败:', err)
   })
+}
+
+/**
+ * 文件存在性缓存 & 预校验
+ *
+ * 在 markdown-it 渲染之前，从原始内容中提取所有可能的文件路径，
+ * 批量请求后端校验，结果写入缓存。
+ * 渲染时，markdown-it 插件 / fence 渲染器查缓存决定是否生成 <a> 标签。
+ * 不存在（或未缓存）的路径直接输出为纯文本，无任何闪烁。
+ */
+
+/** 路径 → 是否存在 */
+const fileExistenceCache = new Map<string, boolean>()
+
+/**
+ * 从原始 Markdown 内容中提取所有可能的工作区文件路径
+ */
+function extractPotentialFilePaths(content: string): string[] {
+  const paths = new Set<string>()
+
+  // 1) 正文中的文件引用（与 markdownItWorkspaceFileLinks 同正则）
+  WORKSPACE_FILE_REF_FIND_RE.lastIndex = 0
+  let m: RegExpExecArray | null
+  while ((m = WORKSPACE_FILE_REF_FIND_RE.exec(content))) {
+    const rawPath = m[2] || ''
+    if (rawPath) paths.add(normalizeWorkspaceFilePath(rawPath))
+  }
+
+  // 2) 行内 code `path.ts` / `path.ts:12`
+  const inlineCodeRe = /`([^`]+)`/g
+  while ((m = inlineCodeRe.exec(content))) {
+    const ref = parseWorkspaceFileRefExact(m[1] || '')
+    if (ref) paths.add(ref.path)
+  }
+
+  // 3) 代码块标题中的引用格式 ```start:end:path
+  const fenceRefRe = /^```(\d+):(\d+):(.+)/gm
+  while ((m = fenceRefRe.exec(content))) {
+    const rawPath = (m[3] || '').trim()
+    if (rawPath) paths.add(normalizeWorkspaceFilePath(rawPath))
+  }
+
+  return Array.from(paths)
+}
+
+/**
+ * 渲染前预校验：批量检查未缓存的路径是否存在
+ */
+async function prevalidateFilePaths(content: string) {
+  const allPaths = extractPotentialFilePaths(content)
+  const unchecked = allPaths.filter(p => !fileExistenceCache.has(p))
+  if (unchecked.length === 0) return
+
+  try {
+    const resp = await sendToExtension<{ results: Record<string, boolean> }>(
+      'checkWorkspaceFilesExist',
+      { paths: unchecked }
+    )
+    if (resp?.results) {
+      for (const [p, exists] of Object.entries(resp.results)) {
+        fileExistenceCache.set(p, exists)
+      }
+    }
+  } catch (err) {
+    console.warn('Failed to prevalidate workspace file paths:', err)
+  }
 }
 
 /**
@@ -1580,6 +1676,7 @@ onUnmounted(()=> {
   font-size: 0.8em;
   opacity: 0.7;
 }
+
 
 /* 分隔线 */
 .markdown-content :deep(hr) {

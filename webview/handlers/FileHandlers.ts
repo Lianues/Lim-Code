@@ -89,6 +89,38 @@ export const checkPinnedFilesExistence: MessageHandler = async (data, requestId,
   }
 };
 
+/**
+ * 批量检查工作区文件是否存在
+ * 接收一组路径，返回每个路径的存在性结果
+ */
+export const checkWorkspaceFilesExist: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const paths: string[] = data?.paths;
+    if (!Array.isArray(paths) || paths.length === 0) {
+      ctx.sendResponse(requestId, { results: {} });
+      return;
+    }
+
+    const workspaceUri = ctx.getCurrentWorkspaceUri();
+    if (!workspaceUri) {
+      // 无工作区，全部视为不存在
+      const results: Record<string, boolean> = {};
+      for (const p of paths) results[p] = false;
+      ctx.sendResponse(requestId, { results });
+      return;
+    }
+
+    const results: Record<string, boolean> = {};
+    await Promise.all(paths.map(async (p: string) => {
+      results[p] = await checkFileExists(p, workspaceUri);
+    }));
+
+    ctx.sendResponse(requestId, { results });
+  } catch (error: any) {
+    ctx.sendError(requestId, 'CHECK_WORKSPACE_FILES_EXIST_ERROR', error.message || 'Failed to check files existence');
+  }
+};
+
 export const updatePinnedFilesConfig: MessageHandler = async (data, requestId, ctx) => {
   try {
     const { config } = data;
@@ -941,6 +973,7 @@ export function registerFileHandlers(registry: Map<string, MessageHandler>): voi
   // 固定文件管理
   registry.set('getPinnedFilesConfig', getPinnedFilesConfig);
   registry.set('checkPinnedFilesExistence', checkPinnedFilesExistence);
+  registry.set('checkWorkspaceFilesExist', checkWorkspaceFilesExist);
   registry.set('updatePinnedFilesConfig', updatePinnedFilesConfig);
   registry.set('addPinnedFile', addPinnedFile);
   registry.set('removePinnedFile', removePinnedFile);

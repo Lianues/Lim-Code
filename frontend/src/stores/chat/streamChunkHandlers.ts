@@ -6,6 +6,7 @@
 
 import type { Message, StreamChunk, ToolUsage, ToolExecutionResult } from '../../types'
 import type { ChatStoreState, CheckpointRecord } from './types'
+import { triggerRef } from 'vue'
 import { generateId } from '../../utils/format'
 import { contentToMessage } from './parsers'
 import {
@@ -501,6 +502,8 @@ export function handleAwaitingConfirmation(
           )
         }
       }
+      // 手动触发 ref 更新，因为 Map.set() 不会被 Vue 的 ref 追踪
+      triggerRef(state.toolResponseCache)
     }
   }
 
@@ -657,6 +660,8 @@ export function handleToolIteration(
           )
         }
       }
+      // 手动触发 ref 更新，因为 Map.set() 不会被 Vue 的 ref 追踪
+      triggerRef(state.toolResponseCache)
     }
   }
   

@@ -1,4 +1,4 @@
-import type { PromptMode } from '../components/input/ModeSelector.vue'
+import type { PromptMode } from '../components/input/types'
 import type { ModelInfo } from '../types'
 import { sendToExtension } from '../utils/vscode'
 

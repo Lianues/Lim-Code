@@ -14,7 +14,8 @@ import type {
   BuildSession,
   ChatStoreState,
   TabInfo,
-  ConversationSessionSnapshot
+  ConversationSessionSnapshot,
+  QueuedMessage
 } from './types'
 
 /**
@@ -120,6 +121,9 @@ export function createChatState(): ChatStoreState {
   /** 当前回合模型覆盖（用于 Plan 执行的“渠道 + 模型”选择） */
   const pendingModelOverride = ref<string | null>(null)
 
+  /** 消息排队队列（候选区） */
+  const messageQueue = ref<QueuedMessage[]>([])
+
   // ============ 多对话标签页 ============
 
   /** 当前打开的标签页列表 */
@@ -168,6 +172,7 @@ export function createChatState(): ChatStoreState {
     workspaceFilter,
     activeBuild,
     pendingModelOverride,
+    messageQueue,
     openTabs,
     activeTabId,
     sessionSnapshots,

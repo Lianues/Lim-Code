@@ -29,6 +29,7 @@ import { defineStore } from 'pinia'
 import { computed as vueComputed } from 'vue'
 import type { Attachment, StreamChunk } from '../types'
 import { sendToExtension, onMessageFromExtension } from '../utils/vscode'
+import { generateId } from '../utils/format'
 
 // 导入模块
 import { createChatState } from './chat/state'
@@ -94,7 +95,7 @@ import {
 } from './chat/messageActions'
 
 import type { SendMessageOptions } from './chat/messageActions'
-import type { BuildSession } from './chat/types'
+import type { BuildSession, QueuedMessage } from './chat/types'
 
 import {
   createTab as createTabAction,
@@ -108,7 +109,7 @@ import {
 import type { StreamHandlerContext } from './chat/streamHandler'
 
 // 重新导出类型
-export type { Conversation, WorkspaceFilter, TabInfo } from './chat/types'
+export type { Conversation, WorkspaceFilter, TabInfo, QueuedMessage } from './chat/types'
 
 export const useChatStore = defineStore('chat', () => {
   // ============ 状态 ============
@@ -223,6 +224,99 @@ export const useChatStore = defineStore('chat', () => {
   const setInputValue = (value: string) => setInputValueAction(state, value)
   const clearInputValue = () => clearInputValueAction(state)
 
+  // ============ 消息队列（候选区） ============
+
+  /**
+   * 将消息加入排队队列
+   */
+  function enqueueMessage(content: string, attachments: Attachment[] = []): void {
+    const item: QueuedMessage = {
+      id: generateId(),
+      content,
+      attachments: [...attachments],
+      timestamp: Date.now()
+    }
+    state.messageQueue.value = [...state.messageQueue.value, item]
+  }
+
+  /**
+   * 取出队列第一条消息
+   */
+  function dequeueMessage(): QueuedMessage | null {
+    const queue = state.messageQueue.value
+    if (queue.length === 0) return null
+    const first = queue[0]
+    state.messageQueue.value = queue.slice(1)
+    return first
+  }
+
+  /**
+   * 移除队列中指定消息
+   */
+  function removeQueuedMessage(id: string): void {
+    state.messageQueue.value = state.messageQueue.value.filter(m => m.id !== id)
+  }
+
+  /**
+   * 移动队列中的消息（拖拽排序）
+   */
+  function moveQueuedMessage(fromIndex: number, toIndex: number): void {
+    const queue = [...state.messageQueue.value]
+    if (fromIndex < 0 || fromIndex >= queue.length) return
+    if (toIndex < 0 || toIndex >= queue.length) return
+    if (fromIndex === toIndex) return
+
+    const [item] = queue.splice(fromIndex, 1)
+    queue.splice(toIndex, 0, item)
+    state.messageQueue.value = queue
+  }
+
+  /**
+   * 更新队列中指定消息的内容和附件（编辑）
+   */
+  function updateQueuedMessage(id: string, content: string, attachments: Attachment[]): void {
+    state.messageQueue.value = state.messageQueue.value.map(m =>
+      m.id === id
+        ? { ...m, content, attachments: [...attachments] }
+        : m
+    )
+  }
+
+  /**
+   * 立即发送队列中指定消息（若 AI 正在响应则先中断）
+   */
+  async function sendQueuedMessageNow(id: string): Promise<void> {
+    const item = state.messageQueue.value.find(m => m.id === id)
+    if (!item) return
+
+    // 从队列中移除
+    removeQueuedMessage(id)
+
+    // 如果 AI 正在响应，先取消
+    if (state.isWaitingForResponse.value) {
+      await cancelStream()
+    }
+
+    // 发送消息
+    await sendMessage(item.content, item.attachments)
+  }
+
+  /**
+   * 处理队列：AI 响应结束后自动取出下一条消息发送
+   *
+   * 在 handleComplete / handleCancelled / handleError 中被调用
+   */
+  async function processQueue(): Promise<void> {
+    // 如果仍在响应中，不处理
+    if (state.isWaitingForResponse.value) return
+
+    const next = dequeueMessage()
+    if (!next) return
+
+    // 发送下一条排队消息
+    await sendMessage(next.content, next.attachments)
+  }
+
   // ============ Build（Plan 执行）============
 
   async function setActiveBuild(
@@ -285,7 +379,8 @@ export const useChatStore = defineStore('chat', () => {
     state,
     currentModelName: () => computed.currentModelName.value,
     addCheckpoint,
-    updateConversationAfterMessage: () => updateConversationAfterMessage(state)
+    updateConversationAfterMessage: () => updateConversationAfterMessage(state),
+    processQueue
   }
   
   function handleStreamChunkWrapper(chunk: StreamChunk): void {
@@ -492,6 +587,16 @@ export const useChatStore = defineStore('chat', () => {
     inputValue: state.inputValue,
     setInputValue,
     clearInputValue,
+
+    // 消息队列（候选区）
+    messageQueue: state.messageQueue,
+    enqueueMessage,
+    dequeueMessage,
+    removeQueuedMessage,
+    sendQueuedMessageNow,
+    moveQueuedMessage,
+    updateQueuedMessage,
+    processQueue,
 
     // Build（Plan 执行）
     activeBuild: state.activeBuild,

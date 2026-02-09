@@ -413,6 +413,14 @@ export interface LanguageMessages {
             tokenUsage: string;
             context: string;
             fileNotExists: string;
+            queue: {
+                title: string;
+                sendNow: string;
+                remove: string;
+                queued: string;
+                drag: string;
+                edit: string;
+            };
             mode: {
                 selectMode: string;
                 manageMode: string;

@@ -261,6 +261,14 @@ const ja: LanguageMessages = {
             tokenUsage: '使用量',
             context: 'コンテキスト',
             fileNotExists: 'ファイルが存在しません',
+            queue: {
+                title: 'キューメッセージ',
+                sendNow: '今すぐ送信',
+                remove: '削除',
+                queued: 'キューに追加',
+                drag: 'ドラッグして並べ替え',
+                edit: '編集'
+            },
             mode: {
                 selectMode: 'モードを選択',
                 manageMode: 'モードを管理',

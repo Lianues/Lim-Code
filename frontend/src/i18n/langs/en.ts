@@ -261,6 +261,14 @@ const en: LanguageMessages = {
             tokenUsage: 'Usage',
             context: 'Context',
             fileNotExists: 'File does not exist',
+            queue: {
+                title: 'Queued Messages',
+                sendNow: 'Send now',
+                remove: 'Remove',
+                queued: 'Queued',
+                drag: 'Drag to reorder',
+                edit: 'Edit'
+            },
             mode: {
                 selectMode: 'Select mode',
                 manageMode: 'Manage Modes',

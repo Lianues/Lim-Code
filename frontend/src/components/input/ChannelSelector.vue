@@ -11,12 +11,9 @@ import { useSearchableDropdown } from '../../composables'
 
 const { t } = useI18n()
 
-export interface ChannelOption {
-  id: string
-  name: string
-  model: string
-  type: string
-}
+import type { ChannelOption } from './types'
+
+export type { ChannelOption }
 
 const props = withDefaults(defineProps<{
   modelValue: string
@@ -46,6 +43,7 @@ const { isOpen, toggle, close, inputRef, searchQuery, filteredItems, highlighted
     opt.type?.toLowerCase().includes(q)
 })
 
+void inputRef // used in template via ref="inputRef"
 const selectedOption = computed(() => props.options.find(opt => opt.id === props.modelValue))
 
 function selectChannel(option: ChannelOption) {

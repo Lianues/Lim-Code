@@ -8,12 +8,13 @@ import { ref, computed, onMounted, watch, nextTick, onBeforeUnmount } from 'vue'
 import InputBox from './InputBox.vue'
 import FilePickerPanel from './FilePickerPanel.vue'
 import SendButton from './SendButton.vue'
+import MessageQueue from './MessageQueue.vue'
 import InputAttachments from './InputAttachments.vue'
 import PinnedFilesWidget from './PinnedFilesWidget.vue'
 import SkillsWidget from './SkillsWidget.vue'
 import InputSelectorBar from './InputSelectorBar.vue'
-import type { ChannelOption } from './ChannelSelector.vue'
-import type { PromptMode } from './ModeSelector.vue'
+import type { ChannelOption } from './types'
+import type { PromptMode } from './types'
 
 import { IconButton, Tooltip } from '../common'
 import { useChatStore, useSettingsStore } from '../../stores'
@@ -42,6 +43,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   send: [content: string, attachments: Attachment[]]
   cancel: []
+  clearAttachments: []
   attachFile: []
   removeAttachment: [id: string]
   pasteFiles: [files: File[]]
@@ -163,14 +165,31 @@ const canSend = computed(() => {
     return true
   }
 
-  return hasContent && !chatStore.isWaitingForResponse && !props.uploading
+  // 允许在 AI 响应期间输入（会入队），只需有内容且未上传中即可
+  return hasContent && !props.uploading
 })
 
 function handleSend() {
   if (!canSend.value) return
 
   const content = serializeNodes(editorNodes.value).trim()
-  emit('send', content, props.attachments || [])
+  const currentAttachments = props.attachments || []
+
+  // 智能决策：AI 空闲且队列为空时直接发送，否则入队
+  if (!chatStore.isWaitingForResponse && chatStore.messageQueue.length === 0) {
+    // 直接发送
+    emit('send', content, currentAttachments)
+  } else {
+    // 加入候选区队列
+    // 如果有工具待确认，仍走直接发送路径（拒绝工具的场景）
+    if (chatStore.hasPendingToolConfirmation) {
+      emit('send', content, currentAttachments)
+    } else {
+      chatStore.enqueueMessage(content, currentAttachments)
+      // 入队后清空附件（通知父组件）
+      emit('clearAttachments')
+    }
+  }
 
   editorNodes.value = []
   chatStore.clearInputValue()
@@ -437,6 +456,9 @@ watch(() => settingsStore.promptModesVersion, () => {
       @remove="handleRemoveAttachment"
       @preview="previewAttachment"
     />
+
+    <!-- 消息候选区（排队队列） -->
+    <MessageQueue />
 
     <div class="input-box-container">
       <FilePickerPanel

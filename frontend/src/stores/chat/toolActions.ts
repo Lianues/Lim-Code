@@ -6,6 +6,7 @@
 
 import type { Message } from '../../types'
 import type { ChatStoreState, ChatStoreComputed } from './types'
+import { triggerRef } from 'vue'
 import { sendToExtension } from '../../utils/vscode'
 import { generateId } from '../../utils/format'
 import { calculateBackendIndex } from './messageActions'
@@ -53,6 +54,8 @@ export function getToolResponseById(
   // 3) 回填缓存（包括 null，避免重复扫描）
   if (latest !== null) {
     state.toolResponseCache.value.set(toolCallId, latest)
+    // 手动触发 ref 更新，因为 Map.set() 不会被 Vue 的 ref 追踪
+    triggerRef(state.toolResponseCache)
   }
 
   return latest

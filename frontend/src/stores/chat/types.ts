@@ -3,7 +3,7 @@
  */
 
 import type { Ref, ComputedRef } from 'vue'
-import type { Message, ErrorInfo, CheckpointRecord } from '../../types'
+import type { Message, ErrorInfo, CheckpointRecord, Attachment } from '../../types'
 
 // 重新导出类型以供其他模块使用
 export type { CheckpointRecord } from '../../types'
@@ -80,6 +80,19 @@ export interface BuildSession {
   startedAt: number
   anchorBackendIndex?: number
   status: BuildStatus
+}
+
+/**
+ * 排队消息（候选区）
+ */
+export interface QueuedMessage {
+  id: string
+  /** 序列化后的编辑器内容（包含 @上下文标记） */
+  content: string
+  /** 附件 */
+  attachments: Attachment[]
+  /** 入队时间戳 */
+  timestamp: number
 }
 
 /**
@@ -165,6 +178,9 @@ export interface ChatStoreState {
    * 用于：Plan 执行时选择“渠道 + 模型”，并在 toolConfirmation 时保持一致。
    */
   pendingModelOverride: Ref<string | null>
+
+  /** 消息排队队列（候选区） */
+  messageQueue: Ref<QueuedMessage[]>
 
   // ============ 多对话标签页 ============
 

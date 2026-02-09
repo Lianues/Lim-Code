@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import ChannelSelector, { type ChannelOption } from './ChannelSelector.vue'
-import ModelSelector, { type ModelInfo } from './ModelSelector.vue'
-import ModeSelector, { type PromptMode } from './ModeSelector.vue'
+import ChannelSelector from './ChannelSelector.vue'
+import ModelSelector from './ModelSelector.vue'
+import ModeSelector from './ModeSelector.vue'
+import type { ChannelOption, PromptMode, ModelInfo } from './types'
+
 import { useI18n } from '../../i18n'
 
 const { t } = useI18n()

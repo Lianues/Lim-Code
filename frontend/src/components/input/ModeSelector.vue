@@ -11,11 +11,9 @@ import { useSearchableDropdown } from '../../composables'
 
 const { t } = useI18n()
 
-export interface PromptMode {
-  id: string
-  name: string
-  icon?: string
-}
+import type { PromptMode } from './types'
+
+export type { PromptMode }
 
 const props = withDefaults(defineProps<{
   modelValue: string
@@ -43,6 +41,7 @@ const { isOpen, toggle, close, inputRef, searchQuery, filteredItems, highlighted
   filter: (opt, q) => opt.name.toLowerCase().includes(q)
 })
 
+void inputRef // used in template via ref="inputRef"
 const selectedOption = computed(() => props.options.find(opt => opt.id === props.modelValue))
 
 function selectMode(option: PromptMode) {

@@ -8,6 +8,7 @@
 
 import type { StreamChunk } from '../../types'
 import type { ChatStoreState, CheckpointRecord } from './types'
+import { nextTick } from 'vue'
 import { bufferBackgroundChunk, updateTabStreamingStatus } from './tabActions'
 
 import {
@@ -39,6 +40,8 @@ export interface StreamHandlerContext {
   currentModelName: () => string
   addCheckpoint: (checkpoint: CheckpointRecord) => void
   updateConversationAfterMessage: () => Promise<void>
+  /** AI 响应结束后处理消息队列 */
+  processQueue: () => Promise<void>
 }
 
 /**
@@ -48,7 +51,7 @@ export function handleStreamChunk(
   chunk: StreamChunk,
   ctx: StreamHandlerContext
 ): void {
-  const { state, currentModelName, addCheckpoint, updateConversationAfterMessage } = ctx
+  const { state, currentModelName, addCheckpoint, updateConversationAfterMessage, processQueue } = ctx
   
   // 非当前活跃对话的流式响应 -> 缓冲到后台并更新标签页状态
   if (chunk.conversationId !== state.currentConversationId.value) {
@@ -88,6 +91,7 @@ export function handleStreamChunk(
     case 'complete':
       if (chunk.content) {
         handleComplete(chunk, state, addCheckpoint, updateConversationAfterMessage)
+        nextTick(() => processQueue())
       }
       break
       
@@ -97,10 +101,12 @@ export function handleStreamChunk(
       
     case 'cancelled':
       handleCancelled(chunk, state)
+      nextTick(() => processQueue())
       break
       
     case 'error':
       handleError(chunk, state)
+      nextTick(() => processQueue())
       break
   }
 }

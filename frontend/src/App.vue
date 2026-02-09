@@ -314,6 +314,7 @@ onMounted(async () => {
         :uploading="uploading"
         @send="handleSend"
         @cancel="handleCancel"
+        @clear-attachments="clearAttachments"
         @attach-file="handleAttachFile"
         @remove-attachment="handleRemoveAttachment"
         @paste-files="handlePasteFiles"

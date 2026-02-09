@@ -23,4 +23,4 @@ export { default as AnnouncementModal } from './AnnouncementModal.vue'
 export { default as JsonViewerDialog } from './JsonViewerDialog.vue'
 
 // 导出类型
-export type { SelectOption } from './CustomSelect.vue'
+export type { SelectOption } from './types'
