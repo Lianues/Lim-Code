@@ -103,7 +103,8 @@ async function executeToolCall(
     toolName: string,
     args: Record<string, unknown>,
     context: SubAgentExecutorContext,
-    abortSignal?: AbortSignal
+    abortSignal?: AbortSignal,
+    allowedToolNames?: Set<string>
 ): Promise<{ result: unknown; success: boolean; error?: string }> {
     const startTime = Date.now();
     
@@ -115,6 +116,18 @@ async function executeToolCall(
                 success: false,
                 error: 'Cancelled'
             };
+        }
+
+        // 校验子代理自身的工具白名单
+        // 即使 AI 不应该调用不在列表里的工具，这里做防御性校验
+        if (allowedToolNames && allowedToolNames.size > 0) {
+            if (!allowedToolNames.has(toolName)) {
+                return {
+                    result: null,
+                    success: false,
+                    error: `Tool not allowed for this sub-agent: ${toolName}`
+                };
+            }
         }
 
         // 安全策略：防止子代理绕过“模式工具限制”
@@ -456,6 +469,9 @@ export function createDefaultExecutor(
             // 获取可用工具
             const availableTools = await getAvailableTools(config, context);
             
+            // 构建允许的工具名称集合，用于执行时的防御性校验
+            const allowedToolNames = new Set(availableTools.map(t => t.name));
+            
             // 构建系统提示词
             const systemPrompt = config.systemPrompt;
             
@@ -524,7 +540,7 @@ export function createDefaultExecutor(
                     history: history,
                     dynamicSystemPrompt: systemPrompt,
                     abortSignal: combinedSignal,
-                    skipRetry: true  // 子代理内部不重试
+                    toolOverrides: availableTools.length > 0 ? availableTools : undefined,
                 };
                 
                 // 如果指定了模型，设置模型覆盖
@@ -645,7 +661,8 @@ export function createDefaultExecutor(
                   call.name,
                         call.args,
                         context,
-                        combinedSignal
+                        combinedSignal,
+                        allowedToolNames
                     );
                     const duration = Date.now() - toolStartTime;
                     

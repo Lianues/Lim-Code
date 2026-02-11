@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { computed } from 'vue'
+import { CustomSelect, type SelectOption } from '../../common'
 import { useI18n } from '../../../i18n'
 
 const { t } = useI18n()
@@ -20,10 +22,49 @@ const DEFAULT_VALUES: Record<string, any> = {
   top_p: 0.9,
   top_k: 40,
   thinking: {
-    type: 'enabled',
-    budget_tokens: 10000
+    type: 'adaptive',
+    budget_tokens: 10000,
+    effort: 'high'
   }
 }
+
+// 思考类型选项
+const thinkingTypeOptions = computed<SelectOption[]>(() => [
+  {
+    value: 'adaptive',
+    label: t('components.channels.anthropic.thinking.typeAdaptive'),
+    description: t('components.channels.anthropic.thinking.typeAdaptiveHint')
+  },
+  {
+    value: 'enabled',
+    label: t('components.channels.anthropic.thinking.typeEnabled'),
+    description: t('components.channels.anthropic.thinking.typeEnabledHint')
+  }
+])
+
+// Effort 级别选项
+const effortOptions = computed<SelectOption[]>(() => [
+  {
+    value: 'max',
+    label: 'max',
+    description: t('components.channels.anthropic.thinking.effortMax')
+  },
+  {
+    value: 'high',
+    label: 'high',
+    description: t('components.channels.anthropic.thinking.effortHigh')
+  },
+  {
+    value: 'medium',
+    label: 'medium',
+    description: t('components.channels.anthropic.thinking.effortMedium')
+  },
+  {
+    value: 'low',
+    label: 'low',
+    description: t('components.channels.anthropic.thinking.effortLow')
+  }
+])
 
 // 检查配置项是否启用
 function isOptionEnabled(optionKey: string): boolean {
@@ -34,6 +75,11 @@ function isOptionEnabled(optionKey: string): boolean {
 // 获取思考配置字段值
 function getThinkingValue(field: string, defaultValue: any = undefined): any {
   return props.config?.options?.thinking?.[field] ?? defaultValue
+}
+
+// 获取当前思考类型
+function getThinkingType(): string {
+  return getThinkingValue('type', 'adaptive')
 }
 
 // 处理选项启用状态变更
@@ -136,7 +182,7 @@ function handleThinkingNumberChange(field: string, event: any) {
         <label class="toggle-switch" :title="t('components.channels.common.maxTokens.toggleHint')">
           <input
             type="checkbox"
-            :checked="isOptionEnabled('max_tokens')"
+           :checked="isOptionEnabled('max_tokens')"
             @change="(e: any) => handleOptionEnabledChange('max_tokens', e.target.checked)"
           />
           <span class="toggle-slider"></span>
@@ -220,8 +266,33 @@ function handleThinkingNumberChange(field: string, event: any) {
       </div>
       
       <div class="option-section-content" :class="{ disabled: !isOptionEnabled('thinking') }">
-        <!-- 思考预算 -->
+        <!-- 思考类型 -->
         <div class="option-item">
+          <label>{{ t('components.channels.anthropic.thinking.typeLabel') }}</label>
+          <CustomSelect
+            :model-value="getThinkingType()"
+            :options="thinkingTypeOptions"
+            :disabled="!isOptionEnabled('thinking')"
+            @update:model-value="(v: string) => updateThinking('type', v)"
+          />
+        </div>
+        
+        <!-- Effort 级别（仅 adaptive 模式） -->
+        <div v-if="getThinkingType() === 'adaptive'" class="option-item">
+          <label>{{ t('components.channels.anthropic.thinking.effortLabel') }}</label>
+          <CustomSelect
+            :model-value="getThinkingValue('effort', 'high')"
+            :options="effortOptions"
+            :disabled="!isOptionEnabled('thinking')"
+            @update:model-value="(v: string) => updateThinking('effort', v)"
+          />
+          <span class="option-hint">
+            {{ t('components.channels.anthropic.thinking.effortHint') }}
+          </span>
+        </div>
+        
+        <!-- 思考预算（仅 enabled 模式） -->
+        <div v-if="getThinkingType() === 'enabled'" class="option-item">
           <label>{{ t('components.channels.anthropic.thinking.budgetLabel') }}</label>
           <input
             type="number"

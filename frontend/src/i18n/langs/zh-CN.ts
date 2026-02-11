@@ -1710,9 +1710,20 @@ const zhCN: LanguageMessages = {
             },
             anthropic: {
                 thinking: {
+                    typeLabel: '思考模式',
+                    typeAdaptive: '自适应 (Adaptive)',
+                    typeEnabled: '手动 (Enabled)',
+                    typeAdaptiveHint: 'Claude 自动决定思考深度，推荐用于 Opus 4.6+',
+                    typeEnabledHint: '手动设置思考 Token 预算，适用于所有支持思考的模型',
                     budgetLabel: '思考预算 (Budget Tokens)',
                     budgetPlaceholder: '10000',
-                    budgetHint: '思考过程使用的最大 Token 数量，建议 5000-50000'
+                    budgetHint: '思考过程使用的最大 Token 数量，建议 5000-50000',
+                    effortLabel: '思考努力级别 (Effort)',
+                    effortMax: '最大努力（仅 Opus 4.6）',
+                    effortHigh: '高努力（默认）',
+                    effortMedium: '中等努力',
+                    effortLow: '低努力',
+                    effortHint: '控制 Claude 的思考深度，级别越高思考越深入但消耗更多 Token'
                 }
             },
             gemini: {

@@ -93,21 +93,39 @@ export interface AnthropicConfig extends BaseChannelConfig {
          *   type: "enabled",
          *   budget_tokens: 10000
          * }
+         *
+         * 或使用自适应模式（Opus 4.6+）：
+         * {
+         *   type: "adaptive",
+         *   effort: "high"
+         * }
          */
         thinking?: {
             /**
              * 思考类型
-             * - enabled: 启用思考
+             * - enabled: 启用思考（需配合 budget_tokens）
+             * - adaptive: 自适应思考（Opus 4.6+，Claude 自动决定思考深度）
              * - disabled: 禁用思考
              */
-            type?: 'enabled' | 'disabled';
+            type?: 'enabled' | 'adaptive' | 'disabled';
             
             /**
              * 思考预算（Token 数量）
              * 思考过程使用的最大 Token 数量
              * 建议值：5000-50000
+             * 仅在 type 为 'enabled' 时使用
              */
             budget_tokens?: number;
+            
+            /**
+             * 思考努力级别
+             * 仅在 type 为 'adaptive' 时使用
+             * - max: 最大努力（仅 Opus 4.6）
+             * - high: 高努力（默认）
+             * - medium: 中等努力
+             * - low: 低努力
+             */
+            effort?: 'max' | 'high' | 'medium' | 'low';
         };
     };
     

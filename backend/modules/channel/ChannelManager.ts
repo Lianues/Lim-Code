@@ -206,11 +206,15 @@ export class ChannelManager {
         
         // 5. 获取过滤后的工具声明（除非请求指定跳过工具）
         // 传递配置信息以便动态生成工具描述
-        const tools = request.skipTools ? undefined : this.getFilteredTools(
-            (config as any).multimodalToolsEnabled,
-            config.type as 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom',
-            (config as any).toolMode
-        );
+        const tools = request.skipTools
+            ? undefined
+            : (request.toolOverrides
+                ? request.toolOverrides
+                : this.getFilteredTools(
+                    (config as any).multimodalToolsEnabled,
+                    config.type as 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom',
+                    (config as any).toolMode
+                ));
         
         // 6. 构建请求
         let httpRequest: HttpRequestOptions;
@@ -370,11 +374,15 @@ export class ChannelManager {
         
         // 4. 获取过滤后的工具声明（除非请求指定跳过工具）
         // 传递配置信息以便动态生成工具描述
-        const tools = request.skipTools ? undefined : this.getFilteredTools(
-            (config as any).multimodalToolsEnabled,
-            config.type as 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom',
-            (config as any).toolMode
-        );
+        const tools = request.skipTools
+            ? undefined
+            : (request.toolOverrides
+                ? request.toolOverrides
+                : this.getFilteredTools(
+                    (config as any).multimodalToolsEnabled,
+                    config.type as 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom',
+                    (config as any).toolMode
+                ));
         
         // 5. 构建请求
         const httpRequest = formatter.buildRequest(request, config, tools);

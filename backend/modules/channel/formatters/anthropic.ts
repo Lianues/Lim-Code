@@ -511,19 +511,36 @@ export class AnthropicFormatter extends BaseFormatter {
         const thinking = config.options?.thinking;
         
         if (thinkingEnabled && thinking) {
-            const thinkingConfig: any = {
-                type: 'enabled'
-            };
+            const thinkingType = thinking.type || 'enabled';
             
-            // 思考预算（budget_tokens）
-            if (thinking.budget_tokens && thinking.budget_tokens > 0) {
-                thinkingConfig.budget_tokens = thinking.budget_tokens;
-            } else {
-                // 默认预算
-                thinkingConfig.budget_tokens = 10000;
+            if (thinkingType === 'adaptive') {
+                // 自适应思考模式（Opus 4.6+）
+                genConfig.thinking = {
+                    type: 'adaptive'
+                };
+                
+                // effort 通过 output_config 发送
+                if (thinking.effort) {
+                    genConfig.output_config = {
+                        effort: thinking.effort
+                    };
+                }
+            } else if (thinkingType === 'enabled') {
+                // 传统手动思考模式
+                const thinkingConfig: any = {
+                    type: 'enabled'
+                };
+                
+                // 思考预算（budget_tokens）
+                if (thinking.budget_tokens && thinking.budget_tokens > 0) {
+                    thinkingConfig.budget_tokens = thinking.budget_tokens;
+                } else {
+                    // 默认预算
+                    thinkingConfig.budget_tokens = 10000;
+                }
+                
+                genConfig.thinking = thinkingConfig;
             }
-            
-            genConfig.thinking = thinkingConfig;
         }
         
         return genConfig;

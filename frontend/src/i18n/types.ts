@@ -1754,9 +1754,20 @@ export interface LanguageMessages {
             /** Anthropic 专属 */
             anthropic: {
                 thinking: {
+                    typeLabel: string;
+                    typeAdaptive: string;
+                    typeEnabled: string;
+                    typeAdaptiveHint: string;
+                    typeEnabledHint: string;
                     budgetLabel: string;
                     budgetPlaceholder: string;
                     budgetHint: string;
+                    effortLabel: string;
+                    effortMax: string;
+                    effortHigh: string;
+                    effortMedium: string;
+                    effortLow: string;
+                    effortHint: string;
                 };
             };
             

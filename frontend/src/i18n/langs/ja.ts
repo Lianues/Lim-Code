@@ -1710,9 +1710,20 @@ const ja: LanguageMessages = {
             },
             anthropic: {
                 thinking: {
+                    typeLabel: '思考モード',
+                    typeAdaptive: 'アダプティブ (Adaptive)',
+                    typeEnabled: '手動 (Enabled)',
+                    typeAdaptiveHint: 'Claude が思考の深さを自動的に決定、Opus 4.6+ に推奨',
+                    typeEnabledHint: '思考トークンバジェットを手動設定、思考対応の全モデルで使用可能',
                     budgetLabel: '思考バジェット (Budget Tokens)',
                     budgetPlaceholder: '10000',
-                    budgetHint: '思考プロセスに使用する最大トークン数、5000-50000 を推奨'
+                    budgetHint: '思考プロセスに使用する最大トークン数、5000-50000 を推奨',
+                    effortLabel: '思考エフォートレベル (Effort)',
+                    effortMax: '最大（Opus 4.6 のみ）',
+                    effortHigh: '高（デフォルト）',
+                    effortMedium: '中',
+                    effortLow: '低',
+                    effortHint: 'Claude の思考の深さを制御。レベルが高いほど深く思考しますが、トークン消費が増えます'
                 }
             },
             gemini: {

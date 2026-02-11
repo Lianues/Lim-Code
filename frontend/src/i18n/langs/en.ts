@@ -1710,9 +1710,20 @@ const en: LanguageMessages = {
             },
             anthropic: {
                 thinking: {
+                    typeLabel: 'Thinking Mode',
+                    typeAdaptive: 'Adaptive',
+                    typeEnabled: 'Manual (Enabled)',
+                    typeAdaptiveHint: 'Claude automatically decides thinking depth, recommended for Opus 4.6+',
+                    typeEnabledHint: 'Manually set thinking token budget, works with all thinking-capable models',
                     budgetLabel: 'Thinking Budget (Budget Tokens)',
                     budgetPlaceholder: '10000',
-                    budgetHint: 'Maximum token count for thinking process, recommended 5000-50000'
+                    budgetHint: 'Maximum token count for thinking process, recommended 5000-50000',
+                    effortLabel: 'Thinking Effort',
+                    effortMax: 'Maximum (Opus 4.6 only)',
+                    effortHigh: 'High (default)',
+                    effortMedium: 'Medium',
+                    effortLow: 'Low',
+                    effortHint: 'Controls Claude thinking depth. Higher levels think deeper but consume more tokens'
                 }
             },
             gemini: {

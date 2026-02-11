@@ -151,8 +151,9 @@ export class ConfigManager {
                         max_tokens: 8192,
                         // Anthropic 思考配置默认值
                         thinking: {
-                            type: 'enabled',
-                            budget_tokens: 10000
+                            type: 'adaptive',
+                            budget_tokens: 10000,
+                            effort: 'high'
                         }
                     },
                     optionsEnabled: {

@@ -68,6 +68,16 @@ export interface GenerateRequest {
     skipRetry?: boolean;
     
     /**
+     * 工具覆盖列表（可选）
+     *
+     * 如果提供，将直接使用此工具列表，跳过内部的 getFilteredTools() 逻辑。
+     * 用于子代理（SubAgent）等场景，需要精确控制可用工具集。
+     * 
+     * 注意：此字段与 skipTools 互斥，如果 skipTools 为 true 则忽略此字段。
+     */
+    toolOverrides?: import('../../tools/types').ToolDeclaration[];
+    
+    /**
      * MCP 工具内容（可选）
      *
      * 已格式化的 MCP 工具定义内容。
