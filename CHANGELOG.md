@@ -3,6 +3,11 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.0.85] - 2026-02-11
+
+### Fixed
+  - 修复了获取模型列表的数量问题
+
 ## [1.0.84] - 2026-02-10
 
 ### Fixed
