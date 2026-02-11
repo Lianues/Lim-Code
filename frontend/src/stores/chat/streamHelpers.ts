@@ -48,6 +48,8 @@ export function addFunctionCallToMessage(
     id: call.id,
     name: call.name,
     args: call.args,
+    // 传递 partialArgs 以便 ToolMessage 组件显示流式预览
+    partialArgs: call.partialArgs,
     // 刚从流式内容里解析/拼接出来的工具调用，视为“AI 还在输出/完善工具内容”
     // 有 partialArgs 说明参数仍在流式累积中；无 partialArgs 说明已拿到完整参数
     status: typeof call.partialArgs === 'string' ? 'streaming' : 'queued'
@@ -288,6 +290,20 @@ export function handleFunctionCallPart(part: any, message: Message): void {
             lastFc.args = JSON.parse(lastFc.partialArgs)
           } catch (e) { /* 继续累积 */ }
         }
+
+        // ★ 同步更新 message.tools 中对应工具的流式状态和 partialArgs
+        const toolId = lastFc.id
+        if (toolId) {
+          const toolEntry = message.tools?.find(t => t.id === toolId)
+          if (toolEntry) {
+            toolEntry.status = 'streaming'
+            toolEntry.partialArgs = lastFc.partialArgs
+            // 同步已解析的 args（用于描述格式化器预览）
+            if (lastFc.args && Object.keys(lastFc.args).length > 0) {
+              toolEntry.args = lastFc.args
+            }
+          }
+        }
       } else if (fc.args && Object.keys(fc.args).length > 0) {
         lastFc.args = { ...lastFc.args, ...fc.args }
 
@@ -305,6 +321,7 @@ export function handleFunctionCallPart(part: any, message: Message): void {
         if (toolEntry && toolEntry.status === 'streaming') {
           toolEntry.status = 'queued'
           toolEntry.args = lastFc.args
+          delete toolEntry.partialArgs
         }
       }
       

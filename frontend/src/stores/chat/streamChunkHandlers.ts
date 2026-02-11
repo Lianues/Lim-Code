@@ -56,7 +56,8 @@ function mergeToolsPreferExisting(
       result: e.result ?? t.result,
       error: e.error ?? t.error,
       duration: e.duration ?? t.duration,
-      awaitingConfirmation: e.awaitingConfirmation ?? t.awaitingConfirmation
+      awaitingConfirmation: e.awaitingConfirmation ?? t.awaitingConfirmation,
+      partialArgs: e.partialArgs ?? t.partialArgs
     })
     byId.delete(t.id)
   }
@@ -147,6 +148,8 @@ export function handleChunkType(chunk: StreamChunk, state: ChatStoreState): void
         for (const tool of message.tools) {
           if (tool.status === 'streaming') {
             tool.status = 'queued'
+            // 清理流式预览状态
+            delete tool.partialArgs
             // 从 parts 同步最终 args
             const matchingPart = message.parts?.find(
               p => p.functionCall && p.functionCall.id === tool.id
@@ -218,16 +221,18 @@ export function handleToolsExecuting(chunk: StreamChunk, state: ChatStoreState):
       const queuedIds = new Set(pending.slice(1).map(t => t.id))
 
       updatedMessage.tools = updatedMessage.tools.map(tool => {
-        // AI 输出完成后，工具如果还停留在 streaming，则进入 queued
-        const baseStatus = tool.status === 'streaming' ? 'queued' : tool.status
+        // AI 输出完成后，工具如果还停留在 streaming，则进入 queued，并清理 partialArgs
+        const isStreaming = tool.status === 'streaming'
+        const baseStatus = isStreaming ? 'queued' : tool.status
+        const baseTool = isStreaming ? { ...tool, partialArgs: undefined } : tool
 
         if (executingId && tool.id === executingId) {
-          return { ...tool, status: 'executing' as const }
+          return { ...baseTool, status: 'executing' as const }
         }
         if (queuedIds.has(tool.id)) {
-          return { ...tool, status: 'queued' as const }
+          return { ...baseTool, status: 'queued' as const }
         }
-        return { ...tool, status: baseStatus as any }
+        return { ...baseTool, status: baseStatus as any }
       })
     }
 
@@ -423,12 +428,14 @@ export function handleAwaitingConfirmation(
 
       // 使用 map 创建新数组
       updatedMessage.tools = updatedMessage.tools.map(tool => {
-        // AI 输出完成后，工具如果还停留在 streaming，则进入 queued
-        const baseStatus = normalizeStreamingToQueued(tool.status) || 'queued'
+        // AI 输出完成后，工具如果还停留在 streaming，则进入 queued，并清理 partialArgs
+        const isStreaming = tool.status === 'streaming'
+        const baseStatus = (isStreaming ? 'queued' : tool.status) || 'queued'
+        const baseTool = isStreaming ? { ...tool, partialArgs: undefined } : tool
 
         if (pendingIds.has(tool.id)) {
           // 轮到该工具，等待用户批准
-          return { ...tool, status: 'awaiting_approval' as const }
+          return { ...baseTool, status: 'awaiting_approval' as const }
         }
         
         // 如果有自动执行的结果，写回 result，并推断最终状态（success/error/warning/awaiting_apply）
@@ -440,10 +447,10 @@ export function handleAwaitingConfirmation(
             typeof (result as any)?.error === 'string' && (result as any).error.trim()
               ? String((result as any).error)
               : undefined
-          return { ...tool, status, result, error: tool.error ?? errFromResult }
+          return { ...baseTool, status, result, error: tool.error ?? errFromResult }
         }
         
-        return { ...tool, status: baseStatus as any }
+        return { ...baseTool, status: baseStatus as any }
       })
     }
 
