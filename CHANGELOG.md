@@ -11,7 +11,7 @@ All notable changes to the "Lim Code" extension will be documented in this file.
   - 添加了diff类工具，自动应用diff时是否显示diff标签页的功能
   - 添加了diff类工具，diff警戒值的功能，只会在开启自动应用diff时显示
   - 添加了聊天界面右侧滚动条节点的功能，可以快速跳转和定位不同的用户消息
-  - 添加了聊天界面用户消息的特殊显示，添加了左侧蓝色彩条和淡蓝色背景，方便快速定位
+  - 添加了聊天界面用户消息的特殊显示，添加了淡蓝色背景，方便快速定位
 
 ### Improved
   - 优化了subagent内部的重试机制，改为静默，不再显示到外部
