@@ -7,7 +7,7 @@ import type { Message, ErrorInfo, CheckpointRecord, Attachment } from '../../typ
 import type { EditorNode } from '../../types/editorNode'
 
 // 重新导出类型以供其他模块使用
-export type { CheckpointRecord } from '../../types'
+export type { CheckpointRecord, ErrorInfo } from '../../types'
 
 /**
  * 对话摘要

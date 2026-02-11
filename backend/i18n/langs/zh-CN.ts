@@ -299,7 +299,8 @@ const zhCN: BackendLanguageMessages = {
                 saveFailed: '保存失败: {error}',
                 savedShort: '已保存: {filePath}',
                 rejected: '已拒绝修改: {filePath}',
-                diffTitle: '{filePath} (AI 修改 - Ctrl+S 保存)'
+                diffTitle: '{filePath} (AI 修改 - Ctrl+S 保存)',
+                diffGuardWarning: '⚠️ 此次修改删除了 {deletePercent}% 的文件内容（{deletedLines}/{totalLines} 行），超过 {threshold}% 的警戒阈值，请仔细检查'
             },
             diffCodeLens: {
                 accept: '接受',

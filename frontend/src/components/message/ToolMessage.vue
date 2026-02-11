@@ -57,6 +57,9 @@ const globalApplyDiffConfig = ref<ApplyDiffAutoSaveConfig>({ autoSave: false, au
 // 工具 ID 到 Pending Diff ID 的映射
 const toolIdToPendingId = ref<Map<string, string>>(new Map())
 
+// 工具 ID 到 diff 警戒值警告的映射
+const diffGuardWarnings = ref<Map<string, { warning: string; deletePercent: number }>>(new Map())
+
 // 记录曾经出现过的 diff 工具（避免在 diff 刚开始、映射尚未同步前误判为错误）
 const seenDiffToolIds = ref<Set<string>>(new Set())
 
@@ -279,6 +282,18 @@ onMounted(async () => {
       }
     }
     toolIdToPendingId.value = newMapping
+
+    // 更新 diff 警戒值警告映射
+    const newWarnings = new Map<string, { warning: string; deletePercent: number }>()
+    for (const d of data.pendingDiffs) {
+      if (d.toolId && d.diffGuardWarning) {
+        newWarnings.set(d.toolId, {
+          warning: d.diffGuardWarning,
+          deletePercent: d.diffGuardDeletePercent ?? 0
+        })
+      }
+    }
+    diffGuardWarnings.value = newWarnings
 
     // 记录已出现过的 diff 工具 ID
     const nextSeen = new Set(seenDiffToolIds.value)
@@ -884,6 +899,14 @@ function renderToolContent(tool: ToolUsage) {
 
       <!-- Diff 工具确认操作栏 (位于外层，不随展开面板隐藏) -->
       <div v-if="isDiffToolPending(tool)" class="diff-action-footer">
+        <!-- Diff 警戒值警告 -->
+        <div v-if="diffGuardWarnings.get(tool.id)" class="diff-guard-warning">
+          <i class="codicon codicon-warning"></i>
+          <span class="diff-guard-text">
+            {{ diffGuardWarnings.get(tool.id)!.warning }}
+          </span>
+        </div>
+        
         <div class="footer-top" v-if="applyDiffConfigs.get(tool.id)?.autoSave">
           <div class="timer-container">
             <div class="timer-bar" :style="{ width: (applyDiffProgress.get(tool.id) || 0) + '%' }"></div>
@@ -1342,5 +1365,31 @@ function renderToolContent(tool: ToolUsage) {
 
 .reject-btn-secondary:hover {
   background: var(--vscode-toolbar-hoverBackground);
+}
+
+/* Diff 警戒值警告 */
+.diff-guard-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 6px 10px;
+  background: var(--vscode-inputValidation-warningBackground, rgba(255, 170, 0, 0.1));
+  border: 1px solid var(--vscode-inputValidation-warningBorder, #ffaa00);
+  border-radius: 4px;
+  margin-bottom: 4px;
+}
+
+.diff-guard-warning .codicon {
+  font-size: 13px;
+  color: var(--vscode-editorWarning-foreground, #ffaa00);
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.diff-guard-text {
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--vscode-foreground);
+  word-break: break-word;
 }
 </style>

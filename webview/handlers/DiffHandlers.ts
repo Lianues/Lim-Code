@@ -70,6 +70,8 @@ async function handleOpenDiffPreview(
     await handleSearchInFilesPreview(result, ctx, toolId);
   } else if (toolName === 'write_file') {
     await handleWriteFilePreview(args, result, ctx, toolId);
+  } else if (toolName === 'insert_code' || toolName === 'delete_code') {
+    await handleDiffContentIdPreview(result, ctx, toolId);
   } else {
     throw new Error(t('webview.errors.unsupportedToolType', { toolName }));
   }
@@ -315,6 +317,43 @@ async function handleWriteFilePreview(
     
     const previewId = diffContentId || (toolId ? `${toolId}:${file.path}` : `${file.path}:${Date.now()}`);
     await openDiffView(file.path, originalContent, newContent, diffTitle, ctx, previewId);
+  }
+}
+
+/**
+ * 通用：通过 result.data.results 中的 diffContentId 打开预览
+ * 适用于 insert_code、delete_code 等结构一致的工具
+ */
+async function handleDiffContentIdPreview(
+  result: Record<string, unknown> | undefined,
+  ctx: HandlerContext,
+  toolId?: string
+): Promise<void> {
+  const resultData = result?.data as Record<string, unknown> | undefined;
+  const results = resultData?.results as Array<{
+    path: string;
+    diffContentId?: string;
+  }> | undefined;
+
+  if (!results || results.length === 0) {
+    throw new Error(t('webview.errors.noReplaceResults'));
+  }
+
+  for (const item of results) {
+    if (!item.diffContentId) {
+      continue;
+    }
+
+    try {
+      const loadedContent = await ctx.diffStorageManager.loadGlobalDiff(item.diffContentId);
+      if (loadedContent) {
+        const diffTitle = t('webview.messages.fullFileDiffPreview', { filePath: item.path });
+        const previewId = item.diffContentId || toolId || `${item.path}:${Date.now()}`;
+        await openDiffView(item.path, loadedContent.originalContent, loadedContent.newContent, diffTitle, ctx, previewId);
+      }
+    } catch (e) {
+      console.warn('Failed to load diff content:', e);
+    }
   }
 }
 

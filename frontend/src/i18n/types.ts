@@ -546,6 +546,17 @@ export interface LanguageMessages {
                         formatDesc: string;
                         formatUnified: string;
                         formatSearchReplace: string;
+
+                        skipDiffView: string;
+                        enableSkipDiffView: string;
+                        enableSkipDiffViewDesc: string;
+
+                        diffGuard: string;
+                        enableDiffGuard: string;
+                        enableDiffGuardDesc: string;
+                        diffGuardThreshold: string;
+                        diffGuardThresholdDesc: string;
+                        diffGuardWarning: string;
                     };
                     listFiles: {
                         ignoreList: string;

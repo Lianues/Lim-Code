@@ -1468,7 +1468,18 @@ const en: LanguageMessages = {
                         format: 'Diff Format',
                         formatDesc: 'Choose the parameter format used when AI calls apply_diff (unified diff is recommended by default)',
                         formatUnified: 'Unified diff (unified diff patch)',
-                        formatSearchReplace: 'Legacy (search/replace)'
+                        formatSearchReplace: 'Legacy (search/replace)',
+
+                        skipDiffView: 'Skip Diff View',
+                        enableSkipDiffView: 'Skip diff view when auto-applying',
+                        enableSkipDiffViewDesc: 'When enabled, auto-applied changes will be saved directly without opening the diff comparison view',
+
+                        diffGuard: 'Diff Guard',
+                        enableDiffGuard: 'Enable deletion guard',
+                        enableDiffGuardDesc: 'Show a warning when the number of deleted lines exceeds a specified percentage of the total file lines',
+                        diffGuardThreshold: 'Guard Threshold',
+                        diffGuardThresholdDesc: 'Trigger a warning when deleted lines exceed this percentage of total file lines',
+                        diffGuardWarning: '⚠️ This change deletes {deletePercent}% of the file content ({deletedLines}/{totalLines} lines), exceeding the {threshold}% guard threshold. Please review carefully.'
                     },
                     listFiles: {
                         ignoreList: 'Ignore List',

@@ -299,7 +299,8 @@ const ja: BackendLanguageMessages = {
                 saveFailed: '保存に失敗しました: {error}',
                 savedShort: '保存完了: {filePath}',
                 rejected: '変更を拒否しました: {filePath}',
-                diffTitle: '{filePath} (AI の変更 - Ctrl+S で保存)'
+                diffTitle: '{filePath} (AI の変更 - Ctrl+S で保存)',
+                diffGuardWarning: '⚠️ この変更はファイルの {deletePercent}% のコンテンツ（{deletedLines}/{totalLines} 行）を削除し、{threshold}% のガード閾値を超えています。慎重に確認してください。'
             },
             diffCodeLens: {
                 accept: '承認',

@@ -5,6 +5,8 @@
  * 功能：
  * 1. 配置自动应用修改开关
  * 2. 配置自动应用延迟时间
+ * 3. 配置自动应用时是否跳过 diff 视图
+ * 4. 配置 diff 警戒值（删除行数阈值警告）
  */
 
 import { ref, onMounted, computed } from 'vue'
@@ -16,6 +18,9 @@ import { t } from '@/i18n'
 const format = ref<'unified' | 'search_replace'>('unified')
 const autoSave = ref(false)
 const autoSaveDelay = ref(3000)
+const autoApplyWithoutDiffView = ref(false)
+const diffGuardEnabled = ref(true)
+const diffGuardThreshold = ref(50)
 
 // 保存状态
 const isSaving = ref(false)
@@ -42,7 +47,14 @@ const currentDelayLabel = computed(() => {
 async function loadConfig() {
   isLoading.value = true
   try {
-    const response = await sendToExtension<{ config: { format?: 'unified' | 'search_replace'; autoSave: boolean; autoSaveDelay: number } }>(
+    const response = await sendToExtension<{ config: {
+      format?: 'unified' | 'search_replace';
+      autoSave: boolean;
+      autoSaveDelay: number;
+      autoApplyWithoutDiffView?: boolean;
+      diffGuardEnabled?: boolean;
+      diffGuardThreshold?: number;
+    } }>(
       'tools.getToolConfig',
       {
         toolName: 'apply_diff'
@@ -52,6 +64,9 @@ async function loadConfig() {
       format.value = response.config.format ?? 'unified'
       autoSave.value = response.config.autoSave ?? false
       autoSaveDelay.value = response.config.autoSaveDelay ?? 3000
+      autoApplyWithoutDiffView.value = response.config.autoApplyWithoutDiffView ?? false
+      diffGuardEnabled.value = response.config.diffGuardEnabled ?? true
+      diffGuardThreshold.value = response.config.diffGuardThreshold ?? 50
     }
   } catch (error) {
     console.error('Failed to load apply_diff config:', error)
@@ -68,7 +83,10 @@ async function saveConfig() {
       config: {
         format: format.value,
         autoSave: autoSave.value,
-        autoSaveDelay: autoSaveDelay.value
+        autoSaveDelay: autoSaveDelay.value,
+        autoApplyWithoutDiffView: autoApplyWithoutDiffView.value,
+        diffGuardEnabled: diffGuardEnabled.value,
+        diffGuardThreshold: diffGuardThreshold.value
       }
     })
   } catch (error) {
@@ -86,6 +104,29 @@ function updateFormat(newFormat: 'unified' | 'search_replace') {
 // 切换自动保存开关
 function toggleAutoSave(enabled: boolean) {
   autoSave.value = enabled
+  saveConfig()
+}
+
+// 切换跳过 diff 视图
+function toggleAutoApplyWithoutDiffView(enabled: boolean) {
+  autoApplyWithoutDiffView.value = enabled
+  saveConfig()
+}
+
+// 切换 diff 警戒值开关
+function toggleDiffGuard(enabled: boolean) {
+  diffGuardEnabled.value = enabled
+  saveConfig()
+}
+
+// 更新 diff 警戒值阈值
+function updateDiffGuardThreshold(event: Event) {
+  const target = event.target as HTMLInputElement
+  let value = parseInt(target.value, 10)
+  if (isNaN(value)) value = 50
+  if (value < 1) value = 1
+  if (value > 100) value = 100
+  diffGuardThreshold.value = value
   saveConfig()
 }
 
@@ -188,6 +229,69 @@ onMounted(() => {
               >
                 {{ option.label }}
               </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 跳过 diff 视图 -->
+      <div v-if="autoSave" class="config-section">
+        <div class="section-header">
+          <i class="codicon codicon-eye-closed"></i>
+          <span>{{ t('components.settings.toolSettings.files.applyDiff.skipDiffView') }}</span>
+        </div>
+        
+        <div class="section-content">
+          <div class="config-item">
+            <div class="item-info">
+              <span class="item-label">{{ t('components.settings.toolSettings.files.applyDiff.enableSkipDiffView') }}</span>
+              <span class="item-description">{{ t('components.settings.toolSettings.files.applyDiff.enableSkipDiffViewDesc') }}</span>
+            </div>
+            <CustomCheckbox
+              :modelValue="autoApplyWithoutDiffView"
+              :disabled="isSaving"
+              @update:modelValue="toggleAutoApplyWithoutDiffView"
+            />
+          </div>
+        </div>
+      </div>
+
+      <!-- Diff 警戒值配置 -->
+      <div v-if="autoSave" class="config-section">
+        <div class="section-header">
+          <i class="codicon codicon-warning"></i>
+          <span>{{ t('components.settings.toolSettings.files.applyDiff.diffGuard') }}</span>
+        </div>
+        
+        <div class="section-content">
+          <div class="config-item">
+            <div class="item-info">
+              <span class="item-label">{{ t('components.settings.toolSettings.files.applyDiff.enableDiffGuard') }}</span>
+              <span class="item-description">{{ t('components.settings.toolSettings.files.applyDiff.enableDiffGuardDesc') }}</span>
+            </div>
+            <CustomCheckbox
+              :modelValue="diffGuardEnabled"
+              :disabled="isSaving"
+              @update:modelValue="toggleDiffGuard"
+            />
+          </div>
+
+          <div v-if="diffGuardEnabled" class="config-item">
+            <div class="item-info">
+              <span class="item-label">{{ t('components.settings.toolSettings.files.applyDiff.diffGuardThreshold') }}</span>
+              <span class="item-description">{{ t('components.settings.toolSettings.files.applyDiff.diffGuardThresholdDesc') }}</span>
+            </div>
+            <div class="threshold-input">
+              <input
+                type="number"
+                :value="diffGuardThreshold"
+                min="1"
+                max="100"
+                :disabled="isSaving"
+                class="threshold-number-input"
+                @change="updateDiffGuardThreshold"
+              />
+              <span class="threshold-unit">%</span>
             </div>
           </div>
         </div>
@@ -323,6 +427,40 @@ onMounted(() => {
 .delay-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* 阈值输入 */
+.threshold-input {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.threshold-number-input {
+  width: 60px;
+  padding: 4px 8px;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
+  border-radius: 4px;
+  font-size: 12px;
+  text-align: center;
+  outline: none;
+}
+
+.threshold-number-input:focus {
+  border-color: var(--vscode-focusBorder);
+}
+
+.threshold-number-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.threshold-unit {
+  font-size: 12px;
+  color: var(--vscode-descriptionForeground);
+  font-weight: 500;
 }
 
 /* 信息框 */

@@ -312,6 +312,7 @@ export interface BackendLanguageMessages {
                 savedShort: string;
                 rejected: string;
                 diffTitle: string;
+                diffGuardWarning: string;
             };
             diffCodeLens: {
                 accept: string;

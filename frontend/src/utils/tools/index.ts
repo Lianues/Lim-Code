@@ -11,6 +11,8 @@ import './file/list_files'
 import './file/delete_file'
 import './file/apply_diff'
 import './file/create_directory'
+import './file/insert_code'
+import './file/delete_code'
 
 // 搜索工具
 import './search/find_files'

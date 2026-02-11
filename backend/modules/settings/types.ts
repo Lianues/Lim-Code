@@ -127,6 +127,7 @@ export interface SearchInFilesToolConfig {
  */
 export type ApplyDiffFormat = 'unified' | 'search_replace';
 
+
 /**
  * Apply Diff 工具配置
  */
@@ -148,6 +149,29 @@ export interface ApplyDiffToolConfig {
      * 在此延迟后自动保存修改，然后继续下一次 AI 调用
      */
     autoSaveDelay: number;
+    
+    /**
+     * 自动应用时是否跳过 diff 视图
+     * 
+     * 当开启自动应用 (autoSave=true) 时：
+     * - true: 直接将修改写入文件并保存，不打开 diff 视图
+     * - false: 仍然打开 diff 视图显示差异（默认行为）
+     */
+    autoApplyWithoutDiffView: boolean;
+    
+    /**
+     * 是否启用 diff 警戒值检测
+     * 当开启自动应用时，如果一次性删除的行数超过文件总行数的百分比阈值，
+     * 会在前端 diff 工具外侧显示一个提示文本
+     */
+    diffGuardEnabled: boolean;
+    
+    /**
+     * diff 警戒值阈值（百分比，0-100）
+     * 当删除行数占文件总行数的比例超过此值时触发警告
+     * 默认: 50
+     */
+    diffGuardThreshold: number;
     
     [key: string]: unknown;
 }
@@ -1442,7 +1466,10 @@ export const DEFAULT_APPLY_DIFF_CONFIG: ApplyDiffToolConfig = {
     // 默认使用新格式（unified diff patch）
     format: 'unified',
     autoSave: false,
-    autoSaveDelay: 3000
+    autoSaveDelay: 3000,
+    autoApplyWithoutDiffView: false,
+    diffGuardEnabled: true,
+    diffGuardThreshold: 50
 };
 
 /**

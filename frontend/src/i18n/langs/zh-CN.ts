@@ -1468,7 +1468,18 @@ const zhCN: LanguageMessages = {
                         format: '差异格式',
                         formatDesc: '选择 AI 调用 apply_diff 时使用的参数格式（默认推荐统一 diff）',
                         formatUnified: '统一 diff（unified diff patch）',
-                        formatSearchReplace: '旧格式（search/replace）'
+                        formatSearchReplace: '旧格式（search/replace）',
+
+                        skipDiffView: '跳过差异视图',
+                        enableSkipDiffView: '自动应用时不打开差异视图',
+                        enableSkipDiffViewDesc: '开启后，自动应用修改时将直接保存文件而不打开差异对比视图',
+
+                        diffGuard: 'Diff 警戒值',
+                        enableDiffGuard: '启用删除行数警戒值',
+                        enableDiffGuardDesc: '当一次性删除的行数超过文件总行数的指定百分比时，在工具外侧显示警告提示',
+                        diffGuardThreshold: '警戒阈值',
+                        diffGuardThresholdDesc: '删除行数占文件总行数的百分比超过此值时触发警告',
+                        diffGuardWarning: '⚠️ 此次修改删除了 {deletePercent}% 的文件内容（{deletedLines}/{totalLines} 行），超过 {threshold}% 的警戒阈值，请仔细检查'
                     },
                     listFiles: {
                         ignoreList: '忽略列表',

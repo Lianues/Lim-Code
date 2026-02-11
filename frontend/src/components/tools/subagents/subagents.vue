@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from '@/composables'
-import { TaskCard, MarkdownRenderer } from '../../common'
+import { TaskCard, MarkdownRenderer, CustomScrollbar } from '../../common'
 import { extractPreviewText, formatSubAgentRuntimeBadge } from '../../../utils/taskCards'
 
 const { t } = useI18n()
@@ -60,16 +60,24 @@ const preview = computed(() => {
       <div class="expanded">
         <div class="block">
           <div class="label">{{ t('components.tools.subagents.task') }}</div>
-          <pre class="pre">{{ prompt }}</pre>
+          <CustomScrollbar :max-height="200">
+            <pre class="pre">{{ prompt }}</pre>
+          </CustomScrollbar>
         </div>
 
         <div v-if="context" class="block">
           <div class="label">{{ t('components.tools.subagents.context') }}</div>
-          <pre class="pre">{{ context }}</pre>
+          <CustomScrollbar :max-height="200">
+            <pre class="pre">{{ context }}</pre>
+          </CustomScrollbar>
         </div>
 
         <div v-if="errorMessage" class="error">{{ errorMessage }}</div>
-        <MarkdownRenderer v-if="responseText" :content="responseText" />
+        <div v-if="responseText" class="response-block">
+          <CustomScrollbar :max-height="500">
+            <MarkdownRenderer :content="responseText" />
+          </CustomScrollbar>
+        </div>
       </div>
     </template>
   </TaskCard>
@@ -105,9 +113,18 @@ const preview = computed(() => {
   color: var(--vscode-foreground);
   white-space: pre-wrap;
   word-break: break-word;
-  max-height: 200px;
-  overflow: auto;
   font-family: var(--vscode-editor-font-family), monospace;
+}
+
+.response-block {
+  background: var(--vscode-sideBar-background);
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.response-block :deep(.markdown-content) {
+  padding: 8px 10px;
 }
 
 .error {

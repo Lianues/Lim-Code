@@ -299,7 +299,8 @@ Requirements:
                 saveFailed: 'Save failed: {error}',
                 savedShort: 'Saved: {filePath}',
                 rejected: 'Rejected changes: {filePath}',
-                diffTitle: '{filePath} (AI changes - Ctrl+S to save)'
+                diffTitle: '{filePath} (AI changes - Ctrl+S to save)',
+                diffGuardWarning: '⚠️ This change deletes {deletePercent}% of the file content ({deletedLines}/{totalLines} lines), exceeding the {threshold}% guard threshold. Please review carefully.'
             },
             diffCodeLens: {
                 accept: 'Accept',

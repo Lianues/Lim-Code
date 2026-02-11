@@ -541,6 +541,7 @@ export function createDefaultExecutor(
                     dynamicSystemPrompt: systemPrompt,
                     abortSignal: combinedSignal,
                     toolOverrides: availableTools.length > 0 ? availableTools : undefined,
+                    suppressRetryNotification: true,
                 };
                 
                 // 如果指定了模型，设置模型覆盖

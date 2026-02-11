@@ -84,6 +84,23 @@ export interface GenerateRequest {
      * 用于替换系统提示词模板中的 {{$MCP_TOOLS}} 占位符。
      */
     mcpToolsContent?: string;
+    
+    /**
+     * 抑制重试状态通知（可选）
+     *
+     * 如果为 true，请求重试时不会通过 retryStatusCallback 通知前端 UI。
+     * 用于子代理（SubAgent）等内部调用场景，避免内部重试状态干扰外部聊天界面。
+     * 重试机制本身仍然正常工作，只是不再通知 UI。
+     */
+    suppressRetryNotification?: boolean;
+    
+    /**
+     * 对话 ID（可选，仅用于重试通知标识）
+     *
+     * 如果提供，重试状态回调会携带该 ID，便于前端按对话隔离重试状态。
+     * 渠道层本身不使用该字段。
+     */
+    conversationId?: string;
 }
 
 /**

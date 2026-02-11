@@ -109,6 +109,9 @@ export function clearInputValue(state: ChatStoreState): void {
 
 /**
  * 处理重试状态事件
+ *
+ * 如果 status 携带 conversationId 且不是当前活跃对话，
+ * 则将重试状态写入该对话对应的标签页快照，避免跨对话状态泄漏。
  */
 export function handleRetryStatus(
   state: ChatStoreState,
@@ -119,10 +122,14 @@ export function handleRetryStatus(
     error?: string
     errorDetails?: any
     nextRetryIn?: number
+    conversationId?: string
   }
 ): void {
+  const targetConvId = status.conversationId
+  const isCurrent = !targetConvId || targetConvId === state.currentConversationId.value
+
   if (status.type === 'retrying') {
-    state.retryStatus.value = {
+    const retryValue = {
       isRetrying: true,
       attempt: status.attempt,
       maxAttempts: status.maxAttempts,
@@ -130,8 +137,31 @@ export function handleRetryStatus(
       errorDetails: status.errorDetails,
       nextRetryIn: status.nextRetryIn
     }
+
+    if (isCurrent) {
+      state.retryStatus.value = retryValue
+    } else {
+      // 非当前对话 -> 写入对应标签页的快照
+      const tab = state.openTabs.value.find(t => t.conversationId === targetConvId)
+      if (tab) {
+        const snapshot = state.sessionSnapshots.value.get(tab.id)
+        if (snapshot) {
+          snapshot.retryStatus = retryValue
+        }
+      }
+    }
   } else if (status.type === 'retrySuccess' || status.type === 'retryFailed') {
-    // 清除重试状态
-    state.retryStatus.value = null
+    if (isCurrent) {
+      state.retryStatus.value = null
+    } else {
+      // 非当前对话 -> 清除对应快照中的重试状态
+      const tab = state.openTabs.value.find(t => t.conversationId === targetConvId)
+      if (tab) {
+        const snapshot = state.sessionSnapshots.value.get(tab.id)
+        if (snapshot) {
+          snapshot.retryStatus = null
+        }
+      }
+    }
   }
 }

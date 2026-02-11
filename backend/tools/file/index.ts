@@ -13,6 +13,8 @@ export { registerListFiles } from './list_files';
 export { registerDeleteFile } from './delete_file';
 export { registerCreateDirectory } from './create_directory';
 export { registerApplyDiff } from './apply_diff';
+export { registerInsertCode } from './insert_code';
+export { registerDeleteCode } from './delete_code';
 
 // 导出 DiffManager 相关
 export { getDiffManager, type PendingDiff, type DiffSettings } from './diffManager';
@@ -28,6 +30,8 @@ export function getAllFileTools(): Tool[] {
     const { registerDeleteFile } = require('./delete_file');
     const { registerCreateDirectory } = require('./create_directory');
     const { registerApplyDiff } = require('./apply_diff');
+    const { registerInsertCode } = require('./insert_code');
+    const { registerDeleteCode } = require('./delete_code');
     
     return [
         registerReadFile(),
@@ -35,7 +39,9 @@ export function getAllFileTools(): Tool[] {
         registerListFiles(),
         registerDeleteFile(),
         registerCreateDirectory(),
-        registerApplyDiff()
+        registerApplyDiff(),
+        registerInsertCode(),
+        registerDeleteCode()
     ];
 }
 
@@ -50,6 +56,8 @@ export function getFileToolRegistrations() {
     const { registerDeleteFile } = require('./delete_file');
     const { registerCreateDirectory } = require('./create_directory');
     const { registerApplyDiff } = require('./apply_diff');
+    const { registerInsertCode } = require('./insert_code');
+    const { registerDeleteCode } = require('./delete_code');
     
     return [
         registerReadFile,
@@ -57,6 +65,8 @@ export function getFileToolRegistrations() {
         registerListFiles,
         registerDeleteFile,
         registerCreateDirectory,
-        registerApplyDiff
+        registerApplyDiff,
+        registerInsertCode,
+        registerDeleteCode
     ];
 }

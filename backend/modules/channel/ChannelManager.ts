@@ -33,6 +33,8 @@ export type RetryStatusCallback = (status: {
     error?: string;
     errorDetails?: any;  // 完整的错误详情（如 API 响应体）
     nextRetryIn?: number;
+    /** 触发重试的对话 ID（如果请求中提供了 conversationId） */
+    conversationId?: string;
 }) => void;
 
 /**
@@ -259,11 +261,12 @@ export class ChannelManager {
                 }
                 
                 // 如果是重试成功，通知前端
-                if (attempt > 1 && this.retryStatusCallback) {
+                if (attempt > 1 && this.retryStatusCallback && !request.suppressRetryNotification) {
                     this.retryStatusCallback({
                         type: 'retrySuccess',
                         attempt: attempt - 1,
-                        maxAttempts: maxRetries
+                        maxAttempts: maxRetries,
+                        conversationId: request.conversationId
                     });
                 }
                 
@@ -287,13 +290,14 @@ export class ChannelManager {
                 // 检查是否可重试
                 if (!retryEnabled || !this.isRetryableError(error) || attempt >= totalAttempts) {
                     // 不能重试或已达到最大重试次数
-                    if (attempt > 1 && this.retryStatusCallback) {
+                    if (attempt > 1 && this.retryStatusCallback && !request.suppressRetryNotification) {
                         this.retryStatusCallback({
                             type: 'retryFailed',
                             attempt: Math.min(maxRetries, attempt - 1),
                             maxAttempts: maxRetries,
                             error: errorMessage,
-                            errorDetails
+                            errorDetails,
+                            conversationId: request.conversationId
                         });
                     }
                     break;
@@ -308,14 +312,15 @@ export class ChannelManager {
                 }
                 
                 // 通知前端正在重试
-                if (this.retryStatusCallback) {
+                if (this.retryStatusCallback && !request.suppressRetryNotification) {
                     this.retryStatusCallback({
                         type: 'retrying',
                         attempt,
                         maxAttempts: maxRetries,
                         error: errorMessage,
                         errorDetails,
-                        nextRetryIn: retryInterval
+                        nextRetryIn: retryInterval,
+                        conversationId: request.conversationId
                     });
                 }
                 
@@ -401,11 +406,12 @@ export class ChannelManager {
                 const stream = await this.executeStreamRequest(httpRequest, request.abortSignal);
                 
                 // 如果是重试成功，通知前端
-                if (attempt > 1 && this.retryStatusCallback) {
+                if (attempt > 1 && this.retryStatusCallback && !request.suppressRetryNotification) {
                     this.retryStatusCallback({
                         type: 'retrySuccess',
                         attempt: attempt - 1,
-                        maxAttempts: maxRetries
+                        maxAttempts: maxRetries,
+                        conversationId: request.conversationId
                     });
                 }
                 
@@ -435,13 +441,14 @@ export class ChannelManager {
                 // 检查是否可重试
                 if (!retryEnabled || !this.isRetryableError(error) || attempt >= totalAttempts) {
                     // 不能重试或已达到最大重试次数
-                    if (attempt > 1 && this.retryStatusCallback) {
+                    if (attempt > 1 && this.retryStatusCallback && !request.suppressRetryNotification) {
                         this.retryStatusCallback({
                             type: 'retryFailed',
                             attempt: Math.min(maxRetries, attempt - 1),
                             maxAttempts: maxRetries,
                             error: errorMessage,
-                            errorDetails
+                            errorDetails,
+                            conversationId: request.conversationId
                         });
                     }
                     break;
@@ -456,14 +463,15 @@ export class ChannelManager {
                 }
                 
                 // 通知前端正在重试
-                if (this.retryStatusCallback) {
+                if (this.retryStatusCallback && !request.suppressRetryNotification) {
                     this.retryStatusCallback({
                         type: 'retrying',
                         attempt,
                         maxAttempts: maxRetries,
                         error: errorMessage,
                         errorDetails,
-                        nextRetryIn: retryInterval
+                        nextRetryIn: retryInterval,
+                        conversationId: request.conversationId
                     });
                 }
                 

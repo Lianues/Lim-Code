@@ -1468,7 +1468,18 @@ const ja: LanguageMessages = {
                         format: '差分形式',
                         formatDesc: 'AI が apply_diff を呼び出すときのパラメータ形式を選択します（デフォルトは統一 diff 推奨）',
                         formatUnified: '統一 diff（unified diff patch）',
-                        formatSearchReplace: '旧形式（search/replace）'
+                        formatSearchReplace: '旧形式（search/replace）',
+
+                        skipDiffView: '差分ビューをスキップ',
+                        enableSkipDiffView: '自動適用時に差分ビューを開かない',
+                        enableSkipDiffViewDesc: '有効にすると、自動適用時にファイルを直接保存し、差分比較ビューを開きません',
+
+                        diffGuard: 'Diff ガード',
+                        enableDiffGuard: '削除行数ガードを有効化',
+                        enableDiffGuardDesc: '一度に削除される行数がファイル全体の指定割合を超えた場合に警告を表示します',
+                        diffGuardThreshold: 'ガード閾値',
+                        diffGuardThresholdDesc: '削除行数がファイル全体の行数に対するこの割合を超えた場合に警告をトリガーします',
+                        diffGuardWarning: '⚠️ この変更はファイルの {deletePercent}% のコンテンツ（{deletedLines}/{totalLines} 行）を削除し、{threshold}% のガード閾値を超えています。慎重に確認してください。'
                     },
                     listFiles: {
                         ignoreList: '無視リスト',

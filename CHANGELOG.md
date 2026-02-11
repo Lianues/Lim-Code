@@ -7,6 +7,12 @@ All notable changes to the "Lim Code" extension will be documented in this file.
 
 ### Added
   - 添加了Anthropic格式里自适应思考模式和思考effort参数的配置支持
+  - 添加了两个diff类工具：插入代码（insert_code），删除代码（elete_code）
+  - 添加了diff类工具，自动应用diff时是否显示diff标签页的功能
+  - 添加了diff类工具，diff警戒值的功能，只会在开启自动应用diff时显示
+
+### Improved
+  - 优化了subagent内部的重试机制，改为静默，不再显示到外部
 
 ### Fixed
   - 修复了不同对话之间，输入框状态不隔离的问题
@@ -14,6 +20,9 @@ All notable changes to the "Lim Code" extension will be documented in this file.
   - 修复了搜索替换工具点击查看差异按钮没有响应的问题
   - 修复了subagent工具，子代理内部调用ai报错时不重试的问题
   - 修复了subagent工具，子代理配置的工具列表不被使用的问题
+  - 修复了不同对话之间，报错重试的串对话问题
+  - 修复了顶部todo list的状态保存，不会再切换对话时总是展开，改为对话持久记忆
+  - 修复了切换对话后，总是重新渲染文字显示的问题
 
 ## [1.0.86] - 2026-02-12
 

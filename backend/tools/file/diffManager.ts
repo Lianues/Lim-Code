@@ -54,6 +54,10 @@ export interface PendingDiff {
     rawDiffs?: any[];
     /** 关联的工具 ID */
     toolId?: string;
+    /** diff 警戒值警告信息（当删除行数超过阈值时设置） */
+    diffGuardWarning?: string;
+    /** 删除行占比（0-100，用于前端显示） */
+    diffGuardDeletePercent?: number;
 }
 
 /**
@@ -400,6 +404,52 @@ export class DiffManager {
     /**
      * 创建待审阅的 diff
      */
+    private getFullApplyDiffConfig() {
+        const settingsManager = getGlobalSettingsManager();
+        if (settingsManager) {
+            return settingsManager.getApplyDiffConfig();
+        }
+        return null;
+    }
+    
+    /**
+     * 检查 diff 警戒值
+     * 计算删除行数占原始文件总行数的百分比
+     */
+    private checkDiffGuard(originalContent: string, newContent: string): { warning?: string; deletePercent: number } {
+        const config = this.getFullApplyDiffConfig();
+        if (!config || !config.diffGuardEnabled) {
+            return { deletePercent: 0 };
+        }
+        
+        const originalLines = originalContent.split('\n');
+        const newLines = newContent.split('\n');
+        const totalOriginalLines = originalLines.length;
+        
+        if (totalOriginalLines === 0) {
+            return { deletePercent: 0 };
+        }
+        
+        // 计算被删除的行数（原始内容中存在但新内容中不存在的行数）
+        const deletedLineCount = Math.max(0, totalOriginalLines - newLines.length);
+        const deletePercent = Math.round((deletedLineCount / totalOriginalLines) * 100);
+        
+        if (deletePercent >= config.diffGuardThreshold) {
+            const warning = t('tools.file.diffManager.diffGuardWarning', {
+                deletePercent: String(deletePercent),
+                threshold: String(config.diffGuardThreshold),
+                deletedLines: String(deletedLineCount),
+                totalLines: String(totalOriginalLines)
+            });
+            return { warning, deletePercent };
+        }
+        
+        return { deletePercent };
+    }
+    
+    /**
+     * 创建待审阅的 diff（原始方法）
+     */
     public async createPendingDiff(
         filePath: string,
         absolutePath: string,
@@ -426,11 +476,24 @@ export class DiffManager {
         
         this.pendingDiffs.set(id, pendingDiff);
         
-        // 注册原始内容到提供者
-        this.contentProvider.setContent(id, originalContent);
+        // 检查 diff 警戒值
+        const guardResult = this.checkDiffGuard(originalContent, newContent);
+        if (guardResult.warning) {
+            pendingDiff.diffGuardWarning = guardResult.warning;
+        }
+        pendingDiff.diffGuardDeletePercent = guardResult.deletePercent;
         
-        // 如果有块信息，注册到 CodeLens 提供者
-        if (blocks) {
+        // 获取完整配置以决定是否跳过 diff 视图
+        const fullConfig = this.getFullApplyDiffConfig();
+        const shouldSkipDiffView = fullConfig?.autoSave && fullConfig?.autoApplyWithoutDiffView;
+        
+        // 注册原始内容到提供者（仅在需要显示 diff 视图时）
+        if (!shouldSkipDiffView) {
+            this.contentProvider.setContent(id, originalContent);
+        }
+        
+        // 如果有块信息且不跳过 diff 视图，注册到 CodeLens 提供者
+        if (blocks && !shouldSkipDiffView) {
             const provider = getDiffCodeLensProvider();
             provider.addSession({
                 id,
@@ -460,19 +523,68 @@ export class DiffManager {
             });
         }
         
-        // 显示 diff 视图
-        await this.showDiffView(pendingDiff);
+        // 根据配置决定是否显示 diff 视图
+        if (shouldSkipDiffView) {
+            // 跳过 diff 视图：直接写入文件并保存
+            await this.directApplyAndSave(pendingDiff);
+        } else {
+            // 显示 diff 视图
+            await this.showDiffView(pendingDiff);
+        }
         
-        // 如果开启自动保存，设置定时器
-        const currentSettings = this.getSettings();
-        if (currentSettings.autoSave) {
-            this.scheduleAutoSave(id);
+        // 如果开启自动保存且 diff 仍处于 pending 状态，设置定时器
+        if (pendingDiff.status === 'pending') {
+            const currentSettings = this.getSettings();
+            if (currentSettings.autoSave) {
+                this.scheduleAutoSave(id);
+            }
         }
         
         // 通知状态变化
         this.notifyStatusChange();
         
         return pendingDiff;
+    }
+
+    /**
+     * 直接应用修改并保存（不打开 diff 视图）
+     * 用于 autoApplyWithoutDiffView 模式
+     */
+    private async directApplyAndSave(diff: PendingDiff): Promise<void> {
+        try {
+            // 直接写入文件到磁盘
+            fs.writeFileSync(diff.absolutePath, diff.newContent, 'utf8');
+            
+            // 如果文档已在编辑器中打开，则刷新它
+            const uri = vscode.Uri.file(diff.absolutePath);
+            const openDoc = vscode.workspace.textDocuments.find(d => d.uri.fsPath === diff.absolutePath);
+            if (openDoc) {
+                // revert 让 VSCode 从磁盘重新加载
+                try {
+                    // 先 focus 到该文档，然后 revert
+                    await vscode.window.showTextDocument(openDoc, { preview: false, preserveFocus: true });
+                    await vscode.commands.executeCommand('workbench.action.files.revert');
+                } catch {
+                    // ignore
+                }
+            }
+            
+            // 标记为已接受
+            diff.status = 'accepted';
+            this.cleanup(diff.id);
+            
+            this.notifyStatusChange();
+            this.notifySaveComplete(diff);
+            
+            vscode.window.setStatusBarMessage(
+                `$(check) ${t('tools.file.diffManager.savedShort', { filePath: diff.filePath })}`,
+                3000
+            );
+        } catch (error) {
+            console.error('[DiffManager] directApplyAndSave failed:', error);
+            // 回退到显示 diff 视图
+            await this.showDiffView(diff);
+        }
     }
 
     /**

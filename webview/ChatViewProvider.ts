@@ -406,12 +406,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         maxAttempts: number;
         error?: string;
         nextRetryIn?: number;
+        conversationId?: string;
     }): void {
         if (!this._view) return;
         
         this._view.webview.postMessage({
             type: 'retryStatus',
-            data: status
+            data: {
+                ...status
+            }
         });
     }
     
@@ -516,7 +519,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                     id: d.id,
                     status: d.status,
                     filePath: d.filePath,
-                    toolId: d.toolId
+                    toolId: d.toolId,
+                    diffGuardWarning: d.diffGuardWarning,
+                    diffGuardDeletePercent: d.diffGuardDeletePercent
                 })),
                 allProcessed
             });

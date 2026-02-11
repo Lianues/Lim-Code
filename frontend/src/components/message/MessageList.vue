@@ -58,6 +58,9 @@ const todoBarItems = computed<BuildTodoItem[]>(() => {
     .filter(t => t.text.length > 0)
 })
 
+// 每个对话独立记忆 TODO 展开状态；key = conversationId, value = 用户最后设定的展开/折叠
+// undefined 表示该对话从未手动设置过（首次出现 TODO 时自动展开）
+const todoExpandedMap = new Map<string, boolean>()
 const isTodoExpanded = ref(false)
 
 
@@ -272,15 +275,32 @@ watch(showBuildBar, (visible) => {
 })
 
 
-watch(showTodoBar, (visible, prev) => {
-  if (!visible) {
-    isTodoExpanded.value = false
-    return
-  }
-  if (!prev) {
+/** 根据当前对话恢复 TODO 展开状态 */
+function restoreTodoExpandedState() {
+  if (!showTodoBar.value) return
+  const convId = chatStore.currentConversationId
+  if (convId && todoExpandedMap.has(convId)) {
+    isTodoExpanded.value = todoExpandedMap.get(convId)!
+  } else {
     isTodoExpanded.value = true
+    if (convId) todoExpandedMap.set(convId, true)
   }
+}
+
+// showTodoBar 变为可见时，恢复该对话记忆的展开状态
+watch(showTodoBar, (visible) => {
+  if (!visible) return
+  restoreTodoExpandedState()
 })
+
+/** 切换 TODO 展开/折叠，同时记忆到当前对话 */
+function toggleTodoExpanded() {
+  isTodoExpanded.value = !isTodoExpanded.value
+  const convId = chatStore.currentConversationId
+  if (convId) {
+    todoExpandedMap.set(convId, isTodoExpanded.value)
+  }
+}
 
 // 消息分页显示逻辑：解决消息过多导致的输入卡顿
 const VISIBLE_INCREMENT = 40
@@ -443,6 +463,7 @@ watch(() => chatStore.currentConversationId, (newId, oldId) => {
   if (newId !== oldId) {
     needsScrollToBottom.value = true
     visibleCount.value = VISIBLE_INCREMENT // 切换对话时重置
+    restoreTodoExpandedState() // 恢复目标对话的 TODO 展开状态
   }
 })
 
@@ -893,7 +914,7 @@ function formatCheckpointTime(timestamp: number): string {
 
           <div v-else-if="row.kind === 'todo'" class="todo-sticky-shell">
             <div class="build-bar todo-snapshot-bar" :class="{ expanded: isTodoExpanded }">
-              <div class="build-header" @click="isTodoExpanded = !isTodoExpanded">
+              <div class="build-header" @click="toggleTodoExpanded()">
                 <div class="build-title">
                   <i class="codicon codicon-checklist build-icon todo-snapshot-icon"></i>
                   <span class="build-label">{{ t('components.message.tool.todoWrite.label') }}</span>
@@ -908,7 +929,7 @@ function formatCheckpointTime(timestamp: number): string {
                   <button
                     class="build-btn"
                     :title="isTodoExpanded ? t('common.collapse') : t('common.expand')"
-                    @click.stop="isTodoExpanded = !isTodoExpanded"
+                    @click.stop="toggleTodoExpanded()"
                   >
                     <i class="codicon" :class="isTodoExpanded ? 'codicon-chevron-up' : 'codicon-chevron-down'"></i>
                   </button>

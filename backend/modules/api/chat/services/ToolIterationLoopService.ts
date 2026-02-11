@@ -215,7 +215,8 @@ export class ToolIterationLoopService {
                 abortSignal,
                 dynamicSystemPrompt,
                 dynamicContextMessages,
-                modelOverride
+                modelOverride,
+                conversationId
             });
 
             // 8. 处理响应
@@ -509,7 +510,8 @@ export class ToolIterationLoopService {
                 history,
                 dynamicSystemPrompt,
                 dynamicContextMessages,
-                modelOverride
+                modelOverride,
+                conversationId
             });
 
             // 类型守卫：确保是 GenerateResponse
