@@ -4,8 +4,18 @@ import { t } from '../../i18n'
 
 /**
  * 自定义滚动条组件 - 方角、始终可见、悬浮式
- * 参考 gemini-go-sandbox 实现
+ * 支持在轨道上渲染 marker 节点（如用户消息标记），点击可快速跳转
  */
+
+// ==================== Marker 类型定义 ====================
+interface MarkerItem {
+  /** marker 在轨道上的垂直像素偏移 */
+  top: number
+  /** 对应的 DOM 元素（用于点击跳转） */
+  element: HTMLElement
+  /** marker 的索引序号（用于 tooltip 显示） */
+  index: number
+}
 
 const props = defineProps({
   /** 滚动条宽度（px） */
@@ -66,6 +76,41 @@ const props = defineProps({
   maxHeight: {
     type: [Number, String],
     default: ''
+  },
+  // ==================== Marker 相关 Props ====================
+  /**
+   * CSS 选择器，用于在滚动内容中查找需要标记的元素
+   * 例如 '.user-message' 会匹配所有用户消息
+   * 留空则不渲染任何 marker
+   */
+  markerSelector: {
+    type: String,
+    default: ''
+  },
+  /** marker 节点颜色 */
+  markerColor: {
+    type: String,
+    default: 'rgba(100, 160, 255, 0.55)'
+  },
+  /** marker 节点高度（px） */
+  markerHeight: {
+    type: Number,
+    default: 6
+  },
+  /** marker 节点默认透明度 (0-1) */
+  markerOpacity: {
+    type: Number,
+    default: 0.55
+  },
+  /** marker hover 透明度 (0-1) */
+  markerHoverOpacity: {
+    type: Number,
+    default: 1
+  },
+  /** marker tooltip 前缀文案（与序号拼接显示，如 "User #3"） */
+  markerTooltipPrefix: {
+    type: String,
+    default: 'User'
   }
 })
 
@@ -82,6 +127,10 @@ const showScrollbar = ref(false)
 const thumbWidth = ref(0)
 const thumbLeft = ref(0)
 const showHScrollbar = ref(false)
+
+// ==================== Marker 状态 ====================
+const markerPositions = ref<MarkerItem[]>([])
+let markerUpdateTimer: ReturnType<typeof setTimeout> | null = null
 
 let isDragging = false
 let isHDragging = false
@@ -151,6 +200,84 @@ function updateScrollbar() {
     }
   }
 }
+
+// ==================== Marker 逻辑 ====================
+
+/**
+ * 计算元素相对于滚动容器内容顶部的绝对偏移
+ * 使用 getBoundingClientRect + scrollTop 换算，不依赖 offsetParent 链
+ */
+function getContentOffset(element: HTMLElement, container: HTMLElement): number {
+  const elRect = element.getBoundingClientRect()
+  const containerRect = container.getBoundingClientRect()
+  return elRect.top - containerRect.top + container.scrollTop
+}
+
+/**
+ * 扫描 markerSelector 匹配的元素，计算它们在轨道上的映射位置
+ * 仅在内容/尺寸变化时调用（不在每次 scroll 事件中调用——位置是内容相关的，不是视口相关的）
+ */
+function updateMarkers() {
+  if (!scrollContainer.value || !props.markerSelector || !scrollTrack.value) {
+    markerPositions.value = []
+    return
+  }
+
+  const container = scrollContainer.value
+  const scrollHeight = container.scrollHeight
+  const clientHeight = container.clientHeight
+  const trackHeight = scrollTrack.value.clientHeight
+
+  // 内容不足以滚动时无需显示 marker
+  if (scrollHeight <= clientHeight || trackHeight <= 0) {
+    markerPositions.value = []
+    return
+  }
+
+  const elements = container.querySelectorAll(props.markerSelector)
+  const newPositions: MarkerItem[] = []
+
+  elements.forEach((el, idx) => {
+    const htmlEl = el as HTMLElement
+    const contentOffset = getContentOffset(htmlEl, container)
+    // 映射到轨道位置：(元素在内容中的偏移 / 总内容高度) * 轨道高度
+    const trackPos = (contentOffset / scrollHeight) * trackHeight
+    newPositions.push({ top: trackPos, element: htmlEl, index: idx + 1 })
+  })
+
+  markerPositions.value = newPositions
+}
+
+/**
+ * 防抖版 updateMarkers
+ * MutationObserver 在流式输出期间会高频触发，
+ * 这里用 80ms 防抖避免频繁 DOM 查询 + 布局计算
+ */
+function debouncedUpdateMarkers() {
+  if (markerUpdateTimer) {
+    clearTimeout(markerUpdateTimer)
+  }
+  markerUpdateTimer = setTimeout(() => {
+    updateMarkers()
+    markerUpdateTimer = null
+  }, 80)
+}
+
+/**
+ * 点击 marker 跳转到对应元素
+ */
+function handleMarkerClick(marker: MarkerItem, e: MouseEvent) {
+  e.stopPropagation()
+  if (!scrollContainer.value) return
+  marker.element.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+/**
+ * 计算 marker 的 CSS 样式
+ */
+const markerBaseColor = computed(() => {
+  return props.markerColor || 'rgba(100, 160, 255, 0.55)'
+})
 
 // 滚动事件处理
 function handleScroll() {
@@ -339,6 +466,10 @@ onMounted(() => {
   nextTick(() => {
     setTimeout(() => {
       updateScrollbar()
+      // 初始化 marker
+      if (props.markerSelector) {
+        updateMarkers()
+      }
     }, 100)
     
     if (scrollContainer.value) {
@@ -351,6 +482,10 @@ onMounted(() => {
     if (window.ResizeObserver && scrollContainer.value) {
       resizeObserver = new ResizeObserver(() => {
         updateScrollbar()
+        // 尺寸变化时重新计算 marker 位置
+        if (props.markerSelector) {
+          debouncedUpdateMarkers()
+        }
       })
       resizeObserver.observe(scrollContainer.value)
     }
@@ -366,6 +501,10 @@ onMounted(() => {
         }
         
         updateScrollbar()
+        // 内容变化时重新计算 marker 位置（防抖）
+        if (props.markerSelector) {
+          debouncedUpdateMarkers()
+        }
         // 更新底部状态，用于下次检测
         wasAtBottom = isAtBottom()
       })
@@ -394,6 +533,10 @@ onBeforeUnmount(() => {
   if (mutationObserver) {
     mutationObserver.disconnect()
     mutationObserver = null
+  }
+  if (markerUpdateTimer) {
+    clearTimeout(markerUpdateTimer)
+    markerUpdateTimer = null
   }
   document.removeEventListener('mousemove', handleMouseMove)
   document.removeEventListener('mouseup', handleMouseUp)
@@ -428,6 +571,7 @@ function scrollToBottom() {
 // 暴露方法供外部调用
 defineExpose({
   update: updateScrollbar,
+  updateMarkers,
   scrollToTop,
   scrollToBottom,
   getContainer: () => scrollContainer.value
@@ -469,6 +613,21 @@ defineExpose({
         :style="trackStyle"
         @click="handleTrackClick"
       >
+        <!-- Marker 节点：渲染在轨道内，位于 thumb 之下 -->
+        <div
+          v-for="(marker, idx) in markerPositions"
+          :key="idx"
+          class="scroll-marker"
+          :style="{
+            top: `${marker.top}px`,
+            height: `${markerHeight}px`,
+            background: markerBaseColor,
+            opacity: markerOpacity,
+          }"
+          :title="`${markerTooltipPrefix} #${marker.index}`"
+          @click.stop="handleMarkerClick(marker, $event)"
+        />
+
         <div
           class="scroll-thumb scroll-thumb-v"
           :style="thumbStyle"
@@ -624,6 +783,8 @@ defineExpose({
   transition: background 0.18s ease, transform 0.06s linear;
   will-change: transform;
   background: var(--vscode-scrollbarSlider-background, rgba(100, 100, 100, 0.4));
+  /* 确保 thumb 在 markers 之上 */
+  z-index: 2;
 }
 
 /* 横向滚动滑块 */
@@ -649,11 +810,31 @@ defineExpose({
   background: var(--vscode-scrollbarSlider-activeBackground, rgba(100, 100, 100, 0.7));
 }
 
+/* ==================== Marker 样式 ==================== */
+.scroll-marker {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  border-radius: 0;
+  cursor: pointer;
+  z-index: 1;
+  transition: opacity 0.18s ease, box-shadow 0.18s ease;
+  /* 允许指针事件穿透到轨道（除了 marker 自身） */
+  pointer-events: auto;
+}
+
+.scroll-marker:hover {
+  opacity: 0.9 !important;
+  opacity: 1 !important;
+  box-shadow: 0 0 3px rgba(100, 160, 255, 0.6);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .scroll-track-v,
   .scroll-track-h,
   .scroll-thumb-v,
-  .scroll-thumb-h {
+  .scroll-thumb-h,
+  .scroll-marker {
     transition: none !important;
   }
 }

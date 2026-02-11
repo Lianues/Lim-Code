@@ -24,6 +24,10 @@ const { t } = useI18n()
 
 const props = defineProps<{
   messages: Message[]
+  /** 标签页 ID，标识此 MessageList 实例所属的标签页 */
+  tabId: string
+  /** 当前是否为活跃（可见）标签页 */
+  isActive: boolean
 }>()
 
 // 从 store 读取等待状态
@@ -458,12 +462,15 @@ const needsScrollToBottom = ref(false)
 // ResizeObserver 引用
 let resizeObserver: ResizeObserver | null = null
 
-// 监听对话切换，标记需要滚动，并重置可见数量
-watch(() => chatStore.currentConversationId, (newId, oldId) => {
-  if (newId !== oldId) {
+// 多实例模式下：当此标签页变为活跃时，滚动到底部并恢复 TODO 展开状态
+// （不再重置 visibleCount，因为每个实例独立维护自己的分页状态）
+watch(() => props.isActive, (active, wasActive) => {
+  if (active && !wasActive) {
+    // 刚切换到此标签页，标记需要滚动到底部
     needsScrollToBottom.value = true
-    visibleCount.value = VISIBLE_INCREMENT // 切换对话时重置
-    restoreTodoExpandedState() // 恢复目标对话的 TODO 展开状态
+    restoreTodoExpandedState()
+    // 尝试滚动（如果容器已就绪）
+    nextTick(() => tryScrollToBottom())
   }
 })
 
@@ -778,7 +785,7 @@ function formatCheckpointTime(timestamp: number): string {
 <template>
   <div class="message-list">
     <div class="message-scroll-area">
-      <CustomScrollbar ref="scrollbarRef" sticky-bottom show-jump-buttons>
+      <CustomScrollbar ref="scrollbarRef" sticky-bottom show-jump-buttons marker-selector=".user-message">
       <div class="messages-container">
         <!-- 自动加载更多指示器 -->
         <div v-if="hasMore" class="load-more-container">

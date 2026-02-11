@@ -273,11 +273,14 @@ onMounted(async () => {
           v-if="chatStore.showEmptyState"
         />
 
-        <!-- 有消息时：显示消息列表 -->
-        <!-- 使用 v-show 保持组件挂载状态，避免切换对话时 watch 失效 -->
+        <!-- 多实例消息列表：每个标签页维护独立 DOM，切换时零成本 -->
         <MessageList
-          v-show="!chatStore.showEmptyState"
+          v-for="tab in chatStore.openTabs"
+          :key="tab.id"
+          v-show="tab.id === chatStore.activeTabId && !chatStore.showEmptyState"
           :messages="chatStore.messages"
+          :tab-id="tab.id"
+          :is-active="tab.id === chatStore.activeTabId"
           @edit="handleEdit"
           @delete="handleDelete"
           @retry="handleRetry"

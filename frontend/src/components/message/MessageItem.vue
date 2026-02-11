@@ -846,6 +846,12 @@ function handleRestoreAndRetry(checkpointId: string) {
   max-width: 100%;
 }
 
+/* 用户消息左侧蓝色竖条 — 滚动时快速定位 */
+.user-message {
+  border-left: 3px solid var(--vscode-textLink-foreground);
+  background-color: color-mix(in srgb, var(--vscode-textLink-foreground) 6%, transparent);
+}
+
 /* 消息头部 */
 .message-header {
   display: flex;

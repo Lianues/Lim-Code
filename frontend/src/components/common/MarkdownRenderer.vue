@@ -948,6 +948,31 @@ function scheduleRender() {
   const delay = props.isStreaming ? STREAM_RENDER_DEBOUNCE_MS : 0
   clearRenderTimer()
 
+  // 非流式 + 首次渲染：同步执行 renderContent，让组件挂载瞬间就有内容（消除切换对话闪白）
+  if (!props.isStreaming && renderedContent.value === '') {
+    const contentChanged = !(
+      props.content === lastRenderedSource &&
+      props.latexOnly === lastRenderedLatexOnly
+    )
+    if (contentChanged) {
+      lastRenderedSource = props.content
+      lastRenderedLatexOnly = props.latexOnly
+      renderedContent.value = renderContent(props.content, props.latexOnly)
+    }
+    // 后处理（图片/Mermaid/链接校验、代码块换行状态）仍异步执行
+    renderTimer = window.setTimeout(async () => {
+      await nextTick()
+      applyCodeBlockWrapStates()
+      if (!props.isStreaming && postProcessedSource !== props.content) {
+        await prevalidateFilePaths(props.content)
+        await loadWorkspaceImages()
+        await renderMermaid()
+        postProcessedSource = props.content
+      }
+    }, 0)
+    return
+  }
+
   renderTimer = window.setTimeout(async () => {
     // 判断内容是否变化：变了才需要重新渲染 HTML
     const contentChanged = !(
@@ -1284,7 +1309,6 @@ onMounted(() => {
     containerRef.value.addEventListener('click', handleImageClick)
     containerRef.value.addEventListener('click', handleMermaidClick)
   }
-  scheduleRender()
 })
 
 watch(
