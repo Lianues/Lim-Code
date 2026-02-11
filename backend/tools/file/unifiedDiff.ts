@@ -362,7 +362,12 @@ export function applyUnifiedDiff(originalContent: string, parsed: ParsedUnifiedD
  * best-effort：逐 hunk 尝试应用。
  *
  * - 每个 hunk 要么完整应用，要么完全不生效（原子回滚）
- * - 不做模糊定位：仍使用 oldStart + 已应用 delta 定位
+ * - 行号定位失败时，自动 fallback 到全局搜索 context+del 行文本块：
+ *   - 提取 hunk 中 context + del 行组成的连续文本
+ *   - 在当前文件内容中全局搜索
+ *   - 唯一匹配 → 用匹配位置重新应用该 hunk
+ *   - 多处匹配 → 报错（无法确定目标位置）
+ *   - 无匹配 → 报错
  * - 用于“部分成功”的工具体验（避免 1 个 hunk 失败导致整次 apply_diff 失败）
  */
 export function applyUnifiedDiffBestEffort(originalContent: string, parsed: ParsedUnifiedDiff): ApplyUnifiedDiffBestEffortResult {
@@ -374,23 +379,12 @@ export function applyUnifiedDiffBestEffort(originalContent: string, parsed: Pars
 
     for (let hunkIndex = 0; hunkIndex < parsed.hunks.length; hunkIndex++) {
         const hunk = parsed.hunks[hunkIndex];
-        let snapshot: string[] | null = null;
 
-        try {
-            if (hunk.oldStart < 0) {
-                throw new Error(`Invalid hunk oldStart: ${hunk.oldStart}`);
-            }
-
-            // 统一 diff 的行号是 1-based；oldStart=0 只在特殊情况下出现，这里按插入到文件头处理
-            const baseOldStart = Math.max(1, hunk.oldStart);
-            const startIndex = baseOldStart - 1 + delta;
-
+        // 尝试在指定 startIndex 处应用 hunk，成功返回 { added, removed }，失败抛异常
+        const tryApplyAt = (startIndex: number): { added: number; removed: number } => {
             if (startIndex < 0 || startIndex > lines.length) {
                 throw new Error(`Hunk start is out of range. ${hunk.header}`);
             }
-
-            // 原子性：本 hunk 若失败则回滚
-            snapshot = lines.slice();
 
             let idx = startIndex;
             let removed = 0;
@@ -412,7 +406,7 @@ export function applyUnifiedDiffBestEffort(originalContent: string, parsed: Pars
                     const actual = lines[idx];
                     if (actual !== line.content) {
                         throw new Error(
-                            `Hunk delete mismatch at ${hunk.header}.\nExpected: ${JSON.stringify(line.content)}\nActual:   ${JSON.stringify(actual)}`
+                            `Hunk context mismatch at ${hunk.header}.\nExpected: ${JSON.stringify(line.content)}\nActual:   ${JSON.stringify(actual)}`
                         );
                     }
                     lines.splice(idx, 1);
@@ -426,23 +420,94 @@ export function applyUnifiedDiffBestEffort(originalContent: string, parsed: Pars
                 added++;
             }
 
-            const newLen = computeHunkNewLen(hunk);
-            const startLine = startIndex + 1;
-            const endLine = startLine + Math.max(newLen, 1) - 1;
-            appliedHunks.push({ index: hunkIndex, startLine, endLine });
+            return { added, removed };
+        };
 
-            delta += added - removed;
-
-            results.push({ index: hunkIndex, ok: true, startLine, endLine });
-        } catch (e) {
-            if (snapshot) {
-                lines.splice(0, lines.length, ...snapshot);
+        // 全局搜索 hunk 的 context+del 行文本块，返回所有匹配的 startIndex（0-based）
+        const searchHunkInFile = (): number[] => {
+            const oldLines = hunk.lines.filter(l => l.type === 'context' || l.type === 'del').map(l => l.content);
+            if (oldLines.length === 0) {
+                return []; // 纯 add hunk，无法搜索
             }
-            results.push({
-                index: hunkIndex,
-                ok: false,
-                error: e instanceof Error ? e.message : String(e)
-            });
+            const matches: number[] = [];
+            const scanLimit = lines.length - oldLines.length + 1;
+            for (let s = 0; s < scanLimit; s++) {
+                let match = true;
+                for (let j = 0; j < oldLines.length; j++) {
+                    if (lines[s + j] !== oldLines[j]) {
+                        match = false;
+                        break;
+                    }
+                }
+                if (match) {
+                    matches.push(s);
+                }
+            }
+            return matches;
+        };
+
+        let snapshot = lines.slice();
+        let applied = false;
+
+        // 第一轮：按行号 + delta 定位
+        try {
+            if (hunk.oldStart >= 0) {
+                const baseOldStart = Math.max(1, hunk.oldStart);
+                const startIndex = baseOldStart - 1 + delta;
+                const { added, removed } = tryApplyAt(startIndex);
+
+                const newLen = computeHunkNewLen(hunk);
+                const startLine = startIndex + 1;
+                const endLine = startLine + Math.max(newLen, 1) - 1;
+                appliedHunks.push({ index: hunkIndex, startLine, endLine });
+                delta += added - removed;
+                results.push({ index: hunkIndex, ok: true, startLine, endLine });
+                applied = true;
+            }
+        } catch {
+            // 行号匹配失败，回滚并进入 fallback
+            lines.splice(0, lines.length, ...snapshot);
+        }
+
+        // 第二轮 fallback：全局搜索 context+del 文本块，唯一匹配时重新应用
+        if (!applied) {
+            snapshot = lines.slice(); // 刷新快照（虽然上面已回滚，保险起见）
+            const matches = searchHunkInFile();
+
+            if (matches.length === 1) {
+                try {
+                    const startIndex = matches[0];
+                    const { added, removed } = tryApplyAt(startIndex);
+
+                    const newLen = computeHunkNewLen(hunk);
+                    const startLine = startIndex + 1;
+                    const endLine = startLine + Math.max(newLen, 1) - 1;
+                    appliedHunks.push({ index: hunkIndex, startLine, endLine });
+                    delta += added - removed;
+                    results.push({ index: hunkIndex, ok: true, startLine, endLine });
+                    applied = true;
+                } catch (e) {
+                    // fallback 也失败了（理论上不应该，因为搜索已匹配），回滚
+                    lines.splice(0, lines.length, ...snapshot);
+                }
+            }
+
+            if (!applied) {
+                // 报告错误
+                const oldLines = hunk.lines.filter(l => l.type === 'context' || l.type === 'del').map(l => l.content);
+                let errorMsg: string;
+                if (matches.length === 0) {
+                    errorMsg = `Hunk context mismatch at ${hunk.header}. Line-number match failed and global search found no match for the context/delete block (${oldLines.length} lines).`;
+                } else {
+                    const candidateLineNums = matches.map(m => m + 1);
+                    errorMsg = `Hunk context mismatch at ${hunk.header}. Line-number match failed and global search found ${matches.length} matches (ambiguous). Candidate lines: ${candidateLineNums.join(', ')}.`;
+                }
+                results.push({
+                    index: hunkIndex,
+                    ok: false,
+                    error: errorMsg
+                });
+            }
         }
     }
 

@@ -6,6 +6,7 @@
 
 import type { Message, Attachment, Content } from '../../types'
 import type { ChatStoreState, ChatStoreComputed, AttachmentData } from './types'
+import { triggerRef } from 'vue'
 import { sendToExtension } from '../../utils/vscode'
 import { generateId } from '../../utils/format'
 import { createAndPersistConversation, MESSAGES_PAGE_SIZE, loadCheckpoints, refreshCurrentConversationBuildSession } from './conversationActions'
@@ -117,6 +118,17 @@ function upsertHiddenFunctionResponseMessage(
           { ...msg, parts: nextParts },
           ...all.slice(i + 1)
         ]
+        // ★ 同步更新 toolResponseCache，避免 getToolResponseById 返回旧缓存
+        // 导致 replayTodoStateFromMessages 看不到 planExecutionPrompt 等新合并字段
+        if (payload.id) {
+          const mergedResponse = nextParts
+            .find(p => p.functionResponse?.id === payload.id)
+            ?.functionResponse?.response as Record<string, unknown> | undefined
+          if (mergedResponse) {
+            state.toolResponseCache.value.set(payload.id, mergedResponse)
+            triggerRef(state.toolResponseCache)
+          }
+        }
         return
       }
     }

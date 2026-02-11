@@ -7,6 +7,8 @@ All notable changes to the "Lim Code" extension will be documented in this file.
 
 ### Fixed
   - 修复了不同对话之间，输入框状态不隔离的问题
+  - 修复了执行plan后，如果模型回答没有调用任何工具，导致todolist消失的问题
+  - 修复了搜索替换工具点击查看差异按钮没有响应的问题
 
 ## [1.0.86] - 2026-02-12
 

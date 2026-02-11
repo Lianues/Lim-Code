@@ -922,6 +922,7 @@ export function createSearchInFilesTool(): Tool {
                         success: !anyCancelled,
                         cancelled: anyCancelled,
                         data: {
+                            isReplaceMode: true,
                             matches: allMatches.map(m => ({
                                 file: m.file,
                                 workspace: m.workspace,
