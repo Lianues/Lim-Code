@@ -3,6 +3,11 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.0.87] - 2026-02-12
+
+### Fixed
+  - 修复了不同对话之间，输入框状态不隔离的问题
+
 ## [1.0.86] - 2026-02-12
 
 ### Fixed

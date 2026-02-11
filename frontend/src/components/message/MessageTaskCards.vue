@@ -246,6 +246,8 @@ async function executePlan(card: PlanCardItem) {
       const targetModeId = String(selectedModeId.value || 'code').trim() || 'code'
       await configService.setCurrentPromptMode(targetModeId)
       saveState(PLAN_EXECUTION_MODE_STATE_KEY, targetModeId)
+      // 通知 InputArea 刷新模式指示器（触发 promptModesVersion watch）
+      settingsStore.refreshPromptModes()
     } catch (modeError) {
       // 模式切换失败不阻塞执行
       console.error('[plan] Failed to switch prompt mode before execution:', modeError)

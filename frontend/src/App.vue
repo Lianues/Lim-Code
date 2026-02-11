@@ -5,6 +5,7 @@
  */
 
 import { onMounted, ref } from 'vue'
+import { storeToRefs } from 'pinia'
 import { MessageList } from './components/message'
 import { InputArea } from './components/input'
 import { WelcomePanel } from './components/home'
@@ -30,14 +31,17 @@ const chatStore = useChatStore()
 const settingsStore = useSettingsStore()
 const terminalStore = useTerminalStore()
 
-// 附件管理（仍使用composable）
+// 从 store 获取原始 Ref（Pinia 会自动解包 ref，storeToRefs 保持 Ref 不被解包）
+const { storeAttachments: storeAttachmentsRef } = storeToRefs(chatStore)
+
+// 附件管理（传入 store 驱动的 Ref<Attachment[]>，实现对话级隔离）
 const {
   attachments,
   uploading,
   addAttachments,
   removeAttachment,
   clearAttachments
-} = useAttachments()
+} = useAttachments(storeAttachmentsRef)
 
 // 处理新建对话
 function handleNewChat() {

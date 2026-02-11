@@ -8,7 +8,7 @@
  * - 附件管理
  */
 
-import { ref, computed } from 'vue'
+import { ref, computed, type Ref } from 'vue'
 import type { Attachment, AttachmentType } from '../types'
 import {
   validateFile,
@@ -21,12 +21,12 @@ import { generateId } from '../utils/format'
 import { showNotification } from '../utils/vscode'
 import { useI18n } from './useI18n'
 
-export function useAttachments() {
+export function useAttachments(externalAttachments?: Ref<Attachment[]>) {
   // i18n
   const { t } = useI18n()
   
-  // 状态
-  const attachments = ref<Attachment[]>([])
+  // 状态：优先使用外部传入的 ref（store 驱动），否则使用本地 ref
+  const attachments: Ref<Attachment[]> = externalAttachments ?? ref<Attachment[]>([])
   const uploading = ref(false)
   const uploadProgress = ref(0)
 

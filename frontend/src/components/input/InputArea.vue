@@ -51,16 +51,21 @@ const emit = defineEmits<{
 
 const isComposing = ref(false)
 
-// 编辑器节点数组（文本和上下文徽章混合）
-const editorNodes = ref<EditorNode[]>([])
+// 编辑器节点数组（从 store 读写，实现对话级隔离）
+const editorNodes = computed({
+  get: () => chatStore.editorNodes,
+  set: (nodes: EditorNode[]) => chatStore.setEditorNodes(nodes)
+})
 
+// 当 store 中的 inputValue 被外部设置（如恢复快照）但 editorNodes 为空时，从文本创建节点
 watch(() => chatStore.inputValue, (val) => {
-  if (val && editorNodes.value.length === 0) {
-    editorNodes.value = [createTextNode(val)]
+  if (val && chatStore.editorNodes.length === 0) {
+    chatStore.setEditorNodes([createTextNode(val)])
   }
 }, { immediate: true })
 
-watch(editorNodes, (nodes) => {
+// 反向同步：editorNodes 变化时更新纯文本 inputValue
+watch(() => chatStore.editorNodes, (nodes) => {
   chatStore.setInputValue(getPlainText(nodes))
 }, { deep: true })
 

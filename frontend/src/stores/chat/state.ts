@@ -5,7 +5,9 @@
 import { ref } from 'vue'
 import type { Message, ErrorInfo } from '../../types'
 import type { CheckpointRecord } from '../../types'
+import type { Attachment } from '../../types'
 import type { StreamChunk } from '../../types'
+import type { EditorNode } from '../../types/editorNode'
 import type {
   Conversation,
   WorkspaceFilter,
@@ -127,6 +129,12 @@ export function createChatState(): ChatStoreState {
   /** 上一次被 cancelStream 取消的 streamingMessageId */
   const _lastCancelledStreamId = ref<string | null>(null)
 
+  /** 编辑器节点数组（包含文本和上下文徽章，用于对话级输入状态隔离） */
+  const editorNodes = ref<EditorNode[]>([])
+
+  /** 当前对话的附件列表 */
+  const attachments = ref<Attachment[]>([])
+
   // ============ 多对话标签页 ============
 
   /** 当前打开的标签页列表 */
@@ -174,6 +182,8 @@ export function createChatState(): ChatStoreState {
     inputValue,
     workspaceFilter,
     activeBuild,
+    editorNodes,
+    attachments,
     pendingModelOverride,
     messageQueue,
     _lastCancelledStreamId,

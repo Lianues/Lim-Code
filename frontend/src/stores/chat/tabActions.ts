@@ -40,7 +40,10 @@ export function snapshotCurrentSession(state: ChatStoreState): ConversationSessi
     toolCallBuffer: state.toolCallBuffer.value,
     inToolCall: state.inToolCall.value,
     inputValue: state.inputValue.value,
-    pendingModelOverride: state.pendingModelOverride.value
+    pendingModelOverride: state.pendingModelOverride.value,
+    editorNodes: [...state.editorNodes.value],
+    attachments: [...state.attachments.value],
+    messageQueue: [...state.messageQueue.value]
   }
 }
 
@@ -70,6 +73,9 @@ export function restoreSessionFromSnapshot(
   state.inToolCall.value = snapshot.inToolCall
   state.inputValue.value = snapshot.inputValue
   state.pendingModelOverride.value = snapshot.pendingModelOverride
+  state.editorNodes.value = [...snapshot.editorNodes]
+  state.attachments.value = [...snapshot.attachments]
+  state.messageQueue.value = [...snapshot.messageQueue]
 }
 
 /**
@@ -96,6 +102,9 @@ export function resetConversationState(state: ChatStoreState): void {
   state.inToolCall.value = null
   state.inputValue.value = ''
   state.pendingModelOverride.value = null
+  state.editorNodes.value = []
+  state.attachments.value = []
+  state.messageQueue.value = []
 }
 
 /**

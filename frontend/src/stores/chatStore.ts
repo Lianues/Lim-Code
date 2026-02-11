@@ -30,6 +30,7 @@ import { computed as vueComputed } from 'vue'
 import type { Attachment, StreamChunk } from '../types'
 import { sendToExtension, onMessageFromExtension } from '../utils/vscode'
 import { generateId } from '../utils/format'
+import type { EditorNode } from '../types/editorNode'
 
 // 导入模块
 import { createChatState } from './chat/state'
@@ -223,6 +224,26 @@ export const useChatStore = defineStore('chat', () => {
   const setWorkspaceFilter = (filter: 'current' | 'all') => setWorkspaceFilterAction(state, filter)
   const setInputValue = (value: string) => setInputValueAction(state, value)
   const clearInputValue = () => clearInputValueAction(state)
+
+  // ============ 编辑器节点（对话级输入状态隔离） ============
+
+  function setEditorNodes(nodes: EditorNode[]) {
+    state.editorNodes.value = nodes
+  }
+
+  // ============ 附件管理（对话级隔离） ============
+
+  function addStoreAttachment(att: Attachment) {
+    state.attachments.value = [...state.attachments.value, att]
+  }
+
+  function removeStoreAttachment(id: string) {
+    state.attachments.value = state.attachments.value.filter(a => a.id !== id)
+  }
+
+  function clearStoreAttachments() {
+    state.attachments.value = []
+  }
 
   // ============ 消息队列（候选区） ============
 
@@ -587,6 +608,14 @@ export const useChatStore = defineStore('chat', () => {
     inputValue: state.inputValue,
     setInputValue,
     clearInputValue,
+
+    // 编辑器节点 & 附件（对话级隔离）
+    editorNodes: state.editorNodes,
+    setEditorNodes,
+    storeAttachments: state.attachments,
+    addStoreAttachment,
+    removeStoreAttachment,
+    clearStoreAttachments,
 
     // 消息队列（候选区）
     messageQueue: state.messageQueue,

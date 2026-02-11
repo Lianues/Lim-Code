@@ -4,6 +4,7 @@
 
 import type { Ref, ComputedRef } from 'vue'
 import type { Message, ErrorInfo, CheckpointRecord, Attachment } from '../../types'
+import type { EditorNode } from '../../types/editorNode'
 
 // 重新导出类型以供其他模块使用
 export type { CheckpointRecord } from '../../types'
@@ -168,6 +169,10 @@ export interface ChatStoreState {
   inputValue: Ref<string>
   /** 工作区筛选模式 */
   workspaceFilter: Ref<WorkspaceFilter>
+  /** 编辑器节点数组（包含文本和上下文徽章，用于对话级输入状态隔离） */
+  editorNodes: Ref<EditorNode[]>
+  /** 当前对话的附件列表 */
+  attachments: Ref<Attachment[]>
 
   /** 当前 Build 会话（用于 Plan 执行 UI 展示） */
   activeBuild: Ref<BuildSession | null>
@@ -279,6 +284,12 @@ export interface ConversationSessionSnapshot {
   inputValue: string
   /** 模型覆盖 */
   pendingModelOverride: string | null
+  /** 编辑器节点（富文本状态，包含上下文徽章） */
+  editorNodes: EditorNode[]
+  /** 附件列表 */
+  attachments: Attachment[]
+  /** 消息排队队列 */
+  messageQueue: QueuedMessage[]
 }
 
 /**
