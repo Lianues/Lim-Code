@@ -3,6 +3,12 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.0.88] - 2026-02-12
+
+### Improved
+  - 增加了聊天界面右侧滚动条和消息节点的大小
+  - 修改了遮挡关系，让消息节点位于滚动条上方
+
 ## [1.0.87] - 2026-02-12
 
 ### Added

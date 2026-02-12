@@ -498,6 +498,19 @@ const tokenRate = computed(() => {
 })
 
 // 消息类名
+
+// 用户消息预览文本（供滚动条 marker tooltip 使用）
+const previewText = computed(() => {
+  if (!isUser.value) return ''
+  const raw = props.message.content || ''
+  // 去除 context 标签、多余空白，截断到 80 字符
+  const cleaned = raw
+    .replace(/<lim-context[\s\S]*?<\/lim-context>/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  return cleaned.length > 80 ? cleaned.slice(0, 80) + '…' : cleaned
+})
+
 const messageClass = computed(() => ({
   'message-item': true,
   'user-message': isUser.value,
@@ -593,6 +606,7 @@ function handleRestoreAndRetry(checkpointId: string) {
 <template>
   <div
     :class="messageClass"
+    :data-preview="isUser ? previewText : undefined"
     @mouseenter="showActions = true"
     @mouseleave="showActions = false"
   >

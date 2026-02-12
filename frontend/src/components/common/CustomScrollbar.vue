@@ -11,6 +11,8 @@ import { t } from '../../i18n'
 interface MarkerItem {
   /** marker 在轨道上的垂直像素偏移 */
   top: number
+  /** marker 对应的内容预览文本（从 data-preview 读取） */
+  contentPreview: string
   /** 对应的 DOM 元素（用于点击跳转） */
   element: HTMLElement
   /** marker 的索引序号（用于 tooltip 显示） */
@@ -132,6 +134,15 @@ const showHScrollbar = ref(false)
 const markerPositions = ref<MarkerItem[]>([])
 let markerUpdateTimer: ReturnType<typeof setTimeout> | null = null
 
+// ==================== Tooltip 状态 ====================
+const tooltipVisible = ref(false)
+const tooltipContent = ref('')
+const tooltipIndex = ref(0)
+const tooltipTop = ref(0)
+let tooltipHideTimer: ReturnType<typeof setTimeout> | null = null
+const tooltipRef = ref<HTMLElement | null>(null)
+let tooltipRafId: number | null = null
+
 let isDragging = false
 let isHDragging = false
 let startY = 0
@@ -240,9 +251,10 @@ function updateMarkers() {
   elements.forEach((el, idx) => {
     const htmlEl = el as HTMLElement
     const contentOffset = getContentOffset(htmlEl, container)
+    const preview = htmlEl.getAttribute('data-preview') || ''
     // 映射到轨道位置：(元素在内容中的偏移 / 总内容高度) * 轨道高度
     const trackPos = (contentOffset / scrollHeight) * trackHeight
-    newPositions.push({ top: trackPos, element: htmlEl, index: idx + 1 })
+    newPositions.push({ top: trackPos, element: htmlEl, index: idx + 1, contentPreview: preview })
   })
 
   markerPositions.value = newPositions
@@ -270,6 +282,92 @@ function handleMarkerClick(marker: MarkerItem, e: MouseEvent) {
   e.stopPropagation()
   if (!scrollContainer.value) return
   marker.element.scrollIntoView({ behavior: 'smooth', block: 'start' })
+}
+
+/**
+ * 鼠标进入 marker 时显示 tooltip
+ */
+function handleMarkerMouseEnter(marker: MarkerItem, _e: MouseEvent) {
+  if (tooltipHideTimer) {
+    clearTimeout(tooltipHideTimer)
+    tooltipHideTimer = null
+  }
+  tooltipContent.value = marker.contentPreview
+  tooltipIndex.value = marker.index
+  tooltipVisible.value = true
+
+  // 需要在 DOM 渲染后再计算位置，保证 tooltipRef 已挂载并获取到真实高度
+  if (tooltipRafId) cancelAnimationFrame(tooltipRafId)
+  tooltipRafId = requestAnimationFrame(() => {
+    tooltipRafId = null
+    clampTooltipPosition(marker)
+  })
+}
+
+/**
+ * 根据 marker 位置和 tooltip 实际高度，将 tooltip 钳制在可视区域内
+ */
+function clampTooltipPosition(marker: MarkerItem) {
+  if (!scrollTrack.value || !scrollContainer.value) return
+
+  const trackRect = scrollTrack.value.getBoundingClientRect()
+  // marker 在屏幕上的绝对 Y 坐标
+  const markerScreenY = trackRect.top + marker.top
+
+  // tooltip 实际高度（如果还没渲染则取估算值）
+  const tipEl = tooltipRef.value
+  const tipHeight = tipEl ? tipEl.offsetHeight : 60
+
+  // 理想位置：tooltip 垂直居中于 marker
+  let idealTop = markerScreenY - tipHeight / 2
+
+  // 上下边界：以滚动容器的可视区域为准（而非整个 viewport），
+  // 避免被顶部标签栏等 UI 遮挡
+  const containerRect = scrollContainer.value.getBoundingClientRect()
+  const viewportTop = containerRect.top
+  const viewportBottom = containerRect.bottom
+  if (idealTop < viewportTop + 4) {
+    idealTop = viewportTop + 4
+  }
+  if (idealTop + tipHeight > viewportBottom - 4) {
+    idealTop = viewportBottom - 4 - tipHeight
+  }
+
+  // 转回轨道坐标系（tooltip 的 CSS top 是相对于 scroll-track 的）
+  tooltipTop.value = idealTop - trackRect.top
+}
+
+/**
+ * 鼠标离开 marker 时延迟隐藏 tooltip
+ */
+function handleMarkerMouseLeave() {
+  tooltipHideTimer = setTimeout(() => {
+    tooltipVisible.value = false
+    tooltipHideTimer = null
+  }, 150)
+}
+
+/**
+ * 鼠标进入 tooltip 气泡本身时，取消隐藏
+ */
+function handleTooltipMouseEnter() {
+  if (tooltipHideTimer) {
+    clearTimeout(tooltipHideTimer)
+    tooltipHideTimer = null
+  }
+}
+
+/**
+ * tooltip 上的 wheel 事件转发给滚动容器，保持滚动体验
+ */
+function handleTooltipWheel(e: WheelEvent) {
+  if (!scrollContainer.value) return
+  // 阻止默认行为（避免整个页面滚动），转发给内容容器
+  e.preventDefault()
+  scrollContainer.value.scrollBy({
+    top: e.deltaY,
+    behavior: 'auto'
+  })
 }
 
 /**
@@ -538,6 +636,14 @@ onBeforeUnmount(() => {
     clearTimeout(markerUpdateTimer)
     markerUpdateTimer = null
   }
+  if (tooltipHideTimer) {
+    clearTimeout(tooltipHideTimer)
+    tooltipHideTimer = null
+  }
+  if (tooltipRafId) {
+    cancelAnimationFrame(tooltipRafId)
+    tooltipRafId = null
+  }
   document.removeEventListener('mousemove', handleMouseMove)
   document.removeEventListener('mouseup', handleMouseUp)
   document.removeEventListener('mousemove', handleHMouseMove)
@@ -613,7 +719,7 @@ defineExpose({
         :style="trackStyle"
         @click="handleTrackClick"
       >
-        <!-- Marker 节点：渲染在轨道内，位于 thumb 之下 -->
+        <!-- Marker 节点：渲染在轨道内，位于 thumb 之上 -->
         <div
           v-for="(marker, idx) in markerPositions"
           :key="idx"
@@ -624,8 +730,9 @@ defineExpose({
             background: markerBaseColor,
             opacity: markerOpacity,
           }"
-          :title="`${markerTooltipPrefix} #${marker.index}`"
           @click.stop="handleMarkerClick(marker, $event)"
+          @mouseenter="handleMarkerMouseEnter(marker, $event)"
+          @mouseleave="handleMarkerMouseLeave"
         />
 
         <div
@@ -633,6 +740,26 @@ defineExpose({
           :style="thumbStyle"
           @mousedown="handleThumbMouseDown"
         />
+
+        <!-- Marker 悬浮预览气泡 -->
+        <Transition name="marker-tooltip">
+          <div
+            v-if="tooltipVisible && tooltipContent"
+            ref="tooltipRef"
+            class="marker-tooltip"
+            :style="{ top: `${tooltipTop}px` }"
+            @mouseenter="handleTooltipMouseEnter"
+            @mouseleave="handleMarkerMouseLeave"
+            @wheel="handleTooltipWheel"
+          >
+            <div class="marker-tooltip-header">
+              {{ markerTooltipPrefix }} #{{ tooltipIndex }}
+            </div>
+            <div class="marker-tooltip-body">
+              {{ tooltipContent }}
+            </div>
+          </div>
+        </Transition>
       </div>
 
       <button 
@@ -709,6 +836,7 @@ defineExpose({
   z-index: 10;
   display: flex;
   flex-direction: column;
+  overflow: visible;
 }
 
 .scroll-track-v {
@@ -719,6 +847,7 @@ defineExpose({
   cursor: pointer;
   background: transparent;
   opacity: 1;
+  overflow: visible;
 }
 
 /* 跳转按钮 */
@@ -783,7 +912,7 @@ defineExpose({
   transition: background 0.18s ease, transform 0.06s linear;
   will-change: transform;
   background: var(--vscode-scrollbarSlider-background, rgba(100, 100, 100, 0.4));
-  /* 确保 thumb 在 markers 之上 */
+  /* thumb 位于 marker 之下 */
   z-index: 2;
 }
 
@@ -817,16 +946,91 @@ defineExpose({
   width: 100%;
   border-radius: 0;
   cursor: pointer;
-  z-index: 1;
+  z-index: 3;
   transition: opacity 0.18s ease, box-shadow 0.18s ease;
   /* 允许指针事件穿透到轨道（除了 marker 自身） */
   pointer-events: auto;
 }
 
 .scroll-marker:hover {
-  opacity: 0.9 !important;
   opacity: 1 !important;
   box-shadow: 0 0 3px rgba(100, 160, 255, 0.6);
+}
+
+/* ==================== Marker Tooltip 样式 ==================== */
+.marker-tooltip {
+  position: absolute;
+  right: calc(100% + 6px);
+  max-width: 300px;
+  min-width: 120px;
+  padding: 0;
+  background: var(--vscode-editorHoverWidget-background, #2d2d30);
+  border: 1px solid var(--vscode-editorHoverWidget-border, #454545);
+  border-radius: 3px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.36);
+  z-index: 100;
+  pointer-events: auto;
+  overflow: hidden;
+}
+
+.marker-tooltip-header {
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--vscode-editorHoverWidget-foreground, #cccccc);
+  background: var(--vscode-editorHoverWidget-statusBarBackground, rgba(255, 255, 255, 0.04));
+  border-bottom: 1px solid var(--vscode-editorHoverWidget-border, #454545);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  user-select: none;
+}
+
+.marker-tooltip-body {
+  padding: 6px 10px;
+  font-size: 12px;
+  /* 使用固定行高，避免小数行高导致底部出现“半行被截断”视觉问题 */
+  line-height: 18px;
+  color: var(--vscode-editorHoverWidget-foreground, #cccccc);
+  white-space: normal;
+  word-break: break-word;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  line-clamp: 4;
+  /* +4px 容错，避免某些字体在第4行基线下沿被裁切 */
+  max-height: calc(18px * 4 + 4px);
+}
+
+/* Tooltip 进出动画 */
+.marker-tooltip-enter-active {
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.marker-tooltip-leave-active {
+  transition: opacity 0.1s ease, transform 0.1s ease;
+}
+
+.marker-tooltip-enter-from {
+  opacity: 0;
+  transform: translateX(4px);
+}
+
+.marker-tooltip-enter-to {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.marker-tooltip-leave-from {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.marker-tooltip-leave-to {
+  opacity: 0;
+  transform: translateX(4px);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -834,7 +1038,10 @@ defineExpose({
   .scroll-track-h,
   .scroll-thumb-v,
   .scroll-thumb-h,
-  .scroll-marker {
+  .scroll-marker,
+  .marker-tooltip,
+  .marker-tooltip-enter-active,
+  .marker-tooltip-leave-active {
     transition: none !important;
   }
 }

@@ -785,7 +785,7 @@ function formatCheckpointTime(timestamp: number): string {
 <template>
   <div class="message-list">
     <div class="message-scroll-area">
-      <CustomScrollbar ref="scrollbarRef" sticky-bottom show-jump-buttons marker-selector=".user-message">
+      <CustomScrollbar ref="scrollbarRef" sticky-bottom show-jump-buttons marker-selector=".user-message" :width="10" :marker-height="10">
       <div class="messages-container">
         <!-- 自动加载更多指示器 -->
         <div v-if="hasMore" class="load-more-container">
