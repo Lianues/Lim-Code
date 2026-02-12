@@ -55,9 +55,26 @@ export const deleteSingleMessage: MessageHandler = async (data, requestId, ctx) 
 };
 
 /**
+ * 取消总结请求（仅取消总结 API，不中断主对话流）
+ */
+export const cancelSummarizeRequest: MessageHandler = async (data, requestId, ctx) => {
+  const { conversationId } = data;
+
+  const abortManager = ctx.streamAbortControllers as any;
+  let cancelled = false;
+
+  if (abortManager?.cancelSummary) {
+    cancelled = !!abortManager.cancelSummary(conversationId);
+  }
+
+  ctx.sendResponse(requestId, { cancelled });
+};
+
+/**
  * 注册聊天处理器
  */
 export function registerChatHandlers(registry: Map<string, MessageHandler>): void {
   registry.set('deleteMessage', deleteMessage);
   registry.set('deleteSingleMessage', deleteSingleMessage);
+  registry.set('cancelSummarizeRequest', cancelSummarizeRequest);
 }

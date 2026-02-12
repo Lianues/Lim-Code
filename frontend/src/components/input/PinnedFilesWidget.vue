@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { IconButton, Tooltip } from '../common'
 import { getFileIcon } from '../../utils/fileIcons'
 import { showNotification } from '../../utils/vscode'
@@ -14,8 +14,10 @@ import {
   setPinnedFileEnabled,
   validatePinnedFile
 } from '../../services/pinnedFiles'
+import { useChatStore } from '../../stores'
 
 const { t } = useI18n()
+const chatStore = useChatStore()
 
 const pinnedFiles = ref<PinnedFileItem[]>([])
 const showPinnedFilesPanel = ref(false)
@@ -24,10 +26,13 @@ const isDraggingOver = ref(false)
 
 async function loadPinnedFiles() {
   isLoadingPinnedFiles.value = true
+  const conversationId = chatStore.currentConversationId
+
   try {
-    pinnedFiles.value = await listPinnedFiles()
+    pinnedFiles.value = await listPinnedFiles(conversationId)
   } catch (error) {
     console.error('Failed to load pinned files:', error)
+    pinnedFiles.value = []
   } finally {
     isLoadingPinnedFiles.value = false
   }
@@ -104,7 +109,7 @@ async function tryAddPinnedFile(pathOrUri: string) {
     return
   }
 
-  const addResult = await addPinnedFile(validation.relativePath, validation.workspaceUri)
+  const addResult = await addPinnedFile(validation.relativePath, validation.workspaceUri, chatStore.currentConversationId)
 
   if (addResult?.success && addResult.file) {
     pinnedFiles.value.push(addResult.file)
@@ -149,7 +154,7 @@ async function handleDrop(e: DragEvent) {
 
 async function handleRemovePinnedFile(id: string) {
   try {
-    await removePinnedFile(id)
+    await removePinnedFile(id, chatStore.currentConversationId)
     pinnedFiles.value = pinnedFiles.value.filter(f => f.id !== id)
   } catch (error: any) {
     console.error('Failed to remove pinned file:', error)
@@ -159,7 +164,7 @@ async function handleRemovePinnedFile(id: string) {
 
 async function handleTogglePinnedFile(id: string, enabled: boolean) {
   try {
-    await setPinnedFileEnabled(id, enabled)
+    await setPinnedFileEnabled(id, enabled, chatStore.currentConversationId)
     const file = pinnedFiles.value.find(f => f.id === id)
     if (file) file.enabled = enabled
   } catch (error: any) {
@@ -184,6 +189,13 @@ function getPinnedFileIcon(file: PinnedFileItem): string {
 
 onMounted(() => {
   loadPinnedFiles()
+})
+
+watch(() => chatStore.currentConversationId, async () => {
+  await loadPinnedFiles()
+  if (showPinnedFilesPanel.value) {
+    await refreshPinnedFilesExistence()
+  }
 })
 </script>
 

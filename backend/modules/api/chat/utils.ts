@@ -28,6 +28,8 @@ export interface ContextTrimInfo {
     history: Content[];
     /** 裁剪起始索引（在完整历史中的索引，0 表示没有裁剪） */
     trimStartIndex: number;
+    /** 是否需要触发自动总结（仅当 autoSummarizeEnabled 开启且 token 超过阈值时为 true） */
+    needsAutoSummarize?: boolean;
 }
 
 /**

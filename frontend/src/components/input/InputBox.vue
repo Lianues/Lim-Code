@@ -17,7 +17,6 @@ import { extractNodesFromEditor, renderNodesToDOM } from './inputBox/useEditorNo
 import {
   getCaretTextOffset,
   insertLineBreakAtCaret,
-  insertPlainTextWithLineBreaksAtCaret,
   insertTextAtCaret,
   getRangeInEditor,
   replaceTextRangeByOffsets
@@ -419,6 +418,7 @@ function handleCompositionEnd() {
 function handlePaste(e: ClipboardEvent) {
   const items = e.clipboardData?.items
   if (!items) return
+  const editor = editorRef.value
 
   const files: File[] = []
   for (let i = 0; i < items.length; i++) {
@@ -436,18 +436,13 @@ function handlePaste(e: ClipboardEvent) {
   }
 
   const text = e.clipboardData?.getData('text/plain')
-  if (text && editorRef.value) {
-    e.preventDefault()
-    // Copying from our own contenteditable may include ZWSP (\u200B). If we paste them back,
-    // it can make a line break require two backspaces (first removes the invisible char).
-    // Strip them at the boundary so pasted content behaves like normal plain text.
-    const cleaned = text.replace(/\u200B/g, '')
-    insertPlainTextWithLineBreaksAtCaret(editorRef.value, cleaned)
-    handleInput()
-    // 粘贴后滚动到末尾
+  if (text && editor) {
+    // Let browser handle native text paste so the operation is recorded in
+    // the native undo stack (Ctrl+Z works reliably in webview environments).
+    // The @input handler will sync nodes after paste.
     nextTick(() => {
-      if (editorRef.value) {
-        editorRef.value.scrollTop = editorRef.value.scrollHeight
+      if (editor) {
+        editor.scrollTop = editor.scrollHeight
       }
     })
   }

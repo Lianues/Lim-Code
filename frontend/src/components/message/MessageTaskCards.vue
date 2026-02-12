@@ -244,10 +244,9 @@ async function executePlan(card: PlanCardItem) {
     // 确认执行后，切换到用户选择的模式，确保后续请求按目标模式运行
     try {
       const targetModeId = String(selectedModeId.value || 'code').trim() || 'code'
-      await configService.setCurrentPromptMode(targetModeId)
+      await chatStore.setCurrentPromptModeId(targetModeId)
       saveState(PLAN_EXECUTION_MODE_STATE_KEY, targetModeId)
-      // 通知 InputArea 刷新模式指示器（触发 promptModesVersion watch）
-      settingsStore.refreshPromptModes()
+      // InputArea 现在直接读取 chatStore.currentPromptModeId，不需要手动触发刷新
     } catch (modeError) {
       // 模式切换失败不阻塞执行
       console.error('[plan] Failed to switch prompt mode before execution:', modeError)

@@ -272,7 +272,26 @@ const zhCN: BackendLanguageMessages = {
 3. 概括对话的主题、讨论的问题、得出的结论
 4. 保留重要的技术细节和决策
 5. 直接输出总结内容，不要添加任何前缀、标题或格式标记`,
-                    summaryPrefix: '[对话总结]'
+                    summaryPrefix: '[对话总结]',
+                    autoSummarizePrompt: `请总结以上对话历史，输出以下内容，用于 AI 继续完成未完成的任务。
+
+## 用户需求
+用户想要完成什么（整体目标）。
+
+## 已完成的工作
+按时间顺序列出已经做了哪些事，包括改了哪些文件、做了什么决策。
+文件路径、变量名、配置值等必须精确保留，不要泛化。
+
+## 当前进度
+做到了哪一步，正在做什么。
+
+## 待办事项
+接下来还需要做什么，按优先级列出。
+
+## 重要约定
+用户提出的限制、偏好、技术约束等（如"不使用第三方库"、"使用 TypeScript"等）。
+
+直接输出内容，不要添加前缀。`
                 }
             }
         }
@@ -300,7 +319,7 @@ const zhCN: BackendLanguageMessages = {
                 savedShort: '已保存: {filePath}',
                 rejected: '已拒绝修改: {filePath}',
                 diffTitle: '{filePath} (AI 修改 - Ctrl+S 保存)',
-                diffGuardWarning: '⚠️ 此次修改删除了 {deletePercent}% 的文件内容（{deletedLines}/{totalLines} 行），超过 {threshold}% 的警戒阈值，请仔细检查'
+                diffGuardWarning: '此次修改删除了 {deletePercent}% 的文件内容（{deletedLines}/{totalLines} 行），超过 {threshold}% 的警戒阈值，请仔细检查'
             },
             diffCodeLens: {
                 accept: '接受',
@@ -377,6 +396,26 @@ const zhCN: BackendLanguageMessages = {
             description: '开启或关闭 Skills。Skills 是用户自定义的知识模块，提供专业的上下文和指令。每个参数是一个 skill 名称 - 设为 true 启用，false 禁用。',
             errors: {
                 managerNotInitialized: 'Skills 管理器未初始化'
+            }
+        },
+        
+        history: {
+            noSummarizedHistory: '没有找到已总结的历史记录。当前对话尚未触发上下文总结。',
+            searchResultHeader: '在已总结历史中找到 {count} 个匹配项，关键词："{query}"（共 {totalLines} 行）',
+            noMatchesFound: '在已总结历史中未找到 "{query}" 的匹配项（共 {totalLines} 行）。请尝试其他关键词。',
+            resultsLimited: '[结果限制为 {max} 个匹配项。请使用更具体的关键词。]',
+            readResultHeader: '已总结历史的第 {start}-{end} 行（共 {totalLines} 行）',
+            readTruncated: '[输出限制为 {max} 行。使用 start_line={nextStart} 继续读取。]',
+            invalidRegex: '无效的正则表达式：{error}',
+            invalidRange: '无效的行范围：{start}-{end}（文档共 {totalLines} 行）',
+            errors: {
+                contextRequired: '需要工具上下文',
+                conversationIdRequired: '工具上下文中需要 conversationId',
+                conversationStoreRequired: '工具上下文中需要 conversationStore',
+                getHistoryNotAvailable: 'conversationStore.getHistory 不可用',
+                invalidMode: '无效的模式："{mode}"。必须是 "search" 或 "read"',
+                queryRequired: 'search 模式需要 query 参数',
+                searchFailed: '历史搜索失败：{error}'
             }
         }
     },

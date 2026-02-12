@@ -283,6 +283,7 @@ export interface BackendLanguageMessages {
                 prompts: {
                     defaultSummarizePrompt: string;
                     summaryPrefix: string;
+                    autoSummarizePrompt: string;
                 };
             };
         };
@@ -396,8 +397,27 @@ export interface BackendLanguageMessages {
                 managerNotInitialized: string;
             };
         };
+        /** 历史检索工具 */
+        history: {
+            noSummarizedHistory: string;
+            searchResultHeader: string;
+            noMatchesFound: string;
+            resultsLimited: string;
+            readResultHeader: string;
+            readTruncated: string;
+            invalidRegex: string;
+            invalidRange: string;
+            errors: {
+                contextRequired: string;
+                conversationIdRequired: string;
+                conversationStoreRequired: string;
+                getHistoryNotAvailable: string;
+                invalidMode: string;
+                queryRequired: string;
+                searchFailed: string;
+            };
+        };
     };
-    
     /** 工作区相关 */
     workspace: {
         noWorkspaceOpen: string;

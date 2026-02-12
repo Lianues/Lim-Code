@@ -271,9 +271,9 @@ async function updateToolOptions(config: ToolOptions) {
 
 // ==================== 上下文阈值 ====================
 
-// 上下文阈值是否启用
-const contextThresholdEnabled = computed(() => {
-  return currentConfig.value?.contextThresholdEnabled ?? false
+// 上下文管理总开关（裁剪或自动总结任一开启即为开启）
+const contextManagementEnabled = computed(() => {
+  return (currentConfig.value?.contextThresholdEnabled ?? false) || (currentConfig.value?.autoSummarizeEnabled ?? false)
 })
 
 // 上下文阈值值
@@ -281,9 +281,18 @@ const contextThreshold = computed(() => {
   return currentConfig.value?.contextThreshold ?? '80%'
 })
 
-// 自动总结是否启用
-const autoSummarizeEnabled = computed(() => {
-  return currentConfig.value?.autoSummarizeEnabled ?? false
+// 上下文管理模式：'trim' 或 'summarize'
+const contextManagementMode = computed(() => {
+  if (currentConfig.value?.autoSummarizeEnabled) return 'summarize'
+  return 'trim'
+})
+
+// 上下文管理模式下拉选项
+const contextManagementModeOptions = computed<SelectOption[]>(() => {
+  return [
+    { value: 'trim', label: t('components.settings.channelSettings.form.contextManagement.mode.trim') },
+    { value: 'summarize', label: t('components.settings.channelSettings.form.contextManagement.mode.summarize') }
+  ]
 })
 
 // 裁剪时额外裁剪量
@@ -291,9 +300,18 @@ const contextTrimExtraCut = computed(() => {
   return currentConfig.value?.contextTrimExtraCut ?? 0
 })
 
-// 更新上下文阈值启用状态
-async function updateContextThresholdEnabled(enabled: boolean) {
-  await updateConfigField('contextThresholdEnabled', enabled)
+// 更新上下文管理总开关
+async function updateContextManagementEnabled(enabled: boolean) {
+  if (enabled) {
+    // 开启时，按当前模式设置对应字段
+    const mode = contextManagementMode.value
+    await updateConfigField('contextThresholdEnabled', mode === 'trim')
+    await updateConfigField('autoSummarizeEnabled', mode === 'summarize')
+  } else {
+    // 关闭时，两个都关
+    await updateConfigField('contextThresholdEnabled', false)
+    await updateConfigField('autoSummarizeEnabled', false)
+  }
 }
 
 // 更新上下文阈值
@@ -310,9 +328,15 @@ async function updateContextThreshold(value: string) {
   }
 }
 
-// 更新自动总结启用状态
-async function updateAutoSummarizeEnabled(enabled: boolean) {
-  await updateConfigField('autoSummarizeEnabled', enabled)
+// 更新上下文管理模式
+async function updateContextManagementMode(mode: string) {
+  if (mode === 'trim') {
+    await updateConfigField('contextThresholdEnabled', true)
+    await updateConfigField('autoSummarizeEnabled', false)
+  } else {
+    await updateConfigField('contextThresholdEnabled', false)
+    await updateConfigField('autoSummarizeEnabled', true)
+  }
 }
 
 // 更新裁剪时额外裁剪量
@@ -922,7 +946,7 @@ onMounted(async () => {
         <span class="field-hint">{{ t('components.settings.channelSettings.form.maxContextTokens.hint') }}</span>
       </div>
       
-      <!-- 上下文阈值设置 -->
+      <!-- 上下文管理 -->
       <div class="form-group">
         <button
           class="advanced-toggle"
@@ -933,8 +957,8 @@ onMounted(async () => {
           <label class="toggle-switch header-toggle" :title="t('components.settings.channelSettings.form.contextManagement.enableTitle')" @click.stop>
             <input
               type="checkbox"
-              :checked="contextThresholdEnabled"
-              @change="(e: any) => updateContextThresholdEnabled(e.target.checked)"
+              :checked="contextManagementEnabled"
+              @change="(e: any) => updateContextManagementEnabled(e.target.checked)"
             />
             <span class="toggle-slider"></span>
           </label>
@@ -942,6 +966,24 @@ onMounted(async () => {
         
         <div v-if="showContextThreshold" class="custom-panel-wrapper">
           <div class="context-threshold-options">
+            <!-- 模式选择 -->
+            <div class="option-item option-with-toggle">
+              <div class="option-header">
+                <label>{{ t('components.settings.channelSettings.form.contextManagement.mode.label') }}</label>
+              </div>
+              <CustomSelect
+                :model-value="contextManagementMode"
+                :options="contextManagementModeOptions"
+                :disabled="!contextManagementEnabled"
+                compact
+                @update:model-value="updateContextManagementMode"
+              />
+              <span class="option-hint">
+                {{ t('components.settings.channelSettings.form.contextManagement.mode.hint') }}
+              </span>
+            </div>
+
+            <!-- 阈值（两种模式共用） -->
             <div class="option-item option-with-toggle">
               <div class="option-header">
                 <label>{{ t('components.settings.channelSettings.form.contextManagement.threshold.label') }}</label>
@@ -950,8 +992,8 @@ onMounted(async () => {
                 type="text"
                 :value="contextThreshold"
                 :placeholder="t('components.settings.channelSettings.form.contextManagement.threshold.placeholder')"
-                :disabled="!contextThresholdEnabled"
-                :class="{ disabled: !contextThresholdEnabled }"
+                :disabled="!contextManagementEnabled"
+                :class="{ disabled: !contextManagementEnabled }"
                 @input="(e: any) => updateContextThreshold(e.target.value)"
               />
               <span class="option-hint">
@@ -959,7 +1001,8 @@ onMounted(async () => {
               </span>
             </div>
             
-            <div class="option-item option-with-toggle">
+            <!-- 额外裁剪量（仅裁剪模式） -->
+            <div v-if="contextManagementMode === 'trim'" class="option-item option-with-toggle">
               <div class="option-header">
                 <label>{{ t('components.settings.channelSettings.form.contextManagement.extraCut.label') }}</label>
               </div>
@@ -967,35 +1010,18 @@ onMounted(async () => {
                 type="text"
                 :value="contextTrimExtraCut"
                 :placeholder="t('components.settings.channelSettings.form.contextManagement.extraCut.placeholder')"
-                :disabled="!contextThresholdEnabled"
-                :class="{ disabled: !contextThresholdEnabled }"
+                :disabled="!contextManagementEnabled"
+                :class="{ disabled: !contextManagementEnabled }"
                 @input="(e: any) => updateContextTrimExtraCut(e.target.value)"
               />
               <span class="option-hint">
                 {{ t('components.settings.channelSettings.form.contextManagement.extraCut.hint') }}
               </span>
             </div>
-            
-            <div class="option-item option-with-toggle">
-              <div class="option-header">
-                <label>{{ t('components.settings.channelSettings.form.contextManagement.autoSummarize.label') }}</label>
-                <label class="toggle-switch" :title="t('components.settings.channelSettings.form.contextManagement.autoSummarize.enableTitle')" @click.stop>
-                  <input
-                    type="checkbox"
-                    :checked="autoSummarizeEnabled"
-                    disabled
-                    @change="(e: any) => updateAutoSummarizeEnabled(e.target.checked)"
-                  />
-                  <span class="toggle-slider"></span>
-                </label>
-              </div>
-              <span class="option-hint">
-                {{ t('components.settings.channelSettings.form.contextManagement.autoSummarize.hint') }}
-              </span>
-            </div>
           </div>
         </div>
       </div>
+
       
       <!-- 工具配置 -->
       <div class="form-group">

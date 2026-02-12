@@ -28,6 +28,9 @@ import type { ConversationRound, ContextTrimInfo } from '../utils';
 import type { TokenEstimationService } from './TokenEstimationService';
 import type { MessageBuilderService } from './MessageBuilderService';
 
+const CONVERSATION_PINNED_FILES_KEY = 'inputPinnedFiles';
+const CONVERSATION_SKILLS_KEY = 'inputSkills';
+
 /**
  * 回合 Token 信息（内部使用）
  */
@@ -293,12 +296,14 @@ export class ContextTrimService {
      * @param conversationId 对话 ID
      * @param config 渠道配置
      * @param historyOptions 历史选项
+     * @param precomputedDynamicContextText 预生成的动态上下文文本（可选）。如果传入则直接使用，避免重复生成；如果不传则内部自动生成。
      * @returns 裁剪后的历史和裁剪信息
      */
     async getHistoryWithContextTrimInfo(
         conversationId: string,
         config: BaseChannelConfig,
-        historyOptions: GetHistoryOptions
+        historyOptions: GetHistoryOptions,
+        precomputedDynamicContextText?: string
     ): Promise<ContextTrimInfo> {
         // 先获取完整的原始历史
         const fullHistory = await this.conversationManager.getHistoryRef(conversationId);
@@ -328,13 +333,23 @@ export class ContextTrimService {
         
         // 收集需要计算 token 的内容：系统提示词、动态上下文、缺失 token 数的用户消息
         const systemPrompt = this.promptManager.getSystemPrompt();
-        let todoList: unknown = undefined;
-        try {
-            todoList = await this.conversationManager.getCustomMetadata(conversationId, 'todoList');
-        } catch {
-            todoList = undefined;
+        
+        // 使用预生成的动态上下文文本（如果传入），否则内部生成
+        let dynamicContextText: string;
+        if (precomputedDynamicContextText !== undefined) {
+            dynamicContextText = precomputedDynamicContextText;
+        } else {
+            const [todoList, pinnedFiles, skills] = await Promise.all([
+                this.conversationManager.getCustomMetadata(conversationId, 'todoList').catch(() => undefined),
+                this.conversationManager.getCustomMetadata(conversationId, CONVERSATION_PINNED_FILES_KEY).catch(() => undefined),
+                this.conversationManager.getCustomMetadata(conversationId, CONVERSATION_SKILLS_KEY).catch(() => undefined)
+            ]);
+            dynamicContextText = this.promptManager.getDynamicContextText({
+                todoList,
+                pinnedFiles,
+                skills
+            });
         }
-        const dynamicContextText = this.promptManager.getDynamicContextText({ todoList });
         
         // 查找缺失 token 数的用户消息
         const missingTokenMessages: Array<{ index: number; message: Content }> = [];
@@ -405,8 +420,8 @@ export class ContextTrimService {
             }
         }
         
-        // 检查是否启用上下文阈值检测
-        if (!config.contextThresholdEnabled) {
+        // 检查是否启用上下文阈值检测（上下文裁剪和自动总结互斥）
+        if (!config.contextThresholdEnabled && !config.autoSummarizeEnabled) {
             // 未启用阈值检测，直接返回从 summary 开始的历史
             const history = await this.conversationManager.getHistoryForAPI(conversationId, {
                 ...historyOptions,
@@ -420,7 +435,45 @@ export class ContextTrimService {
         const thresholdConfig = config.contextThreshold ?? '80%';
         const threshold = this.calculateThreshold(thresholdConfig, maxContextTokens);
         
-        // ========== 核心逻辑：检查是否可以恢复更多历史 ==========
+        // ========== 自动总结模式 ==========
+        // 自动总结模式下不做裁剪，而是返回完整历史 + needsAutoSummarize 标记
+        // 由 ToolIterationLoopService 在发送请求前触发总结
+        if (config.autoSummarizeEnabled) {
+            const history = await this.conversationManager.getHistoryForAPI(conversationId, {
+                ...historyOptions,
+                startIndex: summaryStartIndex
+            });
+            
+            // 估算当前 token 总量来判断是否需要总结
+            const fullTokenResult = this.accumulateTokens(
+                fullHistory,
+                summaryStartIndex,
+                lastNonFunctionResponseUserIndex,
+                historyThoughtMinIndex,
+                historyThoughtMaxIndex,
+                sendHistoryThoughts,
+                sendHistoryThoughtSignatures,
+                sendCurrentThoughts,
+                sendCurrentThoughtSignatures,
+                promptTokens
+            );
+
+            // 直接复用现有 token 估算系统：
+            // - 用户消息优先使用 estimatedTokenCount（由 TokenCount API 或本地估算预写入）
+            // - 模型消息使用 usageMetadata（candidates/thoughts）或回退估算
+            // 不再额外维护 totalTokenCount/安全系数等并行判定逻辑。
+            const needsAutoSummarize = fullTokenResult.estimatedTotalTokens > threshold;
+
+            if (needsAutoSummarize) {
+                console.log(`[ContextTrim] Auto summarize needed: estimated=${fullTokenResult.estimatedTotalTokens}, threshold=${threshold}`);
+            }
+            
+            return { history, trimStartIndex: summaryStartIndex, needsAutoSummarize };
+        }
+        
+        // ========== 上下文裁剪模式（原有逻辑） ==========
+        
+        // 检查是否可以恢复更多历史
         // 首先计算从 summaryStartIndex 开始的完整 token 数
         const fullTokenResult = this.accumulateTokens(
             fullHistory,
@@ -699,9 +752,10 @@ export class ContextTrimService {
     async getHistoryWithContextTrim(
         conversationId: string,
         config: BaseChannelConfig,
-        historyOptions: GetHistoryOptions
+        historyOptions: GetHistoryOptions,
+        precomputedDynamicContextText?: string
     ): Promise<Content[]> {
-        const result = await this.getHistoryWithContextTrimInfo(conversationId, config, historyOptions);
+        const result = await this.getHistoryWithContextTrimInfo(conversationId, config, historyOptions, precomputedDynamicContextText);
         return result.history;
     }
 }

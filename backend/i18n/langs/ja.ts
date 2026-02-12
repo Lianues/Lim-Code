@@ -272,7 +272,26 @@ const ja: BackendLanguageMessages = {
 3. トピック、議論された問題、結論を要約する
 4. 重要な技術的詳細と決定を保持する
 5. プレフィックス、タイトル、書式マーカーなしで直接要約内容を出力する`,
-                    summaryPrefix: '[会話要約]'
+                    summaryPrefix: '[会話要約]',
+                    autoSummarizePrompt: `上記の会話履歴を要約し、AIが未完了のタスクを続行できるように以下の内容を出力してください。
+
+## ユーザーの要件
+ユーザーが達成したいこと（全体的な目標）。
+
+## 完了した作業
+時系列順に、どのファイルを変更したか、どのような決定を下したかを含め、完了した作業をリストアップしてください。
+ファイルパス、変数名、設定値は正確に保持し、一般化しないでください。
+
+## 現在の進捗
+どのステップまで到達したか、現在何をしているか。
+
+## TODOアイテム
+まだ行う必要があること、優先順位順にリストアップ。
+
+## 重要な規約
+ユーザーが提示した制約、好み、技術的要件（例：「サードパーティライブラリを使用しない」、「TypeScriptを使用」など）。
+
+プレフィックスなしで直接内容を出力してください。`
                 }
             }
         }
@@ -300,7 +319,7 @@ const ja: BackendLanguageMessages = {
                 savedShort: '保存完了: {filePath}',
                 rejected: '変更を拒否しました: {filePath}',
                 diffTitle: '{filePath} (AI の変更 - Ctrl+S で保存)',
-                diffGuardWarning: '⚠️ この変更はファイルの {deletePercent}% のコンテンツ（{deletedLines}/{totalLines} 行）を削除し、{threshold}% のガード閾値を超えています。慎重に確認してください。'
+                diffGuardWarning: 'この変更はファイルの {deletePercent}% のコンテンツ（{deletedLines}/{totalLines} 行）を削除し、{threshold}% のガード閾値を超えています。慎重に確認してください。'
             },
             diffCodeLens: {
                 accept: '承認',
@@ -377,6 +396,26 @@ const ja: BackendLanguageMessages = {
             description: 'Skills のオン/オフを切り替えます。Skills はユーザー定義のナレッジモジュールで、専門的なコンテキストと指示を提供します。各パラメータは skill 名です - true で有効、false で無効にします。',
             errors: {
                 managerNotInitialized: 'Skills マネージャーが初期化されていません'
+            }
+        },
+        
+        history: {
+            noSummarizedHistory: '要約された履歴が見つかりません。この会話ではまだコンテキスト要約がトリガーされていません。',
+            searchResultHeader: '要約済み履歴で "{query}" の一致が {count} 件見つかりました（全 {totalLines} 行）',
+            noMatchesFound: '要約済み履歴で "{query}" の一致は見つかりませんでした（全 {totalLines} 行）。別のキーワードをお試しください。',
+            resultsLimited: '[結果は {max} 件に制限されています。より具体的なクエリをお試しください。]',
+            readResultHeader: '要約済み履歴の {start}-{end} 行目（全 {totalLines} 行）',
+            readTruncated: '[出力は {max} 行に制限されています。start_line={nextStart} で続きを読んでください。]',
+            invalidRegex: '無効な正規表現：{error}',
+            invalidRange: '無効な行範囲：{start}-{end}（ドキュメントは全 {totalLines} 行）',
+            errors: {
+                contextRequired: 'ツールコンテキストが必要です',
+                conversationIdRequired: 'ツールコンテキストに conversationId が必要です',
+                conversationStoreRequired: 'ツールコンテキストに conversationStore が必要です',
+                getHistoryNotAvailable: 'conversationStore.getHistory は利用できません',
+                invalidMode: '無効なモード："{mode}"。"search" または "read" を指定してください',
+                queryRequired: 'search モードには query パラメータが必要です',
+                searchFailed: '履歴検索に失敗しました：{error}'
             }
         }
     },

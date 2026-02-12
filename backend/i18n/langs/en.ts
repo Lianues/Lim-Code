@@ -272,7 +272,26 @@ Requirements:
 3. Summarize the topic, discussed problems, and conclusions
 4. Keep important technical details and decisions
 5. Output summary content directly without any prefix, title, or format markers`,
-                    summaryPrefix: '[Conversation Summary]'
+                    summaryPrefix: '[Conversation Summary]',
+                    autoSummarizePrompt: `Please summarize the above conversation history and output the following sections, so that the AI can continue completing the unfinished tasks.
+
+## User Requirements
+What the user wants to accomplish (overall goal).
+
+## Completed Work
+List what has been done in chronological order, including which files were changed and what decisions were made.
+File paths, variable names, and configuration values must be preserved exactly, do not generalize.
+
+## Current Progress
+What step has been reached, what is currently being done.
+
+## TODO Items
+What still needs to be done, listed by priority.
+
+## Important Conventions
+Constraints, preferences, and technical requirements raised by the user (e.g., "do not use third-party libraries", "use TypeScript", etc.).
+
+Output content directly without any prefix.`
                 }
             }
         }
@@ -300,7 +319,7 @@ Requirements:
                 savedShort: 'Saved: {filePath}',
                 rejected: 'Rejected changes: {filePath}',
                 diffTitle: '{filePath} (AI changes - Ctrl+S to save)',
-                diffGuardWarning: '⚠️ This change deletes {deletePercent}% of the file content ({deletedLines}/{totalLines} lines), exceeding the {threshold}% guard threshold. Please review carefully.'
+                diffGuardWarning: 'This change deletes {deletePercent}% of the file content ({deletedLines}/{totalLines} lines), exceeding the {threshold}% guard threshold. Please review carefully.'
             },
             diffCodeLens: {
                 accept: 'Accept',
@@ -377,6 +396,26 @@ Requirements:
             description: 'Toggle skills on or off. Skills are user-defined knowledge modules that provide specialized context and instructions. Each parameter is a skill name - set to true to enable, false to disable.',
             errors: {
                 managerNotInitialized: 'Skills manager not initialized'
+            }
+        },
+        
+        history: {
+            noSummarizedHistory: 'No summarized history found. Context summarization has not been triggered yet in this conversation.',
+            searchResultHeader: 'Found {count} match(es) for "{query}" in summarized history ({totalLines} total lines)',
+            noMatchesFound: 'No matches found for "{query}" in summarized history ({totalLines} total lines). Try different keywords.',
+            resultsLimited: '[Results limited to {max} matches. Try a more specific query to narrow results.]',
+            readResultHeader: 'Lines {start}-{end} of {totalLines} total lines in summarized history',
+            readTruncated: '[Output limited to {max} lines. Use start_line={nextStart} to continue reading.]',
+            invalidRegex: 'Invalid regular expression: {error}',
+            invalidRange: 'Invalid line range: {start}-{end} (document has {totalLines} lines)',
+            errors: {
+                contextRequired: 'Tool context is required',
+                conversationIdRequired: 'conversationId is required in tool context',
+                conversationStoreRequired: 'conversationStore is required in tool context',
+                getHistoryNotAvailable: 'conversationStore.getHistory is not available',
+                invalidMode: 'Invalid mode: "{mode}". Must be "search" or "read"',
+                queryRequired: 'query parameter is required for search mode',
+                searchFailed: 'History search failed: {error}'
             }
         }
     },

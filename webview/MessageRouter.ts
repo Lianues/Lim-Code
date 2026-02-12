@@ -9,6 +9,7 @@ import { createMessageHandlerRegistry } from './handlers';
 import { StreamRequestHandler, StreamAbortManager } from './stream';
 import type { ChatHandler } from '../backend/modules/api/chat';
 import type { ConversationManager } from '../backend/modules/conversation/ConversationManager';
+import type { SettingsManager } from '../backend/modules/settings/SettingsManager';
 import type * as vscode from 'vscode';
 
 /**
@@ -35,6 +36,7 @@ export class MessageRouter {
   constructor(
     private chatHandler: ChatHandler,
     private conversationManager: ConversationManager,
+    private settingsManager: SettingsManager,
     private getView: () => vscode.WebviewView | undefined,
     private sendResponse: (requestId: string, data: any) => void,
     private sendError: (requestId: string, code: string, message: string) => void
@@ -50,7 +52,8 @@ export class MessageRouter {
       conversationManager: this.conversationManager,
       getView: this.getView,
       sendResponse: this.sendResponse,
-      sendError: this.sendError
+      sendError: this.sendError,
+      settingsManager: this.settingsManager
     });
   }
 

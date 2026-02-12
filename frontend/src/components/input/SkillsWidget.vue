@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { IconButton, Tooltip, CustomScrollbar } from '../common'
 import { useI18n } from '../../i18n'
+import { useChatStore } from '../../stores'
 import type { SkillItem } from '../../services/skills'
 import {
   checkSkillsExistence,
@@ -15,6 +16,7 @@ import {
 } from '../../services/skills'
 
 const { t } = useI18n()
+const chatStore = useChatStore()
 
 const skills = ref<SkillItem[]>([])
 const showSkillsPanel = ref(false)
@@ -32,10 +34,13 @@ async function withLoading<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 async function loadSkills() {
+  const conversationId = chatStore.currentConversationId
+
   try {
-    skills.value = await listSkills()
+    skills.value = await listSkills(conversationId)
   } catch (error) {
     console.error('Failed to load skills:', error)
+    skills.value = []
   }
 }
 
@@ -63,7 +68,7 @@ async function refreshSkillsExistence() {
 
 async function handleToggleSkillEnabled(id: string, enabled: boolean) {
   try {
-    await setSkillEnabled(id, enabled)
+    await setSkillEnabled(id, enabled, chatStore.currentConversationId)
     const skill = skills.value.find(s => s.id === id)
     if (skill) skill.enabled = enabled
   } catch (error: any) {
@@ -73,7 +78,7 @@ async function handleToggleSkillEnabled(id: string, enabled: boolean) {
 
 async function handleToggleSkillSendContent(id: string, sendContent: boolean) {
   try {
-    await setSkillSendContent(id, sendContent)
+    await setSkillSendContent(id, sendContent, chatStore.currentConversationId)
     const skill = skills.value.find(s => s.id === id)
     if (skill) skill.sendContent = sendContent
   } catch (error: any) {
@@ -83,7 +88,7 @@ async function handleToggleSkillSendContent(id: string, sendContent: boolean) {
 
 async function handleRemoveSkillConfig(id: string) {
   try {
-    await removeSkillConfig(id)
+    await removeSkillConfig(id, chatStore.currentConversationId)
     skills.value = skills.value.filter(s => s.id !== id)
   } catch (error: any) {
     console.error('Failed to remove skill config:', error)
@@ -129,6 +134,13 @@ const enabledSkillsCount = computed(() => skills.value.filter(s => s.enabled && 
 
 onMounted(() => {
   void withLoading(loadSkills)
+})
+
+watch(() => chatStore.currentConversationId, async () => {
+  await withLoading(loadSkills)
+  if (showSkillsPanel.value) {
+    await refreshSkillsExistence()
+  }
 })
 </script>
 

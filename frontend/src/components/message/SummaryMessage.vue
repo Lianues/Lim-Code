@@ -83,6 +83,9 @@ async function handleDelete() {
         <span v-if="message.summarizedMessageCount" class="summary-count">
           {{ t('components.message.summary.compressed', { count: message.summarizedMessageCount }) }}
         </span>
+        <span v-if="message.isAutoSummary" class="summary-auto-badge">
+          {{ t('components.message.summary.autoTriggered') }}
+        </span>
       </div>
       
       <!-- 右侧：删除按钮 + 时间和 Token 信息 -->
@@ -175,6 +178,15 @@ async function handleDelete() {
   background: var(--vscode-badge-background);
   padding: 2px 8px;
   border-radius: 10px;
+}
+
+.summary-auto-badge {
+  font-size: 11px;
+  color: var(--vscode-badge-foreground);
+  background: var(--vscode-badge-background);
+  padding: 2px 8px;
+  border-radius: 10px;
+  border: 1px solid var(--vscode-focusBorder);
 }
 
 .summary-right {

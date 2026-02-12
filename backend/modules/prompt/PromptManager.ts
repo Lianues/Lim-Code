@@ -19,6 +19,7 @@ import type { Content } from '../conversation/types'
 import { getWorkspaceFileTree, getWorkspaceRoot, getWorkspacesDescription, getAllWorkspaces } from './fileTree'
 import { getGlobalSettingsManager } from '../../core/settingsContext'
 import { getSkillsManager } from '../skills'
+import type { PinnedFileItem, SkillConfigItem } from '../settings/types'
 
 type TodoStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled'
 type NormalizedTodoItem = { id: string; content: string; status: TodoStatus }
@@ -26,6 +27,12 @@ type NormalizedTodoItem = { id: string; content: string; status: TodoStatus }
 type DynamicRuntimeContext = {
     /** ConversationMetadata.custom['todoList'] */
     todoList?: unknown
+
+    /** ConversationMetadata.custom['inputPinnedFiles'] */
+    pinnedFiles?: unknown
+
+    /** ConversationMetadata.custom['inputSkills'] */
+    skills?: unknown
 }
 
 function isTodoStatus(value: unknown): value is TodoStatus {
@@ -95,6 +102,39 @@ function formatTodoListText(raw: unknown): string {
     }
 
     return lines.join('\n')
+}
+
+function normalizePinnedFiles(raw: unknown): PinnedFileItem[] {
+    if (!Array.isArray(raw)) return []
+    return raw
+        .filter((item): item is PinnedFileItem => (
+            !!item
+            && typeof (item as any).id === 'string'
+            && typeof (item as any).path === 'string'
+            && typeof (item as any).workspaceUri === 'string'
+            && typeof (item as any).enabled === 'boolean'
+            && typeof (item as any).addedAt === 'number'
+        ))
+        .map(item => ({ ...item }))
+}
+
+function normalizeSkillConfigItems(raw: unknown): SkillConfigItem[] {
+    if (!Array.isArray(raw)) return []
+    return raw
+        .filter((item): item is SkillConfigItem => (
+            !!item
+            && typeof (item as any).id === 'string'
+            && typeof (item as any).name === 'string'
+            && typeof (item as any).description === 'string'
+            && typeof (item as any).enabled === 'boolean'
+            && typeof (item as any).sendContent === 'boolean'
+        ))
+        .map(item => ({
+            ...item,
+            id: item.id.trim(),
+            name: (item.name || '').trim() || item.id,
+            description: item.description || ''
+        }))
 }
 
 /**
@@ -310,14 +350,14 @@ export class PromptManager {
         }
         
         // 固定文件内容
-        const pinnedFilesContent = this.generatePinnedFilesSection()
+        const pinnedFilesContent = this.generatePinnedFilesSection(runtime?.pinnedFiles)
         if (pinnedFilesContent) {
             const sectionTitle = settingsManager?.getPinnedFilesConfig()?.sectionTitle || 'PINNED FILES CONTENT'
             modules['PINNED_FILES'] = this.wrapSection(sectionTitle, pinnedFilesContent)
         }
         
         // Skills 内容
-        const skillsContent = this.generateSkillsSection()
+        const skillsContent = this.generateSkillsSection(runtime?.skills)
         if (skillsContent) {
             modules['SKILLS'] = this.wrapSection('ACTIVE SKILLS', skillsContent)
         }
@@ -494,14 +534,14 @@ export class PromptManager {
         }
         
         // 固定文件内容
-        const pinnedFilesContent = this.generatePinnedFilesSection()
+        const pinnedFilesContent = this.generatePinnedFilesSection(runtime?.pinnedFiles)
         if (pinnedFilesContent) {
             const sectionTitle = getGlobalSettingsManager()?.getPinnedFilesConfig()?.sectionTitle || 'PINNED FILES CONTENT'
             sections.push(this.wrapSection(sectionTitle, pinnedFilesContent))
         }
         
         // Skills 内容
-        const skillsContent = this.generateSkillsSection()
+        const skillsContent = this.generateSkillsSection(runtime?.skills)
         if (skillsContent) {
             sections.push(this.wrapSection('ACTIVE SKILLS', skillsContent))
         }
@@ -782,8 +822,9 @@ export class PromptManager {
      * 生成固定文件内容段落
      *
      * 按工作区过滤固定文件，支持多工作区场景
+     * 支持会话级覆盖（runtimePinnedFiles）
      */
-    private generatePinnedFilesSection(): string {
+    private generatePinnedFilesSection(runtimePinnedFiles?: unknown): string {
         const settingsManager = getGlobalSettingsManager()
         if (!settingsManager) {
             return ''
@@ -793,48 +834,40 @@ export class PromptManager {
         if (!workspaceFolders || workspaceFolders.length === 0) {
             return ''
         }
+
+        const hasRuntimeOverride = runtimePinnedFiles !== undefined
+        const runtimeFiles = hasRuntimeOverride ? normalizePinnedFiles(runtimePinnedFiles) : []
+        const workspaceUriToFolder = new Map(workspaceFolders.map(folder => [folder.uri.toString(), folder]))
+        const allPinnedFiles = hasRuntimeOverride
+            ? runtimeFiles.filter(file => file.enabled)
+            : settingsManager.getEnabledPinnedFiles()
         
         const results: string[] = []
         
-        // 遍历所有工作区，获取每个工作区的固定文件
-        for (const workspaceFolder of workspaceFolders) {
-            const workspaceUri = workspaceFolder.uri.toString()
-            const pinnedFiles = settingsManager.getEnabledPinnedFilesForWorkspace(workspaceUri)
-            
-            for (const pinnedFile of pinnedFiles) {
-                try {
-                    let filePath = pinnedFile.path
-                    let fullPath: string
-                    
-                    // 判断是相对路径还是绝对路径
-                    if (path.isAbsolute(filePath)) {
-                        fullPath = filePath
-                    } else {
-                        // 相对路径，基于当前工作区根目录
-                        fullPath = path.join(workspaceFolder.uri.fsPath, filePath)
-                    }
-                    
-                    // 检查文件是否存在
-                    if (!fs.existsSync(fullPath)) {
-                        // 文件不存在时不添加到结果，也不报错
-                        // 这样文件被删除后不会影响 AI 响应
-                        continue
-                    }
-                    
-                    // 读取文件内容
-                    const content = fs.readFileSync(fullPath, 'utf-8')
-                    
-                    // 多工作区时显示工作区名称前缀
-                    const displayPath = workspaceFolders.length > 1
-                        ? `${workspaceFolder.name}/${pinnedFile.path}`
-                        : pinnedFile.path
-                    
-                    // 添加到结果
-                    results.push(`--- ${displayPath} ---\n${content}`)
-                } catch (error: any) {
-                    // 读取错误时静默跳过
-                    console.warn(`Failed to read pinned file ${pinnedFile.path}:`, error.message)
+        for (const pinnedFile of allPinnedFiles) {
+            const workspaceFolder = workspaceUriToFolder.get(pinnedFile.workspaceUri)
+            if (!workspaceFolder) {
+                continue
+            }
+
+            try {
+                const filePath = pinnedFile.path
+                const fullPath = path.isAbsolute(filePath)
+                    ? filePath
+                    : path.join(workspaceFolder.uri.fsPath, filePath)
+
+                if (!fs.existsSync(fullPath)) {
+                    continue
                 }
+
+                const content = fs.readFileSync(fullPath, 'utf-8')
+                const displayPath = workspaceFolders.length > 1
+                    ? `${workspaceFolder.name}/${pinnedFile.path}`
+                    : pinnedFile.path
+
+                results.push(`--- ${displayPath} ---\n${content}`)
+            } catch (error: any) {
+                console.warn(`Failed to read pinned file ${pinnedFile.path}:`, error.message)
             }
         }
         
@@ -849,13 +882,44 @@ export class PromptManager {
      * 生成 Skills 内容段落
      *
      * 获取当前启用的 skills 内容
+     * 支持会话级覆盖（runtimeSkills）
      */
-    private generateSkillsSection(): string {
+    private generateSkillsSection(runtimeSkills?: unknown): string {
         const skillsManager = getSkillsManager()
         if (!skillsManager) {
             return ''
         }
+
+        // 会话级覆盖：仅使用当前会话的 skills 配置
+        if (runtimeSkills !== undefined) {
+            const sessionSkills = normalizeSkillConfigItems(runtimeSkills)
+            const activeSkills = sessionSkills.filter(skill => skill.enabled && skill.sendContent)
+
+            if (activeSkills.length === 0) {
+                return ''
+            }
+
+            const sections: string[] = []
+            for (const skillConfig of activeSkills) {
+                const actualSkill = skillsManager.getSkill(skillConfig.id)
+                if (!actualSkill) {
+                    continue
+                }
+
+                const displayName = actualSkill.name || skillConfig.name || skillConfig.id
+                sections.push(
+                    `===== SKILL: ${displayName} =====\n\n${actualSkill.content}\n\n===== END: ${displayName} =====`
+                )
+            }
+
+            if (sections.length === 0) {
+                return ''
+            }
+
+            return `The following skills are currently active and provide specialized knowledge and instructions:\n\n${sections.join('\n\n')}`
+        }
         
+        // 全局模式：沿用原有行为
         const skillsContent = skillsManager.getEnabledSkillsContent()
         if (!skillsContent) {
             return ''

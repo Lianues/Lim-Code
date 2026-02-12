@@ -25,6 +25,7 @@ import RemoveBackgroundConfig from './tools/media/remove_background.vue'
 import CropImageConfig from './tools/media/crop_image.vue'
 import ResizeImageConfig from './tools/media/resize_image.vue'
 import RotateImageConfig from './tools/media/rotate_image.vue'
+import HistorySearchConfig from './tools/history/history_search.vue'
 
 // 工具信息接口
 interface ToolInfo {
@@ -67,7 +68,8 @@ function hasConfigPanel(toolName: string): boolean {
     'remove_background',
     'crop_image',
     'resize_image',
-    'rotate_image'
+    'rotate_image',
+    'history_search'
   ]
   return toolsWithConfig.includes(toolName)
 }
@@ -135,6 +137,7 @@ function getCategoryName(category: string): string {
     'media': 'components.settings.toolsSettings.categories.media',
     'plan': 'components.settings.toolsSettings.categories.plan',
     'todo': 'components.settings.toolsSettings.categories.todo',
+    'history': 'components.settings.toolsSettings.categories.history',
     '其他': 'components.settings.toolsSettings.categories.other'
   }
   return t(mapping[category] || mapping['其他'])
@@ -149,6 +152,7 @@ const categoryIcons: Record<string, string> = {
   'media': 'codicon-file-media',
   'plan': 'codicon-notebook',
   'todo': 'codicon-checklist',
+  'history': 'codicon-history',
   '其他': 'codicon-extensions'
 }
 
@@ -434,6 +438,10 @@ onMounted(() => {
             />
             <RotateImageConfig
               v-if="tool.name === 'rotate_image' && isConfigExpanded(tool.name)"
+            />
+            <HistorySearchConfig
+              v-if="tool.name === 'history_search' && isConfigExpanded(tool.name)"
+              :tool-name="tool.name"
             />
           </div>
         </div>

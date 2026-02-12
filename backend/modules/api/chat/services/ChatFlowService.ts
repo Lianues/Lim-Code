@@ -36,6 +36,8 @@ import type {
   ChatStreamToolConfirmationData,
   ChatStreamToolsExecutingData,
   ChatStreamToolStatusData,
+  ChatStreamAutoSummaryData,
+  ChatStreamAutoSummaryStatusData,
 } from '../types';
 
 import type { MessageBuilderService } from './MessageBuilderService';
@@ -55,7 +57,9 @@ export type ChatStreamOutput =
   | ChatStreamCheckpointsData
   | ChatStreamToolConfirmationData
   | ChatStreamToolsExecutingData
-  | ChatStreamToolStatusData;
+  | ChatStreamToolStatusData
+  | ChatStreamAutoSummaryData
+  | ChatStreamAutoSummaryStatusData;
 
 type TodoStatusValue = 'pending' | 'in_progress' | 'completed' | 'cancelled';
 type TodoItemValue = { id: string; content: string; status: TodoStatusValue };
@@ -430,7 +434,7 @@ export class ChatFlowService {
    * 非流式 Retry 流程
    */
   async handleRetry(request: RetryRequestData): Promise<ChatSuccessData | ChatErrorData> {
-    const { conversationId, configId } = request;
+    const { conversationId, configId, modelOverride } = request;
 
     // 1. 确保对话存在
     await this.ensureConversation(conversationId);
@@ -464,6 +468,7 @@ export class ChatFlowService {
       configId,
       config,
       maxToolIterations,
+      modelOverride,
     );
 
     if (loopResult.exceededMaxIterations) {
@@ -488,7 +493,7 @@ export class ChatFlowService {
   async handleEditAndRetry(
     request: EditAndRetryRequestData,
   ): Promise<ChatSuccessData | ChatErrorData> {
-    const { conversationId, messageIndex, newMessage, configId } = request;
+    const { conversationId, messageIndex, newMessage, configId, modelOverride } = request;
 
     // 1. 确保对话存在
     await this.ensureConversation(conversationId);
@@ -566,6 +571,7 @@ export class ChatFlowService {
       configId,
       config,
       maxToolIterations,
+      modelOverride,
     );
 
     if (loopResult.exceededMaxIterations) {
@@ -686,6 +692,7 @@ export class ChatFlowService {
       config,
       modelOverride,
       abortSignal: request.abortSignal,
+      summarizeAbortSignal: request.summarizeAbortSignal,
       isFirstMessage,
       maxIterations: maxToolIterations,
     })) {
@@ -699,7 +706,7 @@ export class ChatFlowService {
   async *handleRetryStream(
     request: RetryRequestData,
   ): AsyncGenerator<ChatStreamOutput> {
-    const { conversationId, configId } = request;
+    const { conversationId, configId, modelOverride } = request;
 
     // 1. 确保对话存在
     await this.ensureConversation(conversationId);
@@ -765,11 +772,15 @@ export class ChatFlowService {
       conversationId,
       configId,
       config,
+      modelOverride,
       abortSignal: request.abortSignal,
+      summarizeAbortSignal: request.summarizeAbortSignal,
       isFirstMessage: isRetryFirstMessage,
       maxIterations: maxToolIterations,
       // 重试场景原本没有模型消息前检查点，这里显式关闭以保持行为一致
       createBeforeModelCheckpoint: false,
+      // 重试的是 AI 回复，回合起始用户消息不变，复用其上缓存的动态上下文
+      isNewTurn: false,
     })) {
       yield output as ChatStreamOutput;
     }
@@ -781,7 +792,7 @@ export class ChatFlowService {
   async *handleEditAndRetryStream(
     request: EditAndRetryRequestData,
   ): AsyncGenerator<ChatStreamOutput> {
-    const { conversationId, messageIndex, newMessage, configId } = request;
+    const { conversationId, messageIndex, newMessage, configId, modelOverride } = request;
 
     // 1. 确保对话存在
     await this.ensureConversation(conversationId);
@@ -907,7 +918,9 @@ export class ChatFlowService {
       conversationId,
       configId,
       config,
+      modelOverride,
       abortSignal: request.abortSignal,
+      summarizeAbortSignal: request.summarizeAbortSignal,
       isFirstMessage: isEditFirstMessage,
       maxIterations: maxToolIterations,
     })) {
@@ -1004,9 +1017,11 @@ export class ChatFlowService {
         config,
         modelOverride,
         abortSignal: request.abortSignal,
+        summarizeAbortSignal: request.summarizeAbortSignal,
         isFirstMessage: false,
         maxIterations: this.getMaxToolIterations(),
         createBeforeModelCheckpoint: false,
+        isNewTurn: false,
       })) {
         yield output as ChatStreamOutput;
       }
@@ -1028,9 +1043,11 @@ export class ChatFlowService {
         config,
         modelOverride,
         abortSignal: request.abortSignal,
+        summarizeAbortSignal: request.summarizeAbortSignal,
         isFirstMessage: false,
         maxIterations: this.getMaxToolIterations(),
         createBeforeModelCheckpoint: false,
+        isNewTurn: false,
       })) {
         yield output as ChatStreamOutput;
       }
@@ -1299,11 +1316,13 @@ export class ChatFlowService {
       config,
       modelOverride,
       abortSignal: request.abortSignal,
+      summarizeAbortSignal: request.summarizeAbortSignal,
       // 工具确认后的继续对话不视为首条消息
       isFirstMessage: false,
       maxIterations: maxToolIterations,
       // 原逻辑未在确认后的循环中创建模型消息前检查点，这里保持一致
       createBeforeModelCheckpoint: false,
+      isNewTurn: false,
     })) {
       yield output as ChatStreamOutput;
     }

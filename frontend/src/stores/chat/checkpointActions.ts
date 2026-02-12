@@ -12,6 +12,12 @@ import { calculateBackendIndex } from './messageActions'
 import { syncTotalMessagesFromWindow, setTotalMessagesFromWindow, trimWindowFromTop } from './windowUtils'
 import { refreshCurrentConversationBuildSession } from './conversationActions'
 
+function resolveConversationModelOverride(state: ChatStoreState): string | undefined {
+  const selected = (state.selectedModelId.value || '').trim()
+  const configModel = (state.currentConfig.value?.model || '').trim()
+  return selected && selected !== configModel ? selected : undefined
+}
+
 /**
  * 根据消息索引获取关联的检查点
  */
@@ -160,9 +166,11 @@ export async function restoreAndRetry(
     state.streamingMessageId.value = assistantMessageId
     
     // 6. 调用后端重试
+    const modelOverride = resolveConversationModelOverride(state)
     await sendToExtension('retryStream', {
       conversationId: state.currentConversationId.value,
-      configId: state.configId.value
+      configId: state.configId.value,
+      modelOverride
     })
     
   } catch (err: any) {
@@ -354,12 +362,14 @@ export async function restoreAndEdit(
       : undefined
     
     // 7. 调用后端编辑并重试
+    const modelOverride = resolveConversationModelOverride(state)
     await sendToExtension('editAndRetryStream', {
       conversationId: state.currentConversationId.value,
       messageIndex: backendMessageIndex,
       newMessage: newContent,
       attachments: attachmentData,
-      configId: state.configId.value
+      configId: state.configId.value,
+      modelOverride
     })
     
   } catch (err: any) {
@@ -391,15 +401,43 @@ export async function summarizeContext(
 ): Promise<{
   success: boolean
   summarizedMessageCount?: number
+  errorCode?: string
   error?: string
 }> {
-  if (!state.currentConversationId.value) {
-    return { success: false, error: 'No conversation selected' }
+  const originConversationId = state.currentConversationId.value
+
+  const setManualSummaryStatusForConversation = (
+    status: { isSummarizing: boolean; mode?: 'auto' | 'manual'; message?: string } | null
+  ) => {
+    // 当前仍是原对话，直接更新当前状态
+    if (!originConversationId || originConversationId === state.currentConversationId.value) {
+      state.autoSummaryStatus.value = status
+      return
+    }
+
+    // 对话已切换，更新原对话对应标签页快照，避免跨对话污染
+    const tab = state.openTabs.value.find(t => t.conversationId === originConversationId)
+    if (!tab) return
+
+    const snapshot = state.sessionSnapshots.value.get(tab.id)
+    if (snapshot) {
+      snapshot.autoSummaryStatus = status ? { ...status } : null
+    }
+  }
+
+  if (!originConversationId) {
+    return { success: false, errorCode: 'NO_CONVERSATION', error: 'No conversation selected' }
   }
   
   if (!state.configId.value) {
-    return { success: false, error: 'No config selected' }
+    return { success: false, errorCode: 'NO_CONFIG', error: 'No config selected' }
   }
+
+  // 显示底部提示（对话级隔离）
+  setManualSummaryStatusForConversation({
+    isSummarizing: true,
+    mode: 'manual'
+  })
   
   try {
     // 只传递必要参数，所有配置项从后端读取
@@ -409,7 +447,7 @@ export async function summarizeContext(
       summarizedMessageCount?: number
       error?: { code: string; message: string }
     }>('summarizeContext', {
-      conversationId: state.currentConversationId.value,
+      conversationId: originConversationId,
       configId: state.configId.value
     })
     
@@ -424,13 +462,32 @@ export async function summarizeContext(
     } else {
       return {
         success: false,
+        errorCode: result.error?.code,
         error: result.error?.message || 'Summarize failed'
       }
     }
   } catch (err: any) {
     return {
       success: false,
+      errorCode: err?.code,
       error: err.message || 'Summarize failed'
     }
+  } finally {
+    // 结束提示（对话级隔离）
+    setManualSummaryStatusForConversation(null)
+  }
+}
+
+/**
+ * 取消当前对话的总结请求（仅取消总结 API，不影响后续 AI 响应）
+ */
+export async function cancelSummarizeRequest(state: ChatStoreState): Promise<void> {
+  const conversationId = state.currentConversationId.value
+  if (!conversationId) return
+
+  try {
+    await sendToExtension('cancelSummarizeRequest', { conversationId })
+  } catch (error) {
+    console.error('[checkpointActions] Failed to cancel summarize request:', error)
   }
 }

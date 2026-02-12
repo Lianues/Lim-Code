@@ -777,6 +777,11 @@ ${descriptionSuffix}`,
                             }
                         };
                         diffManager.addStatusListener(statusListener);
+
+                        // createPendingDiff 在 autoApplyWithoutDiffView 模式下可能会在返回前就完成。
+                        // 这里立刻检查一次，避免错过状态变化事件导致 Promise 一直不 resolve。
+                        const current = diffManager.getDiff(pendingDiff.id);
+                        if (!current || current.status !== 'pending') finish(false);
                     });
 
                     // 获取最终状态
@@ -818,6 +823,8 @@ ${descriptionSuffix}`,
                                 failedCount,
                                 results,
                                 diffContentId,
+                                diffGuardWarning: pendingDiff.diffGuardWarning,
+                                diffGuardDeletePercent: pendingDiff.diffGuardDeletePercent,
                                 fallbackMode
                             }
                         };
@@ -845,6 +852,8 @@ ${descriptionSuffix}`,
                             userEditedContent,
                             diffContentId,
                             fallbackMode,
+                            diffGuardWarning: pendingDiff.diffGuardWarning,
+                            diffGuardDeletePercent: pendingDiff.diffGuardDeletePercent,
                             pendingDiffId: pendingDiff.id
                         }
                     };
@@ -979,6 +988,11 @@ ${descriptionSuffix}`,
                         }
                     };
                     diffManager.addStatusListener(statusListener);
+
+                    // createPendingDiff 在 autoApplyWithoutDiffView 模式下可能会在返回前就完成。
+                    // 这里立刻检查一次，避免错过状态变化事件导致 Promise 一直不 resolve。
+                    const current = diffManager.getDiff(pendingDiff.id);
+                    if (!current || current.status !== 'pending') finish(false);
                 });
 
                 const finalDiff = diffManager.getDiff(pendingDiff.id);
@@ -1014,7 +1028,9 @@ ${descriptionSuffix}`,
                             appliedCount,
                             failedCount,
                             results: diffResults,
-                            diffContentId
+                            diffContentId,
+                            diffGuardWarning: pendingDiff.diffGuardWarning,
+                            diffGuardDeletePercent: pendingDiff.diffGuardDeletePercent
                         }
                     };
                 }
@@ -1043,6 +1059,8 @@ ${descriptionSuffix}`,
                         results: diffResults,
                         userEditedContent,
                         diffContentId,
+                        diffGuardWarning: pendingDiff.diffGuardWarning,
+                        diffGuardDeletePercent: pendingDiff.diffGuardDeletePercent,
                         pendingDiffId: pendingDiff.id
                     }
                 };

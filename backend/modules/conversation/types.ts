@@ -403,6 +403,15 @@ export interface Content {
      * 记录此总结替代了多少条原始消息
      */
     summarizedMessageCount?: number;
+
+    /**
+     * 标识此总结消息是否由系统自动触发
+     *
+     * 仅当 isSummary=true 时有意义
+     * - true: 自动总结（由上下文阈值触发）
+     * - false/undefined: 手动总结
+     */
+    isAutoSummary?: boolean;
     
     /**
      * 标识此消息是用户主动输入的消息
@@ -465,6 +474,20 @@ export interface Content {
      * @deprecated 使用 usageMetadata.candidatesTokenCount 代替
      */
     candidatesTokenCount?: number;
+    
+    /**
+     * 当前回合的动态上下文缓存（仅存在于回合起始的 user 消息上）
+     *
+     * 在回合开始时（用户发送消息）一次性生成动态上下文并存到此字段，
+     * 回合内的所有迭代（包括工具确认后的继续、重试等）复用此缓存，
+     * 确保同一回合内动态上下文保持一致。
+     *
+     * 仅存储纯文本内容，读取时重建为 Content[] 格式。
+     *
+     * 注意：此字段为后端内部字段，不会发送给 AI（getHistoryForAPI 自动过滤），
+     * 也不会传给前端（getMessagesPaged 中过滤）。
+     */
+    turnDynamicContext?: string;
 }
 
 /**

@@ -128,8 +128,8 @@ export class OpenAIFormatter extends BaseFormatter {
                     ...processedHistory.slice(insertIndex)
                 ];
             } else {
-                // 回退到追加到末尾的行为
-                processedHistory = [...processedHistory, ...dynamicContextMessages];
+                // 找不到用户主动消息（如自动总结后），插入到历史最前面（总结消息之前）
+                processedHistory = [...dynamicContextMessages, ...processedHistory];
             }
         }
         

@@ -20,6 +20,8 @@ import {
   handleToolIteration,
   handleComplete,
   handleCheckpoints,
+  handleAutoSummaryStatus,
+  handleAutoSummary,
   handleCancelled,
   handleError
 } from './streamChunkHandlers'
@@ -98,6 +100,14 @@ export function handleStreamChunk(
     case 'checkpoints':
       handleCheckpoints(chunk, addCheckpoint)
       break
+
+    case 'autoSummaryStatus':
+      handleAutoSummaryStatus(chunk, state)
+      break
+
+    case 'autoSummary':
+      handleAutoSummary(chunk, state)
+      break
       
     case 'cancelled':
       handleCancelled(chunk, state)
@@ -112,8 +122,12 @@ export function handleStreamChunk(
 /**
  * 批量处理多条流式响应（性能优化）。
  *
- * 将连续的 toolStatus chunk 合并为一次 allMessages 替换，
- * 其余类型仍逐条处理。整个批量在同一同步上下文中完成，
+ * 优化策略：
+ * 1. 如果 batch 中包含终结事件（complete/toolsExecuting/toolIteration/awaitingConfirmation/cancelled/error），
+ *    跳过终结事件之前的所有 chunk 类型消息（因为终结事件会用后端权威数据覆盖前端流式状态），
+ *    避免对即将被覆盖的 partialArgs 做无意义的 JSON.parse。
+ * 2. 将连续的 toolStatus chunk 合并为一次 allMessages 替换。
+ * 3. 整个批量在同一同步上下文中完成，
  * Vue 会自动将所有响应式变更合并为一次组件更新。
  */
 export function handleStreamChunkBatch(
@@ -121,9 +135,36 @@ export function handleStreamChunkBatch(
   ctx: StreamHandlerContext
 ): void {
   const { state } = ctx
+
+  // 查找 batch 中最后一个终结事件的位置
+  // 终结事件会用后端权威数据完整覆盖前端流式状态，
+  // 所以终结事件之前的 chunk 类型消息可以全部跳过
+  const TERMINAL_TYPES = new Set(['complete', 'toolsExecuting', 'toolIteration', 'awaitingConfirmation', 'cancelled', 'error'])
+  let lastTerminalIndex = -1
+  for (let k = chunks.length - 1; k >= 0; k--) {
+    if (TERMINAL_TYPES.has(chunks[k].type)) {
+      lastTerminalIndex = k
+      break
+    }
+  }
+
+  // 计算需要跳过的 chunk 范围上界：
+  // 终结事件之前的所有 'chunk' 类型消息的增量解析是浪费的（即将被终结事件覆盖），
+  // 但 checkpoints/toolStatus 等非 chunk 消息仍需正常处理
+  let skipChunksBefore = 0
+  if (lastTerminalIndex > 0) {
+    skipChunksBefore = lastTerminalIndex
+  }
+
   let i = 0
   while (i < chunks.length) {
     const chunk = chunks[i]
+
+    // 跳过终结事件之前的 chunk 类型（增量解析即将被覆盖，纯属浪费）
+    if (chunk.type === 'chunk' && i < skipChunksBefore) {
+      i++
+      continue
+    }
 
     // 对连续的 toolStatus chunk，收集为一组批量处理
     if (

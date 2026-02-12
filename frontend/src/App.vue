@@ -98,6 +98,15 @@ async function handleEdit(messageId: string, newContent: string, editAttachments
   }
 }
 
+// 处理取消总结请求（仅取消总结 API，不中断主对话请求）
+async function handleCancelSummarize() {
+  try {
+    await chatStore.cancelSummarizeRequest()
+  } catch (err) {
+    console.error('取消总结失败:', err)
+  }
+}
+
 // 处理删除消息 - 使用 allMessages 索引（由 MessageList 直接调用 store）
 async function handleDelete(messageId: string) {
   const index = chatStore.allMessages.findIndex((m: Message) => m.id === messageId)
@@ -264,6 +273,7 @@ onMounted(async () => {
         @switch-tab="chatStore.switchTab"
         @close-tab="chatStore.closeTab"
         @new-tab="handleNewTab"
+        @reorder-tab="chatStore.reorderTab"
       />
 
       <!-- 主聊天区域 -->
@@ -286,6 +296,29 @@ onMounted(async () => {
           @retry="handleRetry"
           @copy="handleCopy"
         />
+
+        <!-- 自动总结进行中提示 -->
+        <div
+          v-if="chatStore.autoSummaryStatus && chatStore.autoSummaryStatus.isSummarizing"
+          class="auto-summary-panel"
+          :class="{ 'with-retry': chatStore.retryStatus && chatStore.retryStatus.isRetrying }"
+        >
+          <i class="codicon codicon-loading spin auto-summary-icon"></i>
+          <span>
+            {{
+              chatStore.autoSummaryStatus.message ||
+              (chatStore.autoSummaryStatus.mode === 'manual'
+                ? t('app.autoSummaryPanel.manualSummarizing')
+                : t('app.autoSummaryPanel.summarizing'))
+            }}
+          </span>
+          <button
+            class="auto-summary-cancel-btn"
+            :title="t('app.autoSummaryPanel.cancelTooltip')"
+            @click="handleCancelSummarize"
+          ><i class="codicon codicon-close"></i>
+          </button>
+        </div>
         
         <!-- 重试状态提示面板 -->
         <div
@@ -360,6 +393,59 @@ onMounted(async () => {
   min-height: 0;
   overflow: hidden;
   position: relative;
+}
+
+/* 自动总结提示（显示在聊天区域底部） */
+.auto-summary-panel {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  z-index: 99;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--vscode-foreground);
+  background: var(--vscode-editorWidget-background, rgba(127, 127, 127, 0.12));
+  border: 1px solid var(--vscode-panel-border, rgba(127, 127, 127, 0.3));
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+}
+
+.auto-summary-icon {
+  color: var(--vscode-descriptionForeground);
+}
+
+.auto-summary-panel > span {
+  flex: 1;
+  min-width: 0;
+}
+
+.auto-summary-cancel-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: var(--vscode-foreground);
+  opacity: 0.75;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.auto-summary-cancel-btn:hover {
+  opacity: 1;
+  background: var(--vscode-toolbar-hoverBackground);
+}
+
+.auto-summary-panel.with-retry {
+  /* 避开重试面板 */
+  bottom: 220px;
 }
 
 /* 重试状态面板（黑白灰配色，只有图标用黄色） */

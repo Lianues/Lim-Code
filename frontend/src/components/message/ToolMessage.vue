@@ -59,6 +59,9 @@ const toolIdToPendingId = ref<Map<string, string>>(new Map())
 
 // 工具 ID 到 diff 警戒值警告的映射
 const diffGuardWarnings = ref<Map<string, { warning: string; deletePercent: number }>>(new Map())
+// 持久警戒值缓存：一旦出现过警戒，工具结束后仍保留在消息上显示
+// （避免 pending 结束后 diff.statusChanged 把临时映射清空）
+const persistedDiffGuardWarnings = ref<Map<string, { warning: string; deletePercent: number }>>(new Map())
 
 // 记录曾经出现过的 diff 工具（避免在 diff 刚开始、映射尚未同步前误判为错误）
 const seenDiffToolIds = ref<Set<string>>(new Set())
@@ -293,7 +296,18 @@ onMounted(async () => {
         })
       }
     }
+
+    // 实时警告（仅当前 pending）
     diffGuardWarnings.value = newWarnings
+
+    // 持久化警告（工具结束后继续显示在消息上）
+    if (newWarnings.size > 0) {
+      const nextPersisted = new Map(persistedDiffGuardWarnings.value)
+      for (const [toolId, warning] of newWarnings.entries()) {
+        nextPersisted.set(toolId, warning)
+      }
+      persistedDiffGuardWarnings.value = nextPersisted
+    }
 
     // 记录已出现过的 diff 工具 ID
     const nextSeen = new Set(seenDiffToolIds.value)
@@ -546,7 +560,8 @@ async function sendToolConfirmation(toolResponses: Array<{ id: string; name: str
       configId: currentConfig.id,
       modelOverride: chatStore.pendingModelOverride || undefined,
       toolResponses,
-      annotation
+      annotation,
+      promptModeId: chatStore.currentPromptModeId
     })
   } catch (error) {
     console.error('Failed to send tool confirmation:', error)
@@ -638,6 +653,28 @@ function getDiffFilePaths(tool: ToolUsage): string[] {
   const result = config.getDiffFilePath(tool.args, tool.result as Record<string, unknown> | undefined)
   if (Array.isArray(result)) return result
   return result ? [result] : []
+}
+
+// 获取 diff 警戒值警告（优先使用实时 pending 数据，其次使用工具结果中的兜底数据）
+function getDiffGuardWarning(tool: ToolUsage): { warning: string; deletePercent: number } | null {
+  const realtime = diffGuardWarnings.value.get(tool.id)
+  if (realtime?.warning) {
+    return realtime
+  }
+  const persisted = persistedDiffGuardWarnings.value.get(tool.id)
+  if (persisted?.warning) {
+    return persisted
+  }
+
+
+  const data = (tool.result as any)?.data
+  if (data?.diffGuardWarning) {
+    return {
+      warning: String(data.diffGuardWarning),
+      deletePercent: Number(data.diffGuardDeletePercent ?? 0)
+    }
+  }
+  return null
 }
 
 // 打开 diff 预览（在 VSCode 中）
@@ -897,16 +934,16 @@ function renderToolContent(tool: ToolUsage) {
         <component :is="() => renderToolContent(tool)" />
       </div>
 
+      <!-- Diff 警戒值警告（pending 或已结束都可展示） -->
+      <div v-if="getDiffGuardWarning(tool)" class="diff-guard-warning">
+        <i class="codicon codicon-warning"></i>
+        <span class="diff-guard-text">
+          {{ getDiffGuardWarning(tool)!.warning }}
+        </span>
+      </div>
+
       <!-- Diff 工具确认操作栏 (位于外层，不随展开面板隐藏) -->
       <div v-if="isDiffToolPending(tool)" class="diff-action-footer">
-        <!-- Diff 警戒值警告 -->
-        <div v-if="diffGuardWarnings.get(tool.id)" class="diff-guard-warning">
-          <i class="codicon codicon-warning"></i>
-          <span class="diff-guard-text">
-            {{ diffGuardWarnings.get(tool.id)!.warning }}
-          </span>
-        </div>
-        
         <div class="footer-top" v-if="applyDiffConfigs.get(tool.id)?.autoSave">
           <div class="timer-container">
             <div class="timer-bar" :style="{ width: (applyDiffProgress.get(tool.id) || 0) + '%' }"></div>

@@ -42,7 +42,7 @@ export function createChatComputed(state: ChatStoreState): ChatStoreComputed {
   const showEmptyState = computed(() => state.allMessages.value.length === 0 && !state.isLoading.value)
   
   /** 当前模型名称（用于显示） */
-  const currentModelName = computed(() => state.currentConfig.value?.model || state.configId.value)
+  const currentModelName = computed(() => state.selectedModelId.value || state.currentConfig.value?.model || state.configId.value)
   
   /** 最大上下文 Tokens（从配置获取） */
   const maxContextTokens = computed(() => state.currentConfig.value?.maxContextTokens || 128000)

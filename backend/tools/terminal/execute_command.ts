@@ -715,6 +715,22 @@ ${getAvailableShellsDescription()}${workspaceDescription}
                     // 使用 TaskManager 注册任务
                     // 创建一个 AbortController 用于统一取消
                     const taskAbortController = new AbortController();
+                    
+                    // 监听 taskAbortController 的 signal（通过 TaskManager.cancelTask 取消时触发）
+                    {
+                        const taskAbortHandler = () => {
+                            // 通过 TaskManager 取消时，终止进程树
+                            killTerminalProcess(terminalId);
+                        };
+                        
+                        taskAbortController.signal.addEventListener('abort', taskAbortHandler, { once: true });
+                        
+                        // 进程结束时移除监听器
+                        proc.on('close', () => {
+                            taskAbortController.signal.removeEventListener('abort', taskAbortHandler);
+                        });
+                    }
+                    
                     TaskManager.registerTask(terminalId, TASK_TYPE_TERMINAL, taskAbortController, {
                         command,
                         cwd: workingDir,
@@ -803,9 +819,23 @@ ${getAvailableShellsDescription()}${workspaceDescription}
                     let timeoutHandle: NodeJS.Timeout | undefined;
                     if (timeout > 0) {
                         timeoutHandle = setTimeout(() => {
-                            proc.kill('SIGTERM');
                             terminalProcess.killed = true;
                             terminalProcess.error = `Command timed out after ${timeout}ms`;
+                            // 使用 tree-kill 终止整个进程树，而非仅杀父进程
+                            const pid = proc.pid;
+                            if (pid) {
+                                treeKill(pid, 'SIGTERM', (err) => {
+                                    if (err) {
+                                        try {
+                                            proc.kill('SIGKILL');
+                                        } catch {
+                                            // 忽略错误，进程可能已经退出
+                                        }
+                                    }
+                                });
+                            } else {
+                                proc.kill('SIGTERM');
+                            }
                         }, timeout);
                     }
 

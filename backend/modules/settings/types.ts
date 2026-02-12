@@ -129,6 +129,28 @@ export type ApplyDiffFormat = 'unified' | 'search_replace';
 
 
 /**
+ * History Search 工具配置
+ */
+export interface HistorySearchToolConfig {
+    /** search 模式下最大返回匹配数 */
+    maxSearchMatches: number;
+
+    /** search 模式下每个匹配的上下文行数（前后各取） */
+    searchContextLines: number;
+
+    /** read 模式下单次最大读取行数 */
+    maxReadLines: number;
+
+    /** 返回结果的最大总字符数限制 */
+    maxResultChars: number;
+
+    /** 输出时单行的最大显示字符数（超出部分省略，可通过单行 read 获取完整内容） */
+    lineDisplayLimit: number;
+
+    [key: string]: unknown;
+}
+
+/**
  * Apply Diff 工具配置
  */
 export interface ApplyDiffToolConfig {
@@ -972,19 +994,14 @@ export const DEFAULT_TOKEN_COUNT_CONFIG: TokenCountConfig = {
  */
 export interface SummarizeConfig {
     /**
-     * 是否启用自动总结
-     */
-    autoSummarize: boolean;
-    
-    /**
-     * 自动总结触发阈值（百分比）
-     */
-    autoSummarizeThreshold: number;
-    
-    /**
-     * 总结提示词
+     * 手动总结提示词
      */
     summarizePrompt: string;
+
+    /**
+     * 自动总结提示词
+     */
+    autoSummarizePrompt: string;
     
     /**
      * 保留最近 N 轮不总结
@@ -1129,6 +1146,7 @@ export interface ToolsConfig {
     system_prompt?: SystemPromptConfig;
     token_count?: TokenCountConfig;
     subagents?: SubAgentsConfig;
+    history_search?: HistorySearchToolConfig;
     [toolName: string]: Record<string, unknown> | undefined;
 }
 
@@ -1480,6 +1498,17 @@ export const DEFAULT_DELETE_FILE_CONFIG: DeleteFileToolConfig = {
 };
 
 /**
+ * 默认 history_search 配置
+ */
+export const DEFAULT_HISTORY_SEARCH_CONFIG: HistorySearchToolConfig = {
+    maxSearchMatches: 30,
+    searchContextLines: 3,
+    maxReadLines: 300,
+    maxResultChars: 30000,
+    lineDisplayLimit: 500
+};
+
+/**
  * 获取默认的 execute_command 配置
  * 根据操作系统自动设置默认 shell
  * 所有 shell 默认启用，用户自己配置路径
@@ -1580,9 +1609,26 @@ export const DEFAULT_TOOL_AUTO_EXEC_CONFIG: ToolAutoExecConfig = {
  * 默认总结配置
  */
 export const DEFAULT_SUMMARIZE_CONFIG: SummarizeConfig = {
-    autoSummarize: false,
-    autoSummarizeThreshold: 80,
     summarizePrompt: 'Please summarize the above conversation, keeping key information and context points while removing redundant content.',
+    autoSummarizePrompt: `Please summarize the above conversation history and output the following sections, so that the AI can continue completing the unfinished tasks.
+
+## User Requirements
+What the user wants to accomplish (overall goal).
+
+## Completed Work
+List what has been done in chronological order, including which files were changed and what decisions were made.
+File paths, variable names, and configuration values must be preserved exactly, do not generalize.
+
+## Current Progress
+What step has been reached, what is currently being done.
+
+## TODO Items
+What still needs to be done, listed by priority.
+
+## Important Conventions
+Constraints, preferences, and technical requirements raised by the user (e.g., "do not use third-party libraries", "use TypeScript", etc.).
+
+Output content directly without any prefix.`,
     keepRecentRounds: 2,
     useSeparateModel: false,
     summarizeChannelId: '',

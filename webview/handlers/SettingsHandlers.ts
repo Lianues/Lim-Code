@@ -3,6 +3,7 @@
  */
 
 import { t } from '../../backend/i18n';
+import { DEFAULT_SUMMARIZE_CONFIG } from '../../backend/modules/settings/types';
 import type { HandlerContext, MessageHandler } from '../types';
 
 /**
@@ -91,6 +92,17 @@ export const updateSummarizeConfig: MessageHandler = async (data, requestId, ctx
     ctx.sendResponse(requestId, { success: true });
   } catch (error: any) {
     ctx.sendError(requestId, 'UPDATE_SUMMARIZE_CONFIG_ERROR', error.message || t('webview.errors.updateSummarizeConfigFailed'));
+  }
+};
+
+/**
+ * 获取内置默认总结配置
+ */
+export const getDefaultSummarizeConfig: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    ctx.sendResponse(requestId, DEFAULT_SUMMARIZE_CONFIG);
+  } catch (error: any) {
+    ctx.sendError(requestId, 'GET_DEFAULT_SUMMARIZE_CONFIG_ERROR', error.message || t('webview.errors.getSummarizeConfigFailed'));
   }
 };
 
@@ -228,6 +240,7 @@ export function registerSettingsHandlers(registry: Map<string, MessageHandler>):
   registry.set('settings.getActiveChannelId', getActiveChannelId);
   registry.set('settings.setActiveChannelId', setActiveChannelId);
   registry.set('getSummarizeConfig', getSummarizeConfig);
+  registry.set('getDefaultSummarizeConfig', getDefaultSummarizeConfig);
   registry.set('updateSummarizeConfig', updateSummarizeConfig);
   registry.set('getGenerateImageConfig', getGenerateImageConfig);
   registry.set('updateGenerateImageConfig', updateGenerateImageConfig);

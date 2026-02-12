@@ -8,7 +8,7 @@ import type { Message, StreamChunk, ToolUsage, ToolExecutionResult } from '../..
 import type { ChatStoreState, CheckpointRecord } from './types'
 import { triggerRef } from 'vue'
 import { generateId } from '../../utils/format'
-import { contentToMessage } from './parsers'
+import { contentToMessage, contentToMessageEnhanced } from './parsers'
 import {
   addTextToMessage,
   processStreamingText,
@@ -784,6 +784,7 @@ export function handleComplete(
   state.streamingMessageId.value = null
   state.isStreaming.value = false
   state.isWaitingForResponse.value = false  // 结束等待
+  state.autoSummaryStatus.value = null
   state.pendingModelOverride.value = null
   state._lastCancelledStreamId.value = null
   
@@ -804,6 +805,96 @@ export function handleCheckpoints(
       addCheckpoint(cp)
     }
   }
+}
+
+/**
+ * 处理 autoSummaryStatus 类型
+ */
+export function handleAutoSummaryStatus(
+  chunk: StreamChunk,
+  state: ChatStoreState
+): void {
+  if (!chunk.autoSummaryStatus || !chunk.status) {
+    return
+  }
+
+  if (chunk.status === 'started') {
+    state.autoSummaryStatus.value = {
+      isSummarizing: true,
+      mode: 'auto',
+      message: chunk.message
+    }
+    return
+  }
+
+  // completed / failed 都结束提示
+  state.autoSummaryStatus.value = null
+}
+
+
+/**
+ * 处理 autoSummary 类型
+ *
+ * 自动总结是在后端历史中直接 insertContent 的，
+ * 前端需要同步插入一条总结消息，避免必须重载历史才能看到。
+ */
+export function handleAutoSummary(
+  chunk: StreamChunk,
+  state: ChatStoreState
+): void {
+  if (!chunk.summaryContent || typeof chunk.insertIndex !== 'number') {
+    return
+  }
+
+  const insertIndex = chunk.insertIndex
+
+  // 去重：避免重复插入同一个 summary
+  const exists = state.allMessages.value.some(
+    m => m.isSummary && typeof m.backendIndex === 'number' && m.backendIndex === insertIndex
+  )
+  if (exists) {
+    return
+  }
+
+  // 如果插入位置在当前窗口之前，仅维护索引偏移即可
+  if (insertIndex < state.windowStartIndex.value) {
+    state.windowStartIndex.value += 1
+    for (const msg of state.allMessages.value) {
+      if (typeof msg.backendIndex === 'number') {
+        msg.backendIndex += 1
+      }
+    }
+    syncTotalMessagesFromWindow(state)
+    return
+  }
+
+  // 先将当前窗口中插入点及之后的 backendIndex 后移 1
+  for (const msg of state.allMessages.value) {
+    if (typeof msg.backendIndex === 'number' && msg.backendIndex >= insertIndex) {
+      msg.backendIndex += 1
+    }
+  }
+
+  const summaryMessage = contentToMessageEnhanced(chunk.summaryContent)
+  summaryMessage.backendIndex = insertIndex
+  summaryMessage.timestamp = chunk.summaryContent.timestamp || Date.now()
+  summaryMessage.localOnly = false
+  summaryMessage.streaming = false
+
+  const localInsertIndex = Math.min(
+    Math.max(insertIndex - state.windowStartIndex.value, 0),
+    state.allMessages.value.length
+  )
+
+  state.allMessages.value = [
+    ...state.allMessages.value.slice(0, localInsertIndex),
+    summaryMessage,
+    ...state.allMessages.value.slice(localInsertIndex)
+  ]
+
+  syncTotalMessagesFromWindow(state)
+  trimWindowFromTop(state)
+  state.autoSummaryStatus.value = null
 }
 
 /**
@@ -920,6 +1011,7 @@ export function handleCancelled(chunk: StreamChunk, state: ChatStoreState): void
   state.streamingMessageId.value = null
   state.isStreaming.value = false
   state.isWaitingForResponse.value = false
+  state.autoSummaryStatus.value = null
   state.pendingModelOverride.value = null
   state._lastCancelledStreamId.value = null
 }
@@ -962,6 +1054,7 @@ export function handleError(chunk: StreamChunk, state: ChatStoreState): void {
   
   state.isStreaming.value = false
   state.isWaitingForResponse.value = false  // 结束等待
+  state.autoSummaryStatus.value = null
   state.pendingModelOverride.value = null
   state._lastCancelledStreamId.value = null
 }

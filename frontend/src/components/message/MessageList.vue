@@ -464,14 +464,26 @@ let resizeObserver: ResizeObserver | null = null
 
 // 多实例模式下：当此标签页变为活跃时，滚动到底部并恢复 TODO 展开状态
 // （不再重置 visibleCount，因为每个实例独立维护自己的分页状态）
-watch(() => props.isActive, (active, wasActive) => {
-  if (active && !wasActive) {
+watch(() => props.isActive, (active, wasActive: boolean | undefined) => {
+  if (active && (wasActive === undefined || !wasActive)) {
     // 刚切换到此标签页，标记需要滚动到底部
     needsScrollToBottom.value = true
     restoreTodoExpandedState()
-    // 尝试滚动（如果容器已就绪）
-    nextTick(() => tryScrollToBottom())
+    // 尝试即时滚动（如果容器已就绪）
+    nextTick(() => tryScrollToBottom({ instant: true }))
   }
+}, { immediate: true })
+
+// 监听对话切换：当前活跃标签页内加载新对话时，重置分页并滚动到底部
+watch(() => chatStore.currentConversationId, (newId, oldId) => {
+  if (!props.isActive) return
+  if (newId === oldId) return
+
+  // 重置分页计数（新对话从最后一页开始显示）
+  visibleCount.value = VISIBLE_INCREMENT
+  // 标记需要滚动到底部
+  needsScrollToBottom.value = true
+  nextTick(() => tryScrollToBottom({ instant: true }))
 })
 
 // 监听消息变化，当消息加载完成时尝试滚动
@@ -479,12 +491,12 @@ watch(() => props.messages, (newMessages) => {
   // 当消息加载完成时，尝试滚动
   // 如果容器还没有尺寸（display: none），ResizeObserver 会在可见时触发
   if (needsScrollToBottom.value && newMessages.length > 0) {
-    tryScrollToBottom()
+    tryScrollToBottom({ instant: true })
   }
 }, { deep: false })
 
 // 尝试滚动到底部（会检查容器是否准备好）
-function tryScrollToBottom() {
+function tryScrollToBottom(options?: { instant?: boolean }) {
   if (!scrollbarRef.value) return
   
   const container = scrollbarRef.value.getContainer()
@@ -494,7 +506,7 @@ function tryScrollToBottom() {
   if (container.scrollHeight > 0 && container.clientHeight > 0) {
     if (needsScrollToBottom.value) {
       needsScrollToBottom.value = false
-      scrollbarRef.value.scrollToBottom()
+      scrollbarRef.value.scrollToBottom(options?.instant ? { instant: true } : undefined)
     }
   }
   // 如果容器还没有尺寸，ResizeObserver 会在可见时触发
@@ -520,7 +532,7 @@ onMounted(() => {
         if (height > 0 && needsScrollToBottom.value) {
           // 使用 requestAnimationFrame 确保布局完成
           requestAnimationFrame(() => {
-            tryScrollToBottom()
+            tryScrollToBottom({ instant: true })
           })
         }
       }

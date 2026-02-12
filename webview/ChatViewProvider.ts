@@ -310,6 +310,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.messageRouter = new MessageRouter(
             this.chatHandler,
             this.conversationManager,
+            this.settingsManager,
             () => this._view,
             this.sendResponse.bind(this),
             this.sendError.bind(this)

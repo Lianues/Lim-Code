@@ -75,7 +75,6 @@ const configs = ref<any[]>([])
 const isLoadingConfigs = ref(false)
 
 const promptModes = ref<PromptMode[]>([])
-const currentModeId = ref('code')
 
 const channelOptions = computed<ChannelOption[]>(() =>
   configs.value
@@ -91,7 +90,7 @@ const channelOptions = computed<ChannelOption[]>(() =>
 const modeOptions = computed<PromptMode[]>(() => promptModes.value)
 
 const currentConfig = computed(() => configs.value.find(c => c.id === chatStore.configId))
-const currentModel = computed(() => currentConfig.value?.model || '')
+const currentModel = computed(() => chatStore.selectedModelId || currentConfig.value?.model || '')
 const currentModels = computed(() => currentConfig.value?.models || [])
 
 async function loadConfigs() {
@@ -118,7 +117,9 @@ async function loadPromptModes() {
     const result = await configService.getPromptModes()
     if (result) {
       promptModes.value = result.modes
-      currentModeId.value = result.currentModeId
+      // 仅在 store 还未设置过（使用默认值 'code'）且后端返回不同值时，才初始化 store
+      // 后续切换全部由 store 驱动，不再反向覆盖
+      // （注：初始加载时 store 可能已从对话元数据恢复，此处不强制覆盖）
     }
   } catch (error) {
     console.error('Failed to load prompt modes:', error)
@@ -127,8 +128,7 @@ async function loadPromptModes() {
 
 async function handleModeChange(modeId: string) {
   try {
-    await configService.setCurrentPromptMode(modeId)
-    currentModeId.value = modeId
+    await chatStore.setCurrentPromptModeId(modeId)
   } catch (error) {
     console.error('Failed to change mode:', error)
   }
@@ -144,17 +144,7 @@ async function handleChannelChange(channelId: string) {
 
 async function handleModelChange(modelId: string) {
   if (!chatStore.configId) return
-
-  try {
-    await configService.updateConfig(chatStore.configId, { model: modelId })
-
-    const config = configs.value.find(c => c.id === chatStore.configId)
-    if (config) config.model = modelId
-
-    await chatStore.loadCurrentConfig()
-  } catch (error) {
-    console.error('Failed to update model:', error)
-  }
+  await chatStore.setSelectedModelId(modelId)
 }
 
 // ========== Send / Cancel ==========
@@ -369,16 +359,15 @@ async function handleOpenContext(ctx: PromptContextItem) {
 
 // ========== summarize + token ring ==========
 
-const isSummarizing = ref(false)
+const isSummarizing = computed(() => !!chatStore.autoSummaryStatus?.isSummarizing)
 
 async function handleSummarize() {
   if (isSummarizing.value || chatStore.isWaitingForResponse) return
 
-  isSummarizing.value = true
   try {
     const result = await chatStore.summarizeContext()
 
-    if (!result.success) {
+    if (!result.success && result.errorCode !== 'ABORTED') {
       await showNotification(
         t('components.input.notifications.summarizeFailed', { error: result.error || t('common.unknownError') }),
         'warning'
@@ -395,8 +384,6 @@ async function handleSummarize() {
       t('components.input.notifications.summarizeError', { error: error.message || t('common.unknownError') }),
       'error'
     )
-  } finally {
-    isSummarizing.value = false
   }
 }
 
@@ -568,7 +555,7 @@ watch(() => settingsStore.promptModesVersion, () => {
     </div>
 
     <InputSelectorBar
-      :current-mode-id="currentModeId"
+      :current-mode-id="chatStore.currentPromptModeId"
       :mode-options="modeOptions"
       :is-loading-configs="isLoadingConfigs"
       :config-id="chatStore.configId"

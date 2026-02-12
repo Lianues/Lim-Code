@@ -14,6 +14,7 @@ import { updateTabConversationId, updateTabTitle } from './tabActions'
 import { clearCheckpointsFromIndex } from './checkpointActions'
 import { contentToMessageEnhanced } from './parsers'
 import { syncTotalMessagesFromWindow, setTotalMessagesFromWindow, trimWindowFromTop } from './windowUtils'
+import { persistConversationModelConfig, persistConversationPromptMode } from './configActions'
 
 /**
  * 安全写入错误信息（支持对话切换隔离）
@@ -84,6 +85,20 @@ export function calculateBackendIndex(messages: Message[], frontendIndex: number
 
 function getNextBackendIndex(state: ChatStoreState): number {
   return state.windowStartIndex.value + state.allMessages.value.length
+}
+
+function resolveConversationModelOverride(
+  state: ChatStoreState,
+  explicitOverride?: string
+): string | undefined {
+  if (typeof explicitOverride === 'string') {
+    const trimmed = explicitOverride.trim()
+    return trimmed || undefined
+  }
+
+  const selected = (state.selectedModelId.value || '').trim()
+  const configModel = (state.currentConfig.value?.model || '').trim()
+  return selected && selected !== configModel ? selected : undefined
 }
 
 function isEmptyAssistantPlaceholder(msg: Message | undefined): boolean {
@@ -203,6 +218,7 @@ export async function sendMessage(
 
   // 记录请求发起时的对话 ID，用于 catch 块中的对话切换检测
   let originConvId: string | null = state.currentConversationId.value
+  const effectiveModelOverride = resolveConversationModelOverride(state, options?.modelOverride)
   
   try {
     if (!state.currentConversationId.value) {
@@ -217,6 +233,9 @@ export async function sendMessage(
         const title = messageText.slice(0, 30) + (messageText.length > 30 ? '...' : '')
         updateTabTitle(state, state.activeTabId.value, title)
       }
+
+      await persistConversationModelConfig(state)
+      await persistConversationPromptMode(state)
     }
     
     if (hiddenFunctionResponse) {
@@ -235,7 +254,7 @@ export async function sendMessage(
     }
     
     const assistantMessageId = generateId()
-    const displayModelVersion = options?.modelOverride || computed.currentModelName.value
+    const displayModelVersion = effectiveModelOverride || computed.currentModelName.value
     const assistantMessage: Message = {
       id: assistantMessageId,
       role: 'assistant',
@@ -267,7 +286,7 @@ export async function sendMessage(
     
     state.toolCallBuffer.value = ''
     state.inToolCall.value = null
-    state.pendingModelOverride.value = options?.modelOverride || null
+    state.pendingModelOverride.value = effectiveModelOverride || null
     
     const attachmentData: AttachmentData[] | undefined = attachments && attachments.length > 0
       ? attachments.map(att => ({
@@ -287,8 +306,9 @@ export async function sendMessage(
       configId: state.configId.value,
       message: messageText,
       attachments: hiddenFunctionResponse ? undefined : attachmentData,
-      modelOverride: options?.modelOverride,
-      hiddenFunctionResponse
+      modelOverride: effectiveModelOverride,
+      hiddenFunctionResponse,
+      promptModeId: state.currentPromptModeId.value
     })
 
   } catch (err: any) {
@@ -383,9 +403,12 @@ export async function retryFromMessage(
     trimWindowFromTop(state)
 
     try {
+      const modelOverride = resolveConversationModelOverride(state)
       await sendToExtension('retryStream', {
         conversationId: state.currentConversationId.value,
-        configId: state.configId.value
+        configId: state.configId.value,
+        modelOverride,
+        promptModeId: state.currentPromptModeId.value
       })
     } catch (err: any) {
       if (state.isStreaming.value) {
@@ -475,9 +498,12 @@ export async function retryFromMessage(
   trimWindowFromTop(state)
   
   try {
+    const modelOverride = resolveConversationModelOverride(state)
     await sendToExtension('retryStream', {
       conversationId: state.currentConversationId.value,
-      configId: state.configId.value
+      configId: state.configId.value,
+      modelOverride,
+      promptModeId: state.currentPromptModeId.value
     })
   } catch (err: any) {
     if (state.isStreaming.value) {
@@ -534,9 +560,12 @@ export async function retryAfterError(
   trimWindowFromTop(state)
   
   try {
+    const modelOverride = resolveConversationModelOverride(state)
     await sendToExtension('retryStream', {
       conversationId: state.currentConversationId.value,
-      configId: state.configId.value
+      configId: state.configId.value,
+      modelOverride,
+      promptModeId: state.currentPromptModeId.value
     })
   } catch (err: any) {
     if (state.isStreaming.value) {
@@ -626,12 +655,15 @@ export async function editAndRetry(
     : undefined
   
   try {
+    const modelOverride = resolveConversationModelOverride(state)
     await sendToExtension('editAndRetryStream', {
       conversationId: state.currentConversationId.value,
       messageIndex: backendMessageIndex,
       newMessage,
       attachments: attachmentData,
-      configId: state.configId.value
+      configId: state.configId.value,
+      modelOverride,
+      promptModeId: state.currentPromptModeId.value
     })
   } catch (err: any) {
     if (state.isStreaming.value) {

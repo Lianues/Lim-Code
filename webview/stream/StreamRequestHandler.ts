@@ -7,6 +7,7 @@
 import type * as vscode from 'vscode';
 import type { ChatHandler } from '../../backend/modules/api/chat';
 import type { ConversationManager } from '../../backend/modules/conversation/ConversationManager';
+import type { SettingsManager } from '../../backend/modules/settings/SettingsManager';
 import { StreamAbortManager } from './StreamAbortManager';
 import { StreamChunkProcessor } from './StreamChunkProcessor';
 import { t } from '../../backend/i18n';
@@ -20,6 +21,7 @@ export interface StreamHandlerDeps {
   getView: () => vscode.WebviewView | undefined;
   sendResponse: (requestId: string, data: any) => void;
   sendError: (requestId: string, code: string, message: string) => void;
+  settingsManager?: SettingsManager;
 }
 
 /**
@@ -27,6 +29,22 @@ export interface StreamHandlerDeps {
  */
 export class StreamRequestHandler {
   constructor(private deps: StreamHandlerDeps) {}
+
+  /**
+   * 在处理请求前，临时切换到请求指定的 Prompt 模式
+   *
+   * 确保后端 PromptManager / ChannelManager 在本次请求期间使用正确的模式模板和工具策略。
+   * 由于前端已在 setCurrentPromptModeId 中同步过一次，这里是防御性保障（防止多标签竞态）。
+   */
+  private async applyPromptModeIfNeeded(promptModeId?: string): Promise<void> {
+    if (!promptModeId || !this.deps.settingsManager) return;
+    try {
+      await this.deps.settingsManager.setCurrentPromptMode(promptModeId);
+    } catch (err) {
+      // 模式不存在等情况下静默忽略，使用全局当前模式
+      console.warn('[StreamRequestHandler] Failed to apply promptModeId:', promptModeId, err);
+    }
+  }
 
   private isAbortError(error: any): boolean {
     const name = error?.name
@@ -69,12 +87,16 @@ export class StreamRequestHandler {
    * 处理普通聊天流
    */
   async handleChatStream(data: any, requestId: string): Promise<void> {
-    const { conversationId, message, configId, attachments, modelOverride, hiddenFunctionResponse } = data;
+    const { conversationId, message, configId, attachments, modelOverride, hiddenFunctionResponse, promptModeId } = data;
     
     const controller = this.deps.abortManager.create(conversationId);
+    const summarizeController = this.deps.abortManager.createSummary(conversationId);
     const processor = new StreamChunkProcessor(this.deps.getView(), conversationId);
     
     try {
+      // 在发起请求前切换到对话指定的 Prompt 模式
+      await this.applyPromptModeIfNeeded(promptModeId);
+
       const stream = this.deps.chatHandler.handleChatStream({
         conversationId,
         message,
@@ -82,7 +104,8 @@ export class StreamRequestHandler {
         modelOverride,
         attachments,
         hiddenFunctionResponse,
-        abortSignal: controller.signal
+        abortSignal: controller.signal,
+        summarizeAbortSignal: summarizeController.signal
       });
       
       // 发送响应，通知前端请求已接收并开始
@@ -108,6 +131,7 @@ export class StreamRequestHandler {
       this.handleStreamError(error, processor, requestId);
     } finally {
       this.deps.abortManager.delete(conversationId);
+      this.deps.abortManager.deleteSummary(conversationId);
     }
   }
 
@@ -115,16 +139,21 @@ export class StreamRequestHandler {
    * 处理重试流
    */
   async handleRetryStream(data: any, requestId: string): Promise<void> {
-    const { conversationId, configId } = data;
+    const { conversationId, configId, modelOverride, promptModeId } = data;
     
     const controller = this.deps.abortManager.create(conversationId);
+    const summarizeController = this.deps.abortManager.createSummary(conversationId);
     const processor = new StreamChunkProcessor(this.deps.getView(), conversationId);
     
     try {
+      await this.applyPromptModeIfNeeded(promptModeId);
+
       const stream = this.deps.chatHandler.handleRetryStream({
         conversationId,
         configId,
-        abortSignal: controller.signal
+        modelOverride,
+        abortSignal: controller.signal,
+        summarizeAbortSignal: summarizeController.signal
       });
       
       // 发送响应，通知前端请求已接收并开始
@@ -147,6 +176,7 @@ export class StreamRequestHandler {
       this.handleStreamError(error, processor, requestId);
     } finally {
       this.deps.abortManager.delete(conversationId);
+      this.deps.abortManager.deleteSummary(conversationId);
     }
   }
 
@@ -154,19 +184,24 @@ export class StreamRequestHandler {
    * 处理编辑并重试流
    */
   async handleEditAndRetryStream(data: any, requestId: string): Promise<void> {
-    const { conversationId, messageIndex, newMessage, configId, attachments } = data;
+    const { conversationId, messageIndex, newMessage, configId, modelOverride, attachments, promptModeId } = data;
     
     const controller = this.deps.abortManager.create(conversationId);
+    const summarizeController = this.deps.abortManager.createSummary(conversationId);
     const processor = new StreamChunkProcessor(this.deps.getView(), conversationId);
     
     try {
+      await this.applyPromptModeIfNeeded(promptModeId);
+
       const stream = this.deps.chatHandler.handleEditAndRetryStream({
         conversationId,
         messageIndex,
         newMessage,
         configId,
+        modelOverride,
         attachments,
-        abortSignal: controller.signal
+        abortSignal: controller.signal,
+        summarizeAbortSignal: summarizeController.signal
       });
       
       // 发送响应，通知前端请求已接收并开始
@@ -189,6 +224,7 @@ export class StreamRequestHandler {
       this.handleStreamError(error, processor, requestId);
     } finally {
       this.deps.abortManager.delete(conversationId);
+      this.deps.abortManager.deleteSummary(conversationId);
     }
   }
 
@@ -196,18 +232,22 @@ export class StreamRequestHandler {
    * 处理工具确认流
    */
   async handleToolConfirmationStream(data: any, requestId: string): Promise<void> {
-    const { conversationId, toolResponses, annotation, configId, modelOverride } = data;
+    const { conversationId, toolResponses, annotation, configId, modelOverride, promptModeId } = data;
     
     const controller = this.deps.abortManager.create(conversationId);
+    const summarizeController = this.deps.abortManager.createSummary(conversationId);
     const processor = new StreamChunkProcessor(this.deps.getView(), conversationId);
     
     try {
+      await this.applyPromptModeIfNeeded(promptModeId);
+
       const stream = this.deps.chatHandler.handleToolConfirmation({
         conversationId,
         toolResponses,
         annotation,
         configId,
         modelOverride,
+        summarizeAbortSignal: summarizeController.signal,
         abortSignal: controller.signal
       });
       
@@ -231,6 +271,7 @@ export class StreamRequestHandler {
       this.handleStreamError(error, processor, requestId);
     } finally {
       this.deps.abortManager.delete(conversationId);
+      this.deps.abortManager.deleteSummary(conversationId);
     }
   }
 

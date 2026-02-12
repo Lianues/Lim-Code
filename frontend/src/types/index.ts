@@ -103,6 +103,8 @@ export interface Content {
   isSummary?: boolean
   /** 总结消息覆盖的消息数量 */
   summarizedMessageCount?: number
+  /** 是否为自动触发的总结消息 */
+  isAutoSummary?: boolean
   /**
    * 思考开始时间戳（毫秒）
    *
@@ -206,6 +208,8 @@ export interface Message {
    * 总结消息覆盖的消息数量
    */
   summarizedMessageCount?: number
+  /** 是否为自动触发的总结消息 */
+  isAutoSummary?: boolean
 }
 
 export interface MessageMetadata {
@@ -412,6 +416,8 @@ export interface ChatRequest {
 export interface RetryRequest {
   conversationId: string
   configId: string
+  /** 可选：覆盖本次重试使用的模型（不修改 config） */
+  modelOverride?: string
 }
 
 export interface EditAndRetryRequest {
@@ -419,6 +425,8 @@ export interface EditAndRetryRequest {
   messageIndex: number
   newMessage: string
   configId: string
+  /** 可选：覆盖本次编辑重试使用的模型（不修改 config） */
+  modelOverride?: string
 }
 
 export interface DeleteMessageRequest {
@@ -485,6 +493,8 @@ export interface StreamChunk {
     | 'awaitingConfirmation'
     | 'toolsExecuting'
     | 'toolStatus'
+    | 'autoSummaryStatus'
+    | 'autoSummary'
   conversationId: string
   chunk?: BackendStreamChunk
   content?: Content
@@ -508,6 +518,20 @@ export interface StreamChunk {
     status: 'queued' | 'executing' | 'awaiting_apply' | 'success' | 'error' | 'warning'
     result?: Record<string, unknown>
   }
+
+  /** 自动总结状态（用于显示“自动总结中”提示） */
+  autoSummaryStatus?: boolean
+  /** 自动总结状态值 */
+  status?: 'started' | 'completed' | 'failed'
+  /** 自动总结状态提示信息（可选） */
+  message?: string
+
+  /** 自动总结完成（用于前端即时插入总结消息） */
+  autoSummary?: boolean
+  /** 自动总结消息内容 */
+  summaryContent?: Content
+  /** 总结消息插入位置（完整历史绝对索引） */
+  insertIndex?: number
 }
 
 // ============ 错误类型 ============

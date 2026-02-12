@@ -46,6 +46,9 @@ import './todo/todo_update'
 // Plan 工具
 import './plan/create_plan'
 
+// History 工具
+import './history/history_search'
+
 // 导出工具注册表
 export { toolRegistry, registerTool, getToolConfig, type ToolConfig } from '../toolRegistry'
 

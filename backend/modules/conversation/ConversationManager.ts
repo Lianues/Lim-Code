@@ -322,8 +322,10 @@ export class ConversationManager {
 
         // 为每条消息添加 index 字段（绝对索引）
         return history.map((message, index) => {
+            // 过滤后端内部字段（turnDynamicContext 数据量大且前端无需使用）
+            const { turnDynamicContext, ...rest } = message;
             return {
-                ...JSON.parse(JSON.stringify(message)),
+                ...JSON.parse(JSON.stringify(rest)),
                 index
             };
         });
@@ -365,8 +367,10 @@ export class ConversationManager {
         const slice = history.slice(start, endExclusive);
         const messages = slice.map((message, i) => {
             const index = start + i;
+            // 深拷贝并过滤后端内部字段（turnDynamicContext 数据量大且前端无需使用）
+            const { turnDynamicContext, ...rest } = message;
             return {
-                ...JSON.parse(JSON.stringify(message)),
+                ...JSON.parse(JSON.stringify(rest)),
                 index
             } as Content;
         });

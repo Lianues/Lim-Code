@@ -77,9 +77,23 @@ export interface ChatRequestData {
     abortSignal?: AbortSignal;
 
     /**
+     * 总结请求专用取消信号（仅取消总结 API，不中断主对话请求）
+     *
+     * 仅在自动总结流程中使用。
+     */
+    summarizeAbortSignal?: AbortSignal;
+
+    /**
      * 隐藏 functionResponse：存在时，不创建可见 user 文本消息，改为写入 functionResponse 后继续循环
      */
     hiddenFunctionResponse?: HiddenFunctionResponseData;
+
+    /**
+     * Prompt 模式 ID（可选）
+     *
+     * 如果提供，将在本次请求期间临时切换到该模式，影响系统提示词模板和工具策略。
+     */
+    promptModeId?: string;
 }
 
 // ==================== 响应数据 ====================
@@ -175,6 +189,34 @@ export interface ChatStreamCheckpointsData {
     checkpointOnly: true;
 }
 
+/**
+ * 自动总结完成数据（用于前端插入总结消息）
+ */
+export interface ChatStreamAutoSummaryData {
+    /** 对话 ID */
+    conversationId: string;
+    /** 标记这是自动总结消息 */
+    autoSummary: true;
+    /** 自动总结内容 */
+    summaryContent: Content;
+    /** 总结消息插入位置（完整历史中的绝对索引） */
+    insertIndex: number;
+}
+
+/**
+ * 自动总结状态数据（用于前端显示“自动总结中”提示）
+ */
+export interface ChatStreamAutoSummaryStatusData {
+    /** 对话 ID */
+    conversationId: string;
+    /** 标记这是自动总结状态消息 */
+    autoSummaryStatus: true;
+    /** 状态 */
+    status: 'started' | 'completed' | 'failed';
+    /** 可选状态说明 */
+    message?: string;
+}
+
 // ==================== 重试消息 ====================
 
 /**
@@ -186,9 +228,26 @@ export interface RetryRequestData {
     
     /** 配置 ID */
     configId: string;
+
+    /**
+     * 模型覆盖（可选）
+     *
+     * 如果提供，将覆盖该 config 的 model 字段，仅对本次重试生效。
+     */
+    modelOverride?: string;
     
     /** 取消信号 */
     abortSignal?: AbortSignal;
+
+    /**
+     * 总结请求专用取消信号（仅取消总结 API，不中断主对话请求）
+     *
+     * 仅在自动总结流程中使用。
+     */
+    summarizeAbortSignal?: AbortSignal;
+
+    /** Prompt 模式 ID（可选） */
+    promptModeId?: string;
 }
 
 // ==================== 编辑并重试 ====================
@@ -211,9 +270,26 @@ export interface EditAndRetryRequestData {
     
     /** 配置 ID */
     configId: string;
+
+    /**
+     * 模型覆盖（可选）
+     *
+     * 如果提供，将覆盖该 config 的 model 字段，仅对本次编辑重试生效。
+     */
+    modelOverride?: string;
     
     /** 取消信号 */
     abortSignal?: AbortSignal;
+
+    /**
+     * 总结请求专用取消信号（仅取消总结 API，不中断主对话请求）
+     *
+     * 仅在自动总结流程中使用。
+     */
+    summarizeAbortSignal?: AbortSignal;
+
+    /** Prompt 模式 ID（可选） */
+    promptModeId?: string;
 }
 
 // ==================== 删除消息 ====================
@@ -377,6 +453,16 @@ export interface ToolConfirmationResponseData {
 
     /** 取消信号 */
     abortSignal?: AbortSignal;
+
+    /**
+     * 总结请求专用取消信号（仅取消总结 API，不中断主对话请求）
+     *
+     * 仅在自动总结流程中使用。
+     */
+    summarizeAbortSignal?: AbortSignal;
+
+    /** Prompt 模式 ID（可选） */
+    promptModeId?: string;
 }
 
 // ==================== 上下文总结 ====================
@@ -414,6 +500,8 @@ export interface SummarizeContextSuccessData {
     beforeTokenCount?: number;
     /** 总结后的内容 token 数（candidatesTokenCount） */
     afterTokenCount?: number;
+    /** 总结消息插入位置（完整历史中的绝对索引） */
+    insertIndex?: number;
 }
 
 /**

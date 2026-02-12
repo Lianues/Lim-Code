@@ -24,8 +24,8 @@ export interface AddPinnedFileResult {
   errorCode?: string
 }
 
-export async function listPinnedFiles(): Promise<PinnedFileItem[]> {
-  const config = await sendToExtension<{ files: PinnedFileItem[] }>('getPinnedFilesConfig', {})
+export async function listPinnedFiles(conversationId?: string | null): Promise<PinnedFileItem[]> {
+  const config = await sendToExtension<{ files: PinnedFileItem[] }>('getPinnedFilesConfig', { conversationId })
   return config?.files || []
 }
 
@@ -40,14 +40,14 @@ export async function validatePinnedFile(pathOrUri: string): Promise<ValidatePin
   return await sendToExtension<ValidatePinnedFileResult>('validatePinnedFile', { path: pathOrUri })
 }
 
-export async function addPinnedFile(path: string | undefined, workspaceUri: string | undefined): Promise<AddPinnedFileResult> {
-  return await sendToExtension<AddPinnedFileResult>('addPinnedFile', { path, workspaceUri })
+export async function addPinnedFile(path: string | undefined, workspaceUri: string | undefined, conversationId?: string | null): Promise<AddPinnedFileResult> {
+  return await sendToExtension<AddPinnedFileResult>('addPinnedFile', { path, workspaceUri, conversationId })
 }
 
-export async function removePinnedFile(id: string) {
-  return await sendToExtension('removePinnedFile', { id })
+export async function removePinnedFile(id: string, conversationId?: string | null) {
+  return await sendToExtension('removePinnedFile', { id, conversationId })
 }
 
-export async function setPinnedFileEnabled(id: string, enabled: boolean) {
-  return await sendToExtension('setPinnedFileEnabled', { id, enabled })
+export async function setPinnedFileEnabled(id: string, enabled: boolean, conversationId?: string | null) {
+  return await sendToExtension('setPinnedFileEnabled', { id, enabled, conversationId })
 }

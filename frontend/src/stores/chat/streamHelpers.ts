@@ -1,6 +1,7 @@
 /**
  * 流式处理辅助函数
  * 
+ * @module streamHelpers
  * 包含消息操作、工具调用解析等辅助函数
  */
 
@@ -213,6 +214,36 @@ export function flushToolCallBuffer(message: Message, state: ChatStoreState): vo
 /**
  * 处理工具调用 part（原生 function call format）
  */
+
+/**
+ * partialArgs JSON.parse 节流控制
+ * 
+ * 问题：每个增量片段都对整个累积字符串做 JSON.parse，当参数很大时（如 write_file 写长代码），
+ * 复杂度退化为 O(N²)，导致主线程卡死。
+ * 
+ * 策略：
+ * - 跟踪上次成功/尝试 parse 时的字符串长度
+ * - 每次增量后，只有当新增数据量超过阈值时才再次尝试 parse
+ * - 阈值随字符串长度动态增长：短字符串频繁 parse（保证小参数的预览体验），
+ *   长字符串大幅减少 parse 次数（避免 O(N²) 卡顿）
+ */
+const partialArgsParseState = new WeakMap<object, { lastParseLen: number }>()
+
+function shouldAttemptParse(fcRef: object, currentLen: number): boolean {
+  let state = partialArgsParseState.get(fcRef)
+  if (!state) {
+    state = { lastParseLen: 0 }
+    partialArgsParseState.set(fcRef, state)
+  }
+  // 动态阈值：短字符串(<1KB) 每 200 字符 parse 一次；
+  // 中等字符串(1-10KB) 每 1KB parse 一次；长字符串 每 4KB parse 一次
+  const threshold = currentLen < 1024 ? 200 : currentLen < 10240 ? 1024 : 4096
+  const delta = currentLen - state.lastParseLen
+  if (delta < threshold) return false
+  state.lastParseLen = currentLen
+  return true
+}
+
 export function handleFunctionCallPart(part: any, message: Message): void {
   const fc = part.functionCall
   const lastPart = message.parts![message.parts!.length - 1]
@@ -284,11 +315,12 @@ export function handleFunctionCallPart(part: any, message: Message): void {
       // 合并参数
       if (incomingHasPartial) {
         lastFc.partialArgs = (lastFc.partialArgs || '') + fc.partialArgs
-        // 尝试更新解析后的 args 用于预览
-        if (lastFc.partialArgs.trim()) {
+        // 节流式 JSON.parse：只在累积足够数据时才尝试解析，避免 O(N²) 卡顿
+        if (lastFc.partialArgs.trim() && shouldAttemptParse(lastFc, lastFc.partialArgs.length)) {
           try {
             lastFc.args = JSON.parse(lastFc.partialArgs)
           } catch (e) { /* 继续累积 */ }
+          // 无论成功与否，lastParseLen 已在 shouldAttemptParse 中更新
         }
 
         // ★ 同步更新 message.tools 中对应工具的流式状态和 partialArgs

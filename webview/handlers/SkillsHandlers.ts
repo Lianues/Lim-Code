@@ -4,7 +4,7 @@
 
 import * as vscode from 'vscode';
 import { t } from '../../backend/i18n';
-import type { MessageHandler } from '../types';
+import type { HandlerContext, MessageHandler } from '../types';
 import { getSkillsManager } from '../../backend/modules/skills';
 import type { SkillConfigItem } from '../../backend/modules/settings/types';
 
@@ -23,6 +23,37 @@ export interface SkillsConfigResponse {
     skills: SkillItem[];
 }
 
+const CONVERSATION_SKILLS_KEY = 'inputSkills';
+
+function normalizeSkillConfigItems(raw: unknown): SkillConfigItem[] {
+    if (!Array.isArray(raw)) return [];
+
+    return raw
+        .filter((item): item is SkillConfigItem => {
+            return !!item
+                && typeof (item as any).id === 'string'
+                && typeof (item as any).name === 'string'
+                && typeof (item as any).description === 'string'
+                && typeof (item as any).enabled === 'boolean'
+                && typeof (item as any).sendContent === 'boolean';
+        })
+        .map(item => ({ ...item }));
+}
+
+async function getConversationSkillsRaw(ctx: HandlerContext, conversationId: string): Promise<SkillConfigItem[] | null> {
+    try {
+        const raw = await ctx.conversationManager.getCustomMetadata(conversationId, CONVERSATION_SKILLS_KEY);
+        if (raw === undefined) return null;
+        return normalizeSkillConfigItems(raw);
+    } catch {
+        return null;
+    }
+}
+
+async function saveConversationSkills(ctx: HandlerContext, conversationId: string, skills: SkillConfigItem[]): Promise<void> {
+    await ctx.conversationManager.setCustomMetadata(conversationId, CONVERSATION_SKILLS_KEY, skills);
+}
+
 // ========== Skills 管理 ==========
 
 /**
@@ -36,11 +67,16 @@ export const getSkillsConfig: MessageHandler = async (data, requestId, ctx) => {
             ctx.sendResponse(requestId, { skills: [] });
             return;
         }
+
+        const conversationId = typeof data?.conversationId === 'string' ? data.conversationId.trim() : '';
         
         // 从 settingsManager 获取持久化的 skills 配置
         const savedConfig = ctx.settingsManager.getSkillsConfig() || { skills: [] };
+        const conversationSkills = conversationId ? await getConversationSkillsRaw(ctx, conversationId) : null;
+        const savedSkills = conversationSkills ?? savedConfig.skills;
+
         const savedSkillsMap = new Map<string, { enabled: boolean; sendContent: boolean }>();
-        for (const skill of savedConfig.skills) {
+        for (const skill of savedSkills) {
             savedSkillsMap.set(skill.id, { enabled: skill.enabled, sendContent: skill.sendContent });
         }
         
@@ -50,14 +86,16 @@ export const getSkillsConfig: MessageHandler = async (data, requestId, ctx) => {
             const saved = savedSkillsMap.get(skill.id);
             const enabled = saved?.enabled ?? true;          // 默认启用
             const sendContent = saved?.sendContent ?? true;  // 默认发送内容
-            
-            // 同步状态到 SkillsManager
-            if (enabled) {
-                skillsManager.enableSkill(skill.id);
-            } else {
-                skillsManager.disableSkill(skill.id);
+
+            // 仅全局模式同步状态到 SkillsManager（对话隔离模式不污染全局）
+            if (!conversationId) {
+                if (enabled) {
+                    skillsManager.enableSkill(skill.id);
+                } else {
+                    skillsManager.disableSkill(skill.id);
+                }
+                skillsManager.setSkillSendContent(skill.id, sendContent);
             }
-            skillsManager.setSkillSendContent(skill.id, sendContent);
             
             return {
                 id: skill.id,
@@ -69,8 +107,9 @@ export const getSkillsConfig: MessageHandler = async (data, requestId, ctx) => {
             };
         });
 
-        // 将最新的元数据（名称、描述）同步回 SettingsManager，确保 settings.json 中不再是空的
-        // 同时保留那些在配置中存在但目前不在磁盘上的 skill，避免被误删
+        // 仅全局模式：将最新元数据同步回 SettingsManager
+        // 对话隔离模式下不改全局 settings
+        if (!conversationId) {
         const finalSkillsToSync: SkillConfigItem[] = [];
         
         // 1. 添加当前存在的 skills
@@ -96,10 +135,11 @@ export const getSkillsConfig: MessageHandler = async (data, requestId, ctx) => {
         if (finalSkillsToSync.length > 0) {
             // 批量更新配置，确保元数据得到同步
             await ctx.settingsManager.updateSkillsConfig({ skills: finalSkillsToSync });
+            }
         }
         
         // 检查已保存但不再存在的 skills (保留它们在 UI 显示为已丢失)
-        for (const savedSkill of savedConfig.skills) {
+        for (const savedSkill of savedSkills) {
             if (!allSkills.find(s => s.id === savedSkill.id)) {
                 skills.push({
                     id: savedSkill.id,
@@ -147,11 +187,36 @@ export const checkSkillsExistence: MessageHandler = async (data, requestId, ctx)
  */
 export const setSkillEnabled: MessageHandler = async (data, requestId, ctx) => {
     try {
-        const { id, enabled } = data;
-        
+        const { id, enabled, conversationId } = data;
+        const normalizedConversationId = typeof conversationId === 'string' ? conversationId.trim() : '';
+
         // 获取实时元数据（名称、描述）
         const skillsManager = getSkillsManager();
         const skill = skillsManager?.getSkill(id);
+
+        if (normalizedConversationId) {
+            const skills = (await getConversationSkillsRaw(ctx, normalizedConversationId))
+                ?? [...ctx.settingsManager.getSkills()];
+
+            const target = skills.find(s => s.id === id);
+            if (target) {
+                target.enabled = !!enabled;
+                if (skill?.name) target.name = skill.name;
+                if (skill?.description) target.description = skill.description;
+            } else {
+                skills.push({
+                    id,
+                    name: skill?.name || id,
+                    description: skill?.description || '',
+                    enabled: !!enabled,
+                    sendContent: true
+                });
+            }
+
+            await saveConversationSkills(ctx, normalizedConversationId, skills);
+            ctx.sendResponse(requestId, { success: true });
+            return;
+        }
         
         // 保存到持久化配置（带上最新的名称和描述）
         await ctx.settingsManager.setSkillEnabled(id, enabled, {
@@ -179,11 +244,36 @@ export const setSkillEnabled: MessageHandler = async (data, requestId, ctx) => {
  */
 export const setSkillSendContent: MessageHandler = async (data, requestId, ctx) => {
     try {
-        const { id, sendContent } = data;
+        const { id, sendContent, conversationId } = data;
+        const normalizedConversationId = typeof conversationId === 'string' ? conversationId.trim() : '';
         
         // 获取实时元数据（名称、描述）
         const skillsManager = getSkillsManager();
         const skill = skillsManager?.getSkill(id);
+
+        if (normalizedConversationId) {
+            const skills = (await getConversationSkillsRaw(ctx, normalizedConversationId))
+                ?? [...ctx.settingsManager.getSkills()];
+
+            const target = skills.find(s => s.id === id);
+            if (target) {
+                target.sendContent = !!sendContent;
+                if (skill?.name) target.name = skill.name;
+                if (skill?.description) target.description = skill.description;
+            } else {
+                skills.push({
+                    id,
+                    name: skill?.name || id,
+                    description: skill?.description || '',
+                    enabled: true,
+                    sendContent: !!sendContent
+                });
+            }
+
+            await saveConversationSkills(ctx, normalizedConversationId, skills);
+            ctx.sendResponse(requestId, { success: true });
+            return;
+        }
         
         // 保存到持久化配置（带上最新的名称和描述）
         await ctx.settingsManager.setSkillSendContent(id, sendContent, {
@@ -207,7 +297,22 @@ export const setSkillSendContent: MessageHandler = async (data, requestId, ctx) 
  */
 export const removeSkillConfig: MessageHandler = async (data, requestId, ctx) => {
     try{
-        const { id } = data;
+        const { id, conversationId } = data;
+        const normalizedConversationId = typeof conversationId === 'string' ? conversationId.trim() : '';
+
+        if (normalizedConversationId) {
+            const skills = (await getConversationSkillsRaw(ctx, normalizedConversationId))
+                ?? [...ctx.settingsManager.getSkills()];
+
+            await saveConversationSkills(
+                ctx,
+                normalizedConversationId,
+                skills.filter(s => s.id !== id)
+            );
+            ctx.sendResponse(requestId, { success: true });
+            return;
+        }
+
         await ctx.settingsManager.removeSkillConfig(id);
         ctx.sendResponse(requestId, { success: true });
     } catch (error: any) {

@@ -28,12 +28,10 @@ const isLoadingChannels = ref(false)
 
 // 总结配置
 const summarizeConfig = reactive({
-  // 自动总结
-  autoSummarize: false,
-  // 触发阈值（百分比）
-  autoSummarizeThreshold: 80,
-  // 总结提示词
+  // 手动总结提示词
   summarizePrompt: '请将以上对话内容进行总结，保留关键信息和上下文要点，去除冗余内容。',
+  // 自动总结提示词
+  autoSummarizePrompt: '',
   // 保留最近 N 轮不总结
   keepRecentRounds: 2,
   // 使用专门的总结模型
@@ -43,6 +41,26 @@ const summarizeConfig = reactive({
   // 总结用的模型 ID
   summarizeModelId: ''
 })
+
+// 内置默认总结配置（用于“恢复内置默认”）
+const defaultSummarizeConfig = ref({
+  summarizePrompt: summarizeConfig.summarizePrompt,
+  autoSummarizePrompt: summarizeConfig.autoSummarizePrompt
+})
+
+const hasManualDefaultPrompt = computed(() =>
+  !!defaultSummarizeConfig.value.summarizePrompt?.trim()
+)
+
+const hasAutoDefaultPrompt = computed(() =>
+  !!defaultSummarizeConfig.value.autoSummarizePrompt?.trim()
+)
+
+async function restorePromptToDefault(kind: 'manual' | 'auto') {
+  const field = kind === 'manual' ? 'summarizePrompt' : 'autoSummarizePrompt'
+  const value = kind === 'manual' ? defaultSummarizeConfig.value.summarizePrompt : defaultSummarizeConfig.value.autoSummarizePrompt
+  await updateConfigField(field, value)
+}
 
 // 已启用的渠道选项
 const enabledChannelOptions = computed<SelectOption[]>(() => {
@@ -99,10 +117,41 @@ async function loadConfig() {
   try {
     const response = await sendToExtension<any>('getSummarizeConfig', {})
     if (response) {
-      Object.assign(summarizeConfig, response)
+      const merged = { ...response }
+
+      // 历史配置兼容：如果提示词为空，前端展示内置默认值（避免显示空白）
+      if (typeof merged.summarizePrompt !== 'string' || !merged.summarizePrompt.trim()) {
+        merged.summarizePrompt = defaultSummarizeConfig.value.summarizePrompt
+      }
+      if (typeof merged.autoSummarizePrompt !== 'string' || !merged.autoSummarizePrompt.trim()) {
+        merged.autoSummarizePrompt = defaultSummarizeConfig.value.autoSummarizePrompt
+      }
+
+      Object.assign(summarizeConfig, merged)
     }
   } catch (error) {
     console.error('Failed to load summarize config:', error)
+  }
+}
+
+// 加载内置默认配置（用于恢复按钮）
+async function loadDefaultConfig() {
+  try {
+    const response = await sendToExtension<any>('getDefaultSummarizeConfig', {})
+    if (response) {
+      defaultSummarizeConfig.value = {
+        summarizePrompt:
+          typeof response.summarizePrompt === 'string'
+            ? response.summarizePrompt
+            : summarizeConfig.summarizePrompt,
+        autoSummarizePrompt:
+          typeof response.autoSummarizePrompt === 'string'
+            ? response.autoSummarizePrompt
+            : summarizeConfig.autoSummarizePrompt
+      }
+    }
+  } catch (error) {
+    console.error('Failed to load default summarize config:', error)
   }
 }
 
@@ -162,6 +211,7 @@ watch(() => summarizeConfig.useSeparateModel, (enabled) => {
 
 // 初始化
 onMounted(async () => {
+  await loadDefaultConfig()
   await Promise.all([loadConfig(), loadChannels()])
 })
 </script>
@@ -187,39 +237,6 @@ onMounted(async () => {
       </p>
     </div>
     
-    <!-- 自动总结设置 -->
-    <div class="section">
-      <h5 class="section-title">
-        <i class="codicon codicon-zap"></i>
-        {{ t('components.settings.summarizeSettings.autoSection.title') }}
-        <span class="badge coming-soon">{{ t('components.settings.summarizeSettings.autoSection.comingSoon') }}</span>
-      </h5>
-      
-      <div class="form-group disabled">
-        <CustomCheckbox
-          v-model="summarizeConfig.autoSummarize"
-          :label="t('components.settings.summarizeSettings.autoSection.enable')"
-          :disabled="true"
-        />
-        <p class="field-hint">{{ t('components.settings.summarizeSettings.autoSection.enableHint') }}</p>
-      </div>
-      
-      <div class="form-group disabled">
-        <label>{{ t('components.settings.summarizeSettings.autoSection.threshold') }}</label>
-        <div class="threshold-input">
-          <input
-            type="number"
-            v-model.number="summarizeConfig.autoSummarizeThreshold"
-            min="50"
-            max="95"
-            disabled
-          />
-          <span class="unit">{{ t('components.settings.summarizeSettings.autoSection.thresholdUnit') }}</span>
-        </div>
-        <p class="field-hint">{{ t('components.settings.summarizeSettings.autoSection.thresholdHint') }}</p>
-      </div>
-    </div>
-    
     <!-- 总结选项 -->
     <div class="section">
       <h5 class="section-title">
@@ -243,14 +260,41 @@ onMounted(async () => {
       </div>
       
       <div class="form-group">
-        <label>{{ t('components.settings.summarizeSettings.optionsSection.prompt') }}</label>
+        <div class="prompt-label-row">
+          <label>{{ t('components.settings.summarizeSettings.optionsSection.manualPrompt') }}</label>
+          <button
+            type="button"
+            class="restore-default-btn"
+            :disabled="!hasManualDefaultPrompt"
+            @click="restorePromptToDefault('manual')"
+          >{{ t('components.settings.summarizeSettings.optionsSection.restoreBuiltin') }}</button>
+        </div>
         <textarea
           :value="summarizeConfig.summarizePrompt"
           rows="3"
-          :placeholder="t('components.settings.summarizeSettings.optionsSection.promptPlaceholder')"
+          :placeholder="t('components.settings.summarizeSettings.optionsSection.manualPromptPlaceholder')"
           @input="(e: any) => updateConfigField('summarizePrompt', e.target.value)"
         ></textarea>
-        <p class="field-hint">{{ t('components.settings.summarizeSettings.optionsSection.promptHint') }}</p>
+        <p class="field-hint">{{ t('components.settings.summarizeSettings.optionsSection.manualPromptHint') }}</p>
+      </div>
+
+      <div class="form-group">
+        <div class="prompt-label-row">
+          <label>{{ t('components.settings.summarizeSettings.optionsSection.autoPrompt') }}</label>
+          <button
+            type="button"
+            class="restore-default-btn"
+            :disabled="!hasAutoDefaultPrompt"
+            @click="restorePromptToDefault('auto')"
+          >{{ t('components.settings.summarizeSettings.optionsSection.restoreBuiltin') }}</button>
+        </div>
+        <textarea
+          :value="summarizeConfig.autoSummarizePrompt"
+          rows="5"
+          :placeholder="t('components.settings.summarizeSettings.optionsSection.autoPromptPlaceholder')"
+          @input="(e: any) => updateConfigField('autoSummarizePrompt', e.target.value)"
+        ></textarea>
+        <p class="field-hint">{{ t('components.settings.summarizeSettings.optionsSection.autoPromptHint') }}</p>
       </div>
     </div>
     
@@ -406,6 +450,36 @@ onMounted(async () => {
 .form-group label {
   font-size: 12px;
   color: var(--vscode-foreground);
+}
+
+.prompt-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.restore-default-btn {
+  padding: 2px 8px;
+  font-size: 11px;
+  color: var(--vscode-textLink-foreground);
+  background: transparent;
+  border: 1px solid var(--vscode-textLink-foreground);
+  border-radius: 4px;
+  cursor: pointer;
+  line-height: 1.4;
+  transition: opacity 0.15s, background-color 0.15s;
+}
+
+.restore-default-btn:hover:not(:disabled) {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.restore-default-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  border-color: var(--vscode-disabledForeground);
+  color: var(--vscode-disabledForeground);
 }
 
 .form-group input[type="number"],

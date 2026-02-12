@@ -375,7 +375,8 @@ const zhCN: LanguageMessages = {
             summary: {
                 title: '上下文总结',
                 compressed: '已压缩 {count} 条消息',
-                deleteTitle: '删除总结'
+                deleteTitle: '删除总结',
+                autoTriggered: '自动触发'
             },
             checkpoint: {
                 userMessageBefore: '用户消息前存档',
@@ -613,7 +614,7 @@ const zhCN: LanguageMessages = {
                     },
                     contextManagement: {
                         title: '上下文管理',
-                        enableTitle: '启用上下文阈值检测',
+                        enableTitle: '启用上下文管理',
                         threshold: {
                             label: '上下文阈值',
                             placeholder: '80% 或 100000',
@@ -625,9 +626,15 @@ const zhCN: LanguageMessages = {
                             hint: '裁剪时额外裁剪的 token 数量。实际保留 = 阈值 - 额外裁剪量。支持百分比或绝对数值，默认为 0'
                         },
                         autoSummarize: {
-                            label: '自动总结（即将推出）',
+                            label: '自动总结',
                             enableTitle: '启用自动总结',
-                            hint: '启用后，在舍弃旧回合前先进行总结（功能开发中）'
+                            hint: '启用后，当上下文超过阈值时自动总结旧回合（与上下文裁剪互斥）'
+                        },
+                        mode: {
+                            label: '管理方式',
+                            hint: '裁剪：直接丢弃旧回合。自动总结：先总结旧回合再丢弃，AI 可基于总结继续工作',
+                            trim: '上下文裁剪',
+                            summarize: '自动总结'
                         }
                     },
                     toolOptions: {
@@ -1329,13 +1336,13 @@ const zhCN: LanguageMessages = {
                 requiresConfigLabel: '依赖配置：'
             },
             summarizeSettings: {
-                description: '上下文总结功能可以压缩对话历史，减少 Token 使用量。当对话过长时，可以手动或自动触发总结，将旧的对话内容压缩为摘要。',
+                description: '上下文总结功能可以压缩对话历史，减少 Token 使用量。此页面用于配置手动总结与总结模型。自动总结请在「渠道设置 > 上下文管理」中配置。',
                 manualSection: {
                     title: '手动总结',
                     description: '点击输入框右侧的压缩按钮，可以手动触发上下文总结。总结后的内容会替换原有的历史对话。'
                 },
                 autoSection: {
-                    title: '自动总结',
+                    title: '自动总结（已迁移）',
                     comingSoon: '即将推出',
                     enable: '启用自动总结',
                     enableHint: '当 Token 使用量超过阈值时自动触发总结',
@@ -1348,9 +1355,13 @@ const zhCN: LanguageMessages = {
                     keepRounds: '保留最近轮数',
                     keepRoundsUnit: '轮',
                     keepRoundsHint: '保留最近 N 轮对话不参与总结，确保上下文连贯',
-                    prompt: '总结提示词',
-                    promptPlaceholder: '输入总结时使用的提示词...',
-                    promptHint: 'AI 进行总结时使用的指令'
+                    manualPrompt: '手动总结提示词',
+                    manualPromptPlaceholder: '输入手动总结时使用的提示词...',
+                    manualPromptHint: '点击“总结上下文”按钮时使用此提示词',
+                    autoPrompt: '自动总结提示词',
+                    autoPromptPlaceholder: '输入自动触发总结时使用的提示词（留空则使用内置提示词）...',
+                    autoPromptHint: '当达到自动总结阈值时使用此提示词',
+                    restoreBuiltin: '恢复内置默认'
                 },
                 modelSection: {
                     title: '专用总结模型',
@@ -1443,7 +1454,7 @@ const zhCN: LanguageMessages = {
                 appInfo: {
                     title: '应用信息',
                     name: 'Lim Code - Vibe Coding助手',
-                    version: '版本：1.0.88',
+                    version: '版本：1.0.89',
                     repository: '项目仓库',
                     developer: '开发者'
                 }
@@ -1479,7 +1490,7 @@ const zhCN: LanguageMessages = {
                         enableDiffGuardDesc: '当一次性删除的行数超过文件总行数的指定百分比时，在工具外侧显示警告提示',
                         diffGuardThreshold: '警戒阈值',
                         diffGuardThresholdDesc: '删除行数占文件总行数的百分比超过此值时触发警告',
-                        diffGuardWarning: '⚠️ 此次修改删除了 {deletePercent}% 的文件内容（{deletedLines}/{totalLines} 行），超过 {threshold}% 的警戒阈值，请仔细检查'
+                        diffGuardWarning: '此次修改删除了 {deletePercent}% 的文件内容（{deletedLines}/{totalLines} 行），超过 {threshold}% 的警戒阈值，请仔细检查'
                     },
                     listFiles: {
                         ignoreList: '忽略列表',
@@ -1504,6 +1515,21 @@ const zhCN: LanguageMessages = {
                         deleteTooltip: '删除',
                         addButton: '添加'
                     }
+                },
+                history: {
+                    searchSection: '搜索模式',
+                    maxSearchMatches: '最大匹配数',
+                    maxSearchMatchesDesc: '每次搜索返回的最大匹配行数',
+                    searchContextLines: '上下文行数',
+                    searchContextLinesDesc: '每个匹配前后显示的上下文行数',
+                    readSection: '读取模式',
+                    maxReadLines: '最大读取行数',
+                    maxReadLinesDesc: '每次读取请求返回的最大行数',
+                    outputSection: '输出限制',
+                    maxResultChars: '结果最大字符数',
+                    maxResultCharsDesc: '多行读取时结果的最大总字符数',
+                    lineDisplayLimit: '单行显示字符限制',
+                    lineDisplayLimitDesc: '每行最大显示字符数，超出部分省略（可通过单行 read 获取完整内容）'
                 },
                 terminal: {
                     executeCommand: {
@@ -1591,6 +1617,7 @@ const zhCN: LanguageMessages = {
                     media: '媒体处理',
                     plan: '计划',
                     todo: 'TODO',
+                    history: '历史',
                     other: '其他'
                 },
                 dependency: {
@@ -2264,6 +2291,24 @@ const zhCN: LanguageMessages = {
                     loadingDiff: '加载差异中...'
                 }
             },
+            history: {
+                historySearch: '历史搜索',
+                searchHistory: '搜索历史',
+                readHistory: '读取历史',
+                readAll: '全部',
+                panel: {
+                    searchTitle: '搜索已总结历史',
+                    readTitle: '读取已总结历史',
+                    regex: '正则',
+                    keywords: '关键词：',
+                    lineRange: '行范围：',
+                    noContent: '没有返回内容',
+                    collapse: '收起',
+                    expandRemaining: '展开剩余 {count} 行',
+                    copyContent: '复制内容',
+                    copied: '已复制'
+                }
+            },
             terminal: {
                 executeCommand: '执行命令',
                 command: '命令',
@@ -2311,6 +2356,11 @@ const zhCN: LanguageMessages = {
             title: '请求失败，正在自动重试',
             cancelTooltip: '取消重试',
             defaultError: '请求失败'
+        },
+        autoSummaryPanel: {
+            summarizing: '自动总结中…',
+            manualSummarizing: '手动总结中…',
+            cancelTooltip: '取消总结'
         }
     },
 

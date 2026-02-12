@@ -297,6 +297,7 @@ export interface LanguageMessages {
                 title: string;
                 compressed: string;
                 deleteTitle: string;
+                autoTriggered: string;
             };
             checkpoint: {
                 userMessageBefore: string;
@@ -585,6 +586,23 @@ export interface LanguageMessages {
                     };
                 };
                 
+                /** 历史工具设置 */
+                history: {
+                    searchSection: string;
+                    maxSearchMatches: string;
+                    maxSearchMatchesDesc: string;
+                    searchContextLines: string;
+                    searchContextLinesDesc: string;
+                    readSection: string;
+                    maxReadLines: string;
+                    maxReadLinesDesc: string;
+                    outputSection: string;
+                    maxResultChars: string;
+                    maxResultCharsDesc: string;
+                    lineDisplayLimit: string;
+                    lineDisplayLimitDesc: string;
+                };
+
                 /** 终端工具设置 */
                 terminal: {
                     executeCommand: {
@@ -790,6 +808,12 @@ export interface LanguageMessages {
                             label: string;
                             enableTitle: string;
                             hint: string;
+                        };
+                        mode: {
+                            label: string;
+                            hint: string;
+                            trim: string;
+                            summarize: string;
                         };
                     };
                     toolOptions: {
@@ -1510,9 +1534,13 @@ export interface LanguageMessages {
                     keepRounds: string;
                     keepRoundsUnit: string;
                     keepRoundsHint: string;
-                    prompt: string;
-                    promptPlaceholder: string;
-                    promptHint: string;
+                    manualPrompt: string;
+                    manualPromptPlaceholder: string;
+                    manualPromptHint: string;
+                    autoPrompt: string;
+                    autoPromptPlaceholder: string;
+                    autoPromptHint: string;
+                    restoreBuiltin: string;
                 };
                 modelSection: {
                     title: string;
@@ -1631,6 +1659,7 @@ export interface LanguageMessages {
                     todo: string;
                     media: string;
                     plan: string;
+                    history: string;
                     other: string;
                 };
                 dependency: {
@@ -2101,6 +2130,25 @@ export interface LanguageMessages {
                     loadingDiff: string;
                 };
             };
+            /** 历史检索工具 */
+            history: {
+                historySearch: string;
+                searchHistory: string;
+                readHistory: string;
+                readAll: string;
+                panel: {
+                    searchTitle: string;
+                    readTitle: string;
+                    regex: string;
+                    keywords: string;
+                    lineRange: string;
+                    noContent: string;
+                    collapse: string;
+                    expandRemaining: string;
+                    copyContent: string;
+                    copied: string;
+                };
+            };
             /** 终端工具 */
             terminal: {
                 executeCommand: string;
@@ -2396,6 +2444,11 @@ export interface LanguageMessages {
             title: string;
             cancelTooltip: string;
             defaultError: string;
+        };
+        autoSummaryPanel: {
+            summarizing: string;
+            manualSummarizing: string;
+            cancelTooltip: string;
         };
     };
 

@@ -56,6 +56,16 @@ export interface RetryStatus {
 }
 
 /**
+ * 自动总结提示状态
+ */
+export interface AutoSummaryStatus {
+  isSummarizing: boolean
+  /** 来源：自动触发或手动触发 */
+  mode?: 'auto' | 'manual'
+  message?: string
+}
+
+/**
  * 配置详情
  */
 export interface ConfigInfo {
@@ -137,6 +147,8 @@ export interface ChatStoreState {
   foldedMessageCount: Ref<number>
   /** 配置ID */
   configId: Ref<string>
+  /** 当前会话选择的模型 ID（对话级隔离，不直接改全局渠道配置） */
+  selectedModelId: Ref<string>
   /** 当前配置详情 */
   currentConfig: Ref<ConfigInfo | null>
   /** 加载状态 */
@@ -153,6 +165,8 @@ export interface ChatStoreState {
   isWaitingForResponse: Ref<boolean>
   /** 重试状态 */
   retryStatus: Ref<RetryStatus | null>
+  /** 自动总结状态（用于显示“自动总结中”提示） */
+  autoSummaryStatus: Ref<AutoSummaryStatus | null>
   /** 工具调用缓冲区 */
   toolCallBuffer: Ref<string>
   /** 当前是否在工具调用标记内 */
@@ -173,6 +187,8 @@ export interface ChatStoreState {
   editorNodes: Ref<EditorNode[]>
   /** 当前对话的附件列表 */
   attachments: Ref<Attachment[]>
+  /** 当前对话的 Prompt 模式 ID（对话级隔离） */
+  currentPromptModeId: Ref<string>
 
   /** 当前 Build 会话（用于 Plan 执行 UI 展示） */
   activeBuild: Ref<BuildSession | null>
@@ -252,6 +268,10 @@ export interface ConversationSessionSnapshot {
   allMessages: Message[]
   /** 窗口起始索引 */
   windowStartIndex: number
+  /** 当前会话选择的配置 ID（渠道） */
+  configId: string
+  /** 当前会话选择的模型 ID */
+  selectedModelId: string
   /** 总消息数 */
   totalMessages: number
   /** 是否正在加载更多消息 */
@@ -272,6 +292,8 @@ export interface ConversationSessionSnapshot {
   error: ErrorInfo | null
   /** 重试状态 */
   retryStatus: RetryStatus | null
+  /** 自动总结状态 */
+  autoSummaryStatus: AutoSummaryStatus | null
   /** 是否已折叠 */
   historyFolded: boolean
   /** 折叠消息数 */
@@ -290,6 +312,8 @@ export interface ConversationSessionSnapshot {
   attachments: Attachment[]
   /** 消息排队队列 */
   messageQueue: QueuedMessage[]
+  /** Prompt 模式 ID */
+  currentPromptModeId: string
 }
 
 /**

@@ -188,9 +188,10 @@ export class TokenCountService {
     
     /**
      * 本地估算 token 数
-     * 约 4 个字符 = 1 个 token
+     * 约 4 个字符 = 1 个 token，并乘以 1.5 安全系数偏大估算
      */
     private countLocalTokens(contents: Content[]): TokenCountResult {
+        const SAFETY_FACTOR = 1.5;
         let totalChars = 0;
         
         for (const content of contents) {
@@ -204,7 +205,7 @@ export class TokenCountService {
         
         return {
             success: true,
-            totalTokens: Math.ceil(totalChars / 4)
+            totalTokens: Math.ceil(Math.ceil(totalChars / 4) * SAFETY_FACTOR)
         };
     }
     

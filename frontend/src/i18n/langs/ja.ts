@@ -375,7 +375,8 @@ const ja: LanguageMessages = {
             summary: {
                 title: 'コンテキスト要約',
                 compressed: '{count} 件のメッセージを圧縮しました',
-                deleteTitle: '要約を削除'
+                deleteTitle: '要約を削除',
+                autoTriggered: '自動トリガー'
             },
             checkpoint: {
                 userMessageBefore: 'ユーザーメッセージ前のチェックポイント',
@@ -613,7 +614,7 @@ const ja: LanguageMessages = {
                     },
                     contextManagement: {
                         title: 'コンテキスト管理',
-                        enableTitle: 'コンテキストしきい値検出を有効化',
+                        enableTitle: 'コンテキスト管理を有効化',
                         threshold: {
                             label: 'コンテキストしきい値',
                             placeholder: '80% または 100000',
@@ -625,9 +626,15 @@ const ja: LanguageMessages = {
                             hint: 'トリミング時に追加でカットするトークン数。実際の保持 = しきい値 - 追加カット量。パーセンテージまたは絶対値をサポート、デフォルトは 0'
                         },
                         autoSummarize: {
-                            label: '自動要約（近日公開）',
+                            label: '自動要約',
                             enableTitle: '自動要約を有効化',
-                            hint: '有効にすると、古いラウンドを破棄する前に要約します（機能開発中）'
+                            hint: '有効にすると、コンテキストがしきい値を超えた時に古いラウンドを自動要約します（コンテキストトリミングと排他的）'
+                        },
+                        mode: {
+                            label: '管理方式',
+                            hint: 'トリミング：古いラウンドを直接破棄。自動要約：破棄前に古いラウンドを要約し、AIが要約に基づいて作業を継続可能',
+                            trim: 'コンテキストトリミング',
+                            summarize: '自動要約'
                         }
                     },
                     toolOptions: {
@@ -1329,13 +1336,13 @@ const ja: LanguageMessages = {
                 requiresConfigLabel: '必要な設定：'
             },
             summarizeSettings: {
-                description: 'コンテキスト要約機能は会話履歴を圧縮してトークン使用量を削減できます。会話が長くなりすぎた場合、手動または自動で要約をトリガーして、古い会話内容を要約に圧縮できます。',
+                description: 'コンテキスト要約機能は会話履歴を圧縮してトークン使用量を削減できます。このページでは手動要約と要約モデルを設定します。自動要約は「チャネル設定 > コンテキスト管理」で設定してください。',
                 manualSection: {
                     title: '手動要約',
                     description: '入力ボックスの右側にある圧縮ボタンをクリックすると、手動でコンテキスト要約をトリガーできます。要約された内容は元の会話履歴を置き換えます。'
                 },
                 autoSection: {
-                    title: '自動要約',
+                    title: '自動要約（移行済み）',
                     comingSoon: '近日公開',
                     enable: '自動要約を有効化',
                     enableHint: 'トークン使用量がしきい値を超えたときに自動的に要約をトリガー',
@@ -1348,9 +1355,13 @@ const ja: LanguageMessages = {
                     keepRounds: '最近のラウンドを保持',
                     keepRoundsUnit: 'ラウンド',
                     keepRoundsHint: '最近の N ラウンドの会話を要約から除外し、コンテキストの連続性を確保',
-                    prompt: '要約プロンプト',
-                    promptPlaceholder: '要約時に使用するプロンプトを入力...',
-                    promptHint: 'AI が要約を実行する際に使用する指示'
+                    manualPrompt: '手動要約プロンプト',
+                    manualPromptPlaceholder: '手動要約で使用するプロンプトを入力...',
+                    manualPromptHint: '「コンテキストを要約」ボタンを押したときに使用されます',
+                    autoPrompt: '自動要約プロンプト',
+                    autoPromptPlaceholder: '自動要約で使用するプロンプトを入力（空欄の場合は内蔵プロンプトを使用）...',
+                    autoPromptHint: 'コンテキストしきい値で自動要約が発火したときに使用されます',
+                    restoreBuiltin: '内蔵デフォルトに戻す'
                 },
                 modelSection: {
                     title: '専用要約モデル',
@@ -1443,7 +1454,7 @@ const ja: LanguageMessages = {
                 appInfo: {
                     title: 'アプリケーション情報',
                     name: 'Lim Code - Vibe Coding アシスタント',
-                    version: 'バージョン：1.0.88',
+                    version: 'バージョン：1.0.89',
                     repository: 'リポジトリ',
                     developer: '開発者'
                 }
@@ -1479,7 +1490,7 @@ const ja: LanguageMessages = {
                         enableDiffGuardDesc: '一度に削除される行数がファイル全体の指定割合を超えた場合に警告を表示します',
                         diffGuardThreshold: 'ガード閾値',
                         diffGuardThresholdDesc: '削除行数がファイル全体の行数に対するこの割合を超えた場合に警告をトリガーします',
-                        diffGuardWarning: '⚠️ この変更はファイルの {deletePercent}% のコンテンツ（{deletedLines}/{totalLines} 行）を削除し、{threshold}% のガード閾値を超えています。慎重に確認してください。'
+                        diffGuardWarning: 'この変更はファイルの {deletePercent}% のコンテンツ（{deletedLines}/{totalLines} 行）を削除し、{threshold}% のガード閾値を超えています。慎重に確認してください。'
                     },
                     listFiles: {
                         ignoreList: '無視リスト',
@@ -1504,6 +1515,21 @@ const ja: LanguageMessages = {
                         deleteTooltip: '削除',
                         addButton: '追加'
                     }
+                },
+                history: {
+                    searchSection: '検索モード',
+                    maxSearchMatches: '最大一致数',
+                    maxSearchMatchesDesc: '検索ごとに返される最大一致行数',
+                    searchContextLines: 'コンテキスト行数',
+                    searchContextLinesDesc: '各一致の前後に表示されるコンテキスト行数',
+                    readSection: '読み取りモード',
+                    maxReadLines: '最大読み取り行数',
+                    maxReadLinesDesc: '読み取りリクエストごとに返される最大行数',
+                    outputSection: '出力制限',
+                    maxResultChars: '結果の最大文字数',
+                    maxResultCharsDesc: '複数行読み取り時の結果の最大総文字数',
+                    lineDisplayLimit: '行表示文字制限',
+                    lineDisplayLimitDesc: '1行あたりの最大表示文字数。超過分は省略されます（単一行 read で全文取得可能）'
                 },
                 terminal: {
                     executeCommand: {
@@ -1591,6 +1617,7 @@ const ja: LanguageMessages = {
                     media: 'メディア処理',
                     plan: 'プラン',
                     todo: 'TODO',
+                    history: '履歴',
                     other: 'その他'
                 },
                 dependency: {
@@ -2032,6 +2059,24 @@ const ja: LanguageMessages = {
                     loadingDiff: '差分を読み込み中...'
                 }
             },
+            history: {
+                historySearch: '履歴検索',
+                searchHistory: '履歴を検索',
+                readHistory: '履歴を読む',
+                readAll: 'すべて',
+                panel: {
+                    searchTitle: '要約済み履歴を検索',
+                    readTitle: '要約済み履歴を読む',
+                    regex: '正規表現',
+                    keywords: 'キーワード：',
+                    lineRange: '行範囲：',
+                    noContent: 'コンテンツが返されませんでした',
+                    collapse: '折りたたむ',
+                    expandRemaining: '残り {count} 行を展開',
+                    copyContent: 'コンテンツをコピー',
+                    copied: 'コピーしました'
+                }
+            },
             terminal: {
                 executeCommand: 'コマンドを実行',
                 command: 'コマンド',
@@ -2311,6 +2356,11 @@ const ja: LanguageMessages = {
             title: 'リクエストに失敗しました。自動的に再試行しています',
             cancelTooltip: '再試行をキャンセル',
             defaultError: 'リクエストに失敗しました'
+        },
+        autoSummaryPanel: {
+            summarizing: '自動要約中...',
+            manualSummarizing: '要約中...',
+            cancelTooltip: '要約をキャンセル'
         }
     },
 

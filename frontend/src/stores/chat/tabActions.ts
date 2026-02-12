@@ -26,6 +26,8 @@ export function snapshotCurrentSession(state: ChatStoreState): ConversationSessi
     allMessages: [...state.allMessages.value],
     windowStartIndex: state.windowStartIndex.value,
     totalMessages: state.totalMessages.value,
+    configId: state.configId.value,
+    selectedModelId: state.selectedModelId.value,
     isLoadingMoreMessages: state.isLoadingMoreMessages.value,
     isStreaming: state.isStreaming.value,
     isLoading: state.isLoading.value,
@@ -35,6 +37,7 @@ export function snapshotCurrentSession(state: ChatStoreState): ConversationSessi
     activeBuild: state.activeBuild.value ? { ...state.activeBuild.value } : null,
     error: state.error.value ? { ...state.error.value } : null,
     retryStatus: state.retryStatus.value ? { ...state.retryStatus.value } : null,
+    autoSummaryStatus: state.autoSummaryStatus.value ? { ...state.autoSummaryStatus.value } : null,
     historyFolded: state.historyFolded.value,
     foldedMessageCount: state.foldedMessageCount.value,
     toolCallBuffer: state.toolCallBuffer.value,
@@ -43,7 +46,8 @@ export function snapshotCurrentSession(state: ChatStoreState): ConversationSessi
     pendingModelOverride: state.pendingModelOverride.value,
     editorNodes: [...state.editorNodes.value],
     attachments: [...state.attachments.value],
-    messageQueue: [...state.messageQueue.value]
+    messageQueue: [...state.messageQueue.value],
+    currentPromptModeId: state.currentPromptModeId.value
   }
 }
 
@@ -58,6 +62,8 @@ export function restoreSessionFromSnapshot(
   state.allMessages.value = [...snapshot.allMessages]
   state.windowStartIndex.value = snapshot.windowStartIndex
   state.totalMessages.value = snapshot.totalMessages
+  state.configId.value = snapshot.configId
+  state.selectedModelId.value = snapshot.selectedModelId
   state.isLoadingMoreMessages.value = snapshot.isLoadingMoreMessages
   state.isStreaming.value = snapshot.isStreaming
   state.isLoading.value = snapshot.isLoading
@@ -67,6 +73,7 @@ export function restoreSessionFromSnapshot(
   state.activeBuild.value = snapshot.activeBuild ? { ...snapshot.activeBuild } : null
   state.error.value = snapshot.error ? { ...snapshot.error } : null
   state.retryStatus.value = snapshot.retryStatus ? { ...snapshot.retryStatus } : null
+  state.autoSummaryStatus.value = snapshot.autoSummaryStatus ? { ...snapshot.autoSummaryStatus } : null
   state.historyFolded.value = snapshot.historyFolded
   state.foldedMessageCount.value = snapshot.foldedMessageCount
   state.toolCallBuffer.value = snapshot.toolCallBuffer
@@ -76,6 +83,7 @@ export function restoreSessionFromSnapshot(
   state.editorNodes.value = [...snapshot.editorNodes]
   state.attachments.value = [...snapshot.attachments]
   state.messageQueue.value = [...snapshot.messageQueue]
+  state.currentPromptModeId.value = snapshot.currentPromptModeId
 }
 
 /**
@@ -96,15 +104,18 @@ export function resetConversationState(state: ChatStoreState): void {
   state.activeBuild.value = null
   state.error.value = null
   state.retryStatus.value = null
+  state.autoSummaryStatus.value = null
   state.historyFolded.value = false
   state.foldedMessageCount.value = 0
   state.toolCallBuffer.value = ''
   state.inToolCall.value = null
   state.inputValue.value = ''
   state.pendingModelOverride.value = null
+  state.selectedModelId.value = state.currentConfig.value?.model || ''
   state.editorNodes.value = []
   state.attachments.value = []
   state.messageQueue.value = []
+  state.currentPromptModeId.value = 'code'
 }
 
 /**
@@ -349,4 +360,28 @@ export function updateTabConversationId(
   if (tab) {
     tab.conversationId = conversationId
   }
+}
+
+/**
+ * 重新排列标签页顺序（拖拽排序）
+ *
+ * 将 fromIndex 处的标签页移动到 toIndex 位置
+ */
+export function reorderTab(
+  state: ChatStoreState,
+  fromIndex: number,
+  toIndex: number
+): void {
+  const tabs = [...state.openTabs.value]
+  if (
+    fromIndex < 0 || fromIndex >= tabs.length ||
+    toIndex < 0 || toIndex >= tabs.length ||
+    fromIndex === toIndex
+  ) {
+    return
+  }
+
+  const [moved] = tabs.splice(fromIndex, 1)
+  tabs.splice(toIndex, 0, moved)
+  state.openTabs.value = tabs
 }

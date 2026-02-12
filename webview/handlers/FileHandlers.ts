@@ -11,6 +11,7 @@ import type { HandlerContext, MessageHandler } from '../types';
 import { resolveUriWithInfo } from '../../backend/tools/utils';
 import { validateFileInWorkspace, checkFileExists, getRelativePathFromAbsolute } from '../utils/WorkspaceUtils';
 import { extractPlanTodoListFromContent } from '../../backend/tools/plan/todoListSection';
+import type { PinnedFileItem } from '../../backend/modules/settings/types';
 
 // ========== 工作区信息 ==========
 
@@ -46,6 +47,49 @@ export const getRelativePath: MessageHandler = async (data, requestId, ctx) => {
 
 // ========== 固定文件管理 ==========
 
+const CONVERSATION_PINNED_FILES_KEY = 'inputPinnedFiles';
+
+function normalizePinnedFiles(raw: unknown): PinnedFileItem[] {
+  if (!Array.isArray(raw)) return [];
+
+  return raw
+    .filter((item): item is PinnedFileItem => {
+      return !!item
+        && typeof (item as any).id === 'string'
+        && typeof (item as any).path === 'string'
+        && typeof (item as any).workspaceUri === 'string'
+        && typeof (item as any).enabled === 'boolean'
+        && typeof (item as any).addedAt === 'number';
+    })
+    .map(item => ({ ...item }));
+}
+
+function filterPinnedFilesByWorkspace(files: PinnedFileItem[], workspaceUri: string | null): PinnedFileItem[] {
+  if (!workspaceUri) return files;
+  return files.filter(f => f.workspaceUri === workspaceUri);
+}
+
+async function getConversationPinnedFilesRaw(
+  ctx: HandlerContext,
+  conversationId: string
+): Promise<PinnedFileItem[] | null> {
+  try {
+    const raw = await ctx.conversationManager.getCustomMetadata(conversationId, CONVERSATION_PINNED_FILES_KEY);
+    if (raw === undefined) return null;
+    return normalizePinnedFiles(raw);
+  } catch {
+    return null;
+  }
+}
+
+async function saveConversationPinnedFiles(
+  ctx: HandlerContext,
+  conversationId: string,
+  files: PinnedFileItem[]
+): Promise<void> {
+  await ctx.conversationManager.setCustomMetadata(conversationId, CONVERSATION_PINNED_FILES_KEY, files);
+}
+
 export const getPinnedFilesConfig: MessageHandler = async (data, requestId, ctx) => {
   try {
     const workspaceUri = ctx.getCurrentWorkspaceUri();
@@ -53,9 +97,13 @@ export const getPinnedFilesConfig: MessageHandler = async (data, requestId, ctx)
       ctx.sendResponse(requestId, { files: [], sectionTitle: 'PINNED FILES CONTENT' });
       return;
     }
+
+    const conversationId = typeof data?.conversationId === 'string' ? data.conversationId.trim() : '';
     
     const allConfig = ctx.settingsManager.getPinnedFilesConfig();
-    const workspaceFiles = allConfig.files.filter(f => f.workspaceUri === workspaceUri);
+    const conversationFiles = conversationId ? await getConversationPinnedFilesRaw(ctx, conversationId) : null;
+    const sourceFiles = conversationFiles ?? allConfig.files;
+    const workspaceFiles = filterPinnedFilesByWorkspace(sourceFiles, workspaceUri);
     
     ctx.sendResponse(requestId, {
       ...allConfig,
@@ -133,7 +181,8 @@ export const updatePinnedFilesConfig: MessageHandler = async (data, requestId, c
 
 export const addPinnedFile: MessageHandler = async (data, requestId, ctx) => {
   try {
-    const { path: filePath, workspaceUri: providedWorkspaceUri } = data;
+    const { path: filePath, workspaceUri: providedWorkspaceUri, conversationId } = data;
+    const normalizedConversationId = typeof conversationId === 'string' ? conversationId.trim() : '';
     const currentWorkspaceUri = ctx.getCurrentWorkspaceUri();
     
     if (!currentWorkspaceUri) {
@@ -154,6 +203,32 @@ export const addPinnedFile: MessageHandler = async (data, requestId, ctx) => {
     }
     
     const actualWorkspaceUri = validation.workspaceUri || targetWorkspaceUri;
+
+    if (normalizedConversationId) {
+      const files = (await getConversationPinnedFilesRaw(ctx, normalizedConversationId))
+        ?? [...ctx.settingsManager.getPinnedFiles()];
+
+      if (files.some(f => f.path === validation.relativePath && f.workspaceUri === actualWorkspaceUri)) {
+        ctx.sendResponse(requestId, {
+          success: false,
+          error: 'File already pinned',
+          errorCode: 'FILE_ALREADY_PINNED'
+        });
+        return;
+      }
+
+      const file: PinnedFileItem = {
+        id: `pinned_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        path: validation.relativePath!,
+        workspaceUri: actualWorkspaceUri,
+        enabled: true,
+        addedAt: Date.now()
+      };
+      await saveConversationPinnedFiles(ctx, normalizedConversationId, [...files, file]);
+      ctx.sendResponse(requestId, { success: true, file });
+      return;
+    }
+
     const file = await ctx.settingsManager.addPinnedFile(validation.relativePath!, actualWorkspaceUri);
     ctx.sendResponse(requestId, { success: true, file });
   } catch (error: any) {
@@ -163,7 +238,18 @@ export const addPinnedFile: MessageHandler = async (data, requestId, ctx) => {
 
 export const removePinnedFile: MessageHandler = async (data, requestId, ctx) => {
   try {
-    const { id } = data;
+    const { id, conversationId } = data;
+    const normalizedConversationId = typeof conversationId === 'string' ? conversationId.trim() : '';
+
+    if (normalizedConversationId) {
+      const files = (await getConversationPinnedFilesRaw(ctx, normalizedConversationId))
+        ?? [...ctx.settingsManager.getPinnedFiles()];
+      const updated = files.filter(f => f.id !== id);
+      await saveConversationPinnedFiles(ctx, normalizedConversationId, updated);
+      ctx.sendResponse(requestId, { success: true });
+      return;
+    }
+
     await ctx.settingsManager.removePinnedFile(id);
     ctx.sendResponse(requestId, { success: true });
   } catch (error: any) {
@@ -173,7 +259,25 @@ export const removePinnedFile: MessageHandler = async (data, requestId, ctx) => 
 
 export const setPinnedFileEnabled: MessageHandler = async (data, requestId, ctx) => {
   try {
-    const { id, enabled } = data;
+    const { id, enabled, conversationId } = data;
+    const normalizedConversationId = typeof conversationId === 'string' ? conversationId.trim() : '';
+
+    if (normalizedConversationId) {
+      const files = (await getConversationPinnedFilesRaw(ctx, normalizedConversationId))
+        ?? [...ctx.settingsManager.getPinnedFiles()];
+
+      const updated = files.map(f => (
+        f.id === id
+          ? { ...f, enabled: !!enabled }
+          : f
+      ));
+
+      // 若目标 id 不存在，保持兼容：不抛错，直接返回成功
+      await saveConversationPinnedFiles(ctx, normalizedConversationId, updated);
+      ctx.sendResponse(requestId, { success: true });
+      return;
+    }
+
     await ctx.settingsManager.setPinnedFileEnabled(id, enabled);
     ctx.sendResponse(requestId, { success: true });
   } catch (error: any) {
@@ -669,14 +773,36 @@ export const revealConversationInExplorer: MessageHandler = async (data, request
 // ========== 上下文总结 ==========
 
 export const summarizeContext: MessageHandler = async (data, requestId, ctx) => {
+  const abortManager = ctx.streamAbortControllers as any;
+  const controller = abortManager?.createSummary
+    ? abortManager.createSummary(data.conversationId)
+    : new AbortController();
+
   try {
     const result = await ctx.chatHandler.handleSummarizeContext({
       conversationId: data.conversationId,
-      configId: data.configId
+      configId: data.configId,
+      abortSignal: controller.signal
     });
     ctx.sendResponse(requestId, result);
   } catch (error: any) {
+    const aborted = controller.signal.aborted || error?.name === 'AbortError';
+    if (aborted) {
+      ctx.sendResponse(requestId, {
+        success: false,
+        error: {
+          code: 'ABORTED',
+          message: t('modules.api.chat.errors.summarizeAborted')
+        }
+      });
+      return;
+    }
+
     ctx.sendError(requestId, 'SUMMARIZE_ERROR', error.message || t('webview.errors.summarizeFailed'));
+  } finally {
+    if (abortManager?.deleteSummary) {
+      abortManager.deleteSummary(data.conversationId);
+    }
   }
 };
 

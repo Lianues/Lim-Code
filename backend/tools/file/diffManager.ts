@@ -422,16 +422,27 @@ export class DiffManager {
             return { deletePercent: 0 };
         }
         
-        const originalLines = originalContent.split('\n');
-        const newLines = newContent.split('\n');
+        // 使用统一的按行切分（处理 CRLF/尾部换行），避免行数统计偏差
+        const originalLines = splitLines(originalContent);
+        const newLines = splitLines(newContent);
         const totalOriginalLines = originalLines.length;
         
         if (totalOriginalLines === 0) {
             return { deletePercent: 0 };
         }
         
-        // 计算被删除的行数（原始内容中存在但新内容中不存在的行数）
-        const deletedLineCount = Math.max(0, totalOriginalLines - newLines.length);
+        // 计算“真实删除行数”（而非净行数变化）：
+        // - 例如 3 行被删除，同时插入 1 行，净减少 2 行；
+        //   但删除行数应记为 3 行。
+        // 这里基于 Myers diff 统计 delete 操作数量。
+        const ops = myersDiffLines(originalLines, newLines);
+        let deletedLineCount = ops.filter(op => op.type === 'delete').length;
+
+        // 极端兜底：如果差分异常返回空，退化为净行数变化（至少保证有值）
+        if (ops.length === 0 && originalLines.length !== newLines.length) {
+            deletedLineCount = Math.max(0, totalOriginalLines - newLines.length);
+        }
+
         const deletePercent = Math.round((deletedLineCount / totalOriginalLines) * 100);
         
         if (deletePercent >= config.diffGuardThreshold) {

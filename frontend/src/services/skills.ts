@@ -9,8 +9,8 @@ export interface SkillItem {
   exists?: boolean
 }
 
-export async function listSkills(): Promise<SkillItem[]> {
-  const config = await sendToExtension<{ skills: SkillItem[] }>('getSkillsConfig', {})
+export async function listSkills(conversationId?: string | null): Promise<SkillItem[]> {
+  const config = await sendToExtension<{ skills: SkillItem[] }>('getSkillsConfig', { conversationId })
   return config?.skills || []
 }
 
@@ -20,16 +20,16 @@ export async function checkSkillsExistence(ids: string[]) {
   })
 }
 
-export async function setSkillEnabled(id: string, enabled: boolean) {
-  return await sendToExtension('setSkillEnabled', { id, enabled })
+export async function setSkillEnabled(id: string, enabled: boolean, conversationId?: string | null) {
+  return await sendToExtension('setSkillEnabled', { id, enabled, conversationId })
 }
 
-export async function setSkillSendContent(id: string, sendContent: boolean) {
-  return await sendToExtension('setSkillSendContent', { id, sendContent })
+export async function setSkillSendContent(id: string, sendContent: boolean, conversationId?: string | null) {
+  return await sendToExtension('setSkillSendContent', { id, sendContent, conversationId })
 }
 
-export async function removeSkillConfig(id: string) {
-  return await sendToExtension('removeSkillConfig', { id })
+export async function removeSkillConfig(id: string, conversationId?: string | null) {
+  return await sendToExtension('removeSkillConfig', { id, conversationId })
 }
 
 export async function refreshSkills() {

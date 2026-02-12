@@ -12,6 +12,7 @@ import type {
   Conversation,
   WorkspaceFilter,
   RetryStatus,
+  AutoSummaryStatus,
   ConfigInfo,
   BuildSession,
   ChatStoreState,
@@ -68,6 +69,9 @@ export function createChatState(): ChatStoreState {
   
   /** 配置ID */
   const configId = ref('gemini-pro')
+
+  /** 当前会话选择的模型 ID（对话级隔离） */
+  const selectedModelId = ref('')
   
   /** 当前配置详情（包含模型名称） */
   const currentConfig = ref<ConfigInfo | null>(null)
@@ -92,6 +96,9 @@ export function createChatState(): ChatStoreState {
   
   /** 重试状态 */
   const retryStatus = ref<RetryStatus | null>(null)
+
+  /** 自动总结状态（用于显示“自动总结中”提示） */
+  const autoSummaryStatus = ref<AutoSummaryStatus | null>(null)
   
   /** 工具调用缓冲区（用于检测流式中的 XML/JSON 工具调用） */
   const toolCallBuffer = ref('')
@@ -135,6 +142,9 @@ export function createChatState(): ChatStoreState {
   /** 当前对话的附件列表 */
   const attachments = ref<Attachment[]>([])
 
+  /** 当前对话的 Prompt 模式 ID（对话级隔离，默认 'code'） */
+  const currentPromptModeId = ref('code')
+
   // ============ 多对话标签页 ============
 
   /** 当前打开的标签页列表 */
@@ -165,6 +175,7 @@ export function createChatState(): ChatStoreState {
     historyFolded,
     foldedMessageCount,
     configId,
+    selectedModelId,
     currentConfig,
     isLoading,
     isStreaming,
@@ -173,6 +184,7 @@ export function createChatState(): ChatStoreState {
     streamingMessageId,
     isWaitingForResponse,
     retryStatus,
+    autoSummaryStatus,
     toolCallBuffer,
     inToolCall,
     checkpoints,
@@ -184,6 +196,7 @@ export function createChatState(): ChatStoreState {
     activeBuild,
     editorNodes,
     attachments,
+    currentPromptModeId,
     pendingModelOverride,
     messageQueue,
     _lastCancelledStreamId,

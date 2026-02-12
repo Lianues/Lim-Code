@@ -10,6 +10,7 @@ import { contentToMessageEnhanced } from './parsers'
 import type { Content } from '../../types'
 import { perfLog, perfMeasureAsync } from '../../utils/perf'
 import { trimWindowFromTop, syncTotalMessagesFromWindow } from './windowUtils'
+import { applyConversationModelConfig, applyConversationPromptMode } from './configActions'
 
 // ============ 对话列表分页加载配置 ============
 
@@ -466,9 +467,15 @@ export async function switchConversation(
   
   // 如果是已持久化的对话，从后端加载历史和检查点
   if (conv.isPersisted) {
+    // 恢复该对话保存的渠道/模型选择（若无则回落到当前配置）
+    await applyConversationModelConfig(state, id)
+
+    // 恢复该对话保存的 Prompt 模式（若无则回落到默认 'code'）
+    await applyConversationPromptMode(state, id)
+
     await loadHistory(state)
     await loadCheckpoints(state)
-    
+
     // 更新对话的消息数量（在加载后才有准确数据）
     conv.messageCount = state.totalMessages.value || state.allMessages.value.length
 

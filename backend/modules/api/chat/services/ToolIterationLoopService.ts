@@ -26,6 +26,8 @@ import type {
     ChatStreamErrorData,
     ChatStreamToolIterationData,
     ChatStreamCheckpointsData,
+    ChatStreamAutoSummaryData,
+    ChatStreamAutoSummaryStatusData,
     ChatStreamToolConfirmationData,
     ChatStreamToolsExecutingData,
     ChatStreamToolStatusData,
@@ -39,6 +41,10 @@ import type { MessageBuilderService } from './MessageBuilderService';
 import type { TokenEstimationService } from './TokenEstimationService';
 import type { ContextTrimService } from './ContextTrimService';
 import type { ToolExecutionService, ToolExecutionFullResult, ToolExecutionProgressEvent } from './ToolExecutionService';
+import type { SummarizeService } from './SummarizeService';
+
+const CONVERSATION_PINNED_FILES_KEY = 'inputPinnedFiles';
+const CONVERSATION_SKILLS_KEY = 'inputSkills';
 
 /**
  * 工具迭代循环配置
@@ -54,6 +60,10 @@ export interface ToolIterationLoopConfig {
     modelOverride?: string;
     /** 取消信号 */
     abortSignal?: AbortSignal;
+    /**
+     * 总结请求专用取消信号（仅取消总结 API，不中断主对话请求）
+     */
+    summarizeAbortSignal?: AbortSignal;
     /** 是否是首条消息（影响系统提示词刷新策略） */
     isFirstMessage?: boolean;
     /** 最大迭代次数（-1 表示无限制） */
@@ -62,6 +72,12 @@ export interface ToolIterationLoopConfig {
     startIteration?: number;
     /** 是否创建模型消息前的检查点 */
     createBeforeModelCheckpoint?: boolean;
+    /**
+     * 是否是新回合的开始（默认 true）。
+     * 新回合开始时会生成新的动态上下文并缓存到元数据；
+     * 回合继续时（如工具确认后）从元数据读取缓存的动态上下文，保证回合内一致性。
+     */
+    isNewTurn?: boolean;
 }
 
 /**
@@ -73,6 +89,8 @@ export type ToolIterationLoopOutput =
     | ChatStreamErrorData
     | ChatStreamToolIterationData
     | ChatStreamCheckpointsData
+    | ChatStreamAutoSummaryData
+    | ChatStreamAutoSummaryStatusData
     | ChatStreamToolConfirmationData
     | ChatStreamToolsExecutingData
     | ChatStreamToolStatusData;
@@ -94,6 +112,7 @@ export interface NonStreamToolLoopResult {
  */
 export class ToolIterationLoopService {
     private promptManager: PromptManager;
+    private summarizeService?: SummarizeService;
 
     constructor(
         private channelManager: ChannelManager,
@@ -114,7 +133,44 @@ export class ToolIterationLoopService {
     setPromptManager(promptManager: PromptManager): void {
         this.promptManager = promptManager;
     }
+
+    /**
+     * 设置总结服务（允许外部注入，避免循环依赖）
+     */
+    setSummarizeService(summarizeService: SummarizeService): void {
+        this.summarizeService = summarizeService;
+    }
+
+    private async loadDynamicRuntimeContext(conversationId: string): Promise<{
+        todoList?: unknown;
+        pinnedFiles?: unknown;
+        skills?: unknown;
+    }> {
+        const [todoList, pinnedFiles, skills] = await Promise.all([
+            this.conversationManager.getCustomMetadata(conversationId, 'todoList').catch(() => undefined),
+            this.conversationManager.getCustomMetadata(conversationId, CONVERSATION_PINNED_FILES_KEY).catch(() => undefined),
+            this.conversationManager.getCustomMetadata(conversationId, CONVERSATION_SKILLS_KEY).catch(() => undefined)
+        ]);
+
+        return {
+            todoList,
+            pinnedFiles,
+            skills
+        };
+    }
     
+    /**
+     * 找到当前回合的起始用户消息索引（最后一个 isUserInput=true 的 user 消息）
+     */
+    private findTurnStartMessageIndex(history: Content[]): number {
+        for (let i = history.length - 1; i >= 0; i--) {
+            if (history[i].role === 'user' && history[i].isUserInput) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
     /**
      * 清除指定会话的裁剪状态
      * 
@@ -127,6 +183,40 @@ export class ToolIterationLoopService {
      */
     async clearTrimState(conversationId: string): Promise<void> {
         await this.contextTrimService.clearTrimState(conversationId);
+    }
+
+    /**
+     * 合并两个取消信号：任一信号触发都将中止返回信号
+     *
+     * 用于自动总结场景：
+     * - 主请求取消（abortSignal）
+     * - 仅取消总结（summarizeAbortSignal）
+     */
+    private mergeAbortSignals(
+        primary?: AbortSignal,
+        secondary?: AbortSignal
+    ): AbortSignal | undefined {
+        if (!primary) return secondary;
+        if (!secondary) return primary;
+
+        if (primary.aborted || secondary.aborted) {
+            const controller = new AbortController();
+            controller.abort();
+            return controller.signal;
+        }
+
+        const controller = new AbortController();
+        const onAbort = () => {
+            primary.removeEventListener('abort', onAbort);
+            secondary.removeEventListener('abort', onAbort);
+            if (!controller.signal.aborted) {
+                controller.abort();
+            }
+        };
+
+        primary.addEventListener('abort', onAbort, { once: true });
+        secondary.addEventListener('abort', onAbort, { once: true });
+        return controller.signal;
     }
 
     /**
@@ -146,13 +236,48 @@ export class ToolIterationLoopService {
             config,
             modelOverride,
             abortSignal,
+            summarizeAbortSignal,
             isFirstMessage = false,
             maxIterations,
             startIteration = 0,
             createBeforeModelCheckpoint = true
         } = loopConfig;
 
+        const isNewTurn = loopConfig.isNewTurn !== false;
+
         let iteration = startIteration;
+
+        // 动态上下文在回合开始时生成一次，回合内所有迭代（包括工具确认后的继续）复用
+        // 动态部分包含：当前时间、文件树、标签页、活动编辑器、诊断、固定文件、TODO、Skills
+        // 这些内容不存储到后端历史，仅在发送时临时插入到连续的最后一组用户主动发送消息之前
+        // 缓存存储在回合起始用户消息的 turnDynamicContext 字段上，确保每个回合独立
+        let dynamicContextMessages: Content[];
+        let dynamicContextText: string;
+
+        // 获取历史以定位回合起始用户消息
+        const historyRef = await this.conversationManager.getHistoryRef(conversationId);
+        const turnStartIndex = this.findTurnStartMessageIndex(historyRef);
+
+        if (isNewTurn || turnStartIndex < 0 || !historyRef[turnStartIndex]?.turnDynamicContext) {
+            // 新回合开始 / 缓存不存在：生成动态上下文并存到回合起始用户消息上
+            const runtimeContext = await this.loadDynamicRuntimeContext(conversationId);
+            dynamicContextMessages = this.promptManager.getDynamicContextMessages(runtimeContext);
+            dynamicContextText = this.promptManager.getDynamicContextText(runtimeContext);
+
+            // 存到回合起始用户消息上
+            if (turnStartIndex >= 0) {
+                await this.conversationManager.updateMessage(conversationId, turnStartIndex, {
+                    turnDynamicContext: dynamicContextText
+                });
+            }
+        } else {
+            // 回合继续（如工具确认后、重试等）：从缓存的纯文本重建
+            dynamicContextText = historyRef[turnStartIndex].turnDynamicContext!;
+            dynamicContextMessages = [{
+                role: 'user' as const,
+                parts: [{ text: dynamicContextText }]
+            }];
+        }
 
         // -1 表示无限制
         while (maxIterations === -1 || iteration < maxIterations) {
@@ -180,11 +305,100 @@ export class ToolIterationLoopService {
 
             // 3. 获取对话历史（应用上下文裁剪）
             const historyOptions = this.messageBuilderService.buildHistoryOptions(config);
-            const { history } = await this.contextTrimService.getHistoryWithContextTrimInfo(
+            const trimResult = await this.contextTrimService.getHistoryWithContextTrimInfo(
                 conversationId,
                 config,
-                historyOptions
+                historyOptions,
+                dynamicContextText
             );
+
+            // 3.5 自动总结检测：如果需要总结，先执行总结再重新获取历史
+            if (trimResult.needsAutoSummarize && this.summarizeService) {
+                console.log(`[ToolLoop] Auto-summarize triggered for conversation ${conversationId}`);
+
+                // 先通知前端显示“自动总结中”提示
+                yield {
+                    conversationId,
+                    autoSummaryStatus: true as const,
+                    status: 'started' as const
+                } satisfies ChatStreamAutoSummaryStatusData;
+
+                const autoSummarizeAbortSignal = this.mergeAbortSignals(abortSignal, summarizeAbortSignal);
+
+                const summarizeResult = await this.summarizeService.handleAutoSummarize(
+                    conversationId,
+                    configId,
+                    autoSummarizeAbortSignal
+                );
+
+                if (summarizeResult.success) {
+                    console.log(`[ToolLoop] Auto-summarize completed, continuing loop`);
+
+                    // 先通知前端插入总结消息，避免必须重载才能看到
+                    if (typeof summarizeResult.insertIndex === 'number') {
+                        yield {
+                            conversationId,
+                            autoSummary: true as const,
+                            summaryContent: summarizeResult.summaryContent,
+                            insertIndex: summarizeResult.insertIndex
+                        } satisfies ChatStreamAutoSummaryData;
+                    }
+
+                    // 总结完成，隐藏“自动总结中”提示
+                    yield {
+                        conversationId,
+                        autoSummaryStatus: true as const,
+                        status: 'completed' as const
+                    } satisfies ChatStreamAutoSummaryStatusData;
+
+                    // 总结可能删除了存有 turnDynamicContext 缓存的用户消息，
+                    // 需要将当前的动态上下文重新存到新历史的回合起始消息上，
+                    // 确保后续迭代（如工具确认后的新 runToolLoop 调用）能读到缓存
+                    const postSummarizeHistory = await this.conversationManager.getHistoryRef(conversationId);
+                    const postSummarizeTurnIndex = this.findTurnStartMessageIndex(postSummarizeHistory);
+                    if (postSummarizeTurnIndex >= 0 && !postSummarizeHistory[postSummarizeTurnIndex].turnDynamicContext) {
+                        await this.conversationManager.updateMessage(conversationId, postSummarizeTurnIndex, {
+                            turnDynamicContext: dynamicContextText
+                        });
+                    }
+
+                    // 重新获取历史后再发起本轮 API 请求
+                    continue;
+                }
+
+                if ('error' in summarizeResult) {
+                    const summarizeError = summarizeResult.error;
+
+                    // 主请求取消：直接结束整个对话请求
+                    if (abortSignal?.aborted) {
+                        yield {
+                            conversationId,
+                            cancelled: true as const
+                        } as any;
+                        return;
+                    }
+
+                    // 仅取消总结：不终止主请求，继续正常调用 AI
+                    const isSummaryOnlyAborted = summarizeError.code === 'ABORTED';
+
+                    // 总结失败，隐藏“自动总结中”提示
+                    yield {
+                        conversationId,
+                        autoSummaryStatus: true as const,
+                        status: 'failed' as const,
+                        message: isSummaryOnlyAborted
+                            ? t('modules.api.chat.errors.summarizeAborted')
+                            : summarizeError.message
+                    } satisfies ChatStreamAutoSummaryStatusData;
+
+                    // 总结失败：记录日志，但不要阻塞当前轮对话，继续正常请求
+                    console.warn(
+                        `[ToolLoop] Auto-summarize failed (will continue without summarize): ${summarizeError.code} - ${summarizeError.message}`
+                    );
+                }
+            }
+
+            const { history } = trimResult;
 
             // 4. 获取静态系统提示词（可被 API provider 缓存）
             // 静态部分包含：操作系统、时区、用户语言、工作区路径、工具定义
@@ -192,23 +406,10 @@ export class ToolIterationLoopService {
                 ? this.promptManager.refreshAndGetPrompt()
                 : this.promptManager.getSystemPrompt();  // 静态内容不需要强制刷新
 
-            // 5. 获取动态上下文消息（每次都获取，会被插入到最后一组 user 消息之前）
-            // 动态部分包含：当前时间、文件树、标签页、活动编辑器、诊断、固定文件
-            // 这些内容不存储到后端历史，仅在发送时临时插入到连续的最后一组用户主动发送消息之前
-            // 插入位置由 formatter 内部计算，确保与处理后的 history 一致
-            let todoList: unknown = undefined;
-            try {
-                todoList = await this.conversationManager.getCustomMetadata(conversationId, 'todoList');
-            } catch {
-                todoList = undefined;
-            }
-
-            const dynamicContextMessages = this.promptManager.getDynamicContextMessages({ todoList });
-
-            // 6. 记录请求开始时间
+            // 5. 记录请求开始时间
             const requestStartTime = Date.now();
 
-            // 7. 调用 AI
+            // 6. 调用 AI
             const response = await this.channelManager.generate({
                 configId,
                 history,
@@ -219,7 +420,7 @@ export class ToolIterationLoopService {
                 conversationId
             });
 
-            // 8. 处理响应
+            // 7. 处理响应
             let finalContent: Content;
 
             if (isAsyncGenerator(response)) {
@@ -480,29 +681,61 @@ export class ToolIterationLoopService {
         let iteration = 0;
         const historyOptions = this.messageBuilderService.buildHistoryOptions(config);
 
+        // 在回合开始时一次性生成动态上下文，回合内所有迭代复用，并存到回合起始用户消息上
+        const runtimeContext = await this.loadDynamicRuntimeContext(conversationId);
+        const dynamicContextMessages = this.promptManager.getDynamicContextMessages(runtimeContext);
+        // 预计算动态上下文文本，用于 ContextTrimService 的 token 计数
+        const dynamicContextText = this.promptManager.getDynamicContextText(runtimeContext);
+
+        // 存到回合起始用户消息上
+        const historyRef = await this.conversationManager.getHistoryRef(conversationId);
+        const turnStartIndex = this.findTurnStartMessageIndex(historyRef);
+        if (turnStartIndex >= 0) {
+            await this.conversationManager.updateMessage(conversationId, turnStartIndex, {
+                turnDynamicContext: dynamicContextText
+            });
+        }
+
         // -1 表示无限制
         while (maxIterations === -1 || iteration < maxIterations) {
             iteration++;
 
             // 获取对话历史（应用总结过滤和上下文阈值裁剪）
-            const history = await this.contextTrimService.getHistoryWithContextTrim(
+            const trimResult = await this.contextTrimService.getHistoryWithContextTrimInfo(
                 conversationId,
                 config,
-                historyOptions
+                historyOptions,
+                dynamicContextText
             );
+
+            // 自动总结检测
+            if (trimResult.needsAutoSummarize && this.summarizeService) {
+                console.log(`[ToolLoop/NonStream] Auto-summarize triggered for conversation ${conversationId}`);
+
+                const summarizeResult = await this.summarizeService.handleAutoSummarize(
+                    conversationId,
+                    configId
+                );
+
+                if (summarizeResult.success) {
+                    // 总结成功，重新获取历史
+                    continue;
+                }
+
+                if ('error' in summarizeResult) {
+                    const summarizeError = summarizeResult.error;
+
+                    // 总结失败：不阻塞当前请求，继续使用现有历史
+                    console.warn(
+                        `[ToolLoop/NonStream] Auto-summarize failed (will continue without summarize): ${summarizeError.code} - ${summarizeError.message}`
+                    );
+                }
+            }
+
+            const history = trimResult.history;
 
             // 获取静态系统提示词（可被 API provider 缓存）
             const dynamicSystemPrompt = this.promptManager.getSystemPrompt();
-
-            // 获取动态上下文消息（包含 TODO_LIST 等频繁变化的内容）
-            let todoList: unknown = undefined;
-            try {
-                todoList = await this.conversationManager.getCustomMetadata(conversationId, 'todoList');
-            } catch {
-                todoList = undefined;
-            }
-
-            const dynamicContextMessages = this.promptManager.getDynamicContextMessages({ todoList });
 
             // 调用 AI（非流式）
             const response = await this.channelManager.generate({

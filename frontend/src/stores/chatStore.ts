@@ -56,12 +56,15 @@ import {
   setConfigId as setConfigIdAction,
   loadSavedConfigId,
   loadCheckpointConfig,
+  setSelectedModelId as setSelectedModelIdAction,
   setMergeUnchangedCheckpoints,
   setCurrentWorkspaceUri,
   setWorkspaceFilter as setWorkspaceFilterAction,
   setInputValue as setInputValueAction,
   clearInputValue as clearInputValueAction,
-  handleRetryStatus
+  handleRetryStatus,
+  setCurrentPromptModeId as setCurrentPromptModeIdAction,
+  persistConversationPromptMode
 } from './chat/configActions'
 
 import {
@@ -72,7 +75,8 @@ import {
   restoreAndRetry as restoreAndRetryFn,
   restoreAndDelete as restoreAndDeleteFn,
   restoreAndEdit as restoreAndEditFn,
-  summarizeContext as summarizeContextFn
+  summarizeContext as summarizeContextFn,
+  cancelSummarizeRequest as cancelSummarizeRequestFn
 } from './chat/checkpointActions'
 
 import {
@@ -104,7 +108,8 @@ import {
   switchTab as switchTabAction,
   findTabByConversationId,
   updateTabTitle,
-  updateTabConversationId
+  updateTabConversationId,
+  reorderTab as reorderTabAction
 } from './chat/tabActions'
 
 import type { StreamHandlerContext } from './chat/streamHandler'
@@ -221,8 +226,11 @@ export const useChatStore = defineStore('chat', () => {
   // ============ 配置操作 ============
   
   const setConfigId = (newConfigId: string) => setConfigIdAction(state, newConfigId)
+  const setSelectedModelId = (modelId: string) => setSelectedModelIdAction(state, modelId)
   const setWorkspaceFilter = (filter: 'current' | 'all') => setWorkspaceFilterAction(state, filter)
   const setInputValue = (value: string) => setInputValueAction(state, value)
+
+  const setCurrentPromptModeId = (modeId: string) => setCurrentPromptModeIdAction(state, modeId)
   const clearInputValue = () => clearInputValueAction(state)
 
   // ============ 编辑器节点（对话级输入状态隔离） ============
@@ -392,6 +400,7 @@ export const useChatStore = defineStore('chat', () => {
   const restoreAndEdit = (messageIndex: number, newContent: string, attachments: Attachment[] | undefined, checkpointId: string) =>
     restoreAndEditFn(state, messageIndex, newContent, attachments, checkpointId, computed.currentModelName.value, cancelStream)
   const summarizeContext = () => summarizeContextFn(state, () => loadHistory(state))
+  const cancelSummarizeRequest = () => cancelSummarizeRequestFn(state)
 
   // ============ 流式处理 ============
 
@@ -433,6 +442,7 @@ export const useChatStore = defineStore('chat', () => {
    */
   function switchTabWrapped(tabId: string): void {
     switchTabAction(state, tabId, cancelStreamAndRejectTools, streamHandlerCtx)
+    void loadCurrentConfig(state)
   }
 
   /**
@@ -529,6 +539,7 @@ export const useChatStore = defineStore('chat', () => {
     messages: computed.messages,
     configId: state.configId,
     currentConfig: state.currentConfig,
+    selectedModelId: state.selectedModelId,
     isLoading: state.isLoading,
     isStreaming: state.isStreaming,
     isLoadingConversations: state.isLoadingConversations,
@@ -536,6 +547,7 @@ export const useChatStore = defineStore('chat', () => {
     hasMoreConversations,
     isWaitingForResponse: state.isWaitingForResponse,
     retryStatus: state.retryStatus,
+    autoSummaryStatus: state.autoSummaryStatus,
     error: state.error,
     
     // 计算属性
@@ -577,6 +589,8 @@ export const useChatStore = defineStore('chat', () => {
     // 配置管理
     setConfigId,
     loadCurrentConfig: () => loadCurrentConfig(state),
+    setSelectedModelId,
+    setCurrentPromptModeId,
     
     // 工具
     formatTime,
@@ -612,6 +626,9 @@ export const useChatStore = defineStore('chat', () => {
     // 编辑器节点 & 附件（对话级隔离）
     editorNodes: state.editorNodes,
     setEditorNodes,
+    currentPromptModeId: state.currentPromptModeId,
+    persistConversationPromptMode: () => persistConversationPromptMode(state),
+
     storeAttachments: state.attachments,
     addStoreAttachment,
     removeStoreAttachment,
@@ -634,6 +651,7 @@ export const useChatStore = defineStore('chat', () => {
     
     // 上下文总结
     summarizeContext,
+    cancelSummarizeRequest,
 
     // 标签页
     openTabs: state.openTabs,
@@ -642,6 +660,7 @@ export const useChatStore = defineStore('chat', () => {
     closeTab: closeTabWrapped,
     switchTab: switchTabWrapped,
     openConversationInTab,
+    reorderTab: (fromIndex: number, toIndex: number) => reorderTabAction(state, fromIndex, toIndex),
     
     // 初始化
     initialize

@@ -227,6 +227,25 @@ export const checkShellAvailability: MessageHandler = async (data, requestId, ct
   }
 };
 
+export const getHistorySearchConfig: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const config = ctx.settingsManager.getHistorySearchConfig();
+    ctx.sendResponse(requestId, { config });
+  } catch (error: any) {
+    ctx.sendError(requestId, 'GET_HISTORY_SEARCH_CONFIG_ERROR', error.message || 'Failed to get history_search config');
+  }
+};
+
+export const updateHistorySearchConfig: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    await ctx.settingsManager.updateHistorySearchConfig(data.config);
+    ctx.sendResponse(requestId, { success: true });
+  } catch (error: any) {
+    ctx.sendError(requestId, 'UPDATE_HISTORY_SEARCH_CONFIG_ERROR', error.message || 'Failed to update history_search config');
+  }
+};
+
+
 // ========== 终端管理 ==========
 
 export const terminalKill: MessageHandler = async (data, requestId, ctx) => {
@@ -337,6 +356,8 @@ export function registerToolHandlers(registry: Map<string, MessageHandler>): voi
   registry.set('tools.getExecuteCommandConfig', getExecuteCommandConfig);
   registry.set('tools.updateExecuteCommandConfig', updateExecuteCommandConfig);
   registry.set('tools.checkShellAvailability', checkShellAvailability);
+  registry.set('tools.getHistorySearchConfig', getHistorySearchConfig);
+  registry.set('tools.updateHistorySearchConfig', updateHistorySearchConfig);
   
   // 终端管理
   registry.set('terminal.kill', terminalKill);

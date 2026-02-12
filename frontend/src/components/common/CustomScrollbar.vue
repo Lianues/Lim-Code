@@ -660,14 +660,15 @@ function scrollToTop() {
   }
 }
 
-function scrollToBottom() {
+function scrollToBottom(options?: { instant?: boolean }) {
   if (scrollContainer.value) {
+    const behavior = options?.instant ? 'instant' as ScrollBehavior : 'smooth'
     // 强制更新一次，确保获取最新的 scrollHeight
     nextTick(() => {
       if (scrollContainer.value) {
         scrollContainer.value.scrollTo({
           top: scrollContainer.value.scrollHeight,
-          behavior: 'smooth'
+          behavior
         })
       }
     })
@@ -766,7 +767,7 @@ defineExpose({
         v-if="showJumpButtons" 
         class="jump-btn jump-btn-bottom" 
         :title="t ? t('components.common.scrollToBottom') : 'Scroll to bottom'"
-        @click.stop="scrollToBottom"
+        @click.stop="() => scrollToBottom()"
       >
         <i class="codicon codicon-chevron-down"></i>
       </button>

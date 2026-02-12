@@ -36,6 +36,8 @@ import type {
     ChatStreamToolConfirmationData,
     ChatStreamToolsExecutingData,
     ChatStreamToolStatusData,
+    ChatStreamAutoSummaryData,
+    ChatStreamAutoSummaryStatusData,
     ToolConfirmationResponseData,
     PendingToolCall,
     RetryRequestData,
@@ -159,6 +161,10 @@ export class ChatHandler {
         );
         // 设置 PromptManager 到 ToolIterationLoopService
         this.toolIterationLoopService.setPromptManager(this.promptManager);
+        // 设置 SummarizeService 到 ToolIterationLoopService（用于自动总结）
+        this.toolIterationLoopService.setSummarizeService(this.summarizeService);
+        // 设置 TokenEstimationService 到 SummarizeService（用于估算待总结消息的 token 数）
+        this.summarizeService.setTokenEstimationService(this.tokenEstimationService);
     }
     
     /**
@@ -318,6 +324,8 @@ export class ChatHandler {
         | ChatStreamToolConfirmationData
         | ChatStreamToolsExecutingData
         | ChatStreamToolStatusData
+        | ChatStreamAutoSummaryData
+        | ChatStreamAutoSummaryStatusData
     > {
         try {
             for await (const chunk of this.chatFlowService.handleChatStream(request)) {
@@ -359,6 +367,8 @@ export class ChatHandler {
         | ChatStreamToolConfirmationData
         | ChatStreamToolsExecutingData
         | ChatStreamToolStatusData
+        | ChatStreamAutoSummaryData
+        | ChatStreamAutoSummaryStatusData
     > {
         // 新实现：委托给 ChatFlowService 处理完整流程，保留统一的错误处理逻辑
         try {
@@ -443,6 +453,8 @@ export class ChatHandler {
         | ChatStreamToolConfirmationData
         | ChatStreamToolsExecutingData
         | ChatStreamToolStatusData
+        | ChatStreamAutoSummaryData
+        | ChatStreamAutoSummaryStatusData
     > {
         try {
             for await (const chunk of this.chatFlowService.handleRetryStream(request)) {
@@ -505,6 +517,8 @@ export class ChatHandler {
         | ChatStreamToolConfirmationData
         | ChatStreamToolsExecutingData
         | ChatStreamToolStatusData
+        | ChatStreamAutoSummaryData
+        | ChatStreamAutoSummaryStatusData
     > {
         try {
             for await (const chunk of this.chatFlowService.handleEditAndRetryStream(request)) {

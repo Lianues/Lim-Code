@@ -38,7 +38,8 @@ import type {
     SkillsConfig,
     SkillConfigItem,
     SubAgentsConfig,
-    SubAgentConfigItem
+    SubAgentConfigItem,
+    HistorySearchToolConfig
 } from './types';
 import {
     DEFAULT_GLOBAL_SETTINGS,
@@ -69,6 +70,7 @@ import {
     DEFAULT_MAX_TOOL_ITERATIONS,
     DEFAULT_TOKEN_COUNT_CONFIG,
     DEFAULT_SUBAGENTS_CONFIG,
+    DEFAULT_HISTORY_SEARCH_CONFIG,
     getDefaultExecuteCommandConfig
 } from './types';
 
@@ -598,6 +600,45 @@ export class SettingsManager {
             settings: this.settings
         });
     }
+
+    /**
+     * 获取 history_search 工具配置
+     */
+    getHistorySearchConfig(): Readonly<HistorySearchToolConfig> {
+        const cfg = this.settings.toolsConfig?.history_search;
+        return {
+            ...DEFAULT_HISTORY_SEARCH_CONFIG,
+            ...(cfg || {})
+        };
+    }
+
+    /**
+     * 更新 history_search 工具配置
+     */
+    async updateHistorySearchConfig(config: Partial<HistorySearchToolConfig>): Promise<void> {
+        const oldConfig = this.getHistorySearchConfig();
+        const newConfig = {
+            ...oldConfig,
+            ...config
+        };
+
+        if (!this.settings.toolsConfig) {
+            this.settings.toolsConfig = {};
+        }
+        this.settings.toolsConfig.history_search = newConfig;
+        this.settings.lastUpdated = Date.now();
+
+        await this.storage.save(this.settings);
+
+        this.notifyChange({
+            type: 'tools',
+            path: 'toolsConfig.history_search',
+            oldValue: oldConfig,
+            newValue: newConfig,
+            settings: this.settings
+        });
+    }
+
     
     /**
      * 获取 delete_file 工具配置

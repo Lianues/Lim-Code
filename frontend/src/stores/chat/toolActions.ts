@@ -522,7 +522,8 @@ export async function rejectPendingToolsWithAnnotation(
       configId: state.currentConfig.value.id,
       modelOverride: state.pendingModelOverride.value || undefined,
       toolResponses,
-      annotation: trimmedAnnotation
+      annotation: trimmedAnnotation,
+      promptModeId: state.currentPromptModeId.value
     })
   } catch (error) {
     console.error('Failed to send tool confirmation with annotation:', error)

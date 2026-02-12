@@ -375,7 +375,8 @@ const en: LanguageMessages = {
             summary: {
                 title: 'Context Summary',
                 compressed: 'Compressed {count} messages',
-                deleteTitle: 'Delete Summary'
+                deleteTitle: 'Delete Summary',
+                autoTriggered: 'Auto Triggered'
             },
             checkpoint: {
                 userMessageBefore: 'Before User Message',
@@ -613,7 +614,7 @@ const en: LanguageMessages = {
                     },
                     contextManagement: {
                         title: 'Context Management',
-                        enableTitle: 'Enable context threshold detection',
+                        enableTitle: 'Enable context management',
                         threshold: {
                             label: 'Context Threshold',
                             placeholder: '80% or 100000',
@@ -625,9 +626,15 @@ const en: LanguageMessages = {
                             hint: 'Extra tokens to cut when trimming. Actual reserve = threshold - extra cut. Supports percentage or absolute value, defaults to 0'
                         },
                         autoSummarize: {
-                            label: 'Auto Summarize (Coming Soon)',
+                            label: 'Auto Summarize',
                             enableTitle: 'Enable auto summarize',
-                            hint: 'When enabled, summarize old turns before discarding (feature in development)'
+                            hint: 'When enabled, automatically summarize old turns when context exceeds threshold (mutually exclusive with context trimming)'
+                        },
+                        mode: {
+                            label: 'Management Mode',
+                            hint: 'Trim: directly discard old turns. Auto Summarize: summarize old turns before discarding, AI can continue based on summary',
+                            trim: 'Context Trimming',
+                            summarize: 'Auto Summarize'
                         }
                     },
                     toolOptions: {
@@ -1329,13 +1336,13 @@ const en: LanguageMessages = {
                 requiresConfigLabel: 'Requires Config:'
             },
             summarizeSettings: {
-                description: 'Context summarization can compress conversation history to reduce Token usage. When conversations get too long, you can manually or automatically trigger summarization to compress old conversation content into a summary.',
+                description: 'Context summarization can compress conversation history to reduce Token usage. This page is for manual summary and summary model settings. Auto summarize is configured in "Channel Settings > Context Management".',
                 manualSection: {
                     title: 'Manual Summarization',
                     description: 'Click the compress button on the right side of the input box to manually trigger context summarization. The summarized content will replace the original conversation history.'
                 },
                 autoSection: {
-                    title: 'Auto Summarization',
+                    title: 'Auto Summarization (Moved)',
                     comingSoon: 'Coming Soon',
                     enable: 'Enable Auto Summarization',
                     enableHint: 'Automatically trigger summarization when Token usage exceeds the threshold',
@@ -1348,9 +1355,13 @@ const en: LanguageMessages = {
                     keepRounds: 'Keep Recent Rounds',
                     keepRoundsUnit: 'rounds',
                     keepRoundsHint: 'Keep the most recent N rounds of conversation from being summarized to ensure context continuity',
-                    prompt: 'Summarization Prompt',
-                    promptPlaceholder: 'Enter the prompt to use for summarization...',
-                    promptHint: 'Instructions used by AI when performing summarization'
+                    manualPrompt: 'Manual Summarization Prompt',
+                    manualPromptPlaceholder: 'Enter the prompt used for manual summarization...',
+                    manualPromptHint: 'Used when you click the "Summarize context" button',
+                    autoPrompt: 'Auto Summarization Prompt',
+                    autoPromptPlaceholder: 'Enter the prompt used for auto summarization (leave empty to use built-in prompt)...',
+                    autoPromptHint: 'Used when auto summarize is triggered by context threshold',
+                    restoreBuiltin: 'Restore built-in default'
                 },
                 modelSection: {
                     title: 'Dedicated Summarization Model',
@@ -1443,7 +1454,7 @@ const en: LanguageMessages = {
                 appInfo: {
                     title: 'Application Info',
                     name: 'Lim Code - Vibe Coding Assistant',
-                    version: 'Version: 1.0.88',
+                    version: 'Version: 1.0.89',
                     repository: 'Repository',
                     developer: 'Developer'
                 }
@@ -1479,7 +1490,7 @@ const en: LanguageMessages = {
                         enableDiffGuardDesc: 'Show a warning when the number of deleted lines exceeds a specified percentage of the total file lines',
                         diffGuardThreshold: 'Guard Threshold',
                         diffGuardThresholdDesc: 'Trigger a warning when deleted lines exceed this percentage of total file lines',
-                        diffGuardWarning: '⚠️ This change deletes {deletePercent}% of the file content ({deletedLines}/{totalLines} lines), exceeding the {threshold}% guard threshold. Please review carefully.'
+                        diffGuardWarning: 'This change deletes {deletePercent}% of the file content ({deletedLines}/{totalLines} lines), exceeding the {threshold}% guard threshold. Please review carefully.'
                     },
                     listFiles: {
                         ignoreList: 'Ignore List',
@@ -1504,6 +1515,21 @@ const en: LanguageMessages = {
                         deleteTooltip: 'Delete',
                         addButton: 'Add'
                     }
+                },
+                history: {
+                    searchSection: 'Search Mode',
+                    maxSearchMatches: 'Max Matches',
+                    maxSearchMatchesDesc: 'Maximum number of matching lines returned per search',
+                    searchContextLines: 'Context Lines',
+                    searchContextLinesDesc: 'Number of context lines shown before and after each match',
+                    readSection: 'Read Mode',
+                    maxReadLines: 'Max Read Lines',
+                    maxReadLinesDesc: 'Maximum number of lines returned per read request',
+                    outputSection: 'Output Limits',
+                    maxResultChars: 'Max Result Characters',
+                    maxResultCharsDesc: 'Maximum total characters in the result (multi-line read)',
+                    lineDisplayLimit: 'Line Display Limit',
+                    lineDisplayLimitDesc: 'Max display characters per line; longer lines are truncated (use single-line read for full content)'
                 },
                 terminal: {
                     executeCommand: {
@@ -1591,6 +1617,7 @@ const en: LanguageMessages = {
                     media: 'Media Processing',
                     plan: 'Plan',
                     todo: 'TODO',
+                    history: 'History',
                     other: 'Other'
                 },
                 dependency: {
@@ -2032,6 +2059,24 @@ const en: LanguageMessages = {
                     loadingDiff: 'Loading diff...'
                 }
             },
+            history: {
+                historySearch: 'History Search',
+                searchHistory: 'Search History',
+                readHistory: 'Read History',
+                readAll: 'All',
+                panel: {
+                    searchTitle: 'Search Summarized History',
+                    readTitle: 'Read Summarized History',
+                    regex: 'Regex',
+                    keywords: 'Keywords:',
+                    lineRange: 'Lines:',
+                    noContent: 'No content returned',
+                    collapse: 'Collapse',
+                    expandRemaining: 'Expand remaining {count} lines',
+                    copyContent: 'Copy Content',
+                    copied: 'Copied'
+                }
+            },
             terminal: {
                 executeCommand: 'Execute Command',
                 command: 'Command',
@@ -2311,6 +2356,11 @@ const en: LanguageMessages = {
             title: 'Request failed, retrying automatically',
             cancelTooltip: 'Cancel retry',
             defaultError: 'Request failed'
+        },
+        autoSummaryPanel: {
+            summarizing: 'Auto summarizing...',
+            manualSummarizing: 'Summarizing context...',
+            cancelTooltip: 'Cancel summarize request'
         }
     },
 

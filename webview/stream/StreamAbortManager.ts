@@ -11,6 +11,8 @@ import type * as vscode from 'vscode';
  */
 export class StreamAbortManager {
   private controllers: Map<string, AbortController> = new Map();
+  /** 总结请求专用取消器（仅取消总结 API，不中断主对话流） */
+  private summaryControllers: Map<string, AbortController> = new Map();
 
   /**
    * 创建并存储新的 AbortController
@@ -33,12 +35,23 @@ export class StreamAbortManager {
    */
   cancel(conversationId: string): boolean {
     const controller = this.controllers.get(conversationId);
+    const summaryController = this.summaryControllers.get(conversationId);
+    let cancelled = false;
+
     if (controller) {
       controller.abort();
       this.controllers.delete(conversationId);
-      return true;
+      cancelled = true;
     }
-    return false;
+
+    // 取消主请求时，也一并取消总结请求
+    if (summaryController) {
+      summaryController.abort();
+      this.summaryControllers.delete(conversationId);
+      cancelled = true;
+    }
+
+    return cancelled;
   }
 
   /**
@@ -46,6 +59,39 @@ export class StreamAbortManager {
    */
   delete(conversationId: string): void {
     this.controllers.delete(conversationId);
+  }
+
+  /**
+   * 创建并存储总结请求的 AbortController
+   */
+  createSummary(conversationId: string): AbortController {
+    // 若存在旧的总结请求控制器，先中断再替换
+    const existing = this.summaryControllers.get(conversationId);
+    if (existing) {
+      existing.abort();
+    }
+    const controller = new AbortController();
+    this.summaryControllers.set(conversationId, controller);
+    return controller;
+  }
+
+  /** 获取总结请求的 AbortController */
+  getSummary(conversationId: string): AbortController | undefined {
+    return this.summaryControllers.get(conversationId);
+  }
+
+  /** 取消总结请求（不影响主对话流） */
+  cancelSummary(conversationId: string): boolean {
+    const controller = this.summaryControllers.get(conversationId);
+    if (!controller) return false;
+    controller.abort();
+    this.summaryControllers.delete(conversationId);
+    return true;
+  }
+
+  /** 删除总结请求控制器 */
+  deleteSummary(conversationId: string): void {
+    this.summaryControllers.delete(conversationId);
   }
 
   /**
@@ -67,6 +113,11 @@ export class StreamAbortManager {
       }
     }
     this.controllers.clear();
+
+    for (const [, controller] of this.summaryControllers) {
+      controller.abort();
+    }
+    this.summaryControllers.clear();
   }
 
   /**

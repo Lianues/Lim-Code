@@ -6,6 +6,7 @@
  * - 切换标签页
  * - 关闭标签页
  * - 新建标签页
+ * - 拖拽排序标签页
  * - 流式响应指示器
  * - 使用 CustomScrollbar 实现底部横向滚动条
  */
@@ -32,6 +33,7 @@ const emit = defineEmits<{
   switchTab: [tabId: string]
   closeTab: [tabId: string]
   newTab: []
+  reorderTab: [fromIndex: number, toIndex: number]
 }>()
 
 /** CustomScrollbar 组件 ref */
@@ -39,6 +41,81 @@ const scrollbarRef = ref<InstanceType<typeof CustomScrollbar> | null>(null)
 
 /** 是否显示标签栏（至少 1 个标签页时显示） */
 const showTabs = computed(() => props.tabs.length >= 1)
+
+// ─── 拖拽排序状态 ───
+/** 正在拖拽的标签页索引 */
+const dragFromIndex = ref<number | null>(null)
+/** 拖拽悬停的目标索引（用于显示插入指示器） */
+const dragOverIndex = ref<number | null>(null)
+/** 插入指示器方向：'left' 表示在目标标签左侧插入，'right' 表示右侧 */
+const dragOverSide = ref<'left' | 'right'>('left')
+
+/** 拖拽开始 */
+function handleDragStart(e: DragEvent, index: number) {
+  dragFromIndex.value = index
+  dragOverIndex.value = null
+
+  // 设置拖拽数据和效果
+  if (e.dataTransfer) {
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', String(index))
+  }
+}
+
+/** 拖拽经过标签页 */
+function handleDragOver(e: DragEvent, index: number) {
+  e.preventDefault()
+  if (e.dataTransfer) {
+    e.dataTransfer.dropEffect = 'move'
+  }
+  if (dragFromIndex.value === null || dragFromIndex.value === index) {
+    dragOverIndex.value = null
+  return
+  }
+
+  // 根据鼠标在目标标签页内的水平位置判断插入方向
+  const target = (e.currentTarget as HTMLElement)
+  const rect = target.getBoundingClientRect()
+  const midX = rect.left + rect.width / 2
+  dragOverSide.value = e.clientX < midX ? 'left' : 'right'
+  dragOverIndex.value = index
+}
+
+/** 拖拽放置 */
+function handleDrop(e: DragEvent, dropIndex: number) {
+  e.preventDefault()
+  if (dragFromIndex.value === null) return
+
+  const fromIndex = dragFromIndex.value
+  let toIndex = dropIndex
+
+  // 根据插入方向计算最终目标索引
+  if (dragOverSide.value === 'right') {
+    toIndex = dropIndex + 1
+  }
+
+  // 补偿：如果从前面拖到后面，移除原位后目标索引需要 -1
+  if (fromIndex < toIndex) {
+    toIndex -= 1
+  }
+
+  if (fromIndex !== toIndex) {
+    emit('reorderTab', fromIndex, toIndex)
+  }
+
+  resetDragState()
+}
+
+/** 拖拽结束（无论成功与否都清理状态） */
+function handleDragEnd() {
+  resetDragState()
+}
+
+/** 重置拖拽状态 */
+function resetDragState() {
+  dragFromIndex.value = null
+  dragOverIndex.value = null
+}
 
 /** 处理滚轮事件 - 将纵向滚轮转为横向滚动 */
 function handleWheel(e: WheelEvent) {
@@ -107,10 +184,21 @@ watch(() => props.tabs.length, () => {
     >
       <div class="tabs-container">
         <div
-          v-for="tab in tabs"
+          v-for="(tab, index) in tabs"
           :key="tab.id"
           class="tab-item"
-          :class="{ active: tab.id === activeTabId, streaming: tab.isStreaming }"
+          :class="{
+            active: tab.id === activeTabId,
+            streaming: tab.isStreaming,
+            dragging: dragFromIndex === index,
+            'drag-over-left': dragOverIndex === index && dragOverSide === 'left',
+            'drag-over-right': dragOverIndex === index && dragOverSide === 'right'
+          }"
+          draggable="true"
+          @dragstart="handleDragStart($event, index)"
+          @dragover="handleDragOver($event, index)"
+          @drop="handleDrop($event, index)"
+          @dragend="handleDragEnd"
           @click="emit('switchTab', tab.id)"
           @mousedown="handleMouseDown($event, tab.id)"
           :title="tab.title || t('components.tabs.newChat')"
@@ -228,6 +316,44 @@ watch(() => props.tabs.length, () => {
   right: 0;
   height: 2px;
   background: var(--vscode-tab-activeBorderTop, var(--vscode-focusBorder, #007fd4));
+}
+
+/* 拖拽中的标签页半透明 */
+.tab-item.dragging {
+  opacity: 0.4;
+}
+
+/* 拖拽悬停指示器 - 左侧插入 */
+.tab-item.drag-over-left::before {
+  content: '';
+  position: absolute;
+  left: -1px;
+  top: 4px;
+  bottom: 4px;
+  width: 2px;
+  background: var(--vscode-focusBorder, #007fd4);
+  border-radius: 1px;
+  z-index: 10;
+}
+
+/* 拖拽悬停指示器 - 右侧插入 */
+.tab-item.drag-over-right::after {
+  content: '';
+  position: absolute;
+  right: -1px;
+  top: 4px;
+  bottom: 4px;
+  width: 2px;
+  background: var(--vscode-focusBorder, #007fd4);
+  border-radius: 1px;
+  z-index: 10;
+}
+
+/* 防止 drag-over-right 和 active 的 ::after 冲突 */
+.tab-item.active.drag-over-right::after {
+  bottom: 4px;
+  height: auto;
+  background: var(--vscode-focusBorder, #007fd4);
 }
 
 .tab-spinner {

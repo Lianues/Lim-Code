@@ -21,6 +21,9 @@ import type { TokenCountService } from '../../../channel/TokenCountService';
 export type NormalizedChannelType = 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | undefined;
 
 export class TokenEstimationService {
+    /** 本地估算安全系数：统一按偏大估算，避免低估导致超上下文 */
+    private static readonly LOCAL_ESTIMATE_SAFETY_FACTOR = 1.5;
+
     constructor(
         private conversationManager: ConversationManager,
         private tokenCountService: TokenCountService,
@@ -32,6 +35,19 @@ export class TokenEstimationService {
      */
     setSettingsManager(settingsManager: SettingsManager): void {
         this.settingsManager = settingsManager;
+    }
+
+    /**
+     * 本地文本 token 估算（统一按 1.5 安全系数偏大估算）
+     */
+    private estimateTextTokensLocal(text: string): number {
+        const base = Math.ceil(text.length / 4);
+        return this.applyLocalEstimateSafetyFactor(base);
+    }
+
+    /** 对本地估算结果应用统一安全系数 */
+    private applyLocalEstimateSafetyFactor(tokens: number): number {
+        return Math.max(1, Math.ceil(tokens * TokenEstimationService.LOCAL_ESTIMATE_SAFETY_FACTOR));
     }
 
     /**
@@ -273,7 +289,7 @@ export class TokenEstimationService {
     ): Promise<number> {
         if (!this.settingsManager) {
             // 没有设置管理器，直接估算
-            return Math.ceil(systemPrompt.length / 4);
+            return this.estimateTextTokensLocal(systemPrompt);
         }
         
         const tokenCountConfig = this.settingsManager.getTokenCountConfig();
@@ -302,7 +318,7 @@ export class TokenEstimationService {
         }
         
         // 回退到估算
-        return Math.ceil(systemPrompt.length / 4);
+        return this.estimateTextTokensLocal(systemPrompt);
     }
     
     /**
@@ -320,7 +336,7 @@ export class TokenEstimationService {
     ): Promise<number[]> {
         if (!this.settingsManager) {
             // 没有设置管理器，直接估算
-            return texts.map(text => text ? Math.ceil(text.length / 4) : 0);
+            return texts.map(text => text ? this.estimateTextTokensLocal(text) : 0);
         }
         
         const tokenCountConfig = this.settingsManager.getTokenCountConfig();
@@ -331,7 +347,7 @@ export class TokenEstimationService {
         
         if (!useApiCount) {
             // 不使用 API，直接估算
-            return texts.map(text => text ? Math.ceil(text.length / 4) : 0);
+            return texts.map(text => text ? this.estimateTextTokensLocal(text) : 0);
         }
         
         // 更新代理设置
@@ -365,7 +381,7 @@ export class TokenEstimationService {
         const results = await Promise.all(countPromises);
         
         // 构建结果数组
-        const tokenCounts: number[] = texts.map(text => text ? Math.ceil(text.length / 4) : 0);
+        const tokenCounts: number[] = texts.map(text => text ? this.estimateTextTokensLocal(text) : 0);
         
         // 填入 API 结果
         for (let i = 0; i < textsToCount.length; i++) {
@@ -421,7 +437,7 @@ export class TokenEstimationService {
         }
         
         // 最小返回 1 token
-        return Math.max(1, tokens);
+        return this.applyLocalEstimateSafetyFactor(Math.max(1, tokens));
     }
     
     /**
