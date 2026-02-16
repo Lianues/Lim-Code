@@ -322,20 +322,24 @@ export async function cancelStreamAndRejectTools(
 ): Promise<void> {
   if (!state.currentConversationId.value) return
 
-  // 记录被取消的 streamingMessageId，防止迟到的 cancelled/error chunk 误清新请求状态
-  state._lastCancelledStreamId.value = state.streamingMessageId.value
+  const currentStreamingId = state.streamingMessageId.value
+
+  // 仅在“真实流式生成中”才记录取消标记。
+  // awaitingConfirmation 等非流式等待阶段不会再收到该请求的 complete/cancelled，
+  // 若保留旧标记会误伤下一次正常请求的 complete。
+  state._lastCancelledStreamId.value = state.isStreaming.value && currentStreamingId ? currentStreamingId : null
 
   // 先让前端流式指示器立即消失（无论是否存在工具调用）
-  stopStreamingMessage(state, state.streamingMessageId.value)
+  stopStreamingMessage(state, currentStreamingId)
   // 如果是“完全空”的占位消息，立即删除，避免后续重试/删除产生索引错位
-  removeEmptyAssistantPlaceholder(state, state.streamingMessageId.value)
+  removeEmptyAssistantPlaceholder(state, currentStreamingId)
   
   if (state.retryStatus.value) {
     state.retryStatus.value = null
   }
   
-  if (state.streamingMessageId.value) {
-    const messageIndex = state.allMessages.value.findIndex(m => m.id === state.streamingMessageId.value)
+  if (currentStreamingId) {
+    const messageIndex = state.allMessages.value.findIndex(m => m.id === currentStreamingId)
     if (messageIndex !== -1) {
       const message = state.allMessages.value[messageIndex]
       
@@ -345,7 +349,7 @@ export async function cancelStreamAndRejectTools(
         ?.map(tool => tool.id) || []
       
       // 本地先更新工具状态（更健壮：即使 messageIndex 不准确也能 fallback）
-      const info = markIncompleteToolsAsError(state, state.streamingMessageId.value)
+      const info = markIncompleteToolsAsError(state, currentStreamingId)
       // 插入 functionResponse，保持前后端索引一致
       ensureFunctionResponseMessageForRejectedTools(state, info)
       
@@ -376,6 +380,7 @@ export async function cancelStreamAndRejectTools(
   }
   
   state.streamingMessageId.value = null
+  state.activeStreamId.value = null
   state.isStreaming.value = false
   state.isWaitingForResponse.value = false
 }
@@ -387,8 +392,11 @@ export async function cancelStream(
   state: ChatStoreState,
   _computed: ChatStoreComputed
 ): Promise<void> {
-  // 记录被取消的 streamingMessageId，防止后续迟到的 cancelled/error chunk 误清新请求状态
-  state._lastCancelledStreamId.value = state.streamingMessageId.value
+  const currentStreamingId = state.streamingMessageId.value
+
+  // 仅在“真实流式生成中”才记录取消标记，避免非流式等待阶段残留旧标记。
+  // 旧标记会让后续正常请求的 complete 被误判为 stale，导致 isWaitingForResponse 无法清理。
+  state._lastCancelledStreamId.value = state.isStreaming.value && currentStreamingId ? currentStreamingId : null
 
   if (state.retryStatus.value) {
     state.retryStatus.value = null
@@ -397,9 +405,6 @@ export async function cancelStream(
   if (!state.isWaitingForResponse.value || !state.currentConversationId.value) {
     return
   }
-
-  // 先保存当前 streaming 消息 ID，因为后续 await / 事件可能会改变它
-  const currentStreamingId = state.streamingMessageId.value
 
   // 先让前端流式指示器立即消失（无论是否存在工具调用）
   stopStreamingMessage(state, currentStreamingId)
@@ -418,11 +423,12 @@ export async function cancelStream(
     }
 
     // 更新前端工具状态（更健壮：即使 streamingMessageId 丢失也能 fallback）
-    const info = markIncompleteToolsAsError(state, state.streamingMessageId.value)
+    const info = markIncompleteToolsAsError(state, currentStreamingId)
     // 插入 functionResponse，保持前后端索索引一致
     ensureFunctionResponseMessageForRejectedTools(state, info)
 
     state.streamingMessageId.value = null
+    state.activeStreamId.value = null
     state.isLoading.value = false
     state.isWaitingForResponse.value = false
     return
@@ -440,6 +446,7 @@ export async function cancelStream(
     ensureFunctionResponseMessageForRejectedTools(state, info)
 
     state.streamingMessageId.value = null
+    state.activeStreamId.value = null
     state.isLoading.value = false
     state.isStreaming.value = false
     state.isWaitingForResponse.value = false
@@ -449,6 +456,7 @@ export async function cancelStream(
     const info = markIncompleteToolsAsError(state, currentStreamingId)
     ensureFunctionResponseMessageForRejectedTools(state, info)
     state.streamingMessageId.value = null
+    state.activeStreamId.value = null
     state.isLoading.value = false
     state.isStreaming.value = false
     state.isWaitingForResponse.value = false
@@ -517,12 +525,16 @@ export async function rejectPendingToolsWithAnnotation(
   }
 
   try {
+    const streamId = generateId()
+    state.activeStreamId.value = streamId
+    state._lastCancelledStreamId.value = null
     await sendToExtension('toolConfirmation', {
       conversationId: state.currentConversationId.value,
       configId: state.currentConfig.value.id,
       modelOverride: state.pendingModelOverride.value || undefined,
       toolResponses,
       annotation: trimmedAnnotation,
+      streamId,
       promptModeId: state.currentPromptModeId.value
     })
   } catch (error) {

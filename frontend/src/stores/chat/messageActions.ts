@@ -287,6 +287,9 @@ export async function sendMessage(
     state.toolCallBuffer.value = ''
     state.inToolCall.value = null
     state.pendingModelOverride.value = effectiveModelOverride || null
+    const streamId = generateId()
+    state.activeStreamId.value = streamId
+    state._lastCancelledStreamId.value = null
     
     const attachmentData: AttachmentData[] | undefined = attachments && attachments.length > 0
       ? attachments.map(att => ({
@@ -308,7 +311,8 @@ export async function sendMessage(
       attachments: hiddenFunctionResponse ? undefined : attachmentData,
       modelOverride: effectiveModelOverride,
       hiddenFunctionResponse,
-      promptModeId: state.currentPromptModeId.value
+      promptModeId: state.currentPromptModeId.value,
+      streamId
     })
 
   } catch (err: any) {
@@ -319,6 +323,7 @@ export async function sendMessage(
       })
       state.streamingMessageId.value = null
       state.isStreaming.value = false
+      state.activeStreamId.value = null
       state.isWaitingForResponse.value = false
     }
   } finally {
@@ -404,10 +409,14 @@ export async function retryFromMessage(
 
     try {
       const modelOverride = resolveConversationModelOverride(state)
+      const streamId = generateId()
+      state.activeStreamId.value = streamId
+      state._lastCancelledStreamId.value = null
       await sendToExtension('retryStream', {
         conversationId: state.currentConversationId.value,
         configId: state.configId.value,
         modelOverride,
+        streamId,
         promptModeId: state.currentPromptModeId.value
       })
     } catch (err: any) {
@@ -418,6 +427,7 @@ export async function retryFromMessage(
         })
         state.streamingMessageId.value = null
         state.isStreaming.value = false
+        state.activeStreamId.value = null
         state.isWaitingForResponse.value = false
       }
     } finally {
@@ -468,6 +478,7 @@ export async function retryFromMessage(
 
       state.streamingMessageId.value = null
       state.isStreaming.value = false
+      state.activeStreamId.value = null
       state.isWaitingForResponse.value = false
       state.isLoading.value = false
       return
@@ -499,10 +510,14 @@ export async function retryFromMessage(
   
   try {
     const modelOverride = resolveConversationModelOverride(state)
+    const streamId = generateId()
+    state.activeStreamId.value = streamId
+    state._lastCancelledStreamId.value = null
     await sendToExtension('retryStream', {
       conversationId: state.currentConversationId.value,
       configId: state.configId.value,
       modelOverride,
+      streamId,
       promptModeId: state.currentPromptModeId.value
     })
   } catch (err: any) {
@@ -513,6 +528,7 @@ export async function retryFromMessage(
       })
       state.streamingMessageId.value = null
       state.isStreaming.value = false
+      state.activeStreamId.value = null
       state.isWaitingForResponse.value = false
     }
   } finally {
@@ -561,10 +577,14 @@ export async function retryAfterError(
   
   try {
     const modelOverride = resolveConversationModelOverride(state)
+    const streamId = generateId()
+    state.activeStreamId.value = streamId
+    state._lastCancelledStreamId.value = null
     await sendToExtension('retryStream', {
       conversationId: state.currentConversationId.value,
       configId: state.configId.value,
       modelOverride,
+      streamId,
       promptModeId: state.currentPromptModeId.value
     })
   } catch (err: any) {
@@ -575,6 +595,7 @@ export async function retryAfterError(
       })
       state.streamingMessageId.value = null
       state.isStreaming.value = false
+      state.activeStreamId.value = null
       state.isWaitingForResponse.value = false
     }
   } finally {
@@ -656,6 +677,9 @@ export async function editAndRetry(
   
   try {
     const modelOverride = resolveConversationModelOverride(state)
+    const streamId = generateId()
+    state.activeStreamId.value = streamId
+    state._lastCancelledStreamId.value = null
     await sendToExtension('editAndRetryStream', {
       conversationId: state.currentConversationId.value,
       messageIndex: backendMessageIndex,
@@ -663,6 +687,7 @@ export async function editAndRetry(
       attachments: attachmentData,
       configId: state.configId.value,
       modelOverride,
+      streamId,
       promptModeId: state.currentPromptModeId.value
     })
   } catch (err: any) {
@@ -673,6 +698,7 @@ export async function editAndRetry(
       })
       state.streamingMessageId.value = null
       state.isStreaming.value = false
+      state.activeStreamId.value = null
       state.isWaitingForResponse.value = false
     }
   } finally {
@@ -710,6 +736,7 @@ export async function deleteMessage(
     if (state.streamingMessageId.value && msgId && state.streamingMessageId.value === msgId) {
       state.streamingMessageId.value = null
     }
+    state.activeStreamId.value = null
     state.isStreaming.value = false
     state.isWaitingForResponse.value = false
 
@@ -817,5 +844,7 @@ export function clearMessages(state: ChatStoreState): void {
   state.activeBuild.value = null
   state.error.value = null
   state.streamingMessageId.value = null
+  state.activeStreamId.value = null
+  state._lastCancelledStreamId.value = null
   state.isWaitingForResponse.value = false
 }

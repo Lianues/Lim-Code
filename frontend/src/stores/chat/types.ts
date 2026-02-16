@@ -161,6 +161,8 @@ export interface ChatStoreState {
   error: Ref<ErrorInfo | null>
   /** 当前流式消息ID */
   streamingMessageId: Ref<string | null>
+  /** 当前流式请求 ID（用于过滤迟到/过期 chunk） */
+  activeStreamId: Ref<string | null>
   /** 等待AI响应状态 */
   isWaitingForResponse: Ref<boolean>
   /** 重试状态 */
@@ -282,6 +284,8 @@ export interface ConversationSessionSnapshot {
   isLoading: boolean
   /** 流式消息 ID */
   streamingMessageId: string | null
+  /** 当前流式请求 ID */
+  activeStreamId: string | null
   /** 是否等待响应 */
   isWaitingForResponse: boolean
   /** 检查点列表 */

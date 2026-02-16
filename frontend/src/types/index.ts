@@ -496,6 +496,8 @@ export interface StreamChunk {
     | 'autoSummaryStatus'
     | 'autoSummary'
   conversationId: string
+  /** 前端生成的流请求 ID，用于过滤迟到/过期 chunk */
+  streamId?: string
   chunk?: BackendStreamChunk
   content?: Content
   error?: ErrorInfo

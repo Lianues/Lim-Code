@@ -1454,7 +1454,7 @@ const en: LanguageMessages = {
                 appInfo: {
                     title: 'Application Info',
                     name: 'Lim Code - Vibe Coding Assistant',
-                    version: 'Version: 1.0.89',
+                    version: 'Version: 1.0.90',
                     repository: 'Repository',
                     developer: 'Developer'
                 }
@@ -2148,6 +2148,7 @@ const en: LanguageMessages = {
                     requestParams: 'Request Parameters',
                     errorInfo: 'Error Information',
                     responseResult: 'Response Result',
+                    imagePreview: 'Image Preview',
                     waitingResponse: 'Waiting for response...'
                 }
             },

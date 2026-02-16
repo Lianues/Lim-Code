@@ -11,6 +11,7 @@ import type { CheckpointRecord } from '../../../checkpoint';
 import type { SettingsManager } from '../../../settings/SettingsManager';
 import { isPlanPathAllowed } from '../../../settings/modeToolsPolicy';
 import type { McpManager } from '../../../mcp/McpManager';
+import { mcpResultToToolResult } from '../../../mcp/toolAdapter';
 import type { ContentPart } from '../../../conversation/types';
 import type { BaseChannelConfig } from '../../../config/configs/base';
 import { getAllWorkspaces, getMultimodalCapability, type ChannelType as UtilChannelType, type ToolMode as UtilToolMode } from '../../../../tools/utils';
@@ -505,21 +506,33 @@ export class ToolExecutionService {
                 arguments: call.args
             });
 
-            if (result.success) {
-                // 将 MCP 响应转换为标准格式
-                const textContent = result.content
-                    ?.filter(c => c.type === 'text')
-                    .map(c => c.text)
-                    .join('\n') || '';
+            // 统一转换 MCP 结果（支持 text / image / resource）
+            const toolResult = mcpResultToToolResult(result);
 
-                return {
+            if (toolResult.success) {
+                const textContent = typeof toolResult.data === 'string' ? toolResult.data : '';
+                const response: Record<string, unknown> = {
                     success: true,
                     content: textContent || t('modules.api.chat.errors.toolExecutionSuccess')
                 };
+
+                // 保留多模态数据，后续由 processMultimodalData 统一处理
+                if (toolResult.multimodal && toolResult.multimodal.length > 0) {
+                    response.multimodal = toolResult.multimodal.map(item => ({
+                        mimeType: item.mimeType,
+                        data: item.data,
+                        name: item.name
+                    }));
+                }
+
+                return response;
             } else {
                 return {
                     success: false,
-                    error: result.error || t('modules.api.chat.errors.mcpToolCallFailed')
+                    error:
+                        toolResult.error ||
+                        result.error ||
+                        t('modules.api.chat.errors.mcpToolCallFailed')
                 };
             }
         } else {

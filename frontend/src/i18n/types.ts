@@ -2422,6 +2422,7 @@ export interface LanguageMessages {
                     requestParams: string;
                     errorInfo: string;
                     responseResult: string;
+                    imagePreview: string;
                     waitingResponse: string;
                 };
             };

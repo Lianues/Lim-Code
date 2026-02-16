@@ -83,15 +83,24 @@ export class StreamRequestHandler {
     return t('errors.unknown')
   }
 
+  private resolveStreamId(clientStreamId: unknown, requestId: string): string {
+    if (typeof clientStreamId === 'string') {
+      const id = clientStreamId.trim()
+      if (id) return id
+    }
+    return requestId
+  }
+
   /**
    * 处理普通聊天流
    */
   async handleChatStream(data: any, requestId: string): Promise<void> {
-    const { conversationId, message, configId, attachments, modelOverride, hiddenFunctionResponse, promptModeId } = data;
+    const { conversationId, message, configId, attachments, modelOverride, hiddenFunctionResponse, promptModeId, streamId: clientStreamId } = data;
+    const streamId = this.resolveStreamId(clientStreamId, requestId)
     
     const controller = this.deps.abortManager.create(conversationId);
     const summarizeController = this.deps.abortManager.createSummary(conversationId);
-    const processor = new StreamChunkProcessor(this.deps.getView(), conversationId);
+    const processor = new StreamChunkProcessor(this.deps.getView(), conversationId, streamId);
     
     try {
       // 在发起请求前切换到对话指定的 Prompt 模式
@@ -139,11 +148,12 @@ export class StreamRequestHandler {
    * 处理重试流
    */
   async handleRetryStream(data: any, requestId: string): Promise<void> {
-    const { conversationId, configId, modelOverride, promptModeId } = data;
+    const { conversationId, configId, modelOverride, promptModeId, streamId: clientStreamId } = data;
+    const streamId = this.resolveStreamId(clientStreamId, requestId)
     
     const controller = this.deps.abortManager.create(conversationId);
     const summarizeController = this.deps.abortManager.createSummary(conversationId);
-    const processor = new StreamChunkProcessor(this.deps.getView(), conversationId);
+    const processor = new StreamChunkProcessor(this.deps.getView(), conversationId, streamId);
     
     try {
       await this.applyPromptModeIfNeeded(promptModeId);
@@ -184,11 +194,12 @@ export class StreamRequestHandler {
    * 处理编辑并重试流
    */
   async handleEditAndRetryStream(data: any, requestId: string): Promise<void> {
-    const { conversationId, messageIndex, newMessage, configId, modelOverride, attachments, promptModeId } = data;
+    const { conversationId, messageIndex, newMessage, configId, modelOverride, attachments, promptModeId, streamId: clientStreamId } = data;
+    const streamId = this.resolveStreamId(clientStreamId, requestId)
     
     const controller = this.deps.abortManager.create(conversationId);
     const summarizeController = this.deps.abortManager.createSummary(conversationId);
-    const processor = new StreamChunkProcessor(this.deps.getView(), conversationId);
+    const processor = new StreamChunkProcessor(this.deps.getView(), conversationId, streamId);
     
     try {
       await this.applyPromptModeIfNeeded(promptModeId);
@@ -232,11 +243,12 @@ export class StreamRequestHandler {
    * 处理工具确认流
    */
   async handleToolConfirmationStream(data: any, requestId: string): Promise<void> {
-    const { conversationId, toolResponses, annotation, configId, modelOverride, promptModeId } = data;
+    const { conversationId, toolResponses, annotation, configId, modelOverride, promptModeId, streamId: clientStreamId } = data;
+    const streamId = this.resolveStreamId(clientStreamId, requestId)
     
     const controller = this.deps.abortManager.create(conversationId);
     const summarizeController = this.deps.abortManager.createSummary(conversationId);
-    const processor = new StreamChunkProcessor(this.deps.getView(), conversationId);
+    const processor = new StreamChunkProcessor(this.deps.getView(), conversationId, streamId);
     
     try {
       await this.applyPromptModeIfNeeded(promptModeId);

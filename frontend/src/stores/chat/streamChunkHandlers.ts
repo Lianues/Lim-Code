@@ -524,6 +524,7 @@ export function handleAwaitingConfirmation(
   // 注意：不结束 streaming 状态的等待标志，因为需要等用户确认
   // 但 isStreaming 设为 false 允许用户操作
   state.isStreaming.value = false
+  state.activeStreamId.value = null
   // isWaitingForResponse 保持 true 或设为特殊状态
 }
 
@@ -683,6 +684,7 @@ export function handleToolIteration(
   // requiresUserConfirmation: 工具执行后的门闸（如 create_plan），等待用户点击"执行计划"后才继续
   if (hasCancelledTools || hasUserConfirmation) {
     state.streamingMessageId.value = null
+    state.activeStreamId.value = null
     state.isStreaming.value = false
     state.isWaitingForResponse.value = false
     return
@@ -725,7 +727,7 @@ export function handleComplete(
   // 竞态检测：如果 cancelStream 已清理旧请求，而新请求已开始，
   // 迟到的旧请求 complete chunk 不应该影响新请求的消息和状态
   const lastCancelledId = state._lastCancelledStreamId.value
-  const isStaleCallback = !!(
+  const isStaleCallback = !chunk.streamId && !!(
     lastCancelledId &&
     state.streamingMessageId.value &&
     state.streamingMessageId.value !== lastCancelledId
@@ -782,6 +784,7 @@ export function handleComplete(
   }
   
   state.streamingMessageId.value = null
+  state.activeStreamId.value = null
   state.isStreaming.value = false
   state.isWaitingForResponse.value = false  // 结束等待
   state.autoSummaryStatus.value = null
@@ -905,7 +908,7 @@ export function handleCancelled(chunk: StreamChunk, state: ChatStoreState): void
   // 如果 cancelStream() 已经清理了状态并且新请求已经开始（streamingMessageId 已变为新 ID），
   // 此时迟到的 cancelled chunk 不应该重置新请求的全局状态。
   const lastCancelledId = state._lastCancelledStreamId.value
-  const isStaleCallback = !!(
+  const isStaleCallback = !chunk.streamId && !!(
     lastCancelledId &&
     state.streamingMessageId.value &&
     state.streamingMessageId.value !== lastCancelledId
@@ -1009,6 +1012,7 @@ export function handleCancelled(chunk: StreamChunk, state: ChatStoreState): void
     }
   }
   state.streamingMessageId.value = null
+  state.activeStreamId.value = null
   state.isStreaming.value = false
   state.isWaitingForResponse.value = false
   state.autoSummaryStatus.value = null
@@ -1022,7 +1026,7 @@ export function handleCancelled(chunk: StreamChunk, state: ChatStoreState): void
 export function handleError(chunk: StreamChunk, state: ChatStoreState): void {
   // 竞态检测：与 handleCancelled 相同的逻辑
   const lastCancelledId = state._lastCancelledStreamId.value
-  const isStaleCallback = !!(
+  const isStaleCallback = !chunk.streamId && !!(
     lastCancelledId &&
     state.streamingMessageId.value &&
     state.streamingMessageId.value !== lastCancelledId
@@ -1052,6 +1056,7 @@ export function handleError(chunk: StreamChunk, state: ChatStoreState): void {
     state.streamingMessageId.value = null
   }
   
+  state.activeStreamId.value = null
   state.isStreaming.value = false
   state.isWaitingForResponse.value = false  // 结束等待
   state.autoSummaryStatus.value = null

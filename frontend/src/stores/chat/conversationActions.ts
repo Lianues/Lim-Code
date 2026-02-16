@@ -148,6 +148,8 @@ export async function createNewConversation(
   state.isLoading.value = false
   state.isStreaming.value = false
   state.streamingMessageId.value = null
+  state.activeStreamId.value = null
+  state._lastCancelledStreamId.value = null
   state.isWaitingForResponse.value = false
 }
 
@@ -463,6 +465,8 @@ export async function switchConversation(
   state.isLoading.value = false
   state.isStreaming.value = false
   state.streamingMessageId.value = null
+  state.activeStreamId.value = null
+  state._lastCancelledStreamId.value = null
   state.isWaitingForResponse.value = false
   
   // 如果是已持久化的对话，从后端加载历史和检查点

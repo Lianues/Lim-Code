@@ -1454,7 +1454,7 @@ const zhCN: LanguageMessages = {
                 appInfo: {
                     title: '应用信息',
                     name: 'Lim Code - Vibe Coding助手',
-                    version: '版本：1.0.89',
+                    version: '版本：1.0.90',
                     repository: '项目仓库',
                     developer: '开发者'
                 }
@@ -2062,6 +2062,7 @@ const zhCN: LanguageMessages = {
                     requestParams: '请求参数',
                     errorInfo: '错误信息',
                     responseResult: '响应结果',
+                    imagePreview: '图片预览',
                     waitingResponse: '等待响应...'
                 }
             },

@@ -3,6 +3,14 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.0.90] - 2026-02-16
+
+### Added
+  - 添加了对于mcp工具按照mcp规范工具响应返回图片时的显示支持
+
+### Fixed
+  - 优化前后端流式，添加id绑定，修复几个竞态问题
+
 ## [1.0.89] - 2026-02-13
 
 ### Added

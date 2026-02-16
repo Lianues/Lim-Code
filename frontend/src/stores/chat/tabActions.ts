@@ -32,6 +32,7 @@ export function snapshotCurrentSession(state: ChatStoreState): ConversationSessi
     isStreaming: state.isStreaming.value,
     isLoading: state.isLoading.value,
     streamingMessageId: state.streamingMessageId.value,
+    activeStreamId: state.activeStreamId.value,
     isWaitingForResponse: state.isWaitingForResponse.value,
     checkpoints: [...state.checkpoints.value],
     activeBuild: state.activeBuild.value ? { ...state.activeBuild.value } : null,
@@ -68,6 +69,7 @@ export function restoreSessionFromSnapshot(
   state.isStreaming.value = snapshot.isStreaming
   state.isLoading.value = snapshot.isLoading
   state.streamingMessageId.value = snapshot.streamingMessageId
+  state.activeStreamId.value = snapshot.activeStreamId ?? null
   state.isWaitingForResponse.value = snapshot.isWaitingForResponse
   state.checkpoints.value = [...snapshot.checkpoints]
   state.activeBuild.value = snapshot.activeBuild ? { ...snapshot.activeBuild } : null
@@ -99,6 +101,8 @@ export function resetConversationState(state: ChatStoreState): void {
   state.isStreaming.value = false
   state.isLoading.value = false
   state.streamingMessageId.value = null
+  state.activeStreamId.value = null
+  state._lastCancelledStreamId.value = null
   state.isWaitingForResponse.value = false
   state.checkpoints.value = []
   state.activeBuild.value = null
@@ -285,21 +289,67 @@ export function bufferBackgroundChunk(
   if (!buffers.has(convId)) {
     buffers.set(convId, [])
   }
-  buffers.get(convId)!.push(chunk)
 
   // 同时更新对应快照中的流式状态
   // 找到该 conversationId 对应的标签页
   const tab = state.openTabs.value.find(t => t.conversationId === convId)
-  if (!tab) return
+  if (!tab) {
+    buffers.get(convId)!.push(chunk)
+    return
+  }
 
   const snapshot = state.sessionSnapshots.value.get(tab.id)
+
+  // 若快照已绑定 activeStreamId，则过滤掉旧流的迟到 chunk
+  if (
+    snapshot?.activeStreamId &&
+    chunk.streamId &&
+    chunk.streamId !== snapshot.activeStreamId
+  ) {
+    return
+  }
+
+  // 快照当前并不处于等待/流式阶段时，收到带 streamId 的 chunk 视为迟到包，直接忽略。
+  if (
+    snapshot &&
+    !snapshot.activeStreamId &&
+    chunk.streamId &&
+    !snapshot.isWaitingForResponse &&
+    !snapshot.isStreaming
+  ) {
+    return
+  }
+
+  // 快照尚未绑定时，首次收到带 streamId 的 chunk 即建立绑定
+  if (snapshot && !snapshot.activeStreamId && chunk.streamId) {
+    snapshot.activeStreamId = chunk.streamId
+  }
+
+  buffers.get(convId)!.push(chunk)
+
   if (snapshot) {
-    if (chunk.type === 'complete' || chunk.type === 'error' || chunk.type === 'cancelled') {
-      snapshot.isStreaming = false
-      snapshot.isWaitingForResponse = false
-    } else if (chunk.type === 'chunk' || chunk.type === 'toolIteration') {
-      snapshot.isStreaming = true
-      snapshot.isWaitingForResponse = false
+    switch (chunk.type) {
+      case 'complete':
+      case 'error':
+      case 'cancelled':
+        snapshot.isStreaming = false
+        snapshot.isWaitingForResponse = false
+        snapshot.activeStreamId = null
+        break
+      case 'awaitingConfirmation':
+        snapshot.isStreaming = false
+        snapshot.isWaitingForResponse = true
+        snapshot.activeStreamId = null
+        break
+      case 'chunk':
+      case 'toolsExecuting':
+      case 'toolStatus':
+      case 'toolIteration':
+        snapshot.isStreaming = true
+        snapshot.isWaitingForResponse = true
+        break
+      default:
+        break
     }
   }
 }
@@ -317,10 +367,45 @@ export function updateTabStreamingStatus(
   const tab = state.openTabs.value.find(t => t.conversationId === convId)
   if (!tab) return
 
-  if (chunk.type === 'complete' || chunk.type === 'error' || chunk.type === 'cancelled') {
-    tab.isStreaming = false
-  } else {
-    tab.isStreaming = true
+  // 根据“当前会话状态 / 后台快照状态”过滤旧流的迟到 chunk，避免标签页状态闪回。
+  const expectedStreamId = convId === state.currentConversationId.value
+    ? state.activeStreamId.value
+    : state.sessionSnapshots.value.get(tab.id)?.activeStreamId || null
+
+  // 没有预期 streamId 时，不接收带 streamId 的 chunk（通常是迟到包）
+  if (chunk.streamId && !expectedStreamId) {
+    return
+  }
+
+  if (
+    expectedStreamId &&
+    chunk.streamId &&
+    chunk.streamId !== expectedStreamId
+  ) {
+    return
+  }
+
+  switch (chunk.type) {
+    // 明确结束流式状态
+    case 'complete':
+    case 'error':
+    case 'cancelled':
+    case 'awaitingConfirmation':
+      tab.isStreaming = false
+      break
+
+    // 明确处于流式/工具执行推进中
+    case 'chunk':
+    case 'toolsExecuting':
+    case 'toolStatus':
+    case 'toolIteration':
+      tab.isStreaming = true
+      break
+
+    // 与主响应流无关的信号（如 checkpoints / autoSummaryStatus / autoSummary）
+    // 不应覆盖标签页当前流式状态，避免“已完成后又被重置为加载中”的竞态。
+    default:
+      break
   }
 }
 

@@ -167,10 +167,14 @@ export async function restoreAndRetry(
     
     // 6. 调用后端重试
     const modelOverride = resolveConversationModelOverride(state)
+    const streamId = generateId()
+    state.activeStreamId.value = streamId
+    state._lastCancelledStreamId.value = null
     await sendToExtension('retryStream', {
       conversationId: state.currentConversationId.value,
       configId: state.configId.value,
-      modelOverride
+      modelOverride,
+      streamId
     })
     
   } catch (err: any) {
@@ -181,6 +185,7 @@ export async function restoreAndRetry(
       }
       state.streamingMessageId.value = null
       state.isStreaming.value = false
+      state.activeStreamId.value = null
       state.isWaitingForResponse.value = false
     }
   } finally {
@@ -363,13 +368,17 @@ export async function restoreAndEdit(
     
     // 7. 调用后端编辑并重试
     const modelOverride = resolveConversationModelOverride(state)
+    const streamId = generateId()
+    state.activeStreamId.value = streamId
+    state._lastCancelledStreamId.value = null
     await sendToExtension('editAndRetryStream', {
       conversationId: state.currentConversationId.value,
       messageIndex: backendMessageIndex,
       newMessage: newContent,
       attachments: attachmentData,
       configId: state.configId.value,
-      modelOverride
+      modelOverride,
+      streamId
     })
     
   } catch (err: any) {
@@ -380,6 +389,7 @@ export async function restoreAndEdit(
       }
       state.streamingMessageId.value = null
       state.isStreaming.value = false
+      state.activeStreamId.value = null
       state.isWaitingForResponse.value = false
     }
   } finally {

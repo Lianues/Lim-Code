@@ -32,7 +32,8 @@ export class StreamChunkProcessor {
 
   constructor(
     private view: vscode.WebviewView | undefined,
-    private conversationId: string
+    private conversationId: string,
+    private streamId: string
   ) {}
 
   /**
@@ -196,6 +197,7 @@ export class StreamChunkProcessor {
   private enqueue(type: string, data: Record<string, any>): void {
     this.messageBuffer.push({
       conversationId: this.conversationId,
+      streamId: this.streamId,
       type,
       ...data
     });

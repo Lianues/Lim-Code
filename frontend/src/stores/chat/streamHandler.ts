@@ -62,6 +62,17 @@ export function handleStreamChunk(
     return
   }
 
+  // 同一对话可能并发/串行触发多次流式请求，
+  // 通过 streamId 只接收“当前活跃请求”的 chunk，避免迟到 chunk 污染新请求状态。
+  const activeStreamId = state.activeStreamId.value
+  if (chunk.streamId && !activeStreamId) {
+    return
+  }
+
+  if (activeStreamId && chunk.streamId !== activeStreamId) {
+    return
+  }
+
   // 更新当前活跃标签页的流式状态
   updateTabStreamingStatus(state, chunk)
   
@@ -135,6 +146,15 @@ export function handleStreamChunkBatch(
   ctx: StreamHandlerContext
 ): void {
   const { state } = ctx
+  const activeConversationId = state.currentConversationId.value
+  const activeStreamId = state.activeStreamId.value
+
+  const isChunkForCurrentActiveStream = (chunk: StreamChunk): boolean => {
+    if (chunk.conversationId !== activeConversationId) return false
+    if (chunk.streamId && !activeStreamId) return false
+    if (!activeStreamId || !chunk.streamId) return true
+    return chunk.streamId === activeStreamId
+  }
 
   // 查找 batch 中最后一个终结事件的位置
   // 终结事件会用后端权威数据完整覆盖前端流式状态，
@@ -142,7 +162,13 @@ export function handleStreamChunkBatch(
   const TERMINAL_TYPES = new Set(['complete', 'toolsExecuting', 'toolIteration', 'awaitingConfirmation', 'cancelled', 'error'])
   let lastTerminalIndex = -1
   for (let k = chunks.length - 1; k >= 0; k--) {
-    if (TERMINAL_TYPES.has(chunks[k].type)) {
+    const candidate = chunks[k]
+    if (!TERMINAL_TYPES.has(candidate.type)) {
+      continue
+    }
+    // stale stream / 非当前会话的终结事件不应触发“跳过前序 chunk”优化，
+    // 否则可能误跳过当前活跃请求的有效增量。
+    if (isChunkForCurrentActiveStream(candidate)) {
       lastTerminalIndex = k
       break
     }
@@ -169,14 +195,14 @@ export function handleStreamChunkBatch(
     // 对连续的 toolStatus chunk，收集为一组批量处理
     if (
       chunk.type === 'toolStatus' &&
-      chunk.conversationId === state.currentConversationId.value
+      isChunkForCurrentActiveStream(chunk)
     ) {
       const batch: StreamChunk[] = [chunk]
       let j = i + 1
       while (
         j < chunks.length &&
         chunks[j].type === 'toolStatus' &&
-        chunks[j].conversationId === state.currentConversationId.value
+        isChunkForCurrentActiveStream(chunks[j])
       ) {
         batch.push(chunks[j])
         j++
