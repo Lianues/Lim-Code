@@ -555,16 +555,26 @@ async function sendToolConfirmation(toolResponses: Array<{ id: string; name: str
       return
     }
 
+    // 为本次工具确认流绑定 streamId，避免流式过滤器把后端返回的 chunk 当作“未知流”丢弃
+    const streamId = generateId()
+    chatStore.activeStreamId = streamId
+    chatStore.isWaitingForResponse = true
+
     await sendToExtension('toolConfirmation', {
       conversationId: currentConversationId,
       configId: currentConfig.id,
       modelOverride: chatStore.pendingModelOverride || undefined,
       toolResponses,
       annotation,
+      streamId,
       promptModeId: chatStore.currentPromptModeId
     })
   } catch (error) {
     console.error('Failed to send tool confirmation:', error)
+
+    // 请求未发出时回滚 stream 绑定，避免阻塞后续有效流
+    chatStore.activeStreamId = null
+    chatStore.isWaitingForResponse = false
   }
 }
 

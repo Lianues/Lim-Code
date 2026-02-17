@@ -3,6 +3,11 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.0.91] - 2026-02-18
+
+### Fixed
+  - 修复工具等待执行状态不更新的问题
+
 ## [1.0.90] - 2026-02-16
 
 ### Added

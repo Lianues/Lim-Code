@@ -545,6 +545,7 @@ export const useChatStore = defineStore('chat', () => {
     isLoadingConversations: state.isLoadingConversations,
     isLoadingMoreConversations: state.isLoadingMoreConversations,
     hasMoreConversations,
+    activeStreamId: state.activeStreamId,
     isWaitingForResponse: state.isWaitingForResponse,
     retryStatus: state.retryStatus,
     autoSummaryStatus: state.autoSummaryStatus,
