@@ -179,7 +179,16 @@ export interface BaseChannelConfig {
      * 用于控制 API 请求的最大等待时间
      */
     timeout: number;
-    
+
+    /**
+     * 最大上下文 token 数
+     *
+     * 用于上下文阈值裁剪/自动总结的基准窗口。
+     * - 如果未设置，将回退到当前模型的 contextWindow
+     * - 若模型信息不可用，再回退到 128000
+     */
+    maxContextTokens?: number;
+
     /**
      * 是否优先使用流式输出
      *

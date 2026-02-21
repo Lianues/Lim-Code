@@ -360,11 +360,14 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
         // 处理 Usage 统计
         if (response.usage) {
             const usage = response.usage;
+            const outputTokens = usage.output_tokens || 0;
+            const reasoningTokens = usage.output_tokens_details?.reasoning_tokens || 0;
+            const candidatesTokenCount = outputTokens - reasoningTokens;
             content.usageMetadata = {
                 promptTokenCount: usage.input_tokens,
-                candidatesTokenCount: usage.output_tokens,
+                candidatesTokenCount: candidatesTokenCount > 0 ? candidatesTokenCount : undefined,
                 totalTokenCount: usage.total_tokens,
-                thoughtsTokenCount: usage.output_tokens_details?.reasoning_tokens
+                thoughtsTokenCount: reasoningTokens > 0 ? reasoningTokens : undefined
             };
         }
 
@@ -463,11 +466,14 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                 done = true;
                 if (chunk.response?.usage) {
                     const u = chunk.response.usage;
+                    const outputTokens = u.output_tokens || 0;
+                    const reasoningTokens = u.output_tokens_details?.reasoning_tokens || 0;
+                    const candidatesTokenCount = outputTokens - reasoningTokens;
                     usage = {
                         promptTokenCount: u.input_tokens,
-                        candidatesTokenCount: u.output_tokens,
+                        candidatesTokenCount: candidatesTokenCount > 0 ? candidatesTokenCount : undefined,
                         totalTokenCount: u.total_tokens,
-                        thoughtsTokenCount: u.output_tokens_details?.reasoning_tokens
+                        thoughtsTokenCount: reasoningTokens > 0 ? reasoningTokens : undefined
                     };
                 }
                 

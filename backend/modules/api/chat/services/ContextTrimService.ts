@@ -23,13 +23,15 @@
 import type { Content } from '../../../conversation/types';
 import type { ConversationManager, GetHistoryOptions } from '../../../conversation/ConversationManager';
 import type { PromptManager } from '../../../prompt';
-import type { BaseChannelConfig } from '../../../config/configs/base';
+import type { BaseChannelConfig, ModelInfo } from '../../../config/configs/base';
 import type { ConversationRound, ContextTrimInfo } from '../utils';
 import type { TokenEstimationService } from './TokenEstimationService';
 import type { MessageBuilderService } from './MessageBuilderService';
 
 const CONVERSATION_PINNED_FILES_KEY = 'inputPinnedFiles';
 const CONVERSATION_SKILLS_KEY = 'inputSkills';
+const DEFAULT_MAX_CONTEXT_TOKENS = 128000;
+const CONTEXT_TRIM_DEBUG_ENABLED = true;
 
 /**
  * 回合 Token 信息（内部使用）
@@ -41,6 +43,19 @@ interface RoundTokenInfo {
     endIndex: number;
     /** 系统提示词 + effectiveStartIndex 到这个回合结束的累计 token 数 */
     cumulativeTokens: number;
+}
+
+interface AccumulateUsageStats {
+    modelMessagesWithUsage: number;
+    modelMessagesOutputBased: number;
+    modelMessagesMismatch: number;
+    modelMessagesWithoutUsage: number;
+    userMessages: number;
+    userFromChannelCount: number;
+    userFromEstimatedFieldCount: number;
+    userFromLocalEstimateCount: number;
+    userTokensTotal: number;
+    modelTokensTotal: number;
 }
 
 /**
@@ -55,6 +70,14 @@ interface PersistedTrimState {
 
 /** 裁剪状态在 custom metadata 中的 key */
 const TRIM_STATE_KEY = 'trimState';
+
+interface MaxContextResolution {
+    maxContextTokens: number;
+    source: 'config.maxContextTokens' | 'model.contextWindow' | 'default';
+    configMaxContextTokens?: unknown;
+    modelId?: string;
+    modelContextWindow?: unknown;
+}
 
 export class ContextTrimService {
     constructor(
@@ -91,6 +114,90 @@ export class ContextTrimService {
      */
     async clearTrimState(conversationId: string): Promise<void> {
         await this.conversationManager.setCustomMetadata(conversationId, TRIM_STATE_KEY, null);
+    }
+
+    private logDebug(message: string, details?: Record<string, unknown>): void {
+        if (!CONTEXT_TRIM_DEBUG_ENABLED) {
+            return;
+        }
+
+        if (details) {
+            try {
+                console.log(`[ContextTrim][Debug] ${message} ${JSON.stringify(details)}`);
+                return;
+            } catch {
+                // ignore stringify error and fallback below
+            }
+        }
+
+        if (details) {
+            console.log(`[ContextTrim][Debug] ${message}`, details);
+        } else {
+            console.log(`[ContextTrim][Debug] ${message}`);
+        }
+    }
+
+    /**
+     * 归一化 token 数值：仅接受有限正数
+     */
+    private normalizePositiveTokenValue(value: unknown): number | undefined {
+        const numericValue = typeof value === 'number'
+            ? value
+            : (typeof value === 'string' ? Number(value) : NaN);
+
+        if (!Number.isFinite(numericValue) || numericValue <= 0) {
+            return undefined;
+        }
+        return Math.floor(numericValue);
+    }
+
+    /**
+     * 解析当前轮应使用的最大上下文 token 数。
+     *
+     * 优先级：
+     * 1. 配置显式 maxContextTokens
+     * 2. 当前模型（modelOverride 或 config.model）在 models 列表中的 contextWindow
+     * 3. 默认值 128000
+     */
+    private resolveMaxContextTokens(config: BaseChannelConfig, modelOverride?: string): MaxContextResolution {
+        const configuredMax = this.normalizePositiveTokenValue(config.maxContextTokens);
+        if (configuredMax !== undefined) {
+            return {
+                maxContextTokens: configuredMax,
+                source: 'config.maxContextTokens',
+                configMaxContextTokens: config.maxContextTokens
+            };
+        }
+
+        const candidateModelId = (() => {
+            if (typeof modelOverride === 'string' && modelOverride.trim()) {
+                return modelOverride.trim();
+            }
+            const configModel = (config as { model?: unknown }).model;
+            return typeof configModel === 'string' && configModel.trim() ? configModel.trim() : '';
+        })();
+
+        if (candidateModelId) {
+            const modelList = Array.isArray((config as { models?: unknown }).models) ? ((config as { models?: ModelInfo[] }).models as ModelInfo[]) : [];
+            const matchedModel = modelList.find(model => model?.id === candidateModelId);
+            const modelContextWindow = this.normalizePositiveTokenValue(matchedModel?.contextWindow);
+            if (modelContextWindow !== undefined) {
+                return {
+                    maxContextTokens: modelContextWindow,
+                    source: 'model.contextWindow',
+                    configMaxContextTokens: config.maxContextTokens,
+                    modelId: candidateModelId,
+                    modelContextWindow: matchedModel?.contextWindow
+                };
+            }
+        }
+
+        return {
+            maxContextTokens: DEFAULT_MAX_CONTEXT_TOKENS,
+            source: 'default',
+            configMaxContextTokens: config.maxContextTokens,
+            modelId: candidateModelId || undefined
+        };
     }
 
     /**
@@ -204,7 +311,8 @@ export class ContextTrimService {
     calculateContextTrimStartIndex(
         history: Content[],
         config: BaseChannelConfig,
-        latestTokenCount: number
+        latestTokenCount: number,
+        modelOverride?: string
     ): number {
         // 检查是否启用上下文阈值检测
         if (!config.contextThresholdEnabled) {
@@ -212,9 +320,21 @@ export class ContextTrimService {
         }
         
         // 获取最大上下文和阈值
-        const maxContextTokens = (config as any).maxContextTokens || 128000;
+        const maxContextResolution = this.resolveMaxContextTokens(config, modelOverride);
+        const maxContextTokens = maxContextResolution.maxContextTokens;
         const thresholdConfig = config.contextThreshold ?? '80%';
         const threshold = this.calculateThreshold(thresholdConfig, maxContextTokens);
+
+        this.logDebug('calculateContextTrimStartIndex.threshold', {
+            latestTokenCount,
+            threshold,
+            thresholdConfig,
+            maxContextTokens,
+            maxContextSource: maxContextResolution.source,
+            configMaxContextTokens: maxContextResolution.configMaxContextTokens,
+            modelId: maxContextResolution.modelId,
+            modelContextWindow: maxContextResolution.modelContextWindow
+        });
         
         // 如果未超过阈值，无需裁剪
         if (latestTokenCount <= threshold) {
@@ -303,7 +423,8 @@ export class ContextTrimService {
         conversationId: string,
         config: BaseChannelConfig,
         historyOptions: GetHistoryOptions,
-        precomputedDynamicContextText?: string
+        precomputedDynamicContextText?: string,
+        modelOverride?: string
     ): Promise<ContextTrimInfo> {
         // 先获取完整的原始历史
         const fullHistory = await this.conversationManager.getHistoryRef(conversationId);
@@ -362,10 +483,9 @@ export class ContextTrimService {
         
         // 并行计算所有需要的 token 数
         const textsToCount = [systemPrompt, dynamicContextText];
-        const messagesToCount = missingTokenMessages.map(m => m.message);
-        
+
         // 并行执行文本计数和消息计数
-        const [textTokenResults, messageTokenResults] = await Promise.all([
+        const [textTokenResults] = await Promise.all([
             this.tokenEstimationService.countTextTokensBatch(textsToCount, channelType),
             missingTokenMessages.length > 0
                 ? this.countAndUpdateMessageTokens(conversationId, channelType, missingTokenMessages)
@@ -431,9 +551,43 @@ export class ContextTrimService {
         }
         
         // 获取最大上下文和阈值
-        const maxContextTokens = (config as any).maxContextTokens || 128000;
+        const maxContextResolution = this.resolveMaxContextTokens(config, modelOverride);
+        const maxContextTokens = maxContextResolution.maxContextTokens;
         const thresholdConfig = config.contextThreshold ?? '80%';
         const threshold = this.calculateThreshold(thresholdConfig, maxContextTokens);
+
+        this.logDebug('trim.threshold_resolved', {
+            conversationId,
+            channelType,
+            threshold,
+            thresholdConfig,
+            maxContextTokens,
+            maxContextSource: maxContextResolution.source,
+            configMaxContextTokens: maxContextResolution.configMaxContextTokens,
+            modelId: maxContextResolution.modelId,
+            modelContextWindow: maxContextResolution.modelContextWindow,
+            contextThresholdEnabled: !!config.contextThresholdEnabled,
+            autoSummarizeEnabled: !!config.autoSummarizeEnabled,
+            contextTrimExtraCut: config.contextTrimExtraCut ?? 0,
+            summaryStartIndex,
+            savedTrimStartIndex: savedState?.trimStartIndex ?? null,
+            fullHistoryLength: fullHistory.length
+        });
+
+        this.logDebug('trim.token_breakdown', {
+            conversationId,
+            systemPromptTokens,
+            dynamicContextTokens,
+            promptTokens,
+            missingTokenMessages: missingTokenMessages.length,
+            historyThinkingRounds,
+            sendHistoryThoughts,
+            sendHistoryThoughtSignatures,
+            sendCurrentThoughts,
+            sendCurrentThoughtSignatures,
+            historyThoughtMinIndex,
+            historyThoughtMaxIndex
+        });
         
         // ========== 自动总结模式 ==========
         // 自动总结模式下不做裁剪，而是返回完整历史 + needsAutoSummarize 标记
@@ -455,6 +609,7 @@ export class ContextTrimService {
                 sendHistoryThoughtSignatures,
                 sendCurrentThoughts,
                 sendCurrentThoughtSignatures,
+                channelType,
                 promptTokens
             );
 
@@ -463,6 +618,13 @@ export class ContextTrimService {
             // - 模型消息使用 usageMetadata（candidates/thoughts）或回退估算
             // 不再额外维护 totalTokenCount/安全系数等并行判定逻辑。
             const needsAutoSummarize = fullTokenResult.estimatedTotalTokens > threshold;
+
+            this.logDebug('trim.auto_summarize_check', {
+                conversationId,
+                estimatedTotalTokens: fullTokenResult.estimatedTotalTokens,
+                threshold,
+                needsAutoSummarize
+            });
 
             if (needsAutoSummarize) {
                 console.log(`[ContextTrim] Auto summarize needed: estimated=${fullTokenResult.estimatedTotalTokens}, threshold=${threshold}`);
@@ -485,8 +647,18 @@ export class ContextTrimService {
             sendHistoryThoughtSignatures,
             sendCurrentThoughts,
             sendCurrentThoughtSignatures,
+            channelType,
             promptTokens
         );
+
+        this.logDebug('trim.full_history_estimate', {
+            conversationId,
+            estimatedTotalTokens: fullTokenResult.estimatedTotalTokens,
+            threshold,
+            roundCount: fullTokenResult.roundTokenInfos.length,
+            summaryStartIndex,
+            usageStats: fullTokenResult.usageStats
+        });
         
         // 如果完整历史不超过阈值，清除裁剪状态，返回完整历史
         if (fullTokenResult.estimatedTotalTokens <= threshold) {
@@ -494,6 +666,11 @@ export class ContextTrimService {
             const history = await this.conversationManager.getHistoryForAPI(conversationId, {
                 ...historyOptions,
                 startIndex: summaryStartIndex
+            });
+            this.logDebug('trim.not_needed', {
+                conversationId,
+                estimatedTotalTokens: fullTokenResult.estimatedTotalTokens,
+                threshold
             });
             return { history, trimStartIndex: summaryStartIndex };
         }
@@ -511,8 +688,18 @@ export class ContextTrimService {
                 sendHistoryThoughtSignatures,
                 sendCurrentThoughts,
                 sendCurrentThoughtSignatures,
+                channelType,
                 promptTokens
             );
+
+            this.logDebug('trim.saved_state_estimate', {
+                conversationId,
+                savedTrimStartIndex: savedState.trimStartIndex,
+                estimatedTotalTokens: trimmedTokenResult.estimatedTotalTokens,
+                threshold,
+                roundCount: trimmedTokenResult.roundTokenInfos.length,
+                usageStats: trimmedTokenResult.usageStats
+            });
             
             // 如果使用保存的状态后不超过阈值，直接使用
             if (trimmedTokenResult.estimatedTotalTokens <= threshold) {
@@ -531,6 +718,11 @@ export class ContextTrimService {
                     }
                 }
                 
+                this.logDebug('trim.saved_state_reused', {
+                    conversationId,
+                    finalTrimStartIndex
+                });
+
                 return { history: trimmedHistory, trimStartIndex: finalTrimStartIndex };
             }
             
@@ -579,12 +771,25 @@ export class ContextTrimService {
         sendHistoryThoughtSignatures: boolean,
         sendCurrentThoughts: boolean,
         sendCurrentThoughtSignatures: boolean,
+        channelType: string,
         promptTokens: number  // 系统提示词 + 动态上下文的总 token 数
-    ): { estimatedTotalTokens: number; hasEstimatedTokens: boolean; roundTokenInfos: RoundTokenInfo[] } {
+    ): { estimatedTotalTokens: number; hasEstimatedTokens: boolean; roundTokenInfos: RoundTokenInfo[]; usageStats: AccumulateUsageStats } {
         let estimatedTotalTokens = promptTokens;
         let hasEstimatedTokens = promptTokens > 0;
         const roundTokenInfos: RoundTokenInfo[] = [];
         let currentRoundStartIndex = -1;
+        const usageStats: AccumulateUsageStats = {
+            modelMessagesWithUsage: 0,
+            modelMessagesOutputBased: 0,
+            modelMessagesMismatch: 0,
+            modelMessagesWithoutUsage: 0,
+            userMessages: 0,
+            userFromChannelCount: 0,
+            userFromEstimatedFieldCount: 0,
+            userFromLocalEstimateCount: 0,
+            userTokensTotal: 0,
+            modelTokensTotal: 0
+        };
         
         // 只累加 effectiveStartIndex 之后的消息
         for (let i = effectiveStartIndex; i < fullHistory.length; i++) {
@@ -604,11 +809,29 @@ export class ContextTrimService {
                     currentRoundStartIndex = i;
                 }
                 
-                // 用户消息：优先使用 estimatedTokenCount，否则估算
-                const tokenCount = message.estimatedTokenCount ?? this.tokenEstimationService.estimateMessageTokens(message);
+                // 用户消息：优先使用当前渠道的 tokenCountByChannel，其次 estimatedTokenCount，最后回退估算
+                usageStats.userMessages++;
+
+                let tokenCount = message.tokenCountByChannel?.[channelType];
+                if (tokenCount !== undefined) {
+                    usageStats.userFromChannelCount++;
+                } else if (message.estimatedTokenCount !== undefined) {
+                    tokenCount = message.estimatedTokenCount;
+                    usageStats.userFromEstimatedFieldCount++;
+                } else {
+                    tokenCount = this.tokenEstimationService.estimateMessageTokens(message);
+                    usageStats.userFromLocalEstimateCount++;
+                }
+
+                if (tokenCount === undefined) {
+                    tokenCount = 0;
+                }
+
                 estimatedTotalTokens += tokenCount;
+                usageStats.userTokensTotal += tokenCount;
                 hasEstimatedTokens = true;
             } else if (message.role === 'model' && message.usageMetadata) {
+                usageStats.modelMessagesWithUsage++;
                 // model 消息：根据用户配置、消息内容和回合位置决定是否计算思考 token
                 const isCurrentRound = i >= lastNonFunctionResponseUserIndex;
                 const hasThought = this.messageBuilderService.hasThoughtContent(message.parts);
@@ -617,27 +840,59 @@ export class ContextTrimService {
                 let includeThoughtsToken = false;
                 
                 if (isCurrentRound) {
-                    // 当前轮：根据当前轮配置和消息内容决定
-                    includeThoughtsToken = (sendCurrentThoughts && hasThought) ||
-                                          (sendCurrentThoughtSignatures && hasSignatures);
+                    // 当前轮：仅在“发送思考内容”时计入 thoughtsTokenCount。
+                    // sendCurrentThoughtSignatures 只表示发送签名，不应等价于发送完整思考文本，
+                    // 否则会把 reasoning token 全量计入，导致显著高估。
+                    includeThoughtsToken = sendCurrentThoughts && hasThought;
                 } else {
                     // 历史轮：根据历史轮配置、消息内容和 historyThinkingRounds 决定
                     const isInHistoryThoughtRange = i >= historyThoughtMinIndex && i < historyThoughtMaxIndex;
                     if (isInHistoryThoughtRange) {
-                        includeThoughtsToken = (sendHistoryThoughts && hasThought) ||
-                                              (sendHistoryThoughtSignatures && hasSignatures);
+                        // 历史轮同理：仅在真正发送历史思考文本时计入 thoughtsTokenCount。
+                        // sendHistoryThoughtSignatures=true 时通常只发送签名引用，不应按完整思考 token 计算。
+                        includeThoughtsToken = sendHistoryThoughts && hasThought;
                     }
                 }
+
+                const signaturesOnlyMode = isCurrentRound
+                    ? (!sendCurrentThoughts && sendCurrentThoughtSignatures && hasSignatures)
+                    : ((i >= historyThoughtMinIndex && i < historyThoughtMaxIndex) && !sendHistoryThoughts && sendHistoryThoughtSignatures && hasSignatures);
+                if (signaturesOnlyMode) {
+                    // 保留分支变量用于可读性和后续调试扩展
+                }
                 
-                const modelTokens = (message.usageMetadata.candidatesTokenCount ?? 0) +
-                                   (includeThoughtsToken ? (message.usageMetadata.thoughtsTokenCount ?? 0) : 0);
+                const usage = message.usageMetadata;
+                const rawCandidatesTokens = Math.max(0, usage.candidatesTokenCount ?? 0);
+                const rawThoughtsTokens = Math.max(0, usage.thoughtsTokenCount ?? 0);
+
+                let normalizedCandidatesTokens = rawCandidatesTokens;
+                let normalizedThoughtsTokens = rawThoughtsTokens;
+
+                const hasPromptAndTotal = typeof usage.promptTokenCount === 'number' && typeof usage.totalTokenCount === 'number';
+                if (hasPromptAndTotal) {
+                    const outputTokensFromTotal = Math.max(0, usage.totalTokenCount! - usage.promptTokenCount!);
+                    normalizedThoughtsTokens = Math.min(rawThoughtsTokens, outputTokensFromTotal);
+                    normalizedCandidatesTokens = Math.max(0, outputTokensFromTotal - normalizedThoughtsTokens);
+                    usageStats.modelMessagesOutputBased++;
+
+                    const rawCombined = rawCandidatesTokens + rawThoughtsTokens;
+                    if (Math.abs(rawCombined - outputTokensFromTotal) > 1) {
+                        usageStats.modelMessagesMismatch++;
+                    }
+                }
+
+                const modelTokens = normalizedCandidatesTokens +
+                    (includeThoughtsToken ? normalizedThoughtsTokens : 0);
                 if (modelTokens > 0) {
+                    usageStats.modelTokensTotal += modelTokens;
                     estimatedTotalTokens += modelTokens;
                     hasEstimatedTokens = true;
                 }
             } else if (message.role === 'model') {
+                usageStats.modelMessagesWithoutUsage++;
                 // model 消息没有 usageMetadata，估算 token 数
                 const modelTokens = this.tokenEstimationService.estimateMessageTokens(message);
+                usageStats.modelTokensTotal += modelTokens;
                 estimatedTotalTokens += modelTokens;
                 hasEstimatedTokens = true;
             }
@@ -652,7 +907,7 @@ export class ContextTrimService {
             });
         }
         
-        return { estimatedTotalTokens, hasEstimatedTokens, roundTokenInfos };
+        return { estimatedTotalTokens, hasEstimatedTokens, roundTokenInfos, usageStats };
     }
 
     /**
@@ -677,6 +932,12 @@ export class ContextTrimService {
                 ...historyOptions,
                 startIndex: effectiveStartIndex
             });
+            this.logDebug('trim.perform.no_additional_cut', {
+                conversationId,
+                effectiveStartIndex,
+                estimatedTotalTokens,
+                reason: 'only_one_round'
+            });
             return { history, trimStartIndex: effectiveStartIndex };
         }
         
@@ -690,15 +951,30 @@ export class ContextTrimService {
         
         // 实际保留目标 = 阈值 - 额外裁剪
         const targetTokens = Math.max(0, threshold - extraCut);
+
+        this.logDebug('trim.perform.start', {
+            conversationId,
+            effectiveStartIndex,
+            estimatedTotalTokens,
+            promptTokens,
+            threshold,
+            extraCutConfig,
+            extraCut,
+            targetTokens,
+            roundsAfterStart: roundsAfterStart.length
+        });
         
         // 使用自计算的累计 token 数来计算需要跳过多少回合
         let roundsToSkip = 0;
+        let remainingEstimatedTokensAfterTrim = estimatedTotalTokens;
+        const roundEvaluation: Array<{ k: number; remainingTokens: number }> = [];
         
         // 从 k=1 开始尝试，k 表示要跳过的回合数（从第 k 个回合开始保留）
         for (let k = 1; k < roundsAfterStart.length; k++) {
             const skippedTokens = roundsAfterStart[k - 1].cumulativeTokens - promptTokens;
             const remainingTokens = estimatedTotalTokens - skippedTokens;
-            
+            roundEvaluation.push({ k, remainingTokens });
+
             if (remainingTokens <= targetTokens) {
                 roundsToSkip = k;
                 break;
@@ -709,12 +985,26 @@ export class ContextTrimService {
         if (roundsToSkip === 0 && estimatedTotalTokens > targetTokens) {
             roundsToSkip = roundsAfterStart.length - 1;
         }
+
+        if (roundsToSkip > 0) {
+            const skippedTokens = roundsAfterStart[roundsToSkip - 1].cumulativeTokens - promptTokens;
+            remainingEstimatedTokensAfterTrim = estimatedTotalTokens - skippedTokens;
+        }
         
         if (roundsToSkip === 0) {
             // 不需要额外裁剪，返回从起始索引开始的历史
             const history = await this.conversationManager.getHistoryForAPI(conversationId, {
                 ...historyOptions,
                 startIndex: effectiveStartIndex
+            });
+            this.logDebug('trim.perform.no_additional_cut', {
+                conversationId,
+                effectiveStartIndex,
+                estimatedTotalTokens,
+                threshold,
+                targetTokens,
+                remainingEstimatedTokensAfterTrim,
+                roundEvaluation
             });
             return { history, trimStartIndex: effectiveStartIndex };
         }
@@ -742,6 +1032,19 @@ export class ContextTrimService {
         await this.saveTrimState(conversationId, {
             trimStartIndex: finalTrimStartIndex
         });
+
+        this.logDebug('trim.perform.applied', {
+            conversationId,
+            roundsToSkip,
+            trimStartIndex,
+            finalTrimStartIndex,
+            trimmedHistoryLength: trimmedHistory.length,
+            estimatedTotalTokens,
+            threshold,
+            targetTokens,
+            remainingEstimatedTokensAfterTrim,
+            roundEvaluation
+        });
         
         return { history: trimmedHistory, trimStartIndex: finalTrimStartIndex };
     }
@@ -753,9 +1056,10 @@ export class ContextTrimService {
         conversationId: string,
         config: BaseChannelConfig,
         historyOptions: GetHistoryOptions,
-        precomputedDynamicContextText?: string
+        precomputedDynamicContextText?: string,
+        modelOverride?: string
     ): Promise<Content[]> {
-        const result = await this.getHistoryWithContextTrimInfo(conversationId, config, historyOptions, precomputedDynamicContextText);
+        const result = await this.getHistoryWithContextTrimInfo(conversationId, config, historyOptions, precomputedDynamicContextText, modelOverride);
         return result.history;
     }
 }

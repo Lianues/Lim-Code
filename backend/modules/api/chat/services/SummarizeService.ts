@@ -531,7 +531,7 @@ export class SummarizeService {
 
             // 6. 检查待总结内容是否超出总结模型的上下文
             // 获取总结模型的最大上下文（预留 50% 给输出）
-            const summarizeModelMaxContext = (config as any).maxContextTokens || 128000;
+            const summarizeModelMaxContext = config.maxContextTokens ?? 128000;
             const maxInputTokens = Math.floor(summarizeModelMaxContext * 0.5);
 
             // 估算待总结消息的 token 量

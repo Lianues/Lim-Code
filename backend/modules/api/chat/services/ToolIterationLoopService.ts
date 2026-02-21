@@ -309,8 +309,21 @@ export class ToolIterationLoopService {
                 conversationId,
                 config,
                 historyOptions,
-                dynamicContextText
+                dynamicContextText,
+                modelOverride
             );
+
+            try {
+                console.log(`[ContextTrim][Debug] loop.stream.trim_result ${JSON.stringify({
+                    conversationId,
+                    iteration,
+                    modelOverride: modelOverride || null,
+                    configModel: (config as any).model || null,
+                    trimStartIndex: trimResult.trimStartIndex,
+                    historyLength: trimResult.history.length,
+                    needsAutoSummarize: !!trimResult.needsAutoSummarize
+                })}`);
+            } catch {}
 
             // 3.5 自动总结检测：如果需要总结，先执行总结再重新获取历史
             if (trimResult.needsAutoSummarize && this.summarizeService) {
@@ -705,8 +718,21 @@ export class ToolIterationLoopService {
                 conversationId,
                 config,
                 historyOptions,
-                dynamicContextText
+                dynamicContextText,
+                modelOverride
             );
+
+            try {
+                console.log(`[ContextTrim][Debug] loop.nonstream.trim_result ${JSON.stringify({
+                    conversationId,
+                    iteration,
+                    modelOverride: modelOverride || null,
+                    configModel: (config as any).model || null,
+                    trimStartIndex: trimResult.trimStartIndex,
+                    historyLength: trimResult.history.length,
+                    needsAutoSummarize: !!trimResult.needsAutoSummarize
+                })}`);
+            } catch {}
 
             // 自动总结检测
             if (trimResult.needsAutoSummarize && this.summarizeService) {
