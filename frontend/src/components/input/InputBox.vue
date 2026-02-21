@@ -17,6 +17,7 @@ import { extractNodesFromEditor, renderNodesToDOM } from './inputBox/useEditorNo
 import {
   getCaretTextOffset,
   insertLineBreakAtCaret,
+  insertPlainTextWithLineBreaksAtCaret,
   insertTextAtCaret,
   getRangeInEditor,
   replaceTextRangeByOffsets
@@ -437,9 +438,12 @@ function handlePaste(e: ClipboardEvent) {
 
   const text = e.clipboardData?.getData('text/plain')
   if (text && editor) {
-    // Let browser handle native text paste so the operation is recorded in
-    // the native undo stack (Ctrl+Z works reliably in webview environments).
-    // The @input handler will sync nodes after paste.
+    // Force plain-text paste to avoid bringing rich-text styles (from web pages,
+    // docs, etc.) into contenteditable.
+    e.preventDefault()
+    insertPlainTextWithLineBreaksAtCaret(editor, text)
+    handleInput()
+
     nextTick(() => {
       if (editor) {
         editor.scrollTop = editor.scrollHeight

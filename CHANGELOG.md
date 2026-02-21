@@ -3,6 +3,12 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.0.92] - 2026-02-21
+
+### Fixed
+  - 修复上下文裁剪估算问题
+  - 修复粘贴文本为富文本的问题
+
 ## [1.0.91] - 2026-02-18
 
 ### Fixed
