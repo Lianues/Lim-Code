@@ -29,13 +29,13 @@ export async function loadCurrentConfig(state: ChatStoreState): Promise<void> {
       state.currentConfig.value = {
         id: config.id,
         name: config.name,
-        model: config.model || config.id,
+        model: config.model || '',
         type: config.type,
         maxContextTokens: config.maxContextTokens
       }
 
       if (!normalizeModelId(state.selectedModelId.value)) {
-        state.selectedModelId.value = config.model || config.id
+        state.selectedModelId.value = config.model || ''
       }
     }
   } catch (err) {
@@ -83,18 +83,18 @@ export async function applyConversationModelConfig(
     if (storedConfigId) {
       state.configId.value = storedConfigId
       await loadCurrentConfig(state)
-      state.selectedModelId.value = storedModelId || state.currentConfig.value?.model || storedConfigId
+      state.selectedModelId.value = storedModelId || state.currentConfig.value?.model || ''
       return
     }
 
     // 未存储对话级配置：至少确保 currentConfig 与 configId 对齐
     await loadCurrentConfig(state)
-    state.selectedModelId.value = state.currentConfig.value?.model || state.configId.value
+    state.selectedModelId.value = state.currentConfig.value?.model || ''
   } catch (error) {
     console.error('Failed to apply conversation model config:', error)
     // 兜底：确保 currentConfig / selectedModelId 不为空
     await loadCurrentConfig(state)
-    state.selectedModelId.value = state.currentConfig.value?.model || state.configId.value
+    state.selectedModelId.value = state.currentConfig.value?.model || ''
   }
 }
 
@@ -181,7 +181,7 @@ export async function setSelectedModelId(state: ChatStoreState, modelId: string)
 export async function setConfigId(state: ChatStoreState, newConfigId: string): Promise<void> {
   state.configId.value = newConfigId
   await loadCurrentConfig(state)
-  state.selectedModelId.value = state.currentConfig.value?.model || newConfigId
+  state.selectedModelId.value = state.currentConfig.value?.model || ''
   
   // 保存到后端
   try {
@@ -204,7 +204,7 @@ export async function loadSavedConfigId(state: ChatStoreState): Promise<void> {
     }
 
     await loadCurrentConfig(state)
-    state.selectedModelId.value = state.currentConfig.value?.model || state.configId.value
+    state.selectedModelId.value = state.currentConfig.value?.model || ''
   } catch (error) {
     console.error('Failed to load saved config ID:', error)
   }

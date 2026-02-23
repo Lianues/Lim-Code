@@ -66,10 +66,10 @@ export async function getGeminiModels(config: ChannelConfig, proxyUrl?: string):
       pageToken = data.nextPageToken;
     } while (pageToken);
 
-    // 过滤出支持 generateContent 的模型
+    // 过滤出支持 generateContent 的模型（兼容第三方中转站未返回 supportedGenerationMethods 的情况）
     return allModels
       .filter((m: any) => 
-        m.supportedGenerationMethods?.includes('generateContent')
+        !m.supportedGenerationMethods || (Array.isArray(m.supportedGenerationMethods) && m.supportedGenerationMethods.includes('generateContent'))
       )
       .map((m: any) => ({
         id: m.name.replace('models/', ''),

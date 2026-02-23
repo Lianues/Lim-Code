@@ -1335,7 +1335,7 @@ export interface GlobalSettings {
  */
 export interface SettingsChangeEvent {
     /** 变更类型 */
-    type: 'channel' | 'tools' | 'toolMode' | 'proxy' | 'ui' | 'full';
+    type: 'channel' | 'tools' | 'toolMode' | 'proxy' | 'storagePath' | 'ui' | 'full';
     
     /** 变更的字段路径（如 'toolsEnabled.read_file'） */
     path?: string;

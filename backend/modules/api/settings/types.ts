@@ -153,7 +153,7 @@ export interface SettingsChangeNotification {
     type: 'settingsChanged';
     
     /** 变更类型 */
-    changeType: 'channel' | 'tools' | 'toolMode' | 'proxy' | 'ui' | 'full';
+    changeType: 'channel' | 'tools' | 'toolMode' | 'proxy' | 'storagePath' | 'ui' | 'full';
     
     /** 变更的字段路径（如 'toolsEnabled.read_file'） */
     path?: string;
