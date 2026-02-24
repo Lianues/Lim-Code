@@ -3,6 +3,11 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.0.93] - 2026-02-24
+
+### Fixed
+  - 修复模型回退逻辑与第三方 Gemini 模型过滤
+
 ## [1.0.92] - 2026-02-21
 
 ### Fixed
