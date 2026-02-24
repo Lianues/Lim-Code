@@ -1962,7 +1962,7 @@ export class SettingsManager {
         await this.storage.save(this.settings);
         
         this.notifyChange({
-            type: 'full',
+            type: 'storagePath',
             path: 'storagePath',
             oldValue: oldConfig,
             newValue: newConfig,

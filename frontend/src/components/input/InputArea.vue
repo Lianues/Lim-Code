@@ -82,7 +82,7 @@ const channelOptions = computed<ChannelOption[]>(() =>
     .map(config => ({
       id: config.id,
       name: config.name,
-      model: config.model || config.id,
+      model: config.model || '',
       type: config.type
     }))
 )
@@ -152,6 +152,8 @@ async function handleModelChange(modelId: string) {
 const hasAttachments = computed(() => (props.attachments?.length || 0) > 0)
 
 const canSend = computed(() => {
+  if (!currentModel.value) return false
+
   const plainText = getPlainText(editorNodes.value).trim()
   const hasContexts = getContexts(editorNodes.value).length > 0
   const hasContent = plainText.length > 0 || hasContexts || (props.attachments?.length || 0) > 0
