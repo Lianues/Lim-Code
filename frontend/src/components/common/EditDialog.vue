@@ -180,6 +180,37 @@ function handleAtPickerKeydown(key: string) {
   }
 }
 
+function normalizeDirectoryPath(path: string): string {
+  const normalized = (path || '').trim().replace(/\\/g, '/').replace(/\/+$/g, '')
+  if (!normalized) return ''
+  return `${normalized}/`
+}
+
+function hasContextWithPath(path: string): boolean {
+  const key = (path || '').replace(/\/+$/g, '')
+  if (!key) return false
+  return getContexts(editorNodes.value).some(item => ((item.filePath || '').replace(/\/+$/g, '') === key))
+}
+
+function addDirectoryContextByPath(path: string) {
+  const dirPath = normalizeDirectoryPath(path)
+  if (!dirPath) return
+  if (hasContextWithPath(dirPath)) return
+
+  const contextItem: PromptContextItem = {
+    id: `dir-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    type: 'file',
+    title: dirPath,
+    content: '',
+    filePath: dirPath,
+    isTextContent: false,
+    enabled: true,
+    addedAt: Date.now()
+  }
+
+  inputBoxRef.value?.insertContextAtCaret(contextItem)
+}
+
 const AUTO_UPLOAD_NON_TEXT_MIME_TYPES = new Set([
   'image/png',
   'image/jpeg',
@@ -268,9 +299,22 @@ async function addFileContextByPath(path: string, options?: { autoUploadBinaryAt
 }
 
 // InputBox 拖拽文件路径（徽章模式）
-async function handleAddFileContexts(files: { path: string; isDirectory: boolean }[]) {
+async function handleAddFileContexts(files: { path: string; isDirectory: boolean }[], options?: { allowDirectoryBadge?: boolean }) {
+  const inserted = new Set<string>()
+
   for (const file of files) {
-    if (file.isDirectory) continue
+    const key = file.isDirectory ? normalizeDirectoryPath(file.path) : file.path
+    if (!key) continue
+    if (inserted.has(key)) continue
+    inserted.add(key)
+
+    if (file.isDirectory) {
+      if (options?.allowDirectoryBadge) {
+        addDirectoryContextByPath(file.path)
+      }
+      continue
+    }
+
     await addFileContextByPath(file.path, { autoUploadBinaryAttachment: true })
   }
 
@@ -279,7 +323,7 @@ async function handleAddFileContexts(files: { path: string; isDirectory: boolean
   })
 }
 
-async function handleDropFileItems(items: string[], insertAsTextPath: boolean) {
+async function handleDropFileItems(items: string[], insertAsTextPath: boolean, dragMeta?: { shiftKey: boolean; ctrlKey: boolean; altKey: boolean; metaKey: boolean }) {
   const resolved = await resolveWorkspaceItems(items)
   if (resolved.length === 0) return
 
@@ -289,7 +333,8 @@ async function handleDropFileItems(items: string[], insertAsTextPath: boolean) {
     return
   }
 
-  await handleAddFileContexts(resolved)
+  const allowDirectoryBadge = !!dragMeta?.shiftKey && !insertAsTextPath
+  await handleAddFileContexts(resolved, { allowDirectoryBadge })
 }
 
 async function handleOpenContext(ctx: PromptContextItem) {

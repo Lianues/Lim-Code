@@ -3,6 +3,11 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.0.97] - 2026-02-27
+
+### Added
+  - 添加了对于文件夹的shift拖拽到输入框的徽章消息支持
+
 ## [1.0.96] - 2026-02-27
 
 ### Added

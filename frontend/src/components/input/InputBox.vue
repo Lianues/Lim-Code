@@ -56,7 +56,7 @@ const emit = defineEmits<{
   'composition-end': []
   paste: [files: File[]]
   /** contenteditable 内部拖拽文件/URI：交给父层解析为工作区相对路径 */
-  'drop-file-items': [items: string[], insertAsTextPath: boolean]
+  'drop-file-items': [items: string[], insertAsTextPath: boolean, dragMeta?: { shiftKey: boolean; ctrlKey: boolean; altKey: boolean; metaKey: boolean }]
   'trigger-at-picker': [query: string, triggerPosition: number]
   'close-at-picker': []
   'at-query-change': [query: string]
@@ -501,7 +501,12 @@ function handleDrop(e: DragEvent) {
   const insertAsTextPath = e.ctrlKey && e.shiftKey
   const items = extractVscodeDropItems(dt).map(i => i.uriOrPath)
   if (items.length > 0) {
-    emit('drop-file-items', items, insertAsTextPath)
+    emit('drop-file-items', items, insertAsTextPath, {
+      shiftKey: !!e.shiftKey,
+      ctrlKey: !!e.ctrlKey,
+      altKey: !!e.altKey,
+      metaKey: !!e.metaKey
+    })
   }
 }
 
