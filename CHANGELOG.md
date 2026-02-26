@@ -3,6 +3,14 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.0.95] - 2026-02-26
+
+### Added
+  - 添加提示音效系统
+
+### Improved
+  - 优化外观细节：思考内容垂直居中，正文、工具、思考对齐，删除浅色主题的思考标题内容分界线，代码块行号显示自适应
+
 ## [1.0.94] - 2026-02-26
 
 ### Added

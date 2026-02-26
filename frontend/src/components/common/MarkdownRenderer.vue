@@ -635,6 +635,9 @@ function createMarkdownIt() {
 
     // 行号：只反映“原始换行”，用于区分软换行/真实换行（软换行不会增加行号）
     const highlightedLines = splitHighlightedHtmlByNewline(highlighted)
+    // 根据最大行号位数自适应行号列宽度（避免固定宽度导致留白过多）
+    const lineNumberDigits = Math.max(1, String(highlightedLines.length || 1).length)
+
     const linesHtml = highlightedLines.map((line, i) => {
       const lineHtml = line === '' ? '&nbsp;' : line
       return `<span class="code-line"><span class="code-line-number">${i + 1}</span><span class="code-line-content">${lineHtml}</span></span>`
@@ -664,7 +667,7 @@ function createMarkdownIt() {
       : `<span class="code-block-title">${titleLabel}</span>`
 
     // 默认：自动换行；按钮 title 表示“点击后要切换到的模式”
-    return `<div class="code-block-container" data-block-id="${blockId}"><div class="code-block-header">${titleHtml}<div class="code-block-toolbar"><button class="code-tool-btn code-wrap-btn" data-action="toggle-wrap" data-title-nowrap="${escapeHtml(titleWrapEnable)}" data-title-wrap="${escapeHtml(titleWrapDisable)}" title="${escapeHtml(titleWrapDisable)}"><span class="wrap-icon">↩</span><span class="nowrap-icon">↔</span></button><button class="code-tool-btn code-copy-btn" data-code="${encodedCode}" title="${escapeHtml(titleCopy)}"><span class="copy-icon codicon codicon-copy"></span><span class="check-icon codicon codicon-check"></span></button></div></div><pre class="hljs code-block-wrapper"><code class="code-with-lines ${escapeHtml(langClass)}">${linesHtml}</code></pre></div>`
+    return `<div class="code-block-container" data-block-id="${blockId}"><div class="code-block-header">${titleHtml}<div class="code-block-toolbar"><button class="code-tool-btn code-wrap-btn" data-action="toggle-wrap" data-title-nowrap="${escapeHtml(titleWrapEnable)}" data-title-wrap="${escapeHtml(titleWrapDisable)}" title="${escapeHtml(titleWrapDisable)}"><span class="wrap-icon">↩</span><span class="nowrap-icon">↔</span></button><button class="code-tool-btn code-copy-btn" data-code="${encodedCode}" title="${escapeHtml(titleCopy)}"><span class="copy-icon codicon codicon-copy"></span><span class="check-icon codicon codicon-check"></span></button></div></div><pre class="hljs code-block-wrapper"><code class="code-with-lines ${escapeHtml(langClass)}" style="--line-number-digits: ${lineNumberDigits};">${linesHtml}</code></pre></div>`
   }
   
   return md
@@ -1646,9 +1649,11 @@ onUnmounted(()=> {
 }
 
 .markdown-content :deep(.code-with-lines .code-line-number) {
-  width: 44px;
-  padding-right: 10px;
+  /* 按代码块最大行号位数自适应宽度（由 --line-number-digits 提供） */
+  width: calc(var(--line-number-digits, 2) * 1ch + 4px);
+  padding-right: 6px;
   text-align: right;
+  font-variant-numeric: tabular-nums;
   user-select: none;
   color: var(--vscode-descriptionForeground);
   opacity: 0.65;

@@ -742,6 +742,7 @@ function handleRestoreAndRetry(checkpointId: string) {
             <ToolMessage
               :message-backend-index="message.backendIndex"
               v-else-if="block.type === 'tool'"
+              class="tool-message-block"
               :tools="block.tools!"
             />
           </template>
@@ -974,6 +975,11 @@ function handleRestoreAndRetry(checkpointId: string) {
 }
 
 /* .content-text 样式由 MarkdownRenderer 组件内部处理 */
+
+/* 正文与工具调用块的垂直间距，与思考面板和正文的间距保持一致 */
+.tool-message-block {
+  margin: 8px 0;
+}
 
 /* 流式指示器 - Loading 从左到右逐字波动 */
 .streaming-indicator {
@@ -1263,8 +1269,12 @@ function handleRestoreAndRetry(checkpointId: string) {
 }
 
 .thought-content {
-  padding: 0 12px 12px 12px;
-  border-top: 1px solid var(--vscode-panel-border);
+  padding: 12px;
+  /*
+   * 不在标题与内容之间绘制明显分界线：
+   * 与深色模式视觉风格保持一致，改为无硬边框分隔。
+   */
+  border-top: none;
 }
 
 /*
@@ -1277,7 +1287,11 @@ function handleRestoreAndRetry(checkpointId: string) {
 }
 
 .thought-block :deep(.thought-text p:first-child) {
-  margin-top: 0.75em;
+  margin-top: 0;
+}
+
+.thought-block :deep(.thought-text p:last-child) {
+  margin-bottom: 0;
 }
 
 /* 总结消息样式 */
