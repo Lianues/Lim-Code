@@ -286,6 +286,15 @@ function handleContextClick(ctx: PromptContextItem) {
 }
 
 function handleContextMouseEnter(ctx: PromptContextItem) {
+  if (ctx.isTextContent === false) {
+    hoveredContextId.value = null
+    previewContext.value = null
+    if (hoverTimer) {
+      clearTimeout(hoverTimer)
+      hoverTimer = null
+    }
+    return
+  }
   hoveredContextId.value = ctx.id
   if (hoverTimer) clearTimeout(hoverTimer)
   hoverTimer = setTimeout(() => {

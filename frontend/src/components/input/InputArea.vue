@@ -21,9 +21,10 @@ import { useChatStore, useSettingsStore } from '../../stores'
 import { showNotification, onExtensionCommand } from '../../utils/vscode'
 import * as configService from '../../services/config'
 import * as contextService from '../../services/context'
-import { formatNumber } from '../../utils/format'
+import { formatNumber, generateId } from '../../utils/format'
 import { languageFromPath } from '../../utils/languageFromPath'
 import { resolveWorkspaceItems } from '../../utils/resolveWorkspaceItems'
+import { getFileType } from '../../utils/file'
 import type { Attachment } from '../../types'
 import type { PromptContextItem } from '../../types/promptContext'
 import type { EditorNode } from '../../types/editorNode'
@@ -254,27 +255,73 @@ function handleCloseAtPicker() {
   inputBoxRef.value?.closeAtPicker()
 }
 
-async function addFileContextByPath(path: string) {
+const AUTO_UPLOAD_NON_TEXT_MIME_TYPES = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'application/pdf'
+])
+
+function shouldAutoUploadBinaryAttachment(payload?: contextService.WorkspaceInputFileAttachmentPayload): boolean {
+  if (!payload?.data) return false
+  const mime = (payload.mimeType || '').toLowerCase()
+  if (AUTO_UPLOAD_NON_TEXT_MIME_TYPES.has(mime)) return true
+  if (mime.startsWith('audio/')) return true
+  if (mime.startsWith('video/')) return true
+  return false
+}
+
+async function addFileContextByPath(path: string, options?: { autoUploadBinaryAttachment?: boolean }) {
   // Skip directories
   if (path.endsWith('/')) return
 
   const exists = getContexts(editorNodes.value).some(item => item.filePath === path)
   if (exists) return
 
+  const addWorkspaceAttachment = (relativePath: string, payload?: contextService.WorkspaceInputFileAttachmentPayload) => {
+    if (!payload?.data) return
+
+    const existsAttachment = (props.attachments || []).some(att => att.metadata?.sourcePath === relativePath)
+    if (existsAttachment) return
+
+    const attachment: Attachment = {
+      id: generateId(),
+      name: payload.name || relativePath.split('/').pop() || relativePath,
+      type: getFileType(payload.mimeType || 'application/octet-stream'),
+      size: payload.size || 0,
+      mimeType: payload.mimeType || 'application/octet-stream',
+      data: payload.data,
+      metadata: {
+        sourcePath: relativePath
+      }
+    }
+
+    chatStore.addStoreAttachment(attachment)
+  }
+
   try {
-    const result = await contextService.readWorkspaceTextFile(path)
+    const result = await contextService.readWorkspaceFileForInput(path)
 
     if (!result?.success) {
       await showNotification(result?.error || t('components.input.promptContext.readFailed'), 'error')
       return
     }
 
+    const isTextContent = result.isText !== false
+    if (!isTextContent) {
+      if (options?.autoUploadBinaryAttachment && shouldAutoUploadBinaryAttachment(result.attachment)) {
+        addWorkspaceAttachment(result.path || path, result.attachment)
+      }
+    }
+
+
     const contextItem: PromptContextItem = {
       id: `file-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       type: 'file',
-      title: result.path,
-      content: result.content,
-      filePath: result.path,
+      title: result.path || path,
+      content: isTextContent ? (result.content || '') : '',
+      filePath: result.path || path,
+      isTextContent,
       enabled: true,
       addedAt: Date.now()
     }
@@ -328,7 +375,7 @@ async function handleAddFileContexts(files: { path: string; isDirectory: boolean
     if (inserted.has(file.path)) continue
     inserted.add(file.path)
 
-    await addFileContextByPath(file.path)
+    await addFileContextByPath(file.path, { autoUploadBinaryAttachment: true })
   }
 
   nextTick(() => inputBoxRef.value?.focus())
@@ -348,11 +395,20 @@ async function handleDropFileItems(items: string[], insertAsTextPath: boolean) {
 }
 
 async function handleOpenContext(ctx: PromptContextItem) {
+  if (ctx.isTextContent === false && ctx.filePath) {
+    try {
+      await sendToExtension('openWorkspaceFile', { path: ctx.filePath })
+    } catch (error) {
+      console.error('Failed to open workspace file:', error)
+    }
+    return
+  }
+
   try {
     await contextService.showContextContent({
       title: ctx.title,
       content: ctx.content,
-      language: ctx.language || languageFromPath(ctx.filePath)
+      language: ctx.language || languageFromPath(ctx.filePath) || 'plaintext'
     })
   } catch (error) {
     console.error('Failed to show context content:', error)

@@ -247,6 +247,7 @@ export class PromptManager {
      *
      * 只包含静态内容，可被 API provider 缓存：
      * - {{$ENVIRONMENT}} - 静态环境信息（操作系统、时区、用户语言、工作区路径）
+     * - {{$CONTEXT_BADGE_FORMAT}} - lim-context 徽章结构说明（告诉 AI 标题/正文含义）
      * - {{$TOOLS}} - 工具定义（由外部填充）
      * - {{$MCP_TOOLS}} - MCP 工具定义（由外部填充）
      * 
@@ -256,6 +257,7 @@ export class PromptManager {
         // 静态模块（不会频繁变化）
         const modules: Record<string, string> = {
             'ENVIRONMENT': this.wrapSection('ENVIRONMENT', this.generateStaticEnvironmentSection()),
+            'CONTEXT_BADGE_FORMAT': this.wrapSection('CONTEXT BADGE FORMAT', this.generateContextBadgeFormatSection()),
             // 动态内容占位符 - 这些将被移到动态上下文消息中
             // 为了向后兼容，如果模板中包含这些占位符，替换为空字符串
             'WORKSPACE_FILES': '',
@@ -434,6 +436,32 @@ export class PromptManager {
         }
         
         return lines.join('\n')
+    }
+
+    /**
+     * 生成 lim-context 徽章结构说明（静态）
+     *
+     * 目的：让模型明确区分“标题属性”和“正文内容”，
+     * 避免把 binary 徽章按文本内容解析。
+     */
+    private generateContextBadgeFormatSection(): string {
+        return [
+            'Context chips are serialized inline with this XML-like structure:',
+            '<lim-context type="file" path="新建文件夹 (10).zip" binary="true" title="新建文件夹 (10).zip">',
+            '',
+            '</lim-context>',
+            '',
+            'Field meanings:',
+            '- type: context kind (file | text | snippet).',
+            '- path: source file path (usually workspace-relative) when type="file".',
+            '- title: chip display title shown to users. This is the title, NOT the body content.',
+            '- binary="true": indicates non-text/binary attachment context. In this case, the tag body is intentionally empty and must NOT be parsed as text content.',
+            '',
+            'Important parsing rules:',
+            '- The BODY content is only the text between opening/closing tags.',
+            '- The TITLE is only the title attribute value.',
+            '- If binary="true", treat this block as a structural reference/attachment marker only; do not try to summarize or infer textual body from title/path/file name.'
+        ].join('\n')
     }
     
     /**

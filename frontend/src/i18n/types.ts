@@ -1472,6 +1472,10 @@ export interface LanguageMessages {
                         name: string;
                         description: string;
                     };
+                    CONTEXT_BADGE_FORMAT: {
+                        name: string;
+                        description: string;
+                    };
                     WORKSPACE_FILES: {
                         name: string;
                         description: string;

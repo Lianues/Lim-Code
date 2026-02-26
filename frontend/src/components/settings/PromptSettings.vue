@@ -84,6 +84,22 @@ Description: Read file content
 ...`
   },
   {
+    id: 'CONTEXT_BADGE_FORMAT',
+    name: '上下文徽章结构',
+    description: '解释 <lim-context ...>...</lim-context> 的字段含义，明确哪里是标题、哪里是正文，以及 binary 徽章不应按文本解析',
+    example: `====
+
+CONTEXT BADGE FORMAT
+
+<lim-context type="file" path="新建文件夹 (10).zip" binary="true" title="新建文件夹 (10).zip">
+
+</lim-context>
+
+- title 属性是徽章标题
+- 标签体（开闭标签之间）才是正文
+- binary="true" 时正文为空，不应按文本解析`
+  },
+  {
     id: 'MCP_TOOLS',
     name: 'MCP 工具',
     description: '来自 MCP 服务器的额外工具定义（此变量由系统自动填充）',
@@ -211,6 +227,8 @@ const CODE_MODE_TEMPLATE = `You are a professional programming assistant, profic
 
 {{$ENVIRONMENT}}
 
+{{$CONTEXT_BADGE_FORMAT}}
+
 {{$TOOLS}}
 
 {{$MCP_TOOLS}}
@@ -233,6 +251,8 @@ GUIDELINES
 const DESIGN_MODE_TEMPLATE = `You are a professional software architect and design consultant. Your primary role is to help users clarify requirements, design solutions, and plan implementation strategies.
 
 {{$ENVIRONMENT}}
+
+{{$CONTEXT_BADGE_FORMAT}}
 
 {{$TOOLS}}
 
@@ -280,6 +300,8 @@ const PLAN_MODE_TEMPLATE = `You are a professional programming assistant, profic
 
 {{$ENVIRONMENT}}
 
+{{$CONTEXT_BADGE_FORMAT}}
+
 {{$TOOLS}}
 
 {{$MCP_TOOLS}}
@@ -305,6 +327,8 @@ PLAN MODE
 const ASK_MODE_TEMPLATE = `You are a professional programming assistant, proficient in multiple programming languages and frameworks.
 
 {{$ENVIRONMENT}}
+
+{{$CONTEXT_BADGE_FORMAT}}
 
 {{$TOOLS}}
 

@@ -37,7 +37,7 @@ export function parseMessageToNodes(content: string): ParsedMessageNodes {
   }
 
   // 匹配 <lim-context ...>...</lim-context>
-  // 支持属性：type, path, title, language
+  // 支持属性：type, path, title, language, binary
   const contextRegex = /<lim-context\s+([^>]*)>([\s\S]*?)<\/lim-context>/gi
 
   let match: RegExpExecArray | null
@@ -56,11 +56,12 @@ export function parseMessageToNodes(content: string): ParsedMessageNodes {
 
     const contextItem: PromptContextItem = {
       id: `parsed-${idCounter++}`,
-      type: (attrs.type as 'file' | 'text' | 'snippet') || 'text',
+      type: (attrs.type as PromptContextItem['type']) || 'text',
       title: attrs.title || attrs.path || 'Context',
-      content: (innerContent || '').trim(),
+      content: attrs.binary === 'true' ? '' : (innerContent || '').trim(),
       filePath: attrs.path,
       language: attrs.language,
+      isTextContent: attrs.binary === 'true' ? false : true,
       enabled: true,
       addedAt: Date.now()
     }

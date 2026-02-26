@@ -1293,6 +1293,10 @@ const en: LanguageMessages = {
                         name: 'Environment Info',
                         description: 'Contains workspace path, operating system, current time and timezone information'
                     },
+                    CONTEXT_BADGE_FORMAT: {
+                        name: 'Context Badge Format',
+                        description: 'Explains <lim-context ...>...</lim-context> semantics, including title (title attribute), body (tag content), and binary badge handling'
+                    },
                     WORKSPACE_FILES: {
                         name: 'Workspace File Tree',
                         description: 'Lists files and directory structure in the workspace, affected by depth and ignore patterns in context awareness settings',

@@ -711,7 +711,8 @@ export interface SystemPromptConfig {
      * 自定义提示词模板（默认模式的模板，向后兼容）
      *
      * 支持使用以下模块占位符（使用 {{$xxx}} 格式）：
-     * - {{$ENVIRONMENT}} - 环境信息（工作区、操作系统、时间等）
+     * - {{$ENVIRONMENT}} - 环境信息（工作区、操作系统、时区、语言）
+     * - {{$CONTEXT_BADGE_FORMAT}} - lim-context 徽章结构说明（标题/正文/二进制标记）
      * - {{$WORKSPACE_FILES}} - 工作区文件树
      * - {{$OPEN_TABS}} - 打开的标签页
      * - {{$ACTIVE_EDITOR}} - 当前活动编辑器
@@ -1845,6 +1846,22 @@ The following are pinned files...
         requiresConfig: 'Add files via the pinned files button next to input'
     },
     {
+        id: 'CONTEXT_BADGE_FORMAT',
+        name: 'Context Badge Format',
+        description: 'Explains how <lim-context ...>...</lim-context> is structured, including title/body and binary badges',
+        example: `====
+
+CONTEXT BADGE FORMAT
+
+<lim-context type="file" path="新建文件夹 (10).zip" binary="true" title="新建文件夹 (10).zip">
+
+</lim-context>
+
+- title attribute is the chip title shown to users
+- body text between tags is the actual content body
+- when binary="true", body is intentionally empty and should not be parsed as text`
+    },
+    {
         id: 'TOOLS',
         name: 'Tools Definition',
         description: 'Generates tool definitions in XML or Function Call format based on channel config',
@@ -1890,6 +1907,8 @@ export const DEFAULT_DIAGNOSTICS_CONFIG: DiagnosticsConfig = {
 export const DEFAULT_SYSTEM_PROMPT_TEMPLATE = `You are a professional programming assistant, proficient in multiple programming languages and frameworks.
 
 {{$ENVIRONMENT}}
+
+{{$CONTEXT_BADGE_FORMAT}}
 
 {{$TOOLS}}
 
@@ -1954,6 +1973,8 @@ export const CODE_MODE_TEMPLATE = `You are a professional programming assistant,
 
 {{$ENVIRONMENT}}
 
+{{$CONTEXT_BADGE_FORMAT}}
+
 {{$TOOLS}}
 
 {{$MCP_TOOLS}}
@@ -1978,6 +1999,8 @@ GUIDELINES
 export const DESIGN_MODE_TEMPLATE = `You are a professional software architect and design consultant. Your primary role is to help users clarify requirements, design solutions, and plan implementation strategies.
 
 {{$ENVIRONMENT}}
+
+{{$CONTEXT_BADGE_FORMAT}}
 
 {{$TOOLS}}
 
@@ -2027,6 +2050,8 @@ export const PLAN_MODE_TEMPLATE = `You are a professional programming assistant,
 
 {{$ENVIRONMENT}}
 
+{{$CONTEXT_BADGE_FORMAT}}
+
 {{$TOOLS}}
 
 {{$MCP_TOOLS}}
@@ -2054,6 +2079,8 @@ PLAN MODE
 export const ASK_MODE_TEMPLATE = `You are a professional programming assistant, proficient in multiple programming languages and frameworks.
 
 {{$ENVIRONMENT}}
+
+{{$CONTEXT_BADGE_FORMAT}}
 
 {{$TOOLS}}
 

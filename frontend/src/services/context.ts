@@ -10,6 +10,28 @@ export async function previewAttachment(att: Attachment) {
   })
 }
 
+export interface WorkspaceInputFileAttachmentPayload {
+  name: string
+  size: number
+  mimeType: string
+  data: string
+}
+
+export interface ReadWorkspaceFileForInputResult {
+  success: boolean
+  path: string
+  isText: boolean
+  content?: string
+  attachment?: WorkspaceInputFileAttachmentPayload
+  error?: string
+}
+
+export async function readWorkspaceFileForInput(path: string) {
+  return await sendToExtension<ReadWorkspaceFileForInputResult>('readWorkspaceFileForInput', {
+    path
+  })
+}
+
 export async function readWorkspaceTextFile(path: string) {
   return await sendToExtension<{ success: boolean; path: string; content: string; error?: string }>(
     'readWorkspaceTextFile',

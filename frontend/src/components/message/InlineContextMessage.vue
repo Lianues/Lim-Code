@@ -34,6 +34,15 @@ function getContextIcon(ctx: PromptContextItem): { class: string; isFileIcon: bo
 }
 
 function handleContextMouseEnter(ctx: PromptContextItem) {
+  if (ctx.isTextContent === false) {
+    hoveredContextId.value = null
+    previewContext.value = null
+    if (hoverTimer) {
+      clearTimeout(hoverTimer)
+      hoverTimer = null
+    }
+    return
+  }
   hoveredContextId.value = ctx.id
   if (hoverTimer) clearTimeout(hoverTimer)
   hoverTimer = setTimeout(() => {
@@ -67,6 +76,15 @@ function truncatePreview(content: string, maxLines = 10, maxChars = 500): string
 
 // Click chip: open in VSCode virtual doc
 async function handleContextClick(ctx: PromptContextItem) {
+  if (ctx.isTextContent === false && ctx.filePath) {
+    try {
+      await sendToExtension('openWorkspaceFile', { path: ctx.filePath })
+    } catch (error) {
+      console.error('Failed to open workspace file:', error)
+    }
+    return
+  }
+
   try {
     await sendToExtension('showContextContent', {
       title: ctx.title,

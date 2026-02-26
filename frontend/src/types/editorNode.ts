@@ -72,7 +72,9 @@ export function serializeNodes(nodes: EditorNode[]): string {
       const attrs: string[] = [`type="${ctx.type}"`]
       if (ctx.filePath) attrs.push(`path="${ctx.filePath}"`)
       if (ctx.language) attrs.push(`language="${ctx.language}"`)
-      return `<lim-context ${attrs.join(' ')} title="${ctx.title}">\n${ctx.content}\n</lim-context>`
+      const isBinaryContext = ctx.isTextContent === false
+      if (isBinaryContext) attrs.push('binary="true"')
+      return `<lim-context ${attrs.join(' ')} title="${ctx.title}">\n${isBinaryContext ? '' : ctx.content}\n</lim-context>`
     }
   }).join('')
 }

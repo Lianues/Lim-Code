@@ -19,6 +19,8 @@ import { sendToExtension, showNotification } from '../../utils/vscode'
 import { languageFromPath } from '../../utils/languageFromPath'
 import { resolveWorkspaceItems } from '../../utils/resolveWorkspaceItems'
 import { t } from '../../i18n'
+import { getFileType } from '../../utils/file'
+import { generateId } from '../../utils/format'
 
 interface Props {
   modelValue?: boolean
@@ -178,16 +180,60 @@ function handleAtPickerKeydown(key: string) {
   }
 }
 
-async function addFileContextByPath(path: string) {
+const AUTO_UPLOAD_NON_TEXT_MIME_TYPES = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+  'application/pdf'
+])
+
+function shouldAutoUploadBinaryAttachment(payload?: { name: string; size: number; mimeType: string; data: string }): boolean {
+  if (!payload?.data) return false
+  const mime = (payload.mimeType || '').toLowerCase()
+  if (AUTO_UPLOAD_NON_TEXT_MIME_TYPES.has(mime)) return true
+  if (mime.startsWith('audio/')) return true
+  if (mime.startsWith('video/')) return true
+  return false
+}
+
+async function addFileContextByPath(path: string, options?: { autoUploadBinaryAttachment?: boolean }) {
   // Skip directories
   if (path.endsWith('/')) return
 
   const exists = getContexts(editorNodes.value).some(item => item.filePath === path)
   if (exists) return
 
+  const addWorkspaceAttachment = (relativePath: string, payload?: { name: string; size: number; mimeType: string; data: string }) => {
+    if (!payload?.data) return
+
+    const existsAttachment = allAttachments.value.some(att => att.metadata?.sourcePath === relativePath)
+    if (existsAttachment) return
+
+    const attachment: Attachment = {
+      id: generateId(),
+      name: payload.name || relativePath.split('/').pop() || relativePath,
+      type: getFileType(payload.mimeType || 'application/octet-stream'),
+      size: payload.size || 0,
+      mimeType: payload.mimeType || 'application/octet-stream',
+      data: payload.data,
+      metadata: {
+        sourcePath: relativePath
+      }
+    }
+
+    newAttachments.value = [...newAttachments.value, attachment]
+  }
+
   try {
-    const result = await sendToExtension<{ success: boolean; path: string; content: string; error?: string }>(
-      'readWorkspaceTextFile',
+    const result = await sendToExtension<{
+      success: boolean
+      path: string
+      isText: boolean
+      content?: string
+      attachment?: { name: string; size: number; mimeType: string; data: string }
+      error?: string
+    }>(
+      'readWorkspaceFileForInput',
       { path }
     )
 
@@ -196,12 +242,20 @@ async function addFileContextByPath(path: string) {
       return
     }
 
+    const isTextContent = result.isText !== false
+    if (!isTextContent) {
+      if (options?.autoUploadBinaryAttachment && shouldAutoUploadBinaryAttachment(result.attachment)) {
+        addWorkspaceAttachment(result.path || path, result.attachment)
+      }
+    }
+
     const contextItem: PromptContextItem = {
       id: `file-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       type: 'file',
-      title: result.path,
-      content: result.content,
-      filePath: result.path,
+      title: result.path || path,
+      content: isTextContent ? (result.content || '') : '',
+      filePath: result.path || path,
+      isTextContent,
       enabled: true,
       addedAt: Date.now()
     }
@@ -217,7 +271,7 @@ async function addFileContextByPath(path: string) {
 async function handleAddFileContexts(files: { path: string; isDirectory: boolean }[]) {
   for (const file of files) {
     if (file.isDirectory) continue
-    await addFileContextByPath(file.path)
+    await addFileContextByPath(file.path, { autoUploadBinaryAttachment: true })
   }
 
   nextTick(() => {
@@ -239,11 +293,20 @@ async function handleDropFileItems(items: string[], insertAsTextPath: boolean) {
 }
 
 async function handleOpenContext(ctx: PromptContextItem) {
+  if (ctx.isTextContent === false && ctx.filePath) {
+    try {
+      await sendToExtension('openWorkspaceFile', { path: ctx.filePath })
+    } catch (error) {
+      console.error('Failed to open workspace file:', error)
+    }
+    return
+  }
+
   try {
     await sendToExtension('showContextContent', {
       title: ctx.title,
       content: ctx.content,
-      language: ctx.language || languageFromPath(ctx.filePath)
+      language: ctx.language || languageFromPath(ctx.filePath) || 'plaintext'
     })
   } catch (error) {
     console.error('Failed to show context content:', error)
@@ -286,7 +349,12 @@ function getFinalContent(): string {
   return serializeNodes(editorNodes.value).trim()
 }
 
-const canSubmit = computed(() => getPlainText(editorNodes.value).trim().length > 0)
+const canSubmit = computed(() => {
+  const hasText = getPlainText(editorNodes.value).trim().length > 0
+  const hasContexts = getContexts(editorNodes.value).length > 0
+  const hasAttachments = allAttachments.value.length > 0
+  return hasText || hasContexts || hasAttachments
+})
 
 function handleEdit() {
   const finalContent = getFinalContent()

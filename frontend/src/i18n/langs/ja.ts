@@ -1293,6 +1293,10 @@ const ja: LanguageMessages = {
                         name: '環境情報',
                         description: 'ワークスペースパス、オペレーティングシステム、現在時刻、タイムゾーン情報を含みます'
                     },
+                    CONTEXT_BADGE_FORMAT: {
+                        name: 'コンテキストバッジ構造',
+                        description: '<lim-context ...>...</lim-context> の意味を説明し、タイトル（title 属性）・本文（タグ本体）・binary バッジの扱いを明確化します'
+                    },
                     WORKSPACE_FILES: {
                         name: 'ワークスペースファイルツリー',
                         description: 'ワークスペース内のファイルとディレクトリ構造をリストします。コンテキスト認識設定の深度と無視パターンの影響を受けます',

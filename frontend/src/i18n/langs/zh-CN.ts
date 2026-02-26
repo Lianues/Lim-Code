@@ -1293,6 +1293,10 @@ const zhCN: LanguageMessages = {
                         name: '环境信息',
                         description: '包含工作区路径、操作系统、当前时间和时区信息'
                     },
+                    CONTEXT_BADGE_FORMAT: {
+                        name: '上下文徽章结构',
+                        description: '解释 <lim-context ...>...</lim-context> 的字段语义，明确标题（title 属性）、正文（标签体）以及 binary 徽章不应按文本解析'
+                    },
                     WORKSPACE_FILES: {
                         name: '工作区文件树',
                         description: '列出工作区中的文件和目录结构，受上下文感知设置中的深度和忽略模式影响',
