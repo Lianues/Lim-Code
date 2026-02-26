@@ -5,6 +5,7 @@
 import * as vscode from 'vscode';
 import { ChatViewProvider } from './webview/ChatViewProvider';
 import { t, setDetectedLanguage, setLanguage as setBackendLanguage } from './backend/i18n';
+import { Logger } from './backend/core/logger';
 import { getDiffCodeLensProvider } from './backend/tools/file/DiffCodeLensProvider';
 import { getDiffEditorActionsProvider } from './backend/tools/file/DiffEditorActionsProvider';
 import { getDiffInlineProvider, DiffInlineProvider } from './backend/tools/file/DiffInlineProvider';
@@ -22,6 +23,12 @@ let diffInlineDisposable: vscode.Disposable | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('LimCode extension is now active!');
+
+    // 初始化日志系统：创建 OutputChannel 让日志同时输出到 VS Code 输出面板
+    const outputChannel = vscode.window.createOutputChannel('LimCode');
+    context.subscriptions.push(outputChannel);
+    Logger.setOutputChannel((line) => outputChannel.appendLine(line));
+    // Logger.setLevel(LogLevel.DEBUG); // 取消注释以启用 DEBUG 级别日志
 
     // Allow i18n to follow VS Code display language until settings load.
     setDetectedLanguage(vscode.env.language);

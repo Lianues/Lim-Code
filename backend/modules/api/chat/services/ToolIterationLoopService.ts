@@ -18,6 +18,7 @@ import type { GenerateResponse } from '../../../channel/types';
 import { ChannelError, ErrorType } from '../../../channel/types';
 import { PromptManager } from '../../../prompt';
 import { t } from '../../../../i18n';
+import { Logger } from '../../../../core/logger';
 import type { CheckpointService } from './CheckpointService';
 
 import type {
@@ -113,6 +114,7 @@ export interface NonStreamToolLoopResult {
 export class ToolIterationLoopService {
     private promptManager: PromptManager;
     private summarizeService?: SummarizeService;
+    private readonly log = Logger.get('ToolLoop');
 
     constructor(
         private channelManager: ChannelManager,
@@ -314,20 +316,19 @@ export class ToolIterationLoopService {
             );
 
             try {
-                console.log(`[ContextTrim][Debug] loop.stream.trim_result ${JSON.stringify({
-                    conversationId,
-                    iteration,
+                this.log.debug('stream.trim_result', {
+                    conversationId, iteration,
                     modelOverride: modelOverride || null,
                     configModel: (config as any).model || null,
                     trimStartIndex: trimResult.trimStartIndex,
                     historyLength: trimResult.history.length,
                     needsAutoSummarize: !!trimResult.needsAutoSummarize
-                })}`);
+                });
             } catch {}
 
             // 3.5 自动总结检测：如果需要总结，先执行总结再重新获取历史
             if (trimResult.needsAutoSummarize && this.summarizeService) {
-                console.log(`[ToolLoop] Auto-summarize triggered for conversation ${conversationId}`);
+                this.log.info('stream.auto_summarize_triggered', { conversationId, iteration });
 
                 // 先通知前端显示“自动总结中”提示
                 yield {
@@ -345,7 +346,7 @@ export class ToolIterationLoopService {
                 );
 
                 if (summarizeResult.success) {
-                    console.log(`[ToolLoop] Auto-summarize completed, continuing loop`);
+                    this.log.info('stream.auto_summarize_completed', { conversationId, iteration });
 
                     // 先通知前端插入总结消息，避免必须重载才能看到
                     if (typeof summarizeResult.insertIndex === 'number') {
@@ -405,9 +406,7 @@ export class ToolIterationLoopService {
                     } satisfies ChatStreamAutoSummaryStatusData;
 
                     // 总结失败：记录日志，但不要阻塞当前轮对话，继续正常请求
-                    console.warn(
-                        `[ToolLoop] Auto-summarize failed (will continue without summarize): ${summarizeError.code} - ${summarizeError.message}`
-                    );
+                    this.log.warn('stream.auto_summarize_failed', { conversationId, iteration, code: summarizeError.code, message: summarizeError.message });
                 }
             }
 
@@ -723,20 +722,19 @@ export class ToolIterationLoopService {
             );
 
             try {
-                console.log(`[ContextTrim][Debug] loop.nonstream.trim_result ${JSON.stringify({
-                    conversationId,
-                    iteration,
+                this.log.debug('nonstream.trim_result', {
+                    conversationId, iteration,
                     modelOverride: modelOverride || null,
                     configModel: (config as any).model || null,
                     trimStartIndex: trimResult.trimStartIndex,
                     historyLength: trimResult.history.length,
                     needsAutoSummarize: !!trimResult.needsAutoSummarize
-                })}`);
+                });
             } catch {}
 
             // 自动总结检测
             if (trimResult.needsAutoSummarize && this.summarizeService) {
-                console.log(`[ToolLoop/NonStream] Auto-summarize triggered for conversation ${conversationId}`);
+                this.log.info('nonstream.auto_summarize_triggered', { conversationId, iteration });
 
                 const summarizeResult = await this.summarizeService.handleAutoSummarize(
                     conversationId,
@@ -752,9 +750,7 @@ export class ToolIterationLoopService {
                     const summarizeError = summarizeResult.error;
 
                     // 总结失败：不阻塞当前请求，继续使用现有历史
-                    console.warn(
-                        `[ToolLoop/NonStream] Auto-summarize failed (will continue without summarize): ${summarizeError.code} - ${summarizeError.message}`
-                    );
+                    this.log.warn('nonstream.auto_summarize_failed', { conversationId, iteration, code: summarizeError.code, message: summarizeError.message });
                 }
             }
 

@@ -491,6 +491,7 @@ const zhCN: LanguageMessages = {
                 context: '上下文',
                 prompt: '提示词',
                 tokenCount: 'Token 计数',
+                sound: '声音提醒',
                 appearance: '外观',
                 general: '通用'
             },
@@ -1425,6 +1426,10 @@ const zhCN: LanguageMessages = {
                         title: '子代理',
                         description: '配置可由 AI 调用的专业子代理'
                     },
+                    sound: {
+                        title: '声音提醒',
+                        description: '配置警告、错误与任务完成时的提示音'
+                    },
                     appearance: {
                         title: '外观设置',
                         description: '配置界面外观相关选项'
@@ -1655,6 +1660,52 @@ const zhCN: LanguageMessages = {
                 responseFormat: '// 响应格式',
                 openaiDocNote: '您的 API 需要返回包含 total_tokens 字段的 JSON 响应。请求体使用 OpenAI Messages 格式。',
                 saveSuccess: '配置已保存',
+                saveFailed: '保存失败'
+            },
+            soundSettings: {
+                enabled: {
+                    title: '启用声音提醒',
+                    description: '在特定事件发生时播放提示音（默认关闭）',
+                    label: '启用'
+                },
+                volume: {
+                    title: '音量',
+                    description: '调整提示音音量（0-100）'
+                },
+                cooldown: {
+                    title: '最小间隔',
+                    description: '限制提示音的最小播放间隔，避免短时间内连续播放'
+                },
+                cues: {
+                    title: '事件类型',
+                    description: '选择哪些事件需要播放提示音',
+                    warning: '警告（Warning）',
+                    error: '错误（Error）',
+                    taskComplete: '任务完成',
+                    taskError: '任务失败'
+                },
+                assets: {
+                    title: '自定义音效',
+                    description: '为各事件导入本地音频文件，用于覆盖默认音效（导入后需点击保存，建议使用短音效；单个文件最大 {size}）',
+                    none: '未选择',
+                    choose: '选择文件',
+                    clear: '清除',
+                    importSuccess: '已导入：{name}',
+                    clearSuccess: '已清除',
+                    fileTooLarge: '文件过大，最大 {size}',
+                    invalidFile: '无效的音频文件'
+                },
+                test: {
+                    title: '测试播放',
+                    description: '用于解锁浏览器音频策略，并试听提示音',
+                    warning: '试听：警告',
+                    error: '试听：错误',
+                    taskComplete: '试听：任务完成'
+                },
+                testBlocked: '声音被浏览器策略阻止，请点击一次“试听”按钮解锁（或检查 VS Code 音频设置）',
+                testPlayed: '已播放',
+                testFailed: '播放失败（可能被浏览器策略阻止）',
+                saveSuccess: '保存成功',
                 saveFailed: '保存失败'
             },
             appearanceSettings: {

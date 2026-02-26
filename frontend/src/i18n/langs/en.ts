@@ -491,6 +491,7 @@ const en: LanguageMessages = {
                 context: 'Context',
                 prompt: 'Prompt',
                 tokenCount: 'Token Count',
+                sound: 'Sound',
                 appearance: 'Appearance',
                 general: 'General'
             },
@@ -1425,6 +1426,10 @@ const en: LanguageMessages = {
                         title: 'Sub-Agents',
                         description: 'Configure specialized sub-agents that AI can invoke'
                     },
+                    sound: {
+                        title: 'Sound',
+                        description: 'Play sound cues for warnings, errors, and task completion'
+                    },
                     appearance: {
                         title: 'Appearance',
                         description: 'Configure UI appearance options'
@@ -1655,6 +1660,52 @@ const en: LanguageMessages = {
                 responseFormat: '// Response Format',
                 openaiDocNote: 'Your API should return a JSON response with a total_tokens field. The request body uses OpenAI Messages format.',
                 saveSuccess: 'Configuration saved',
+                saveFailed: 'Save failed'
+            },
+            soundSettings: {
+                enabled: {
+                    title: 'Enable Sound Notifications',
+                    description: 'Play sound cues on certain events (disabled by default)',
+                    label: 'Enable'
+                },
+                volume: {
+                    title: 'Volume',
+                    description: 'Adjust cue volume (0-100)'
+                },
+                cooldown: {
+                    title: 'Minimum Interval',
+                    description: 'Limit how often cues can play to avoid spam'
+                },
+                cues: {
+                    title: 'Event Types',
+                    description: 'Choose which events should play a cue',
+                    warning: 'Warning',
+                    error: 'Error',
+                    taskComplete: 'Task Completed',
+                    taskError: 'Task Failed'
+                },
+                assets: {
+                    title: 'Custom Sounds',
+                    description: 'Import local audio files to override built-in default sounds (click Save after importing; short sounds recommended; max {size} per file)',
+                    none: 'None',
+                    choose: 'Choose File',
+                    clear: 'Clear',
+                    importSuccess: 'Imported: {name}',
+                    clearSuccess: 'Cleared',
+                    fileTooLarge: 'File too large (max {size})',
+                    invalidFile: 'Invalid audio file'
+                },
+                test: {
+                    title: 'Test Playback',
+                    description: 'Unlock browser audio policy and preview cues',
+                    warning: 'Test: Warning',
+                    error: 'Test: Error',
+                    taskComplete: 'Test: Task Completed'
+                },
+                testBlocked: 'Audio may be blocked by browser policy. Click a test button once to unlock.',
+                testPlayed: 'Played',
+                testFailed: 'Playback failed (may be blocked by browser policy)',
+                saveSuccess: 'Saved successfully',
                 saveFailed: 'Save failed'
             },
             appearanceSettings: {

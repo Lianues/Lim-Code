@@ -14,6 +14,7 @@ import PromptSettings from './PromptSettings.vue'
 import TokenCountSettings from './TokenCountSettings.vue'
 import SubAgentsSettings from './SubAgentsSettings.vue'
 import AppearanceSettings from './AppearanceSettings.vue'
+import SoundSettings from './SoundSettings.vue'
 import { CustomScrollbar, CustomCheckbox, CustomSelect, Modal, type SelectOption } from '../common'
 import { sendToExtension } from '@/utils/vscode'
 import { useI18n, SUPPORTED_LANGUAGES } from '@/i18n'
@@ -48,6 +49,7 @@ const tabs = computed<TabItem[]>(() => [
   { id: 'context', label: t('components.settings.tabs.context'), icon: 'codicon-symbol-namespace' },
   { id: 'prompt', label: t('components.settings.tabs.prompt'), icon: 'codicon-note' },
   { id: 'tokenCount', label: t('components.settings.tabs.tokenCount'), icon: 'codicon-symbol-numeric' },
+  { id: 'sound', label: t('components.settings.tabs.sound'), icon: 'codicon-bell' },
   { id: 'appearance', label: t('components.settings.tabs.appearance'), icon: 'codicon-paintcan' },
   { id: 'general', label: t('components.settings.tabs.general'), icon: 'codicon-settings-gear' },
 ])
@@ -432,6 +434,14 @@ onMounted(() => {
             <p class="settings-description">{{ t('components.settings.settingsPanel.sections.subagents.description') }}</p>
             
             <SubAgentsSettings />
+          </div>
+
+          <!-- 声音提醒 -->
+          <div v-if="settingsStore.activeTab === 'sound'" class="settings-section">
+            <h4>{{ t('components.settings.settingsPanel.sections.sound.title') }}</h4>
+            <p class="settings-description">{{ t('components.settings.settingsPanel.sections.sound.description') }}</p>
+
+            <SoundSettings />
           </div>
 
           <!-- 外观设置 -->

@@ -14,6 +14,7 @@
             "problemMatcher": "$tsc"
         },
         {
+            "label": "Backend Watch",
             "type": "npm",
             "script": "watch",
             "isBackground": true,
@@ -41,6 +42,33 @@
             "presentation": {
                 "reveal": "silent"
             },
+            "problemMatcher": []
+        },
+        {
+            "label": "Frontend Dev Server (Vite)",
+            "type": "npm",
+            "script": "dev:frontend",
+            "isBackground": true,
+            "presentation": {
+                "reveal": "silent",
+                "panel": "dedicated"
+            },
+            "problemMatcher": {
+                "base": "$tsc-watch",
+                "background": {
+                    "activeOnStart": true,
+                    "beginsPattern": ".+",
+                    "endsPattern": ".*(ready in|Local:).*"
+                }
+            }
+        },
+        {
+            "label": "Local Dev (Backend Watch + Vite)",
+            "dependsOn": [
+                "Backend Watch",
+                "Frontend Dev Server (Vite)"
+            ],
+            "dependsOrder": "parallel",
             "problemMatcher": []
         }
     ]

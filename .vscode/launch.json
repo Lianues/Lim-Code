@@ -28,6 +28,25 @@
             "preLaunchTask": "${defaultBuildTask}"
         },
         {
+            "name": "Run Extension (Local Vite Dev)",
+            "type": "extensionHost",
+            "request": "launch",
+            "args": [
+                "--extensionDevelopmentPath=${workspaceFolder}"
+            ],
+            "outFiles": [
+                "${workspaceFolder}/dist/**/*.js"
+            ],
+            "env": {
+                "LIMCODE_WEBVIEW_DEV_SERVER_URL": "http://127.0.0.1:5173"
+            },
+            "preLaunchTask": "Local Dev (Backend Watch + Vite)",
+            "presentation": {
+                "hidden": false,
+                "group": "local-dev"
+            }
+        },
+        {
             "name": "Extension Tests",
             "type": "extensionHost",
             "request": "launch",

@@ -1,5 +1,6 @@
 node_modules
 dist
+.limcode
 
 # tests (keep local; do not track in git)
 test/
@@ -14,3 +15,13 @@ coverage
 
 # lock files (project uses npm)
 pnpm-lock.yaml
+
+# logs / runtime artifacts
+*.log
+*.log.*
+logs/
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+tmp-*.out.log
+tmp-*.err.log

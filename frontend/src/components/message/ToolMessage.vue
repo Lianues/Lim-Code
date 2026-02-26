@@ -10,7 +10,7 @@
  * 5. 通过工具 ID 从 store 获取响应结果
  */
 
-import { ref, computed, Component, h, watchEffect, watch, nextTick, onMounted, onBeforeUnmount, type ComponentPublicInstance } from 'vue'
+import { ref, computed, h, watchEffect, watch, nextTick, onMounted, onBeforeUnmount, type Component, type ComponentPublicInstance } from 'vue'
 import type { ToolUsage, Message } from '../../types'
 import { getToolConfig } from '../../utils/toolRegistry'
 import { ensureMcpToolRegistered } from '../../utils/tools'

@@ -1844,10 +1844,9 @@ export class SettingsManager {
      */
     async updateUISettings(uiSettings: Partial<NonNullable<GlobalSettings['ui']>>): Promise<void> {
         const oldValue = this.settings.ui;
-        this.settings.ui = {
-            ...this.settings.ui,
-            ...uiSettings
-        };
+        // 深合并：避免仅更新 ui.sound.cues 等子字段时覆盖整个对象
+        const currentUI = (this.settings.ui || {}) as NonNullable<GlobalSettings['ui']>;
+        this.settings.ui = this.deepMergeConfig(currentUI, uiSettings) as NonNullable<GlobalSettings['ui']>;
         this.settings.lastUpdated = Date.now();
         
         await this.storage.save(this.settings);
