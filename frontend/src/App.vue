@@ -4,7 +4,7 @@
  * 使用Pinia store管理状态
  */
 
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { MessageList } from './components/message'
 import { InputArea } from './components/input'
@@ -19,6 +19,7 @@ import { useI18n, setLanguage } from './i18n'
 import { copyToClipboard } from './utils'
 import { sendToExtension, onMessageFromExtension } from './utils/vscode'
 import type { Attachment, Message } from './types'
+import { configureSoundSettings, playCue } from './services/soundCues'
 
 // i18n
 const { t } = useI18n()
@@ -31,8 +32,17 @@ const chatStore = useChatStore()
 const settingsStore = useSettingsStore()
 const terminalStore = useTerminalStore()
 
+// 播放错误提示音：同一错误去重，避免重复触发
+const lastErrorKey = ref('')
 // 从 store 获取原始 Ref（Pinia 会自动解包 ref，storeToRefs 保持 Ref 不被解包）
-const { storeAttachments: storeAttachmentsRef } = storeToRefs(chatStore)
+const { storeAttachments: storeAttachmentsRef, error: errorRef } = storeToRefs(chatStore)
+watch(errorRef, (err) => {
+  if (!err) return
+  const key = `${err.code}:${err.message}`
+  if (key === lastErrorKey.value) return
+  lastErrorKey.value = key
+  void playCue('error')
+})
 
 // 附件管理（传入 store 驱动的 Ref<Attachment[]>，实现对话级隔离）
 const {
@@ -213,6 +223,9 @@ async function loadLanguageSettings() {
     if (response?.settings?.ui?.appearance) {
       settingsStore.setAppearanceLoadingText(response.settings.ui.appearance.loadingText || '')
     }
+
+    // 加载声音提醒设置（不依赖 store，直接配置运行时服务）
+    configureSoundSettings(response?.settings?.ui?.sound)
   } catch (error) {
     console.error('Failed to load language settings:', error)
   } finally {
@@ -246,6 +259,16 @@ onMounted(async () => {
         case 'showSettings':
           handleShowSettings()
           break
+      }
+    }
+
+    // 任务事件声音提醒
+    if (message.type === 'taskEvent') {
+      const event = message.data
+      if (event?.type === 'complete') {
+        void playCue('taskComplete')
+      } else if (event?.type === 'error') {
+        void playCue('taskError')
       }
     }
   })

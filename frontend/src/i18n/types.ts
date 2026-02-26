@@ -520,6 +520,7 @@ export interface LanguageMessages {
                 context: string;
                 prompt: string;
                 tokenCount: string;
+                sound: string;
                 appearance: string;
                 general: string;
             };
@@ -1604,6 +1605,10 @@ export interface LanguageMessages {
                         title: string;
                         description: string;
                     };
+                    sound: {
+                        title: string;
+                        description: string;
+                    };
                     appearance: {
                         title: string;
                         description: string;
@@ -1696,6 +1701,52 @@ export interface LanguageMessages {
                 requestBody: string;
                 responseFormat: string;
                 openaiDocNote: string;
+                saveSuccess: string;
+                saveFailed: string;
+            };
+            soundSettings: {
+                enabled: {
+                    title: string;
+                    description: string;
+                    label: string;
+                };
+                volume: {
+                    title: string;
+                    description: string;
+                };
+                cooldown: {
+                    title: string;
+                    description: string;
+                };
+                cues: {
+                    title: string;
+                    description: string;
+                    warning: string;
+                    error: string;
+                    taskComplete: string;
+                    taskError: string;
+                };
+                assets: {
+                    title: string;
+                    description: string;
+                    none: string;
+                    choose: string;
+                    clear: string;
+                    importSuccess: string;
+                    clearSuccess: string;
+                    fileTooLarge: string;
+                    invalidFile: string;
+                };
+                test: {
+                    title: string;
+                    description: string;
+                    warning: string;
+                    error: string;
+                    taskComplete: string;
+                };
+                testBlocked: string;
+                testPlayed: string;
+                testFailed: string;
                 saveSuccess: string;
                 saveFailed: string;
             };

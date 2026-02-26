@@ -1231,6 +1231,56 @@ export interface StorageStats {
 }
 
 /**
+ * UI 声音提醒设置
+ */
+export interface UISoundSettings {
+    /** 总开关（默认关闭，避免打扰） */
+    enabled?: boolean;
+
+    /** 音量（0-100） */
+    volume?: number;
+
+    /** 最小播放间隔（毫秒），用于限流 */
+    cooldownMs?: number;
+
+    /** 各类提示音开关 */
+    cues?: {
+        warning?: boolean;
+        error?: boolean;
+        taskComplete?: boolean;
+        /** 任务失败提示音（可与 error 分开控制） */
+        taskError?: boolean;
+    };
+
+    /**
+     * 自定义音效（可选）：为各类提示音导入本地音频文件。
+     *
+     * 注意：为支持“清除已导入音效”，这里允许显式写入 null。
+     */
+    assets?: {
+        warning?: UISoundAsset | null;
+        error?: UISoundAsset | null;
+        taskComplete?: UISoundAsset | null;
+        taskError?: UISoundAsset | null;
+    };
+
+    /** 提示音风格 */
+    theme?: 'beep' | 'soft';
+}
+
+/**
+ * UI 声音提醒 - 自定义音效资源
+ */
+export interface UISoundAsset {
+    /** 文件名（展示用） */
+    name: string;
+    /** mime 类型（展示用，可为空字符串） */
+    mime: string;
+    /** base64 内容（不含 data: 前缀） */
+    dataBase64: string;
+}
+
+/**
  * 全局设置
  *
  * 包含所有全局级别的配置项
@@ -1315,6 +1365,11 @@ export interface GlobalSettings {
              */
             loadingText?: string;
         };
+
+        /**
+         * 声音提醒
+         */
+        sound?: UISoundSettings;
     };
     
     /**
@@ -2169,6 +2224,18 @@ export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
         appearance: {
             // 为空表示前端使用默认值（通常来自 i18n）
             loadingText: ''
+        },
+        sound: {
+            enabled: false,
+            volume: 60,
+            cooldownMs: 800,
+            cues: {
+                warning: true,
+                error: true,
+                taskComplete: true,
+                taskError: true
+            },
+            theme: 'beep'
         }
     },
     lastUpdated: Date.now()

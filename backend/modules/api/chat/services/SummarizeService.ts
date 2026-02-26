@@ -5,6 +5,7 @@
  */
 
 import { t } from '../../../../i18n';
+import { Logger } from '../../../../core/logger';
 import type { ConfigManager } from '../../../config/ConfigManager';
 import type {ChannelManager } from '../../../channel/ChannelManager';
 import type { ConversationManager } from '../../../conversation/ConversationManager';
@@ -52,6 +53,8 @@ Preserve exact technical details (file paths, function names, config keys, IDs, 
  * 5. 管理总结消息的插入和删除
  */
 export class SummarizeService {
+    private readonly log = Logger.get('SummarizeService');
+
     constructor(
         private configManager: ConfigManager,
         private channelManager: ChannelManager,
@@ -88,6 +91,7 @@ export class SummarizeService {
     ): Promise<SummarizeContextSuccessData | SummarizeContextErrorData> {
         try {
             const { conversationId, configId } = request;
+            this.log.info('manual.start', { conversationId, configId });
 
             // 从设置中读取总结配置
             let configKeepRecentRounds = 2;  // 默认值
@@ -126,9 +130,9 @@ export class SummarizeService {
                     if (summarizeModelId) {
                         actualModelId = summarizeModelId;
                     }
-                    console.log(`[Summarize] Using dedicated model: channel=${summarizeChannelId}, model=${summarizeModelId || 'default'}`);
+                    this.log.info('manual.dedicated_model', { channelId: summarizeChannelId, modelId: summarizeModelId || 'default' });
                 } else {
-                    console.log(`[Summarize] Dedicated channel not available, falling back to chat config`);
+                    this.log.warn('manual.dedicated_channel_unavailable', { channelId: summarizeChannelId });
                 }
             }
 
@@ -157,6 +161,8 @@ export class SummarizeService {
             // 4. 获取对话历史
             const fullHistory = await this.conversationManager.getHistoryRef(conversationId);
 
+            this.log.info('manual.history_loaded', { conversationId, fullHistoryLength: fullHistory.length });
+
             // 5. 找到最后一个总结消息的位置
             // - 回合识别从最后一个总结消息之后开始（避免反复把旧对话算进“新回合”）
             // - 但真正发给 AI 做“合并总结”的内容，需要包含最后一个总结消息本身（用于承接之前的总结）
@@ -168,6 +174,7 @@ export class SummarizeService {
             const rounds = this.contextTrimService.identifyRounds(historyAfterSummary);
 
             if (rounds.length <= keepRecentRounds) {
+                this.log.info('manual.not_enough_rounds', { conversationId, rounds: rounds.length, keepRecentRounds });
                 return {
                     success: false,
                     error: {
@@ -213,6 +220,7 @@ export class SummarizeService {
             const totalSummarizedCount = previousSummarizedCount + newlySummarizedCount;
 
             if (messagesToSummarize.length === 0) {
+                this.log.warn('manual.no_messages', { conversationId, summarizeInputStartIndex, summarizeEndIndex });
                 return {
                     success: false,
                     error: {
@@ -229,6 +237,18 @@ export class SummarizeService {
 
             // 清理历史中不应发送给 API 的内部字段
             const cleanedMessages = this.cleanMessagesForSummarize(messagesToSummarize, config);
+
+            this.log.info('manual.cleaned', {
+                conversationId,
+                channelType: config.type,
+                rawMessageCount: messagesToSummarize.length,
+                cleanedMessageCount: cleanedMessages.length,
+                rawTotalParts: messagesToSummarize.reduce((s, m) => s + m.parts.length, 0),
+                cleanedTotalParts: cleanedMessages.reduce((s, m) => s + m.parts.length, 0),
+                summarizeInputStartIndex,
+                summarizeEndIndex,
+                keepRecentRounds
+            });
 
             // 构建历史
             const summaryRequestHistory: Content[] = [
@@ -300,6 +320,12 @@ export class SummarizeService {
                 .trim();
 
             if (!summaryText) {
+                this.log.warn('manual.empty_summary', {
+                    conversationId,
+                    partsCount: finalContent.parts.length,
+                    promptTokens: beforeTokenCount,
+                    completionTokens: afterTokenCount
+                });
                 return {
                     success: false,
                     error: {
@@ -329,6 +355,14 @@ export class SummarizeService {
 
             await this.conversationManager.insertContent(conversationId, insertIndex, summaryContent);
 
+            this.log.info('manual.completed', {
+                conversationId,
+                insertIndex,
+                totalSummarizedCount,
+                promptTokens: beforeTokenCount,
+                completionTokens: afterTokenCount
+            });
+
             return {
                 success: true,
                 summaryContent,
@@ -340,6 +374,7 @@ export class SummarizeService {
 
         } catch (error) {
             const err = error as any;
+            this.log.error('manual.exception', { conversationId: request.conversationId, code: err.code, message: err.message });
             return {
                 success: false,
                 error: {
@@ -354,9 +389,8 @@ export class SummarizeService {
      * 清理消息中不应发送给 API 的内部字段
      */
     private cleanMessagesForSummarize(messages: Content[], config: BaseChannelConfig): Content[] {
-        return messages.map(msg => ({
-            ...msg,
-            parts: msg.parts
+        return messages.map(msg => {
+            const cleanedParts = msg.parts
                 // 过滤掉思考内容
                 .filter(part => !part.thought && !(part.thoughtSignatures && Object.keys(part).length === 1))
                 .map(part => {
@@ -426,7 +460,33 @@ export class SummarizeService {
 
                     return cleanedPart;
                 })
-        }));
+                // 过滤掉清理后变成空的 parts
+                .filter(part => {
+                    const keys = Object.keys(part);
+                    if (keys.length === 0) return false;
+                    // 仅剩 thought: true/false 的空壳 part
+                    if (keys.length === 1 && keys[0] === 'thought') return false;
+                    return true;
+                });
+
+            // 跳过清理后 parts 为空的消息
+            if (cleanedParts.length === 0) {
+                return null;
+            }
+
+            // 保留消息的核心字段，移除不应发送给 API 的内部元数据
+            const result: Content = {
+                role: msg.role,
+                parts: cleanedParts
+            };
+
+            // 保留总结消息标记（用于增量总结时 AI 理解上下文）
+            if (msg.isSummary) {
+                result.isSummary = msg.isSummary;
+            }
+
+            return result;
+        }).filter((msg): msg is Content => msg !== null);
     }
 
     /**
@@ -448,6 +508,8 @@ export class SummarizeService {
         abortSignal?: AbortSignal
     ): Promise<SummarizeContextSuccessData | SummarizeContextErrorData> {
         try {
+            this.log.info('auto.start', { conversationId, configId });
+
             // 从设置中读取总结配置
             let keepRecentRounds = 2;
             let useSeparateModel = false;
@@ -481,9 +543,9 @@ export class SummarizeService {
                     if (summarizeModelId) {
                         actualModelId = summarizeModelId;
                     }
-                    console.log(`[AutoSummarize] Using dedicated model: channel=${summarizeChannelId}, model=${summarizeModelId || 'default'}`);
+                    this.log.info('auto.dedicated_model', { channelId: summarizeChannelId, modelId: summarizeModelId || 'default' });
                 } else {
-                    console.log(`[AutoSummarize] Dedicated channel not available, falling back to chat config`);
+                    this.log.warn('auto.dedicated_channel_unavailable', { channelId: summarizeChannelId });
                 }
             }
 
@@ -512,6 +574,7 @@ export class SummarizeService {
             // 3. 获取对话历史
             const fullHistory = await this.conversationManager.getHistoryRef(conversationId);
 
+            this.log.info('auto.history_loaded', { conversationId, fullHistoryLength: fullHistory.length });
             // 4. 找到最后一个总结消息
             const lastSummaryIndex = this.contextTrimService.findLastSummaryIndex(fullHistory);
             const historyStartIndex = lastSummaryIndex >= 0 ? lastSummaryIndex + 1 : 0;
@@ -521,6 +584,7 @@ export class SummarizeService {
             const rounds = this.contextTrimService.identifyRounds(historyAfterSummary);
 
             if (rounds.length <= keepRecentRounds) {
+                this.log.info('auto.not_enough_rounds', { conversationId, rounds: rounds.length, keepRecentRounds });
                 return {
                     success: false,
                     error: {
@@ -542,6 +606,7 @@ export class SummarizeService {
             let messagesToSummarize = fullHistory.slice(summarizeInputStartIndex, summarizeEndIndex);
 
             if (messagesToSummarize.length === 0) {
+                this.log.warn('auto.no_messages', { conversationId, summarizeInputStartIndex, summarizeEndIndex });
                 return {
                     success: false,
                     error: {
@@ -578,12 +643,17 @@ export class SummarizeService {
                     const newEndIndex = summarizeInputStartIndex + lastToolInteractionStart;
                     messagesToSummarize = fullHistory.slice(summarizeInputStartIndex, newEndIndex);
    insertIndex = newEndIndex;
-                    console.log(`[AutoSummarize] Content exceeds context limit, excluding last tool interaction. New range: ${summarizeInputStartIndex}-${newEndIndex}`);
+                    this.log.warn('auto.context_overflow_trimmed', {
+                        conversationId, estimatedTokens, maxInputTokens,
+                        originalRange: `${summarizeInputStartIndex}-${summarizeEndIndex}`,
+                        newRange: `${summarizeInputStartIndex}-${newEndIndex}`
+                    });
                 }
                 // 如果找不到工具交互或排除后仍然为空，继续用原始范围尝试（让 API 自己处理截断）
             }
 
             if (messagesToSummarize.length === 0) {
+                this.log.warn('auto.no_messages_after_trim', { conversationId });
                 return {
                     success: false,
                     error: {
@@ -609,6 +679,18 @@ export class SummarizeService {
 
             // 清理历史中不应发送给 API 的内部字段
             const cleanedMessages = this.cleanMessagesForSummarize(messagesToSummarize, config);
+
+            this.log.info('auto.cleaned', {
+                conversationId,
+                channelType: config.type,
+                rawMessageCount: messagesToSummarize.length,
+                cleanedMessageCount: cleanedMessages.length,
+                rawTotalParts: messagesToSummarize.reduce((s, m) => s + m.parts.length, 0),
+                cleanedTotalParts: cleanedMessages.reduce((s, m) => s + m.parts.length, 0),
+                summarizeInputStartIndex,
+                insertIndex,
+                keepRecentRounds
+            });
 
             const summaryRequestHistory: Content[] = [
                 ...cleanedMessages,
@@ -640,10 +722,13 @@ export class SummarizeService {
                 generateOptions.modelOverride = actualModelId;
             }
 
-            console.log(`[AutoSummarize] Generating summary for conversation ${conversationId}, range: ${summarizeInputStartIndex}-${insertIndex}, messages: ${messagesToSummarize.length}`);
-            const proxyUrl = this.settingsManager?.getEffectiveProxyUrl?.();
-            console.log(`[AutoSummarize] Effective proxy: ${proxyUrl || 'none'}`);
-
+            this.log.info('auto.generate_request', {
+                conversationId,
+                range: `${summarizeInputStartIndex}-${insertIndex}`,
+                requestHistoryLength: summaryRequestHistory.length,
+                configId: actualConfigId,
+                modelOverride: actualModelId || null
+            });
 
             const response = await this.channelManager.generate(generateOptions);
 
@@ -684,6 +769,12 @@ export class SummarizeService {
                 .trim();
 
             if (!summaryText) {
+                this.log.warn('auto.empty_summary', {
+                    conversationId,
+                    partsCount: finalContent.parts.length,
+                    promptTokens: beforeTokenCount,
+                    completionTokens: afterTokenCount
+                });
                 return {
                     success: false,
                     error: {
@@ -709,7 +800,13 @@ export class SummarizeService {
 
             await this.conversationManager.insertContent(conversationId, insertIndex, summaryContent);
 
-            console.log(`[AutoSummarize] Summary inserted at index ${insertIndex}, summarized ${totalSummarizedCount} messages`);
+            this.log.info('auto.completed', {
+                conversationId,
+                insertIndex,
+                totalSummarizedCount,
+                promptTokens: beforeTokenCount,
+                completionTokens: afterTokenCount
+            });
 
             return {
                 success: true,
@@ -722,7 +819,7 @@ export class SummarizeService {
 
         } catch (error) {
             const err = error as any;
-            console.error(`[AutoSummarize] Failed:`, err.message || err);
+            this.log.error('auto.exception', { conversationId, code: err.code, message: err.message });
             return {
                 success: false,
                 error: {

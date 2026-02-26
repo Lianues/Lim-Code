@@ -28,6 +28,7 @@ import type { ConversationRound, ContextTrimInfo } from '../utils';
 import type { TokenEstimationService } from './TokenEstimationService';
 import type { MessageBuilderService } from './MessageBuilderService';
 
+import { Logger } from '../../../../core/logger';
 const CONVERSATION_PINNED_FILES_KEY = 'inputPinnedFiles';
 const CONVERSATION_SKILLS_KEY = 'inputSkills';
 const DEFAULT_MAX_CONTEXT_TOKENS = 128000;
@@ -80,6 +81,8 @@ interface MaxContextResolution {
 }
 
 export class ContextTrimService {
+    private readonly log = Logger.get('ContextTrim');
+
     constructor(
         private conversationManager: ConversationManager,
         private promptManager: PromptManager,
@@ -117,24 +120,8 @@ export class ContextTrimService {
     }
 
     private logDebug(message: string, details?: Record<string, unknown>): void {
-        if (!CONTEXT_TRIM_DEBUG_ENABLED) {
-            return;
-        }
-
-        if (details) {
-            try {
-                console.log(`[ContextTrim][Debug] ${message} ${JSON.stringify(details)}`);
-                return;
-            } catch {
-                // ignore stringify error and fallback below
-            }
-        }
-
-        if (details) {
-            console.log(`[ContextTrim][Debug] ${message}`, details);
-        } else {
-            console.log(`[ContextTrim][Debug] ${message}`);
-        }
+        if (!CONTEXT_TRIM_DEBUG_ENABLED) return;
+        this.log.debug(message, details);
     }
 
     /**
@@ -627,7 +614,7 @@ export class ContextTrimService {
             });
 
             if (needsAutoSummarize) {
-                console.log(`[ContextTrim] Auto summarize needed: estimated=${fullTokenResult.estimatedTotalTokens}, threshold=${threshold}`);
+                this.log.info('auto_summarize_needed', { conversationId, estimatedTotalTokens: fullTokenResult.estimatedTotalTokens, threshold });
             }
             
             return { history, trimStartIndex: summaryStartIndex, needsAutoSummarize };

@@ -16,6 +16,15 @@ yarn.lock
 test/**
 jest.config.cjs
 tsconfig.jest.json
+coverage/**
+.jest-cache/**
+.ts-jest/**
+.cache/**
+
+# 日志文件（本地调试产物不打包）
+*.log
+*.log.*
+logs/**
 
 # 后端源文件和文档（只需要 dist 中的编译结果）
 backend/**

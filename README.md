@@ -84,6 +84,38 @@ npm run build
 npx @vscode/vsce package
 ```
 
+## 🧪 本地开发流程（仅本地）
+
+为了提升前端调试效率，项目支持 **仅在本地开发模式** 下使用 Vite Dev Server（HMR）。
+
+### 1) 启动方式（推荐）
+
+直接在 VS Code 里运行调试配置：
+
+- `Run Extension (Local Vite Dev)`
+
+该配置会自动：
+
+1. 启动后端 TypeScript `watch`
+2. 启动前端 Vite 开发服务器（固定端口 `5173`）
+3. 通过环境变量 `LIMCODE_WEBVIEW_DEV_SERVER_URL` 让 Webview 从本地 Vite 加载前端资源
+
+### 2) 手动启动（可选）
+
+```bash
+# 终端 A：后端 watch
+pnpm run watch
+
+# 终端 B：前端 vite dev server
+pnpm run dev:frontend
+```
+
+然后使用常规 `Run Extension` 或自定义带环境变量的调试配置启动扩展。
+
+> 说明：
+> - Vite Dev Server 仅在 `ExtensionMode.Development` 下生效。
+> - 生产/打包模式仍然使用 `frontend/dist`，不会依赖本地 Vite 服务。
+
 ## 🚀 快速开始
 
 1. 点击侧边栏的 LimCode 图标打开面板

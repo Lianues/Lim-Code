@@ -5,6 +5,17 @@ import path from 'path';
 export default defineConfig({
   base: './',
   plugins: [vue()],
+  // 仅本地开发使用：允许 VS Code webview(vscode-webview://...) 跨域加载 Vite 资源
+  server: {
+    host: '127.0.0.1',
+    port: 5173,
+    strictPort: true,
+    cors: {
+      origin: '*',
+      methods: ['GET', 'HEAD', 'OPTIONS'],
+      allowedHeaders: ['*']
+    }
+  },
   build: {
     outDir: 'dist',
     rollupOptions: {

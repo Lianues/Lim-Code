@@ -109,7 +109,19 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     // 初始化状态
     private initPromise: Promise<void>;
 
+    // 本地开发模式：前端 Vite 开发服务器地址（仅在 ExtensionMode.Development 生效）
+    private readonly webviewDevServerUrl?: string;
+
     constructor(private readonly context: vscode.ExtensionContext) {
+        this.webviewDevServerUrl = this.resolveWebviewDevServerUrl();
+        const startupMode = this.getExtensionModeLabel();
+        const webviewAssetsSource = this.webviewDevServerUrl
+            ? `vite-dev-server(${this.webviewDevServerUrl})`
+            : 'frontend/dist';
+        console.log(
+            `[LimCode][Startup] mode=${startupMode}, extensionPath=${this.context.extensionPath}, webviewAssets=${webviewAssetsSource}`
+        );
+
         // 初始化 Diff 预览内容提供者
         this.diffPreviewProvider = new DiffPreviewContentProvider();
         this.diffPreviewProviderDisposable = vscode.workspace.registerTextDocumentContentProvider(
@@ -491,7 +503,9 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             enableScripts: true,
             localResourceRoots: [
                 vscode.Uri.file(path.join(this.context.extensionPath, 'frontend', 'dist')),
-                vscode.Uri.file(path.join(this.context.extensionPath, 'node_modules', '@vscode', 'codicons', 'dist'))
+                vscode.Uri.file(path.join(this.context.extensionPath, 'node_modules', '@vscode', 'codicons', 'dist')),
+                // 内置资源（例如默认提示音）
+                vscode.Uri.file(path.join(this.context.extensionPath, 'resources'))
             ]
         };
 
@@ -729,6 +743,114 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     /**
      * 生成webview的HTML
      */
+    private getExtensionModeLabel(): string {
+        switch (this.context.extensionMode) {
+            case vscode.ExtensionMode.Development:
+                return 'development';
+            case vscode.ExtensionMode.Test:
+                return 'test';
+            case vscode.ExtensionMode.Production:
+            default:
+                return 'production';
+        }
+    }
+
+    private resolveWebviewDevServerUrl(): string | undefined {
+        const raw = process.env.LIMCODE_WEBVIEW_DEV_SERVER_URL?.trim();
+        if (!raw) {
+            return undefined;
+        }
+
+        if (this.context.extensionMode !== vscode.ExtensionMode.Development) {
+            console.warn('[ChatViewProvider] LIMCODE_WEBVIEW_DEV_SERVER_URL 仅在开发模式下生效，当前已忽略。');
+            return undefined;
+        }
+
+        try {
+            const parsed = new URL(raw);
+            if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+                throw new Error(`Unsupported protocol: ${parsed.protocol}`);
+            }
+
+            return parsed.toString().replace(/\/$/, '');
+        } catch (error) {
+            console.warn('[ChatViewProvider] 无效的 LIMCODE_WEBVIEW_DEV_SERVER_URL:', raw, error);
+            return undefined;
+        }
+    }
+
+    private buildBuiltinSoundAssets(webview: vscode.Webview): Record<string, { url: string; name: string }> {
+        try {
+            const soundDir = path.join(this.context.extensionPath, 'resources', 'sound');
+            if (!fs.existsSync(soundDir)) {
+                return {};
+            }
+
+            const files = fs.readdirSync(soundDir).filter(f => f.toLowerCase().endsWith('.mp3'));
+            if (files.length === 0) {
+                return {};
+            }
+
+            const pick = (re: RegExp): string | undefined => files.find(f => re.test(f));
+
+            // 用户约定：09=成功，02=错误，03=警告（若没有 03，则回退到其它候选文件）
+            const successFile = pick(/-09-/);
+            const errorFile = pick(/-02-/);
+            const warningFile = pick(/-03-/) ?? pick(/-014-/) ?? files.find(f => f !== successFile && f !== errorFile);
+
+            const toEntry = (filename: string) => {
+                const uri = webview.asWebviewUri(vscode.Uri.file(path.join(soundDir, filename)));
+                return { url: uri.toString(), name: filename };
+            };
+
+            const assets: Record<string, { url: string; name: string }> = {};
+            if (warningFile) {
+                assets.warning = toEntry(warningFile);
+            }
+            if (errorFile) {
+                const entry = toEntry(errorFile);
+                assets.error = entry;
+                assets.taskError = entry;
+            }
+            if (successFile) {
+                assets.taskComplete = toEntry(successFile);
+            }
+
+            return assets;
+        } catch (error) {
+            console.warn('[ChatViewProvider] Failed to build builtin sound assets:', error);
+            return {};
+        }
+    }
+
+    private buildCsp(webview: vscode.Webview, devServerOrigin?: string): string {
+        const scriptSrc = [webview.cspSource, "'unsafe-inline'"];
+        const styleSrc = [webview.cspSource, "'unsafe-inline'"];
+        const imgSrc = [webview.cspSource, 'data:', 'blob:'];
+        const mediaSrc = [webview.cspSource, 'data:', 'blob:'];
+        const fontSrc = [webview.cspSource];
+        const connectSrc = [webview.cspSource];
+
+        if (devServerOrigin) {
+            scriptSrc.push(devServerOrigin, "'unsafe-eval'");
+            styleSrc.push(devServerOrigin);
+            imgSrc.push(devServerOrigin);
+            mediaSrc.push(devServerOrigin);
+            fontSrc.push(devServerOrigin, 'data:');
+            connectSrc.push(devServerOrigin, 'ws:', 'wss:');
+        }
+
+        return [
+            "default-src 'none'",
+            `script-src ${scriptSrc.join(' ')}`,
+            `style-src ${styleSrc.join(' ')}`,
+            `img-src ${imgSrc.join(' ')}`,
+            `media-src ${mediaSrc.join(' ')}`,
+            `font-src ${fontSrc.join(' ')}`,
+            `connect-src ${connectSrc.join(' ')}`
+        ].join('; ');
+    }
+
     private getHtmlForWebview(webview: vscode.Webview): string {
         const scriptUri = webview.asWebviewUri(
             vscode.Uri.file(path.join(this.context.extensionPath, 'frontend', 'dist', 'index.js'))
@@ -740,14 +862,41 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             vscode.Uri.file(path.join(this.context.extensionPath, 'node_modules', '@vscode', 'codicons', 'dist', 'codicon.css'))
         );
 
+        const devServerUrl = this.webviewDevServerUrl;
+        const devServerOrigin = devServerUrl ? new URL(devServerUrl).origin : undefined;
+        const cspContent = this.buildCsp(webview, devServerOrigin);
+        const builtinSoundAssetsScript = `<script>window.__LIMCODE_BUILTIN_SOUND_ASSETS = ${JSON.stringify(this.buildBuiltinSoundAssets(webview))};</script>`;
+
+        if (devServerUrl) {
+            console.log(`[LimCode][Webview] load source=vite-dev-server, url=${devServerUrl}`);
+            return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="${cspContent}">
+    <link href="${codiconsUri}" rel="stylesheet">
+    ${builtinSoundAssetsScript}
+    <title>LimCode Chat (Dev)</title>
+</head>
+<body>
+    <div id="app"></div>
+    <script type="module" src="${devServerUrl}/@vite/client"></script>
+    <script type="module" src="${devServerUrl}/src/main.ts"></script>
+</body>
+</html>`;
+        }
+
+        console.log('[LimCode][Webview] load source=frontend/dist');
         return `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource} 'unsafe-inline'; font-src ${webview.cspSource}; script-src ${webview.cspSource} 'unsafe-inline'; img-src ${webview.cspSource} data: blob:; media-src ${webview.cspSource} data: blob:;">
+    <meta http-equiv="Content-Security-Policy" content="${cspContent}">
     <link href="${codiconsUri}" rel="stylesheet">
     <link href="${styleUri}" rel="stylesheet">
+    ${builtinSoundAssetsScript}
     <title>LimCode Chat</title>
 </head>
 <body>

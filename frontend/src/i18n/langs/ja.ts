@@ -491,6 +491,7 @@ const ja: LanguageMessages = {
                 context: 'コンテキスト',
                 prompt: 'プロンプト',
                 tokenCount: 'トークンカウント',
+                sound: 'サウンド通知',
                 appearance: '外観',
                 general: '一般'
             },
@@ -1425,6 +1426,10 @@ const ja: LanguageMessages = {
                         title: 'サブエージェント',
                         description: 'AI が呼び出せる専門サブエージェントを設定'
                     },
+                    sound: {
+                        title: 'サウンド通知',
+                        description: '警告、エラー、タスク完了時に通知音を再生'
+                    },
                     appearance: {
                         title: '外観',
                         description: 'UI の外観に関する設定'
@@ -1655,6 +1660,52 @@ const ja: LanguageMessages = {
                 responseFormat: '// レスポンス形式',
                 openaiDocNote: 'API は total_tokens フィールドを含む JSON レスポンスを返す必要があります。リクエストボディは OpenAI Messages 形式を使用します。',
                 saveSuccess: '設定を保存しました',
+                saveFailed: '保存に失敗しました'
+            },
+            soundSettings: {
+                enabled: {
+                    title: 'サウンド通知を有効化',
+                    description: '特定のイベント発生時に通知音を再生します（既定は無効）',
+                    label: '有効化'
+                },
+                volume: {
+                    title: '音量',
+                    description: '通知音の音量を調整します（0-100）'
+                },
+                cooldown: {
+                    title: '最小間隔',
+                    description: '短時間に連続再生されないよう最小再生間隔を設定します'
+                },
+                cues: {
+                    title: 'イベント種類',
+                    description: '通知音を再生するイベントを選択します',
+                    warning: '警告（Warning）',
+                    error: 'エラー（Error）',
+                    taskComplete: 'タスク完了',
+                    taskError: 'タスク失敗'
+                },
+                assets: {
+                    title: 'カスタム音',
+                    description: '各イベントにローカル音声ファイルを導入して既定音を上書きします（導入後は保存が必要。短い音推奨／1ファイル最大 {size}）',
+                    none: '未選択',
+                    choose: 'ファイルを選択',
+                    clear: 'クリア',
+                    importSuccess: '導入しました：{name}',
+                    clearSuccess: 'クリアしました',
+                    fileTooLarge: 'ファイルが大きすぎます（最大 {size}）',
+                    invalidFile: '無効な音声ファイル'
+                },
+                test: {
+                    title: 'テスト再生',
+                    description: 'ブラウザの音声ポリシーを解除し、通知音を試聴します',
+                    warning: '試聴：警告',
+                    error: '試聴：エラー',
+                    taskComplete: '試聴：タスク完了'
+                },
+                testBlocked: '音声がブラウザのポリシーでブロックされている可能性があります。テストボタンを一度クリックして解除してください。',
+                testPlayed: '再生しました',
+                testFailed: '再生に失敗しました（ブラウザのポリシーでブロックされている可能性があります）',
+                saveSuccess: '保存しました',
                 saveFailed: '保存に失敗しました'
             },
             appearanceSettings: {

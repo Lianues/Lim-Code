@@ -244,11 +244,14 @@
   "scripts": {
     "vscode:prepublish": "pnpm run compile",
     "compile": "tsc -p ./",
+    "build:backend": "pnpm run compile",
     "watch": "tsc -watch -p ./",
     "build:frontend": "cd frontend && pnpm run build",
+    "dev:frontend": "cd frontend && pnpm run dev:local",
     "build": "pnpm run compile && pnpm run build:frontend",
     "test": "jest",
-    "test:watch": "jest --watch"
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage"
   },
   "dependencies": {
     "@vscode/codicons": "^0.0.43",
