@@ -4,7 +4,7 @@
  * 使用Pinia store管理状态
  */
 
-import { onMounted, ref, watch } from 'vue'
+import { onMounted, ref, watch, reactive } from 'vue'
 import { storeToRefs } from 'pinia'
 import { MessageList } from './components/message'
 import { InputArea } from './components/input'
@@ -18,7 +18,7 @@ import { useAttachments } from './composables'
 import { useI18n, setLanguage } from './i18n'
 import { copyToClipboard } from './utils'
 import { sendToExtension, onMessageFromExtension } from './utils/vscode'
-import type { Attachment, Message } from './types'
+import type { Attachment, Message, StreamChunk } from './types'
 import { configureSoundSettings, playCue } from './services/soundCues'
 
 // i18n
@@ -43,6 +43,75 @@ watch(errorRef, (err) => {
   lastErrorKey.value = key
   void playCue('error')
 })
+
+// ============ 声音事件：去重状态 & 辅助函数 ============
+
+/** 已触发过 taskComplete 音效的 toolStatus id 集合（避免同一工具重复播放） */
+const soundPlayedToolIds = reactive(new Set<string>())
+
+/** 上一次各对话的 TODO 全部完成状态（false→true 时触发音效） */
+const todoAllDoneByConv = reactive(new Map<string, boolean>())
+
+/** 上一次重试 attempt 编号（同一 attempt 不重复播放） */
+const lastRetryAttempt = ref(-1)
+
+/**
+ * 从 toolStatus chunk 中检测特定工具完成并播放音效：
+ * - create_plan 成功 → taskComplete
+ * - todo_write / todo_update 导致 TODO 全部完成 → taskComplete
+ */
+function handleSoundForToolStatus(chunk: StreamChunk): void {
+  if (!chunk.toolStatus || !chunk.tool) return
+  const tool = chunk.tool
+  if (tool.status !== 'success') return
+
+  // 去重：同一个 tool id 只播放一次
+  if (soundPlayedToolIds.has(tool.id)) return
+
+  // create_plan 成功
+  if (tool.name === 'create_plan') {
+    soundPlayedToolIds.add(tool.id)
+    void playCue('taskComplete')
+    return
+  }
+
+  // todo_write / todo_update 全部完成检测
+  if (tool.name === 'todo_write' || tool.name === 'todo_update') {
+    const result = tool.result as Record<string, unknown> | undefined
+    if (!result) return
+    const data = (result.data ?? result) as Record<string, unknown>
+    const total = typeof data.total === 'number' ? data.total : -1
+    const counts = data.counts as Record<string, number> | undefined
+    if (!counts || total <= 0) return
+
+    const pending = typeof counts.pending === 'number' ? counts.pending : -1
+    const inProgress = typeof counts.in_progress === 'number' ? counts.in_progress : -1
+    const isAllDone = pending === 0 && inProgress === 0
+
+    // 获取对话 id（从 chunk 或当前对话）
+    const convId = chunk.conversationId || chatStore.currentConversationId || '__default'
+    const wasAllDone = todoAllDoneByConv.get(convId) ?? false
+
+    todoAllDoneByConv.set(convId, isAllDone)
+
+    // 仅在 false→true 时播放
+    if (isAllDone && !wasAllDone) {
+      soundPlayedToolIds.add(tool.id)
+      void playCue('taskComplete')
+    }
+  }
+}
+
+/**
+ * 处理流式 chunk 中的声音事件
+ */
+function handleSoundForStreamChunk(chunk: StreamChunk): void {
+  if (chunk.type === 'complete') {
+    void playCue('taskComplete')
+  } else if (chunk.type === 'toolStatus') {
+    handleSoundForToolStatus(chunk)
+  }
+}
 
 // 附件管理（传入 store 驱动的 Ref<Attachment[]>，实现对话级隔离）
 const {
@@ -262,13 +331,43 @@ onMounted(async () => {
       }
     }
 
-    // 任务事件声音提醒
+    // 任务事件声音提醒（TaskManager 异步任务：终端执行、图片生成等）
     if (message.type === 'taskEvent') {
       const event = message.data
       if (event?.type === 'complete') {
         void playCue('taskComplete')
       } else if (event?.type === 'error') {
         void playCue('taskError')
+      }
+    }
+
+    // 流式 chunk 声音提醒（LLM 完成、工具完成等）
+    if (message.type === 'streamChunk') {
+      const chunk = message.data as StreamChunk
+      if (chunk) {
+        handleSoundForStreamChunk(chunk)
+      }
+    } else if (message.type === 'streamChunkBatch') {
+      const chunks = message.data as StreamChunk[]
+      if (Array.isArray(chunks)) {
+        for (const chunk of chunks) {
+          handleSoundForStreamChunk(chunk)
+        }
+      }
+    }
+
+    // 重试警告声音提醒
+    if (message.type === 'retryStatus') {
+      const status = message.data
+      if (status?.type === 'retrying') {
+        const attempt = typeof status.attempt === 'number' ? status.attempt : -1
+        if (attempt !== lastRetryAttempt.value) {
+          lastRetryAttempt.value = attempt
+          void playCue('warning')
+        }
+      } else {
+        // retrySuccess / retryFailed -> 重置 attempt 去重计数
+        lastRetryAttempt.value = -1
       }
     }
   })
