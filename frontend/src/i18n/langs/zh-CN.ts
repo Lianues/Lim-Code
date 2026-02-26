@@ -1700,7 +1700,8 @@ const zhCN: LanguageMessages = {
                     description: '用于解锁浏览器音频策略，并试听提示音',
                     warning: '试听：警告',
                     error: '试听：错误',
-                    taskComplete: '试听：任务完成'
+                    taskComplete: '试听：任务完成',
+                    taskError: '试听：任务失败'
                 },
                 testBlocked: '声音被浏览器策略阻止，请点击一次“试听”按钮解锁（或检查 VS Code 音频设置）',
                 testPlayed: '已播放',

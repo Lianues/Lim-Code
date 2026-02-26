@@ -791,12 +791,14 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 return {};
             }
 
-            const pick = (re: RegExp): string | undefined => files.find(f => re.test(f));
+            const normalizeMap = new Map(files.map(f => [f.toLowerCase(), f] as const));
+            const byName = (name: string): string | undefined => normalizeMap.get(name.toLowerCase());
 
-            // 用户约定：09=成功，02=错误，03=警告（若没有 03，则回退到其它候选文件）
-            const successFile = pick(/-09-/);
-            const errorFile = pick(/-02-/);
-            const warningFile = pick(/-03-/) ?? pick(/-014-/) ?? files.find(f => f !== successFile && f !== errorFile);
+            // 严格使用默认资源命名：warning.mp3 / error.mp3 / taskComplete.mp3 / taskError.mp3
+            const warningFile = byName('warning.mp3');
+            const errorFile = byName('error.mp3');
+            const taskCompleteFile = byName('taskComplete.mp3');
+            const taskErrorFile = byName('taskError.mp3');
 
             const toEntry = (filename: string) => {
                 const uri = webview.asWebviewUri(vscode.Uri.file(path.join(soundDir, filename)));
@@ -808,12 +810,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 assets.warning = toEntry(warningFile);
             }
             if (errorFile) {
-                const entry = toEntry(errorFile);
-                assets.error = entry;
-                assets.taskError = entry;
+                assets.error = toEntry(errorFile);
             }
-            if (successFile) {
-                assets.taskComplete = toEntry(successFile);
+            if (taskCompleteFile) {
+                assets.taskComplete = toEntry(taskCompleteFile);
+            }
+            if (taskErrorFile) {
+                assets.taskError = toEntry(taskErrorFile);
             }
 
             return assets;

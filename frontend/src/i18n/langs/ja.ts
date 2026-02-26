@@ -1700,7 +1700,8 @@ const ja: LanguageMessages = {
                     description: 'ブラウザの音声ポリシーを解除し、通知音を試聴します',
                     warning: '試聴：警告',
                     error: '試聴：エラー',
-                    taskComplete: '試聴：タスク完了'
+                    taskComplete: '試聴：タスク完了',
+                    taskError: '試聴：タスク失敗'
                 },
                 testBlocked: '音声がブラウザのポリシーでブロックされている可能性があります。テストボタンを一度クリックして解除してください。',
                 testPlayed: '再生しました',

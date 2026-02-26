@@ -657,6 +657,7 @@ export const useChatStore = defineStore('chat', () => {
     // 标签页
     openTabs: state.openTabs,
     activeTabId: state.activeTabId,
+    sessionSnapshots: state.sessionSnapshots,
     createNewTab,
     closeTab: closeTabWrapped,
     switchTab: switchTabWrapped,

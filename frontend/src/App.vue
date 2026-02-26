@@ -37,7 +37,10 @@ const lastErrorKey = ref('')
 // 从 store 获取原始 Ref（Pinia 会自动解包 ref，storeToRefs 保持 Ref 不被解包）
 const { storeAttachments: storeAttachmentsRef, error: errorRef } = storeToRefs(chatStore)
 watch(errorRef, (err) => {
-  if (!err) return
+  if (!err) {
+    lastErrorKey.value = ''
+    return
+  }
   const key = `${err.code}:${err.message}`
   if (key === lastErrorKey.value) return
   lastErrorKey.value = key
@@ -60,6 +63,12 @@ const lastRetryAttempt = ref(-1)
  * - create_plan 成功 → taskComplete
  * - todo_write / todo_update 导致 TODO 全部完成 → taskComplete
  */
+function playConversationCue(cue: 'warning' | 'error' | 'taskComplete' | 'taskError', conversationId?: string): void {
+  void playCue(cue, {
+    cooldownKey: conversationId ? `conv:${conversationId}` : undefined
+  })
+}
+
 function handleSoundForToolStatus(chunk: StreamChunk): void {
   if (!chunk.toolStatus || !chunk.tool) return
   const tool = chunk.tool
@@ -71,7 +80,7 @@ function handleSoundForToolStatus(chunk: StreamChunk): void {
   // create_plan 成功
   if (tool.name === 'create_plan') {
     soundPlayedToolIds.add(tool.id)
-    void playCue('taskComplete')
+    playConversationCue('taskComplete', chunk.conversationId)
     return
   }
 
@@ -97,7 +106,7 @@ function handleSoundForToolStatus(chunk: StreamChunk): void {
     // 仅在 false→true 时播放
     if (isAllDone && !wasAllDone) {
       soundPlayedToolIds.add(tool.id)
-      void playCue('taskComplete')
+      playConversationCue('taskComplete', convId)
     }
   }
 }
@@ -107,10 +116,40 @@ function handleSoundForToolStatus(chunk: StreamChunk): void {
  */
 function handleSoundForStreamChunk(chunk: StreamChunk): void {
   if (chunk.type === 'complete') {
-    void playCue('taskComplete')
+    playConversationCue('taskComplete', chunk.conversationId)
   } else if (chunk.type === 'toolStatus') {
     handleSoundForToolStatus(chunk)
   }
+}
+
+/**
+ * 仅处理“当前已打开标签页”的有效 chunk，支持多标签页并发提示音。
+ *
+ * 规则：
+ * - 对于当前激活会话：使用 chatStore.activeStreamId 过滤迟到 chunk
+ * - 对于后台标签页会话：使用会话快照中的 activeStreamId 过滤迟到 chunk
+ */
+function shouldHandleSoundForStreamChunk(chunk: StreamChunk): boolean {
+  const convId = chunk.conversationId
+  if (!convId) return false
+
+  const currentConversationId = chatStore.currentConversationId || null
+  const tab = chatStore.openTabs.find(t => t.conversationId === convId)
+
+  // 仅处理“当前会话”或“已打开标签页中的会话”
+  if (!tab && convId !== currentConversationId) return false
+
+  const expectedStreamId = convId === currentConversationId
+    ? (chatStore.activeStreamId || null)
+    : (tab ? (chatStore.sessionSnapshots.get(tab.id)?.activeStreamId || null) : null)
+
+  // 没有预期 streamId 时，不接收带 streamId 的 chunk（通常是迟到包）
+  if (chunk.streamId && !expectedStreamId) return false
+
+  // 预期 streamId 不匹配，丢弃
+  if (expectedStreamId && chunk.streamId && chunk.streamId !== expectedStreamId) return false
+
+  return true
 }
 
 // 附件管理（传入 store 驱动的 Ref<Attachment[]>，实现对话级隔离）
@@ -335,23 +374,25 @@ onMounted(async () => {
     if (message.type === 'taskEvent') {
       const event = message.data
       if (event?.type === 'complete') {
-        void playCue('taskComplete')
+        playConversationCue('taskComplete')
       } else if (event?.type === 'error') {
-        void playCue('taskError')
+        playConversationCue('taskError')
       }
     }
 
     // 流式 chunk 声音提醒（LLM 完成、工具完成等）
     if (message.type === 'streamChunk') {
       const chunk = message.data as StreamChunk
-      if (chunk) {
+      if (chunk && shouldHandleSoundForStreamChunk(chunk)) {
         handleSoundForStreamChunk(chunk)
       }
     } else if (message.type === 'streamChunkBatch') {
       const chunks = message.data as StreamChunk[]
       if (Array.isArray(chunks)) {
         for (const chunk of chunks) {
-          handleSoundForStreamChunk(chunk)
+          if (shouldHandleSoundForStreamChunk(chunk)) {
+            handleSoundForStreamChunk(chunk)
+          }
         }
       }
     }
@@ -363,7 +404,8 @@ onMounted(async () => {
         const attempt = typeof status.attempt === 'number' ? status.attempt : -1
         if (attempt !== lastRetryAttempt.value) {
           lastRetryAttempt.value = attempt
-          void playCue('warning')
+          const convId = typeof status.conversationId === 'string' ? status.conversationId : undefined
+          playConversationCue('warning', convId)
         }
       } else {
         // retrySuccess / retryFailed -> 重置 attempt 去重计数

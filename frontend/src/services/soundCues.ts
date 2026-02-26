@@ -8,6 +8,10 @@
  * - 任何播放失败都必须被吞掉（不能影响主流程）
  */
 
+// 自定义音效大小上限（与设置页导入限制保持一致）
+const MAX_SOUND_ASSET_BYTES = 10 * 1024 * 1024
+const MAX_SOUND_ASSET_BASE64_LENGTH = Math.ceil((MAX_SOUND_ASSET_BYTES * 4) / 3) + 4
+
 export type SoundCue = 'warning' | 'error' | 'taskComplete' | 'taskError'
 
 export type BuiltinSoundAsset = {
@@ -58,8 +62,7 @@ export function getBuiltinSoundAssets(): Partial<Record<SoundCue, BuiltinSoundAs
 
 function getBuiltinSoundAsset(cue: SoundCue): BuiltinSoundAsset | undefined {
   const assets = getBuiltinSoundAssets()
-  // 允许 taskError 复用 error 的默认音效
-  return assets[cue] ?? (cue === 'taskError' ? assets.error : undefined)
+  return assets[cue]
 }
 
 export interface UISoundAsset {
@@ -143,12 +146,17 @@ let currentSettings: NormalizedUISoundSettings = { ...DEFAULT_UI_SOUND_SETTINGS 
 
 let audioContext: AudioContext | null = null
 let masterGain: GainNode | null = null
+// 活跃播放节点（用于页面切换/卸载时中止试听）
+const activeBufferSources = new Set<AudioBufferSourceNode>()
+const activeOscillators = new Set<OscillatorNode>()
+
 
 // base64/url -> AudioBuffer 缓存（避免重复 decode）
 const decodedAudioBufferCache = new Map<string, AudioBuffer>()
 const decodingPromises = new Map<string, Promise<AudioBuffer>>()
 
-let lastPlayedAt = 0
+// 冷却按 key 维度隔离（默认全局；可按 conversation 分组）
+const lastPlayedAtByKey = new Map<string, number>()
 
 function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
   const n = typeof value === 'number' && Number.isFinite(value) ? value : fallback
@@ -166,7 +174,7 @@ function normalizeSoundAsset(input: unknown): UISoundAsset | undefined {
 
   if (!dataBase64 || !dataBase64.trim()) return undefined
   // 基础安全限制：避免极端大对象导致 webview 卡顿/内存暴涨
-  if (dataBase64.length > 3_000_000) return undefined
+  if (dataBase64.length > MAX_SOUND_ASSET_BASE64_LENGTH) return undefined
 
   return {
     name: name || 'sound',
@@ -287,6 +295,39 @@ export async function unlockAudio(): Promise<{ success: boolean; error?: string 
   }
 }
 
+/**
+ * 停止当前所有正在播放的声音（不关闭 AudioContext，避免后续需要重新解锁）
+ */
+export function stopAllSounds(): void {
+  for (const source of Array.from(activeBufferSources)) {
+    try {
+      source.stop()
+    } catch {
+      // ignore
+    }
+    try {
+      source.disconnect()
+    } catch {
+      // ignore
+    }
+  }
+  activeBufferSources.clear()
+
+  for (const osc of Array.from(activeOscillators)) {
+    try {
+      osc.stop()
+    } catch {
+      // ignore
+    }
+    try {
+      osc.disconnect()
+    } catch {
+      // ignore
+    }
+  }
+  activeOscillators.clear()
+}
+
 type Beep = {
   freq: number
   durationMs: number
@@ -357,15 +398,18 @@ async function decodeAudioBuffer(ctx: AudioContext, asset: UISoundAsset): Promis
   }
 }
 
-async function playSoundAsset(ctx: AudioContext, asset: UISoundAsset): Promise<boolean> {
+async function playSoundAsset(ctx: AudioContext, asset: UISoundAsset, abortSignal?: AbortSignal): Promise<boolean> {
   try {
     if (!masterGain) return false
+    if (abortSignal?.aborted) return false
 
     const buffer = await decodeAudioBuffer(ctx, asset)
+    if (abortSignal?.aborted) return false
 
     const source = ctx.createBufferSource()
     source.buffer = buffer
     source.connect(masterGain)
+    activeBufferSources.add(source)
 
     // decode 可能较慢：在 start 前再取一次 currentTime，避免 startAt 过期
     const startAt = ctx.currentTime + 0.01
@@ -373,6 +417,7 @@ async function playSoundAsset(ctx: AudioContext, asset: UISoundAsset): Promise<b
 
     source.onended = () => {
       try {
+        activeBufferSources.delete(source)
         source.disconnect()
       } catch {
         // ignore
@@ -414,21 +459,25 @@ async function decodeAudioBufferFromUrl(ctx: AudioContext, url: string): Promise
   }
 }
 
-async function playSoundUrl(ctx: AudioContext, url: string): Promise<boolean> {
+async function playSoundUrl(ctx: AudioContext, url: string, abortSignal?: AbortSignal): Promise<boolean> {
   try {
     if (!masterGain) return false
+    if (abortSignal?.aborted) return false
 
     const buffer = await decodeAudioBufferFromUrl(ctx, url)
+    if (abortSignal?.aborted) return false
 
     const source = ctx.createBufferSource()
     source.buffer = buffer
     source.connect(masterGain)
+    activeBufferSources.add(source)
 
     const startAt = ctx.currentTime + 0.01
     source.start(startAt)
 
     source.onended = () => {
       try {
+        activeBufferSources.delete(source)
         source.disconnect()
       } catch {
         // ignore
@@ -457,19 +506,37 @@ function isCueEnabled(cue: SoundCue): boolean {
   }
 }
 
+function getCooldownKey(options: { cooldownKey?: string }): string {
+  return options.cooldownKey || '__global__'
+}
+
+function setLastPlayedAt(cooldownKey: string, timestamp: number): void {
+  lastPlayedAtByKey.set(cooldownKey, timestamp)
+
+  // 简单上限控制，避免极端场景下 key 无限增长
+  if (lastPlayedAtByKey.size > 200) {
+    const firstKey = lastPlayedAtByKey.keys().next().value
+    if (firstKey) lastPlayedAtByKey.delete(firstKey)
+  }
+}
+
 export async function playCue(
   cue: SoundCue,
-  options: { ignoreEnabled?: boolean; bypassCooldown?: boolean } = {}
+  options: { ignoreEnabled?: boolean; bypassCooldown?: boolean; cooldownKey?: string; abortSignal?: AbortSignal } = {}
 ): Promise<boolean> {
   try {
+    if (options.abortSignal?.aborted) return false
+
     if (!options.ignoreEnabled) {
       if (!currentSettings.enabled) return false
       if (!isCueEnabled(cue)) return false
     }
 
     const now = Date.now()
+    const cooldownKey = getCooldownKey(options)
     if (!options.bypassCooldown) {
       const cooldown = currentSettings.cooldownMs
+      const lastPlayedAt = lastPlayedAtByKey.get(cooldownKey) || 0
       if (cooldown > 0 && now - lastPlayedAt < cooldown) {
         return false
       }
@@ -486,14 +553,15 @@ export async function playCue(
         // ignore
       }
     }
+    if (options.abortSignal?.aborted) return false
     if (ctx.state !== 'running') return false
 
     // 优先播放自定义音效
     const asset = currentSettings.assets[cue]
     if (asset) {
-      const ok = await playSoundAsset(ctx, asset)
+      const ok = await playSoundAsset(ctx, asset, options.abortSignal)
       if (ok) {
-        lastPlayedAt = now
+        setLastPlayedAt(cooldownKey, now)
         return true
       }
     }
@@ -501,9 +569,9 @@ export async function playCue(
     // 默认内置提示音（resources/sound）
     const builtin = getBuiltinSoundAsset(cue)
     if (builtin?.url) {
-      const ok = await playSoundUrl(ctx, builtin.url)
+      const ok = await playSoundUrl(ctx, builtin.url, options.abortSignal)
       if (ok) {
-        lastPlayedAt = now
+        setLastPlayedAt(cooldownKey, now)
         return true
       }
     }
@@ -517,6 +585,7 @@ export async function playCue(
     let t = ctx.currentTime + 0.01
 
     for (const beep of pattern) {
+      if (options.abortSignal?.aborted) return false
       const durationSec = Math.max(0.01, beep.durationMs / 1000)
 
       const osc = ctx.createOscillator()
@@ -538,11 +607,13 @@ export async function playCue(
       osc.connect(gain)
       gain.connect(masterGain)
 
+      activeOscillators.add(osc)
       osc.start(t)
       osc.stop(t + durationSec + 0.03)
 
       osc.onended = () => {
         try {
+          activeOscillators.delete(osc)
           osc.disconnect()
           gain.disconnect()
         } catch {
@@ -553,7 +624,7 @@ export async function playCue(
       t = t + durationSec + (beep.gapMs ? beep.gapMs / 1000 : 0)
     }
 
-    lastPlayedAt = now
+    setLastPlayedAt(cooldownKey, now)
     return true
   } catch (err) {
     // 绝不能影响主流程

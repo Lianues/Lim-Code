@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { sendToExtension } from '@/utils/vscode'
 import { useI18n } from '@/i18n'
 import { CustomCheckbox } from '../common'
@@ -11,6 +11,7 @@ import {
   getSoundSettings,
   getBuiltinSoundAssets,
   unlockAudio,
+  stopAllSounds,
   playCue,
   type SoundCue,
   type UISoundAsset,
@@ -58,25 +59,60 @@ const originalAssets = ref<{
 
 const assetFileInputRef = ref<HTMLInputElement | null>(null)
 const selectingAssetCue = ref<SoundCue | null>(null)
-const MAX_ASSET_BYTES = 300 * 1024
+const MAX_ASSET_BYTES = 10 * 1024 * 1024
 
 const theme = ref<UISoundSettings['theme']>(DEFAULT_UI_SOUND_SETTINGS.theme)
+
+// 试听恢复保护：避免旧的 setTimeout 在用户保存/再次试听后回滚最新配置
+const testRestoreVersion = ref(0)
+let pendingRestoreTimer: ReturnType<typeof setTimeout> | null = null
+
+function clearPendingTestRestore() {
+  if (pendingRestoreTimer) {
+    clearTimeout(pendingRestoreTimer)
+    pendingRestoreTimer = null
+  }
+}
+
+function toPlainAsset(asset: UISoundAsset | null | undefined): UISoundAsset | undefined {
+  if (!asset) return undefined
+  return {
+    // 显式构造纯对象，避免把 Vue Proxy 直接 postMessage 导致 DataCloneError
+    name: String(asset.name || ''),
+    mime: String(asset.mime || ''),
+    dataBase64: String(asset.dataBase64 || '')
+  }
+}
+
+const activeTestControllers = new Set<AbortController>()
+
+function cancelActiveTests() {
+  for (const controller of Array.from(activeTestControllers)) {
+    controller.abort()
+  }
+  activeTestControllers.clear()
+}
 
 const volumeText = computed(() => `${volume.value}%`)
 
 function buildCurrentSettings(): UISoundSettings {
   const assets: NonNullable<UISoundSettings['assets']> = {}
 
-  if (assetWarning.value) assets.warning = assetWarning.value
+  const warningAsset = toPlainAsset(assetWarning.value)
+  const errorAsset = toPlainAsset(assetError.value)
+  const taskCompleteAsset = toPlainAsset(assetTaskComplete.value)
+  const taskErrorAsset = toPlainAsset(assetTaskError.value)
+
+  if (warningAsset) assets.warning = warningAsset
   else if (originalAssets.value.warning) assets.warning = null
 
-  if (assetError.value) assets.error = assetError.value
+  if (errorAsset) assets.error = errorAsset
   else if (originalAssets.value.error) assets.error = null
 
-  if (assetTaskComplete.value) assets.taskComplete = assetTaskComplete.value
+  if (taskCompleteAsset) assets.taskComplete = taskCompleteAsset
   else if (originalAssets.value.taskComplete) assets.taskComplete = null
 
-  if (assetTaskError.value) assets.taskError = assetTaskError.value
+  if (taskErrorAsset) assets.taskError = taskErrorAsset
   else if (originalAssets.value.taskError) assets.taskError = null
 
   return {
@@ -238,6 +274,10 @@ async function saveConfig() {
     // 立即生效
     configureSoundSettings(settings)
 
+    // 若之前存在试听恢复定时器，取消并提升版本，避免旧回调回滚最新保存配置
+    testRestoreVersion.value += 1
+    clearPendingTestRestore()
+
     // 保存按钮属于用户手势：尝试解锁音频上下文，提升后续自动播放成功率
     if (settings.enabled) {
       void unlockAudio()
@@ -292,6 +332,8 @@ async function testCue(cue: SoundCue) {
   // 试听应使用当前表单音量，但不应把“未保存”的 enabled/cues 等设置带到运行时。
   // 因此这里临时覆盖运行时音量，播放后再恢复。
   const prev = getSoundSettings()
+  const restoreVersion = ++testRestoreVersion.value
+  clearPendingTestRestore()
   const tempVolume = Math.min(100, Math.max(0, Number(volume.value) || 0))
   configureSoundSettings({
     ...prev,
@@ -303,8 +345,11 @@ async function testCue(cue: SoundCue) {
       taskError: assetTaskError.value ?? undefined
     }
   })
+  const controller = new AbortController()
+  activeTestControllers.add(controller)
 
   try {
+    if (controller.signal.aborted) return
     const unlocked = await unlockAudio()
     if (!unlocked.success) {
       testMessage.value = t('components.settings.soundSettings.testBlocked')
@@ -312,7 +357,7 @@ async function testCue(cue: SoundCue) {
       return
     }
 
-    const ok = await playCue(cue, { ignoreEnabled: true, bypassCooldown: true })
+    const ok = await playCue(cue, { ignoreEnabled: true, bypassCooldown: true, abortSignal: controller.signal })
     if (ok) {
       testMessage.value = t('components.settings.soundSettings.testPlayed')
       testMessageType.value = 'success'
@@ -320,10 +365,17 @@ async function testCue(cue: SoundCue) {
       testMessage.value = t('components.settings.soundSettings.testFailed')
       testMessageType.value = 'error'
     }
+    if (controller.signal.aborted) return
   } finally {
+    activeTestControllers.delete(controller)
     // 给音频调度留一点时间，避免恢复音量影响当前试听
-    setTimeout(() => {
+    pendingRestoreTimer = setTimeout(() => {
+      if (testRestoreVersion.value !== restoreVersion) {
+        pendingRestoreTimer = null
+        return
+      }
       configureSoundSettings(prev)
+      pendingRestoreTimer = null
     }, 800)
   }
 
@@ -334,6 +386,14 @@ async function testCue(cue: SoundCue) {
 
 onMounted(() => {
   loadConfig()
+})
+
+onBeforeUnmount(() => {
+  // 离开设置页时中止试听并停止当前播放，避免切页后声音继续
+  testRestoreVersion.value += 1
+  clearPendingTestRestore()
+  cancelActiveTests()
+  stopAllSounds()
 })
 </script>
 
@@ -530,6 +590,9 @@ onMounted(() => {
           </button>
           <button class="action-btn" @click="testCue('taskComplete')">
             {{ t('components.settings.soundSettings.test.taskComplete') }}
+          </button>
+          <button class="action-btn" @click="testCue('taskError')">
+            {{ t('components.settings.soundSettings.test.taskError') }}
           </button>
         </div>
 

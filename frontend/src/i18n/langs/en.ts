@@ -1700,7 +1700,8 @@ const en: LanguageMessages = {
                     description: 'Unlock browser audio policy and preview cues',
                     warning: 'Test: Warning',
                     error: 'Test: Error',
-                    taskComplete: 'Test: Task Completed'
+                    taskComplete: 'Test: Task Completed',
+                    taskError: 'Test: Task Failed'
                 },
                 testBlocked: 'Audio may be blocked by browser policy. Click a test button once to unlock.',
                 testPlayed: 'Played',

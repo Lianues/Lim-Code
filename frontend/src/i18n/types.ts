@@ -1743,6 +1743,7 @@ export interface LanguageMessages {
                     warning: string;
                     error: string;
                     taskComplete: string;
+                    taskError: string;
                 };
                 testBlocked: string;
                 testPlayed: string;
