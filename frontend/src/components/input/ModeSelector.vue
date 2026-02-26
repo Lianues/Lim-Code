@@ -44,6 +44,10 @@ const { isOpen, toggle, close, inputRef, searchQuery, filteredItems, highlighted
 void inputRef // used in template via ref="inputRef"
 const selectedOption = computed(() => props.options.find(opt => opt.id === props.modelValue))
 
+function getModeDisplayTitle(option?: PromptMode): string {
+  return option?.name || t('components.input.mode.selectMode')
+}
+
 function selectMode(option: PromptMode) {
   emit('update:modelValue', option.id)
   close()
@@ -67,7 +71,7 @@ function handleKeydown(event: KeyboardEvent) {
       :disabled="disabled"
       @click="toggle"
       @keydown="handleKeydown"
-      :title="selectedOption?.name || t('components.input.mode.selectMode')"
+      :title="getModeDisplayTitle(selectedOption)"
     >
       <i :class="['codicon', selectedOption?.icon ? `codicon-${selectedOption.icon}` : 'codicon-symbol-method']"></i>
       <span class="mode-name">{{ selectedOption?.name || t('components.input.mode.selectMode') }}</span>
@@ -101,6 +105,7 @@ function handleKeydown(event: KeyboardEvent) {
                 highlighted: index === highlightedIndex
               }"
               @click="selectMode(option)"
+              :title="getModeDisplayTitle(option)"
               @mouseenter="highlightedIndex = index"
             >
               <i :class="['codicon', option.icon ? `codicon-${option.icon}` : 'codicon-symbol-method']"></i>
@@ -204,7 +209,7 @@ function handleKeydown(event: KeyboardEvent) {
   background: var(--vscode-dropdown-background);
   border: 1px solid var(--vscode-dropdown-border);
   border-radius: 6px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 4px 12px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.3));
   z-index: 1000;
   overflow: hidden;
 }

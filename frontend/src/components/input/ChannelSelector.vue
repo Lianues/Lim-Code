@@ -46,6 +46,13 @@ const { isOpen, toggle, close, inputRef, searchQuery, filteredItems, highlighted
 void inputRef // used in template via ref="inputRef"
 const selectedOption = computed(() => props.options.find(opt => opt.id === props.modelValue))
 
+function getChannelDisplayTitle(option?: ChannelOption): string {
+  if (!option) return props.placeholder || t('components.input.channelSelector.placeholder')
+  const modelText = option.model || '-'
+  const typeText = option.type || '-'
+  return `${option.name}\nModel: ${modelText}\nType: ${typeText}`
+}
+
 function selectChannel(option: ChannelOption) {
   emit('update:modelValue', option.id)
   close()
@@ -66,10 +73,11 @@ function handleKeydown(event: KeyboardEvent) {
       type="button"
       class="selector-trigger"
       :disabled="disabled"
+      :title="getChannelDisplayTitle(selectedOption)"
       @click="toggle"
     >
       <span v-if="selectedOption" class="selected-value">
-        <span class="selected-label">{{ selectedOption.name }}</span>
+        <span class="selected-label" :title="selectedOption.name">{{ selectedOption.name }}</span>
       </span>
       <span v-else class="placeholder">{{ placeholder || t('components.input.channelSelector.placeholder') }}</span>
       <span :class="['select-arrow', isOpen ? 'arrow-up' : 'arrow-down']">▼</span>
@@ -102,6 +110,7 @@ function handleKeydown(event: KeyboardEvent) {
                                     highlighted: index === highlightedIndex
                 }
               ]"
+              :title="getChannelDisplayTitle(option)"
               @click="selectChannel(option)"
                             @mouseenter="highlightedIndex = index"
             >
@@ -196,7 +205,7 @@ function handleKeydown(event: KeyboardEvent) {
   background: var(--vscode-dropdown-background);
   border: 1px solid var(--vscode-dropdown-border);
   border-radius: 4px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 4px 12px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.3));
   z-index: 1000;
   overflow: visible;
 }

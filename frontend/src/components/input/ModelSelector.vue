@@ -41,6 +41,19 @@ const { isOpen, toggle, close, inputRef, searchQuery, filteredItems, highlighted
 void inputRef // used in template via ref="inputRef"
 const filteredModels = computed(() => filteredItems.value)
 
+const selectedModel = computed(() => props.models.find(m => m.id === props.modelValue))
+
+function getModelDisplayTitle(model?: ModelInfo): string {
+  if (!model) return props.modelValue || t('components.input.modelSelector.placeholder')
+  const label = model.name || model.id
+  if (label === model.id) return model.id
+  const lines = [label, model.id]
+  if (model.description) {
+    lines.push(model.description)
+  }
+  return lines.join('\n')
+}
+
 function selectModel(model: ModelInfo) {
   emit('update:modelValue', model.id)
   close()
@@ -62,8 +75,9 @@ function handleKeydown(event: KeyboardEvent) {
       class="model-trigger"
       :disabled="disabled"
             @click="toggle"
+      :title="getModelDisplayTitle(selectedModel)"
     >
-      <span class="model-id">{{ modelValue || t('components.input.modelSelector.placeholder') }}</span>
+      <span class="model-id" :title="getModelDisplayTitle(selectedModel)">{{ modelValue || t('components.input.modelSelector.placeholder') }}</span>
             <span :class="['select-arrow', isOpen ? 'arrow-up' : 'arrow-down']">▼</span>
     </button>
 
@@ -87,6 +101,7 @@ function handleKeydown(event: KeyboardEvent) {
                 v-for="(model, index) in filteredModels"
                 :key="model.id"
                                 :class="['model-item', { selected: model.id === modelValue, highlighted: index === highlightedIndex }]"
+                :title="getModelDisplayTitle(model)"
                 @click="selectModel(model)"
                 @mouseenter="highlightedIndex = index"
               >
@@ -124,24 +139,22 @@ function handleKeydown(event: KeyboardEvent) {
   justify-content: space-between;
   width: 100%;
   padding: 4px 8px;
-  background: transparent;
-  color: var(--vscode-descriptionForeground);
-  border: none;
+  background: var(--vscode-input-background);
+  color: var(--vscode-input-foreground);
+  border: 1px solid var(--vscode-input-border);
   border-radius: 4px;
   font-size: 12px;
   cursor: pointer;
   text-align: left;
-  transition: background-color 0.15s, color 0.15s;
+  transition: border-color 0.15s, background-color 0.15s;
 }
 
 .model-trigger:hover:not(:disabled) {
-  background: var(--vscode-toolbar-hoverBackground);
-  color: var(--vscode-foreground);
+  border-color: var(--vscode-focusBorder);
 }
 
 .model-selector.open .model-trigger {
-  background: var(--vscode-toolbar-activeBackground);
-  color: var(--vscode-foreground);
+  border-color: var(--vscode-focusBorder);
 }
 
 .model-id {
@@ -173,7 +186,7 @@ function handleKeydown(event: KeyboardEvent) {
   background: var(--vscode-dropdown-background);
   border: 1px solid var(--vscode-dropdown-border);
   border-radius: 4px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 4px 12px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.3));
   z-index: 1000;
   overflow: visible;
 }

@@ -533,10 +533,10 @@ const hasAny = computed(() => planCards.value.length > 0)
 
 /* ============ Plan 面板（继承 write_file 风格） ============ */
 .plan-panel {
-  border: 1px solid var(--vscode-panel-border);
+  border: 1px solid var(--vscode-editorWidget-border, var(--vscode-panel-border));
   border-radius: var(--radius-sm, 2px);
   overflow: hidden;
-  background: var(--vscode-editor-background);
+  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
 }
 
 .plan-header {
@@ -544,7 +544,7 @@ const hasAny = computed(() => planCards.value.length > 0)
   justify-content: space-between;
   align-items: center;
   padding: var(--spacing-xs, 4px) var(--spacing-sm, 8px);
-  background: var(--vscode-editor-inactiveSelectionBackground);
+  background: var(--vscode-sideBarSectionHeader-background, var(--vscode-editor-background));
   border-bottom: 1px solid var(--vscode-panel-border);
 }
 
@@ -607,7 +607,7 @@ const hasAny = computed(() => planCards.value.length > 0)
   font-size: 10px;
   color: var(--vscode-descriptionForeground);
   font-family: var(--vscode-editor-font-family);
-  background: var(--vscode-editor-background);
+  background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
   border-bottom: 1px solid var(--vscode-panel-border);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -628,7 +628,7 @@ const hasAny = computed(() => planCards.value.length > 0)
   justify-content: space-between;
   gap: var(--spacing-sm, 8px);
   padding: var(--spacing-xs, 4px) var(--spacing-sm, 8px);
-  background: var(--vscode-editor-inactiveSelectionBackground);
+  background: var(--vscode-sideBarSectionHeader-background, var(--vscode-editor-background));
   border-top: 1px solid var(--vscode-panel-border);
 }
 
