@@ -22,6 +22,26 @@ import type {
 } from '../types';
 
 /**
+ * Built-in summarize system prompt (English only, channel-agnostic).
+ *
+ * Some providers/channels require non-empty instructions/system prompt,
+ * so we always send this prompt during summarize requests.
+ */
+const BUILTIN_SUMMARIZE_SYSTEM_PROMPT = `You are an expert conversation summarization assistant.
+Always respond in English.
+Produce a structured summary with clear, step-by-step sections.
+Follow this exact structure:
+1. User Goal
+2. Completed Steps
+3. Current Progress
+4. Next Steps
+5. Important Constraints
+6. Open Questions / Risks
+Use concise bullet points under each section.
+Preserve exact technical details (file paths, function names, config keys, IDs, and numbers).`;
+
+
+/**
  * 上下文总结服务
  *
  * 职责：
@@ -71,7 +91,7 @@ export class SummarizeService {
 
             // 从设置中读取总结配置
             let configKeepRecentRounds = 2;  // 默认值
-            let configSummarizePrompt = '';  // 默认值（空则使用内置提示词）
+            let configSummarizePrompt = '';  // 默认值（空则使用内置 i18n 提示词）
             let useSeparateModel = false;
             let summarizeChannelId = '';
             let summarizeModelId = '';
@@ -202,7 +222,7 @@ export class SummarizeService {
                 };
             }
 
-            // 7. 构建总结请求
+            // 7. 构建总结请求（用户提示词可在设置中配置）
             const defaultPrompt = t('modules.api.chat.prompts.defaultSummarizePrompt');
             const configuredManualPrompt = configSummarizePrompt.trim();
             const prompt = configuredManualPrompt || defaultPrompt;
@@ -227,11 +247,13 @@ export class SummarizeService {
                 skipTools: boolean;
                 skipRetry: boolean;
                 modelOverride?: string;
+                dynamicSystemPrompt: string;
             } = {
                 configId: actualConfigId,
                 history: summaryRequestHistory,
                 abortSignal: request.abortSignal,
                 skipTools: true,
+                dynamicSystemPrompt: BUILTIN_SUMMARIZE_SYSTEM_PROMPT,
                 skipRetry: true
             };
 
@@ -411,9 +433,9 @@ export class SummarizeService {
      * 处理自动总结请求
      *
      * 与手动总结的区别：
-     * 1. 使用专用的自动总结提示词（面向"接力继续"，包含 TODO、下一步等）
+     * 1. 用户可配置自动总结用户提示词（与手动总结一样）
      * 2. 当待总结内容超出总结模型上下文时，保留最后一轮工具交互不总结
-     * 3. 总结完成后循环自然继续，AI 看到总结中的 TODO 和进度即可无缝衔接
+     * 3. 总结完成后循环自然继续，AI 看到总结内容即可无缝衔接
      *
      * @param conversationId 对话 ID
      * @param configId 当前使用的配置 ID
@@ -580,7 +602,7 @@ export class SummarizeService {
             const newlySummarizedCount = insertIndex - historyStartIndex;
             const totalSummarizedCount = previousSummarizedCount + newlySummarizedCount;
 
-            // 8. 构建总结请求（自动总结提示词：优先用户配置，回退内置提示词）
+            // 8. 构建总结请求（用户提示词可在设置中配置）
             const defaultAutoPrompt = t('modules.api.chat.prompts.autoSummarizePrompt');
             const configuredAutoPrompt = configAutoSummarizePrompt.trim();
             const prompt = configuredAutoPrompt || defaultAutoPrompt;
@@ -604,11 +626,13 @@ export class SummarizeService {
                 skipTools: boolean;
                 skipRetry: boolean;
                 modelOverride?: string;
+                dynamicSystemPrompt: string;
             } = {
                 configId: actualConfigId,
                 history: summaryRequestHistory,
                 abortSignal,
                 skipTools: true,
+                dynamicSystemPrompt: BUILTIN_SUMMARIZE_SYSTEM_PROMPT,
                 skipRetry: true
             };
 

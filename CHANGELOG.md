@@ -3,6 +3,11 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.0.94] - 2026-02-26
+
+### Added
+  - 为总结功能添加系统提示词，避免某些缺系统提示词导致的报错问题
+
 ## [1.0.93] - 2026-02-24
 
 ### Fixed
