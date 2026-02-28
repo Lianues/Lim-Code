@@ -147,6 +147,9 @@ export interface HistorySearchToolConfig {
     /** 输出时单行的最大显示字符数（超出部分省略，可通过单行 read 获取完整内容） */
     lineDisplayLimit: number;
 
+    /** 检索范围 */
+    searchScope?: 'all' | 'summarized';
+
     [key: string]: unknown;
 }
 
@@ -1561,7 +1564,8 @@ export const DEFAULT_HISTORY_SEARCH_CONFIG: HistorySearchToolConfig = {
     searchContextLines: 3,
     maxReadLines: 300,
     maxResultChars: 30000,
-    lineDisplayLimit: 500
+    lineDisplayLimit: 500,
+    searchScope: 'all'
 };
 
 /**

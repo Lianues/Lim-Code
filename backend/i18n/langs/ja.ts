@@ -401,10 +401,11 @@ const ja: BackendLanguageMessages = {
         
         history: {
             noSummarizedHistory: '要約された履歴が見つかりません。この会話ではまだコンテキスト要約がトリガーされていません。',
-            searchResultHeader: '要約済み履歴で "{query}" の一致が {count} 件見つかりました（全 {totalLines} 行）',
-            noMatchesFound: '要約済み履歴で "{query}" の一致は見つかりませんでした（全 {totalLines} 行）。別のキーワードをお試しください。',
+            noHistory: '会話履歴が見つかりません。',
+            searchResultHeader: '履歴で "{query}" の一致が {count} 件見つかりました（全 {totalLines} 行）',
+            noMatchesFound: '履歴で "{query}" の一致は見つかりませんでした（全 {totalLines} 行）。別のキーワードをお試しください。',
             resultsLimited: '[結果は {max} 件に制限されています。より具体的なクエリをお試しください。]',
-            readResultHeader: '要約済み履歴の {start}-{end} 行目（全 {totalLines} 行）',
+            readResultHeader: '履歴の {start}-{end} 行目（全 {totalLines} 行）',
             readTruncated: '[出力は {max} 行に制限されています。start_line={nextStart} で続きを読んでください。]',
             invalidRegex: '無効な正規表現：{error}',
             invalidRange: '無効な行範囲：{start}-{end}（ドキュメントは全 {totalLines} 行）',

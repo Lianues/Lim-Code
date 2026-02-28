@@ -590,6 +590,10 @@ export interface LanguageMessages {
                 /** 历史工具设置 */
                 history: {
                     searchSection: string;
+                    searchScope: string;
+                    searchScopeDesc: string;
+                    scopeAll: string;
+                    scopeSummarized: string;
                     maxSearchMatches: string;
                     maxSearchMatchesDesc: string;
                     searchContextLines: string;

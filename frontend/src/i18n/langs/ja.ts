@@ -1527,6 +1527,10 @@ const ja: LanguageMessages = {
                 },
                 history: {
                     searchSection: '検索モード',
+                    searchScope: '検索範囲',
+                    searchScopeDesc: 'ツールが検索できる履歴の範囲を選択します',
+                    scopeAll: 'すべての会話履歴（デフォルト）',
+                    scopeSummarized: '要約された内容のみ',
                     maxSearchMatches: '最大一致数',
                     maxSearchMatchesDesc: '検索ごとに返される最大一致行数',
                     searchContextLines: 'コンテキスト行数',

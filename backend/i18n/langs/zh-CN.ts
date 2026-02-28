@@ -401,10 +401,11 @@ const zhCN: BackendLanguageMessages = {
         
         history: {
             noSummarizedHistory: '没有找到已总结的历史记录。当前对话尚未触发上下文总结。',
-            searchResultHeader: '在已总结历史中找到 {count} 个匹配项，关键词："{query}"（共 {totalLines} 行）',
-            noMatchesFound: '在已总结历史中未找到 "{query}" 的匹配项（共 {totalLines} 行）。请尝试其他关键词。',
+            noHistory: '未找到对话历史记录。',
+            searchResultHeader: '在历史记录中找到 {count} 个匹配项，关键词："{query}"（共 {totalLines} 行）',
+            noMatchesFound: '在历史记录中未找到 "{query}" 的匹配项（共 {totalLines} 行）。请尝试其他关键词。',
             resultsLimited: '[结果限制为 {max} 个匹配项。请使用更具体的关键词。]',
-            readResultHeader: '已总结历史的第 {start}-{end} 行（共 {totalLines} 行）',
+            readResultHeader: '历史记录的第 {start}-{end} 行（共 {totalLines} 行）',
             readTruncated: '[输出限制为 {max} 行。使用 start_line={nextStart} 继续读取。]',
             invalidRegex: '无效的正则表达式：{error}',
             invalidRange: '无效的行范围：{start}-{end}（文档共 {totalLines} 行）',

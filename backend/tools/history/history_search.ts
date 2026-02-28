@@ -51,6 +51,7 @@ const {
 
 /** 运行时配置，handler 启动时从 settingsManager 加载 */
 interface RuntimeConfig {
+    searchScope?: 'all' | 'summarized';
     maxSearchMatches: number;
     searchContextLines: number;
     maxReadLines: number;
@@ -359,18 +360,11 @@ function truncateResult(result: string, maxChars: number = MAX_RESULT_CHARS): st
 
 // ─── 工具声明与处理器 ───────────────────────────────────
 
+import { getGlobalSettingsManager } from '../../core/settingsContext';
 export function createHistorySearchToolDeclaration(): ToolDeclaration {
-    return {
+    const declaration: ToolDeclaration = {
         name: 'history_search',
-        description:
-            'Search and read conversation history that has been compressed by context summarization. ' +
-            'The compressed history is formatted as a virtual document with line numbers. ' +
-            'Each round header shows its line range, e.g. "══ Round 3 (L45-L88) ══". ' +
-            'Two modes:\n' +
-            '"search" — find keywords/regex in compressed history, returns matching line numbers and context (like search_in_files). ' +
-            '"read" — read specific line range from the formatted history (like read_file with startLine/endLine, max ' + MAX_READ_LINES + ' lines per read). ' +
-            'Typical workflow: use search to locate relevant lines, then use read to get the full content around those lines.\n' +
-            'Tip: to get the full content of a single long line (e.g. a tool response), use read with start_line=N end_line=N — single-line reads are never truncated.',
+        description: '', // Will be overridden by getter
         category: 'history',
         parameters: {
             type: 'object',
@@ -403,6 +397,24 @@ export function createHistorySearchToolDeclaration(): ToolDeclaration {
             required: ['mode']
         }
     };
+
+    Object.defineProperty(declaration, 'description', {
+        get() {
+            const scope = getGlobalSettingsManager()?.getHistorySearchConfig()?.searchScope ?? 'all';
+            const scopeText = scope === 'summarized' ? 'compressed/summarized history ONLY' : 'ENTIRE conversation history';
+            return `Search and read conversation history. CURRENT SETTINGS ALLOW SEARCHING: [${scopeText}]. ` +
+                `The history is formatted as a virtual document with line numbers. ` +
+                `Each round header shows its line range, e.g. "══ Round 3 (L45-L88) ══". ` +
+                `Two modes:\n` +
+                `"search" — find keywords/regex in history, returns matching line numbers and context (like search_in_files). ` +
+                `"read" — read specific line range from the formatted history (like read_file with startLine/endLine, max ${MAX_READ_LINES} lines per read). ` +
+                `Typical workflow: use search to locate relevant lines, then use read to get the full content around those lines.\n` +
+                `Tip: to get the full content of a single long line (e.g. a tool response), use read with start_line=N end_line=N — single-line reads are never truncated.`;
+        },
+        enumerable: true
+    });
+
+    return declaration;
 }
 
 async function historySearchHandler(
@@ -436,10 +448,10 @@ async function historySearchHandler(
     }
 
     try {
-        // 从 settingsManager 读取运行时配置
-        const settingsManager = (context as any).settingsManager;
+        // 获取全局 settingsManager
+        const settingsManager = getGlobalSettingsManager();
         const userCfg: HistorySearchToolConfig | undefined =
-            typeof settingsManager?.getHistorySearchConfig === 'function'
+            settingsManager
                 ? settingsManager.getHistorySearchConfig()
                 : undefined;
         const cfg: RuntimeConfig = {
@@ -450,18 +462,19 @@ async function historySearchHandler(
         // 获取完整对话历史
         const fullHistory = await conversationStore.getHistory(conversationId) as Content[];
 
-        // 提取被总结覆盖的消息
-        const summarizedMessages = getSummarizedMessages(fullHistory);
+        const targetMessages = cfg.searchScope === 'summarized' ? getSummarizedMessages(fullHistory) : fullHistory;
 
-        if (summarizedMessages.length === 0) {
+        if (targetMessages.length === 0) {
             return {
                 success: true,
-                data: t('tools.history.noSummarizedHistory')
+                data: cfg.searchScope === 'summarized' 
+                    ? t('tools.history.noSummarizedHistory') 
+                    : t('tools.history.noHistory')
             };
         }
 
         // 格式化为虚拟文档
-        const docLines = formatToDocument(summarizedMessages);
+        const docLines = formatToDocument(targetMessages);
 
         switch (mode) {
             case 'search': {

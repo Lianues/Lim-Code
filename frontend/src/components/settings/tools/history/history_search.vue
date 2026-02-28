@@ -15,6 +15,7 @@ import { sendToExtension } from '@/utils/vscode'
 import { t } from '@/i18n'
 
 // 配置数据
+const searchScope = ref<'all' | 'summarized'>('all')
 const maxSearchMatches = ref(30)
 const searchContextLines = ref(3)
 const maxReadLines = ref(300)
@@ -34,6 +35,7 @@ async function loadConfig() {
       {}
     )
     if (response?.config) {
+      searchScope.value = response.config.searchScope ?? 'all'
       maxSearchMatches.value = response.config.maxSearchMatches ?? 30
       searchContextLines.value = response.config.searchContextLines ?? 3
       maxReadLines.value = response.config.maxReadLines ?? 300
@@ -53,6 +55,7 @@ async function saveConfig() {
   try {
     await sendToExtension('tools.updateHistorySearchConfig', {
       config: {
+        searchScope: searchScope.value,
         maxSearchMatches: maxSearchMatches.value,
         searchContextLines: searchContextLines.value,
         maxReadLines: maxReadLines.value,
@@ -95,6 +98,12 @@ function updateNumber(event: Event, field: 'maxSearchMatches' | 'searchContextLi
   saveConfig()
 }
 
+// 选择框更新
+function updateSelect(event: Event) {
+  searchScope.value = (event.target as HTMLSelectElement).value as 'all' | 'summarized'
+  saveConfig()
+}
+
 onMounted(() => {
   loadConfig()
 })
@@ -117,6 +126,24 @@ onMounted(() => {
         </div>
 
         <div class="section-content">
+          <div class="config-item">
+            <div class="item-info">
+              <span class="item-label">{{ t('components.settings.toolSettings.history.searchScope') }}</span>
+              <span class="item-description">{{ t('components.settings.toolSettings.history.searchScopeDesc') }}</span>
+            </div>
+            <div class="select-wrapper">
+              <select
+                :value="searchScope"
+                :disabled="isSaving"
+                class="config-select"
+                @change="updateSelect($event)"
+              >
+                <option value="all">{{ t('components.settings.toolSettings.history.scopeAll') }}</option>
+                <option value="summarized">{{ t('components.settings.toolSettings.history.scopeSummarized') }}</option>
+              </select>
+            </div>
+          </div>
+
           <div class="config-item">
             <div class="item-info">
               <span class="item-label">{{ t('components.settings.toolSettings.history.maxSearchMatches') }}</span>
@@ -363,5 +390,20 @@ onMounted(() => {
 @keyframes spin {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
+}
+
+.select-wrapper {
+  display: flex;
+  align-items: center;
+}
+
+.config-select {
+  padding: 4px 8px;
+  background: var(--vscode-dropdown-background);
+  color: var(--vscode-dropdown-foreground);
+  border: 1px solid var(--vscode-dropdown-border, var(--vscode-panel-border));
+  border-radius: 4px;
+  font-size: 12px;
+  outline: none;
 }
 </style>

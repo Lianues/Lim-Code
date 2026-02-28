@@ -1527,6 +1527,10 @@ const en: LanguageMessages = {
                 },
                 history: {
                     searchSection: 'Search Mode',
+                    searchScope: 'Search Scope',
+                    searchScopeDesc: 'Select the range of history records the tool can search',
+                    scopeAll: 'All conversation history (Default)',
+                    scopeSummarized: 'Summarized content only',
                     maxSearchMatches: 'Max Matches',
                     maxSearchMatchesDesc: 'Maximum number of matching lines returned per search',
                     searchContextLines: 'Context Lines',

@@ -1527,6 +1527,10 @@ const zhCN: LanguageMessages = {
                 },
                 history: {
                     searchSection: '搜索模式',
+                    searchScope: '搜索范围',
+                    searchScopeDesc: '选择工具能够检索的历史记录范围',
+                    scopeAll: '全部对话历史（默认）',
+                    scopeSummarized: '仅已总结的内容',
                     maxSearchMatches: '最大匹配数',
                     maxSearchMatchesDesc: '每次搜索返回的最大匹配行数',
                     searchContextLines: '上下文行数',
