@@ -401,10 +401,11 @@ Output content directly without any prefix.`
         
         history: {
             noSummarizedHistory: 'No summarized history found. Context summarization has not been triggered yet in this conversation.',
-            searchResultHeader: 'Found {count} match(es) for "{query}" in summarized history ({totalLines} total lines)',
-            noMatchesFound: 'No matches found for "{query}" in summarized history ({totalLines} total lines). Try different keywords.',
+            noHistory: 'No conversation history found.',
+            searchResultHeader: 'Found {count} match(es) for "{query}" in history ({totalLines} total lines)',
+            noMatchesFound: 'No matches found for "{query}" in history ({totalLines} total lines). Try different keywords.',
             resultsLimited: '[Results limited to {max} matches. Try a more specific query to narrow results.]',
-            readResultHeader: 'Lines {start}-{end} of {totalLines} total lines in summarized history',
+            readResultHeader: 'Lines {start}-{end} of {totalLines} total lines in history',
             readTruncated: '[Output limited to {max} lines. Use start_line={nextStart} to continue reading.]',
             invalidRegex: 'Invalid regular expression: {error}',
             invalidRange: 'Invalid line range: {start}-{end} (document has {totalLines} lines)',

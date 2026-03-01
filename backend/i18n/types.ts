@@ -400,6 +400,7 @@ export interface BackendLanguageMessages {
         /** 历史检索工具 */
         history: {
             noSummarizedHistory: string;
+            noHistory: string;
             searchResultHeader: string;
             noMatchesFound: string;
             resultsLimited: string;
