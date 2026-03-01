@@ -63,9 +63,6 @@ export class McpManager {
 
     /**
      * 初始化管理器
-     *
-     * 注意：初始化时不进行自动连接，自动连接由前端控制
-     * 这样可以确保前端 UI 能够正确显示连接状态
      */
     async initialize(): Promise<void> {
         if (this.initialized) {
@@ -76,6 +73,15 @@ export class McpManager {
         await this.reloadFromStorage();
 
         this.initialized = true;
+
+        // 触发自动连接
+        const serversToConnect = this.getServersToAutoConnect();
+        for (const serverId of serversToConnect) {
+            // 异步连接，不阻塞初始化流程
+            this.connect(serverId).catch(e => {
+                console.error(`[MCP] Auto-connect failed for ${serverId}:`, e);
+            });
+        }
     }
     
     /**
