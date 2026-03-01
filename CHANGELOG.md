@@ -3,6 +3,12 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.0.98] - 2026-03-01
+
+### Fixed
+  - 修复MCP自动连接依赖UI的Bug
+  - 修复历史对话内容检索工具的范围问题
+
 ## [1.0.97] - 2026-02-27
 
 ### Added
