@@ -118,34 +118,17 @@ const statusText = (status: McpServerStatus) => {
 // ============ 方法 ============
 
 // 加载服务器列表
-async function loadServers(triggerAutoConnect = false) {
+async function loadServers() {
   isLoading.value = true
   try {
     const response = await sendToExtension<{ success: boolean; servers?: McpServerInfo[]; error?: any }>('getMcpServers', {})
     if (response?.success && response.servers) {
       servers.value = response.servers
-      
-      // 如果需要触发自动连接（首次加载时）
-      if (triggerAutoConnect) {
-        autoConnectServers()
-      }
     }
   } catch (error) {
     console.error('Failed to load MCP servers:', error)
   } finally {
     isLoading.value = false
-  }
-}
-
-// 自动连接配置了 autoConnect 的服务器
-function autoConnectServers() {
-  const serversToConnect = servers.value.filter(
-    s => s.config.enabled && s.config.autoConnect && s.status === 'disconnected'
-  )
-  
-  for (const server of serversToConnect) {
-    // 复用单个服务器的自动连接逻辑
-    tryAutoConnect(server)
   }
 }
 
@@ -466,14 +449,15 @@ async function toggleEnabled(server: McpServerInfo) {
     
     await loadServers()
     
-    // 如果启用且配置了自动连接，尝试连接
     if (newEnabled && server.config.autoConnect) {
-      // 获取更新后的服务器信息
       const updatedServer = servers.value.find(s => s.config.id === serverId)
       if (updatedServer && updatedServer.status === 'disconnected') {
         tryAutoConnect(updatedServer)
       }
     }
+    
+    await loadServers()
+    
   } catch (error) {
     console.error('Failed to toggle enabled:', error)
   }
@@ -490,8 +474,7 @@ async function openConfigFile() {
 
 // 初始化
 onMounted(() => {
-  // 首次加载时触发自动连接
-  loadServers(true)
+  loadServers()
 })
 </script>
 
