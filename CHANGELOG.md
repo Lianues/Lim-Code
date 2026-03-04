@@ -3,7 +3,7 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
-## [1.0.100] - 2026-03-05
+## [1.1.0] - 2026-03-05
 
 ### Added
   - 添加了Plan卡片消息的标签页打开功能
