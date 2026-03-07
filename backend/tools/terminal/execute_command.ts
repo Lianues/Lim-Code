@@ -12,6 +12,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { EventEmitter } from 'events';
 import { StringDecoder } from 'string_decoder';
+import { TextDecoder } from 'util';
 import type { Tool, ToolResult, ToolContext } from '../types';
 
 // tree-kill 库，用于跨平台终止进程树
@@ -391,6 +392,68 @@ function getLastLines(lines: string[], n: number): string[] {
     return lines.slice(-n);
 }
 
+type StreamDecodeMode = 'utf8' | 'gbk';
+
+/**
+ * 统计 Unicode 替换字符数量
+ *
+ * 当字节流按错误编码解码时，通常会出现大量 U+FFFD（�）
+ */
+function countReplacementChars(text: string): number {
+    let count = 0;
+    for (const ch of text) {
+        if (ch === '\uFFFD') {
+            count += 1;
+        }
+    }
+    return count;
+}
+
+/**
+ * 判断是否应从 UTF-8 降级到 GBK 解码
+ */
+function shouldFallbackToGbk(utf8Text: string, gbkText: string, chunk: Buffer): boolean {
+    // 纯 ASCII 内容不需要降级
+    if (!chunk.some(byte => byte >= 0x80)) {
+        return false;
+    }
+
+    const utf8ReplacementCount = countReplacementChars(utf8Text);
+    if (utf8ReplacementCount === 0) {
+        return false;
+    }
+
+    const gbkReplacementCount = countReplacementChars(gbkText);
+    return gbkReplacementCount < utf8ReplacementCount;
+}
+
+/**
+ * 根据当前模式解码流式输出
+ */
+function decodeWithMode(
+    chunk: Buffer,
+    modeRef: { mode: StreamDecodeMode },
+    utf8Decoder: StringDecoder,
+    gbkDecoder?: TextDecoder
+): string {
+    if (modeRef.mode === 'gbk' && gbkDecoder) {
+        return gbkDecoder.decode(chunk, { stream: true });
+    }
+
+    const utf8Text = utf8Decoder.write(chunk);
+    if (!gbkDecoder) {
+        return utf8Text;
+    }
+
+    const gbkPreview = new TextDecoder('gbk').decode(chunk);
+    if (shouldFallbackToGbk(utf8Text, gbkPreview, chunk)) {
+        modeRef.mode = 'gbk';
+        return gbkDecoder.decode(chunk, { stream: true });
+    }
+
+    return utf8Text;
+}
+
 /**
  * 获取操作系统名称
  */
@@ -761,16 +824,21 @@ ${getAvailableShellsDescription()}${workspaceDescription}
                         shell
                     });
 
-                    // 使用 StringDecoder 处理 UTF-8 编码，防止多字节字符截断
-                    const stdoutDecoder = new StringDecoder('utf8');
-                    const stderrDecoder = new StringDecoder('utf8');
+                    // 默认按 UTF-8 解码；Windows 上所有 shell 均支持自动降级到 GBK
+                    const canUseGbkFallback = isWindows;
+                    const stdoutUtf8Decoder = new StringDecoder('utf8');
+                    const stderrUtf8Decoder = new StringDecoder('utf8');
+                    const stdoutGbkDecoder = canUseGbkFallback ? new TextDecoder('gbk') : undefined;
+                    const stderrGbkDecoder = canUseGbkFallback ? new TextDecoder('gbk') : undefined;
+                    const stdoutDecodeModeRef: { mode: StreamDecodeMode } = { mode: 'utf8' };
+                    const stderrDecodeModeRef: { mode: StreamDecodeMode } = { mode: 'utf8' };
 
                     let stdoutRemaining = '';
                     let stderrRemaining = '';
 
                     // 收集输出并实时推送
                     proc.stdout?.on('data', (data: Buffer) => {
-                        const text = stdoutDecoder.write(data);
+                        const text = decodeWithMode(data, stdoutDecodeModeRef, stdoutUtf8Decoder, stdoutGbkDecoder);
                         const content = stdoutRemaining + text;
                         const lines = content.split(/\r?\n/);
                         stdoutRemaining = lines.pop() || '';
@@ -788,7 +856,7 @@ ${getAvailableShellsDescription()}${workspaceDescription}
                     });
 
                     proc.stderr?.on('data', (data: Buffer) => {
-                        const text = stderrDecoder.write(data);
+                        const text = decodeWithMode(data, stderrDecodeModeRef, stderrUtf8Decoder, stderrGbkDecoder);
                         const content = stderrRemaining + text;
                         const lines = content.split(/\r?\n/);
                         stderrRemaining = lines.pop() || '';
@@ -807,11 +875,39 @@ ${getAvailableShellsDescription()}${workspaceDescription}
 
                     // 进程结束时处理剩余的输出
                     proc.on('close', () => {
+                        const stdoutTail = (stdoutDecodeModeRef.mode === 'gbk' && stdoutGbkDecoder)
+                            ? stdoutGbkDecoder.decode()
+                            : stdoutUtf8Decoder.end();
+
+                        if (stdoutTail) {
+                            const content = stdoutRemaining + stdoutTail;
+                            const lines = content.split(/\r?\n/);
+                            stdoutRemaining = lines.pop() || '';
+                            if (lines.length > 0) {
+                                terminalProcess.output.push(...lines);
+                            }
+                        }
+
+                        const stderrTail = (stderrDecodeModeRef.mode === 'gbk' && stderrGbkDecoder)
+                            ? stderrGbkDecoder.decode()
+                            : stderrUtf8Decoder.end();
+
+                        if (stderrTail) {
+                            const content = stderrRemaining + stderrTail;
+                            const lines = content.split(/\r?\n/);
+                            stderrRemaining = lines.pop() || '';
+                            if (lines.length > 0) {
+                                terminalProcess.output.push(...lines);
+                            }
+                        }
+
                         if (stdoutRemaining) {
                             terminalProcess.output.push(stdoutRemaining);
+                            stdoutRemaining = '';
                         }
                         if (stderrRemaining) {
                             terminalProcess.output.push(stderrRemaining);
+                            stderrRemaining = '';
                         }
                     });
 

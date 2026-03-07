@@ -7,6 +7,7 @@ All notable changes to the "Lim Code" extension will be documented in this file.
 
 ### Fixed
   - 修复Anthropic格式的获取模型死循环和token计数接口格式问题，以及思考签名不发送问题
+  - 修复Windows终端工具的编码问题，添加编码失败回退逻辑
 
 ## [1.1.1] - 2026-03-06
 
