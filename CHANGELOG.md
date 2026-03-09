@@ -3,6 +3,13 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.1.4] - 2026-03-09
+
+### Fixed
+  - 修复了单个流式块导致的消息消失问题
+  - 修复了拒绝执行工具时，拒绝消息重复添加的问题
+  - 修复多标签页同时工作时无法完成响应的问题
+
 ## [1.1.3] - 2026-03-07
 
 ### Fixed
