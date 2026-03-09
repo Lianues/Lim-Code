@@ -523,7 +523,7 @@ export class GeminiFormatter extends BaseFormatter {
         return history.map(content => {
             const result: Content = {
                 role: content.role,
-                parts: content.parts.map(part => {
+                parts: content.parts.flatMap(part => {
                     // 如果有 thoughtSignatures，提取 gemini 格式的签名
                     if (part.thoughtSignatures?.gemini) {
                         const { thoughtSignatures, ...restPart } = part;
@@ -536,10 +536,14 @@ export class GeminiFormatter extends BaseFormatter {
                     // 但需要确保不发送 thoughtSignatures 字段
                     if (part.thoughtSignatures) {
                         const { thoughtSignatures, ...restPart } = part;
-                        return restPart;
+                        // 移除 thoughtSignatures 后如果 part 为空，则过滤掉
+                        if (Object.keys(restPart).length === 0) {
+                            return [];
+                        }
+                        return [restPart];
                     }
-                    return part;
-                })
+                    return [part];
+                }).filter(part => Object.keys(part).length > 0)
             };
             // 保留 isUserInput 标记
             if (content.isUserInput) {

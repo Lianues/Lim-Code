@@ -3,6 +3,11 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.1.5] - 2026-03-10
+
+### Fixed
+  - 修复了切换模型时，发送为gemini格式时，思考签名导致的空括号问题
+
 ## [1.1.4] - 2026-03-09
 
 ### Fixed
