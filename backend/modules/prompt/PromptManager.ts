@@ -24,7 +24,7 @@ import type { PinnedFileItem, SkillConfigItem } from '../settings/types'
 type TodoStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled'
 type NormalizedTodoItem = { id: string; content: string; status: TodoStatus }
 
-type DynamicRuntimeContext = {
+export type DynamicRuntimeContext = {
     /** ConversationMetadata.custom['todoList'] */
     todoList?: unknown
 
@@ -197,7 +197,7 @@ export class PromptManager {
     /**
      * 获取系统提示词（使用缓存）
      */
-    getSystemPrompt(forceRefresh: boolean = false): string {
+    getSystemPrompt(forceRefresh: boolean = false, runtime?: DynamicRuntimeContext): string {
         const now = Date.now()
         
         // 检查缓存是否有效
@@ -208,7 +208,7 @@ export class PromptManager {
         }
         
         // 生成新的提示词
-        this.cachedPrompt = this.generatePrompt()
+        this.cachedPrompt = this.generatePrompt(runtime)
         this.lastGeneratedAt = now
         
         return this.cachedPrompt
@@ -222,8 +222,8 @@ export class PromptManager {
      * - 用户删除首条消息后重新发送
      * - 用户编辑首条消息后重试
      */
-    refreshAndGetPrompt(): string {
-        return this.getSystemPrompt(true)
+    refreshAndGetPrompt(runtime?: DynamicRuntimeContext): string {
+        return this.getSystemPrompt(true, runtime)
     }
     
     /**
@@ -233,71 +233,64 @@ export class PromptManager {
      * 用户可以通过设置自定义模板内容
      * 根据当前模式使用对应的模板
      */
-    private generatePrompt(): string {
+    private generatePrompt(runtime?: DynamicRuntimeContext): string {
         const settingsManager = getGlobalSettingsManager()
         const promptConfig = settingsManager?.getSystemPromptConfig()
         
         // 获取当前模式的模板（SettingsManager 会根据 currentModeId 返回正确的模板）
         const template = settingsManager?.getSystemPromptTemplate() || promptConfig?.template || ''
-        return this.generateFromTemplate(template, promptConfig?.customPrefix || '', promptConfig?.customSuffix || '')
+        return this.generateFromTemplate(template, promptConfig?.customPrefix || '', promptConfig?.customSuffix || '', runtime)
     }
     
     /**
-     * 从模板生成系统提示词（静态部分）
-     *
-     * 只包含静态内容，可被 API provider 缓存：
-     * - {{$ENVIRONMENT}} - 静态环境信息（操作系统、时区、用户语言、工作区路径）
-     * - {{$CONTEXT_BADGE_FORMAT}} - lim-context 徽章结构说明（告诉 AI 标题/正文含义）
-     * - {{$TOOLS}} - 工具定义（由外部填充）
-     * - {{$MCP_TOOLS}} - MCP 工具定义（由外部填充）
-     * 
-     * 动态内容（时间、文件树、标签页等）由 getDynamicContextMessages() 方法生成
+     * 从模板生成系统提示词
      */
-    private generateFromTemplate(template: string, customPrefix: string, customSuffix: string): string {
-        // 静态模块（不会频繁变化）
-        const modules: Record<string, string> = {
-            'ENVIRONMENT': this.wrapSection('ENVIRONMENT', this.generateStaticEnvironmentSection()),
-            'CONTEXT_BADGE_FORMAT': this.wrapSection('CONTEXT BADGE FORMAT', this.generateContextBadgeFormatSection()),
-            // 动态内容占位符 - 这些将被移到动态上下文消息中
-            // 为了向后兼容，如果模板中包含这些占位符，替换为空字符串
-            'WORKSPACE_FILES': '',
-            'OPEN_TABS': '',
-            'ACTIVE_EDITOR': '',
-            'DIAGNOSTICS': '',
-            'PINNED_FILES': '',
-            // 工具定义由外部在发送前填充，这里返回占位符
-            'TOOLS': '{{$TOOLS}}',
-            'MCP_TOOLS': '{{$MCP_TOOLS}}'
-        }
-        
-        // 替换模板中的占位符（使用 {{$xxx}} 格式）
+    private generateFromTemplate(template: string, customPrefix: string, customSuffix: string, runtime?: DynamicRuntimeContext): string {
+        // 获取所有模块内容（静态和动态）
+        const modules = this.getAllModules(undefined, runtime)
+
+        // 替换模板中的占位符
         let result = template
         for (const [key, value] of Object.entries(modules)) {
             const regex = new RegExp(`\\{\\{\\$${key}\\}\\}`, 'g')
             result = result.replace(regex, value)
         }
-        
-        // 清理多余的空行
+
         return this.cleanupEmptyLines(result)
     }
-    
+
     /**
      * 从动态模板生成上下文内容
-     *
-     * 支持的变量：
-     * - {{$TODO_LIST}} - 当前会话的 TODO 列表（来自 ConversationMetadata.custom['todoList']）
-     * - {{$WORKSPACE_FILES}} - 工作区文件树
-     * - {{$OPEN_TABS}} - 打开的标签页
-     * - {{$ACTIVE_EDITOR}} - 当前活动编辑器
-     * - {{$DIAGNOSTICS}} - 诊断信息
-     * - {{$PINNED_FILES}} - 固定文件内容
-     * - {{$SKILLS}} - 启用的 Skills 内容
      */
     private generateDynamicFromTemplate(template: string, contextConfig: any, runtime?: DynamicRuntimeContext): string {
+        // 获取所有模块内容
+        const modules = this.getAllModules(contextConfig, runtime)
+
+        // 替换模板中的占位符
+        let result = template
+        for (const [key, value] of Object.entries(modules)) {
+            const regex = new RegExp(`\\{\\{\\$${key}\\}\\}`, 'g')
+            result = result.replace(regex, value)
+        }
+
+        return this.cleanupEmptyLines(result)
+    }
+
+    /**
+     * 获取所有可用的模块内容（统一变量解析池）
+     */
+    private getAllModules(contextConfig: any, runtime?: DynamicRuntimeContext): Record<string, string> {
         const settingsManager = getGlobalSettingsManager()
-        
-        // 动态模块
         const modules: Record<string, string> = {
+            // 静态模块
+            'ENVIRONMENT': this.wrapSection('ENVIRONMENT', this.generateStaticEnvironmentSection()),
+            'CONTEXT_BADGE_FORMAT': this.wrapSection('CONTEXT BADGE FORMAT', this.generateContextBadgeFormatSection()),
+            
+            // 工具定义占位符
+            'TOOLS': '{{$TOOLS}}',
+            'MCP_TOOLS': '{{$MCP_TOOLS}}',
+
+            // 动态模块默认值
             'TODO_LIST': '',
             'WORKSPACE_FILES': '',
             'OPEN_TABS': '',
@@ -305,6 +298,11 @@ export class PromptManager {
             'DIAGNOSTICS': '',
             'PINNED_FILES': '',
             'SKILLS': ''
+        }
+
+        // 如果没有提供 contextConfig，从全局设置加载
+        if (!contextConfig) {
+            contextConfig = settingsManager?.getContextAwarenessConfig()
         }
 
         // TODO 列表（来自会话元数据）
@@ -354,7 +352,7 @@ export class PromptManager {
         // 固定文件内容
         const pinnedFilesContent = this.generatePinnedFilesSection(runtime?.pinnedFiles)
         if (pinnedFilesContent) {
-            const sectionTitle = settingsManager?.getPinnedFilesConfig()?.sectionTitle || 'PINNED FILES CONTENT'
+            const sectionTitle = getGlobalSettingsManager()?.getPinnedFilesConfig()?.sectionTitle || 'PINNED FILES CONTENT'
             modules['PINNED_FILES'] = this.wrapSection(sectionTitle, pinnedFilesContent)
         }
         
@@ -364,15 +362,7 @@ export class PromptManager {
             modules['SKILLS'] = this.wrapSection('ACTIVE SKILLS', skillsContent)
         }
         
-        // 替换模板中的占位符
-        let result = template
-        for (const [key, value] of Object.entries(modules)) {
-            const regex = new RegExp(`\\{\\{\\$${key}\\}\\}`, 'g')
-            result = result.replace(regex, value)
-        }
-        
-        // 清理多余的空行
-        return this.cleanupEmptyLines(result)
+        return modules
     }
     
     /**
