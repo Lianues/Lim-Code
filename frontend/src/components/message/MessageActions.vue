@@ -13,7 +13,7 @@ defineProps<{
   message: Message
   canEdit?: boolean
   canRetry?: boolean
-  canViewRaw?: boolean
+  canViewResponse?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -21,7 +21,7 @@ const emit = defineEmits<{
   copy: []
   delete: []
   retry: []
-  viewRaw: []
+  viewResponse: []
 }>()
 
 // 复制状态
@@ -74,13 +74,13 @@ function handleCopy() {
       @click="handleCopy"
     />
 
-    <!-- 查看原始返回（仅助手消息/调试用） -->
+    <!-- 查看回复 -->
     <IconButton
-      v-if="canViewRaw"
+      v-if="canViewResponse"
       icon="codicon-eye"
       size="small"
-      :tooltip="t('components.message.actions.viewRaw')"
-      @click="emit('viewRaw')"
+      :tooltip="t('components.message.actions.viewResponse')"
+      @click="emit('viewResponse')"
     />
 
     <!-- 重试按钮（仅 AI 消息） -->

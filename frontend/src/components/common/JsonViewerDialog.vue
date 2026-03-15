@@ -92,7 +92,7 @@ async function handleCopy() {
 </script>
 
 <template>
-  <Modal v-model="visible" :title="title || t('components.message.actions.viewRaw')" :width="width">
+  <Modal v-model="visible" :title="title || t('components.message.actions.viewResponse')" :width="width">
     <pre class="json-viewer">{{ jsonText }}</pre>
 
     <template #footer>

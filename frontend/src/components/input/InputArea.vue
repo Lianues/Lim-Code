@@ -18,7 +18,7 @@ import type { PromptMode } from './types'
 
 import { IconButton, Tooltip } from '../common'
 import { useChatStore, useSettingsStore } from '../../stores'
-import { showNotification, onExtensionCommand } from '../../utils/vscode'
+import { sendToExtension, showNotification, onExtensionCommand } from '../../utils/vscode'
 import * as configService from '../../services/config'
 import * as contextService from '../../services/context'
 import { formatNumber, generateId } from '../../utils/format'
