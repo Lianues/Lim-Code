@@ -11,7 +11,9 @@ import ToolMessage from './ToolMessage.vue'
 import MessageAttachments from './MessageAttachments.vue'
 import InlineContextMessage from './InlineContextMessage.vue'
 import MessageTaskCards from './MessageTaskCards.vue'
-import { MarkdownRenderer, RetryDialog, EditDialog, JsonViewerDialog } from '../common'
+import ResponseViewerDialog from './ResponseViewerDialog.vue'
+import { buildResponseViewerData } from './responseViewer/buildResponseViewerData'
+import { MarkdownRenderer, RetryDialog, EditDialog } from '../common'
 import type { Message, ToolUsage, CheckpointRecord, Attachment } from '../../types'
 import { hasContextBlocks } from '../../types/contextParser'
 import { formatTime } from '../../utils/format'
@@ -51,7 +53,7 @@ const streamingIndicatorChars = computed(() => Array.from(streamingIndicatorText
 const showActions = ref(false)
 const showRetryDialog = ref(false)
 const showEditDialog = ref(false)
-const showRawDialog = ref(false)
+const showResponseDialog = ref(false)
 
 // 消息角色判断
 const isUser = computed(() => props.message.role === 'user')
@@ -558,42 +560,13 @@ function handleRetryClick() {
   showRetryDialog.value = true
 }
 
-function handleViewRaw() {
-  showRawDialog.value = true
+function handleViewResponse() {
+  showResponseDialog.value = true
 }
 
-const rawMessageView = computed(() => {
-  const attachments = (props.message.attachments || []).map(att => {
-    const { data, thumbnail, ...rest } = att as any
-    return {
-      ...rest,
-      hasData: !!data,
-      hasThumbnail: !!thumbnail,
-      dataSize: typeof data === 'string' ? data.length : 0,
-      thumbnailSize: typeof thumbnail === 'string' ? thumbnail.length : 0
-    }
-  })
-
-  return {
-    id: props.message.id,
-    role: props.message.role,
-    createdAt: props.message.timestamp,
-    backendIndex: props.message.backendIndex,
-    modelVersion: (props.message.metadata as any)?.modelVersion,
-    content: props.message.content,
-    parts: props.message.parts,
-    tools: props.message.tools,
-    attachments,
-    metadata: props.message.metadata,
-    checkpoints: {
-      availableBefore: availableCheckpoints.value,
-      editRestoreCandidates: checkpointsBeforeMessage.value
-    },
-    debug: {
-      renderBlocks: renderBlocks.value
-    }
-  }
-})
+const responseViewerData = computed(() => buildResponseViewerData(props.message, {
+  allMessages: chatStore.allMessages
+}))
 
 function handleRetry() {
   emit('retry', props.message.id)
@@ -625,12 +598,12 @@ function handleRestoreAndRetry(checkpointId: string) {
         :message="message"
         :can-edit="isUser"
         :can-retry="!isUser"
-        :can-view-raw="!isUser"
+        :can-view-response="!isUser"
         @edit="startEdit"
         @copy="handleCopy"
         @delete="handleDelete"
         @retry="handleRetryClick"
-        @view-raw="handleViewRaw"
+        @view-response="handleViewResponse"
       />
     </div>
     
@@ -652,12 +625,12 @@ function handleRestoreAndRetry(checkpointId: string) {
       @restore-and-edit="handleRestoreAndEdit"
     />
 
-    <!-- 原始返回查看（调试用） -->
-    <JsonViewerDialog
-      v-model="showRawDialog"
-      :value="rawMessageView"
-      :title="t('components.message.actions.viewRaw')"
-      width="860px"
+    <!-- 回复查看 -->
+    <ResponseViewerDialog
+      v-model="showResponseDialog"
+      :value="responseViewerData"
+      :title="t('components.message.actions.viewResponse')"
+      width="960px"
     />
 
     <div class="message-body">
