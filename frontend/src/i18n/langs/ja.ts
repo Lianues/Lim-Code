@@ -526,6 +526,10 @@ const ja: LanguageMessages = {
                     label: 'プランを作成',
                     fallbackTitle: 'プラン'
                 },
+                createDesign: {
+                    label: '設計を作成',
+                    fallbackTitle: '設計'
+                },
                 todoPanel: {
                     title: 'TODO リスト',
                     modePlan: 'プラン',
@@ -558,6 +562,18 @@ const ja: LanguageMessages = {
                     executePlanFailed: 'プランの実行に失敗しました',
                     openFileFailed: 'ファイルを開くのに失敗しました',
                     promptPrefix: '以下のプランに従って実行してください:\n\n{plan}'
+                },
+                designCard: {
+                    title: '設計',
+                    generateLabel: 'プラン生成:',
+                    generated: 'プラン生成済み',
+                    generating: 'プランを生成中...',
+                    generatePlan: 'プランを生成',
+                    openFile: 'ファイルを開く',
+                    loadChannelsFailed: 'チャンネルの読み込みに失敗しました',
+                    loadModelsFailed: 'モデルの読み込みに失敗しました',
+                    generatePlanFailed: 'プランの生成に失敗しました',
+                    openFileFailed: 'ファイルを開くのに失敗しました'
                 }
             },
             attachment: {

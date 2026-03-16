@@ -33,6 +33,7 @@ export * from './media';
 export * from './lsp';
 export * from './subagents';
 export * from './todo';
+export * from './design';
 export * from './plan';
 export * from './history';
 
@@ -67,6 +68,7 @@ export function getAllTools(): Tool[] {
     const { getLspToolRegistrations } = require('./lsp');
     const { getSubAgentsToolRegistrations } = require('./subagents');
     const { getTodoToolRegistrations } = require('./todo');
+    const { getDesignToolRegistrations } = require('./design');
     const { getPlanToolRegistrations } = require('./plan');
     const { getHistoryToolRegistrations } = require('./history');
     
@@ -77,6 +79,7 @@ export function getAllTools(): Tool[] {
         ...getMediaToolRegistrations(),
         ...getLspToolRegistrations(),
         ...getTodoToolRegistrations(),
+        ...getDesignToolRegistrations(),
         ...getPlanToolRegistrations(),
         ...getHistoryToolRegistrations()
     ];

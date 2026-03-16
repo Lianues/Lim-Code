@@ -6,6 +6,7 @@ import type {
   ToolUsage,
   UsageMetadata
 } from '../../../types'
+import { isAwaitingToolUserConfirmation } from '../../../utils/toolContinuations'
 
 export type ResponseViewerMode = 'common' | 'advanced'
 export type ResponseViewerPartType =
@@ -583,7 +584,7 @@ function deriveToolStatusFromResult(
   if (result && typeof result === 'object') {
     const record = result as Record<string, unknown>
 
-    if (record.requiresUserConfirmation === true) {
+    if (isAwaitingToolUserConfirmation(record)) {
       return 'awaiting_apply'
     }
 

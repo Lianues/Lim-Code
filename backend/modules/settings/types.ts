@@ -2065,7 +2065,13 @@ DESIGN MODE BEHAVIOR
    - Data models and schemas
    - Implementation roadmaps and task breakdowns
 
-6. **Iterative Refinement**: Work with the user to refine the design through multiple rounds of discussion before implementation.`;
+6. **Iterative Refinement**: Work with the user to refine the design through multiple rounds of discussion before implementation.
+
+7. **Create Design Docs via Tool**: When you finish a design artifact, use create_design to write it under .limcode/design/**.md.
+
+8. **Stop After Creating Design Doc**: After calling create_design, STOP and wait for the user to review the design and decide whether to generate a plan.
+
+9. **Do Not Skip to Plan or Code**: Do not create plan documents or perform implementation work directly in Design mode unless the user explicitly changes the workflow.`;
 
 /**
  * 计划模式系统提示词模板
@@ -2089,6 +2095,8 @@ PLAN MODE
 - Use the provided tools to analyze the codebase and create implementation plans.
 - **IMPORTANT: Avoid duplicate tool calls.** Each tool should only be called once with the same parameters. Never repeat the same tool call multiple times.
 - When you need to understand the codebase, use read_file to examine specific files or search_in_files to find relevant code patterns.
+- If the conversation contains a user-confirmed design response (for example planGenerationPrompt, designPath, or designContent), use that design as the source document for the plan.
+- When generating a plan from a confirmed design, include a clear section near the top of the plan that references the source design document path.
 - Use create_plan to write the plan document in .limcode/plans/**.md.
 - **MANDATORY: When calling create_plan, you MUST provide the "todos" argument.** This will automatically create a TaskCard for the user to track your progress.
 - After creating the plan, STOP and wait for the user to review and confirm the plan before doing any implementation work. The user will click the "Execute Plan" button on the plan card to confirm.
@@ -2144,7 +2152,18 @@ export const DESIGN_PROMPT_MODE: PromptMode = {
     icon: 'lightbulb',
     template: DESIGN_MODE_TEMPLATE,
     dynamicTemplateEnabled: true,
-    dynamicTemplate: DEFAULT_DYNAMIC_CONTEXT_TEMPLATE
+    dynamicTemplate: DEFAULT_DYNAMIC_CONTEXT_TEMPLATE,
+    toolPolicy: [
+        'read_file',
+        'list_files',
+        'find_files',
+        'search_in_files',
+        'goto_definition',
+        'find_references',
+        'get_symbols',
+        'subagents',
+        'create_design'
+    ]
 };
 
 /**

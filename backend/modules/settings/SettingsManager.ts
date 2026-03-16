@@ -1609,9 +1609,16 @@ export class SettingsManager {
         const modes = { ...config.modes };
         let needsUpdate = false;
         
-        // 补齐 design 模式
+        // 补齐或更新 design 模式（强制同步 toolPolicy）
         if (!modes[DESIGN_MODE_ID]) {
             modes[DESIGN_MODE_ID] = DESIGN_PROMPT_MODE;
+            needsUpdate = true;
+        } else if (!this.arraysEqual(modes[DESIGN_MODE_ID].toolPolicy, DESIGN_PROMPT_MODE.toolPolicy)) {
+            // 已存在但 toolPolicy 不一致，强制更新
+            modes[DESIGN_MODE_ID] = {
+                ...modes[DESIGN_MODE_ID],
+                toolPolicy: DESIGN_PROMPT_MODE.toolPolicy
+            };
             needsUpdate = true;
         }
         

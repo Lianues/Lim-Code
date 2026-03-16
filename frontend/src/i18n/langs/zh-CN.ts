@@ -526,6 +526,10 @@ const zhCN: LanguageMessages = {
                     label: '创建计划',
                     fallbackTitle: '计划'
                 },
+                createDesign: {
+                    label: '创建设计',
+                    fallbackTitle: '设计'
+                },
                 todoPanel: {
                     title: 'TODO 列表',
                     modePlan: '计划',
@@ -558,6 +562,18 @@ const zhCN: LanguageMessages = {
                     executePlanFailed: '执行计划失败',
                     openFileFailed: '打开文件失败',
                     promptPrefix: '请按照以下计划执行：\n\n{plan}'
+                },
+                designCard: {
+                    title: '设计',
+                    generateLabel: '生成计划：',
+                    generated: '已生成计划',
+                    generating: '生成计划中...',
+                    generatePlan: '生成计划',
+                    openFile: '打开文件',
+                    loadChannelsFailed: '加载渠道失败',
+                    loadModelsFailed: '加载模型失败',
+                    generatePlanFailed: '生成计划失败',
+                    openFileFailed: '打开文件失败'
                 }
             },
             attachment: {

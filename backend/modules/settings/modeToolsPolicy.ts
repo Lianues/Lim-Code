@@ -4,23 +4,16 @@
  */
 
 /**
- * 检查路径是否允许在 Plan 模式下写入
- * 
- * 允许的路径：
- * - .limcode/plans/xxx.plan.md
- * - .limcode/plans/sub/xxx.md
- * 
- * 拒绝的路径：
- * - 不在 .limcode/plans/ 下的路径
+ * 检查路径是否允许在指定 LimCode 文档目录下写入
+ *
+ * 通用拒绝规则：
+ * - 不在指定目录下的路径
  * - 绝对路径
  * - 包含路径穿越（..）的路径
- * - 非 .md 或 .plan.md 扩展名的文件
+ * - 非 .md 扩展名的文件
  * - 空字符串或目录路径
- * 
- * @param path 要检查的路径
- * @returns 如果路径允许则返回 true，否则返回 false
  */
-export function isPlanPathAllowed(path: string): boolean {
+function isScopedMarkdownPathAllowed(path: string, scopeRoot: string): boolean {
     // 空字符串不允许
     if (!path || path.length === 0) {
         return false;
@@ -39,8 +32,8 @@ export function isPlanPathAllowed(path: string): boolean {
         return false;
     }
 
-    // 必须以 .limcode/plans/ 开头
-    if (!normalizedPath.startsWith('.limcode/plans/')) {
+    // 必须以指定目录开头
+    if (!normalizedPath.startsWith(scopeRoot)) {
         return false;
     }
 
@@ -49,23 +42,56 @@ export function isPlanPathAllowed(path: string): boolean {
         return false;
     }
 
-    // 必须是一个文件路径（不能只是 .limcode/plans/）
-    const relativePath = normalizedPath.substring('.limcode/plans/'.length);
+    // 必须是一个文件路径（不能只是目录本身）
+    const relativePath = normalizedPath.substring(scopeRoot.length);
     if (!relativePath || relativePath.length === 0) {
         return false;
     }
 
-    // 检查文件扩展名：必须是 .md 或 .plan.md
-    if (relativePath.endsWith('.plan.md')) {
-        return true;
-    }
-    
-    if (relativePath.endsWith('.md')) {
-        return true;
-    }
+    // 仅允许 Markdown 文件
+    return relativePath.endsWith('.md');
+}
 
-    // 其他扩展名或没有扩展名都不允许
-    return false;
+/**
+ * 检查路径是否允许在 Plan 模式下写入
+ * 
+ * 允许的路径：
+ * - .limcode/plans/xxx.plan.md
+ * - .limcode/plans/sub/xxx.md
+ * 
+ * 拒绝的路径：
+ * - 不在 .limcode/plans/ 下的路径
+ * - 绝对路径
+ * - 包含路径穿越（..）的路径
+ * - 非 .md 或 .plan.md 扩展名的文件
+ * - 空字符串或目录路径
+ * 
+ * @param path 要检查的路径
+ * @returns 如果路径允许则返回 true，否则返回 false
+ */
+export function isPlanPathAllowed(path: string): boolean {
+    return isScopedMarkdownPathAllowed(path, '.limcode/plans/');
+}
+
+/**
+ * 检查路径是否允许在 Design 模式下写入
+ *
+ * 允许的路径：
+ * - .limcode/design/xxx.md
+ * - .limcode/design/sub/xxx.md
+ *
+ * 拒绝的路径：
+ * - 不在 .limcode/design/ 下的路径
+ * - 绝对路径
+ * - 包含路径穿越（..）的路径
+ * - 非 .md 扩展名的文件
+ * - 空字符串或目录路径
+ *
+ * @param path 要检查的路径
+ * @returns 如果路径允许则返回 true，否则返回 false
+ */
+export function isDesignPathAllowed(path: string): boolean {
+    return isScopedMarkdownPathAllowed(path, '.limcode/design/');
 }
 
 /**

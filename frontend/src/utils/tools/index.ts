@@ -43,6 +43,9 @@ import './subagents/subagents'
 import './todo/todo_write'
 import './todo/todo_update'
 
+// Design 工具
+import './design/create_design'
+
 // Plan 工具
 import './plan/create_plan'
 

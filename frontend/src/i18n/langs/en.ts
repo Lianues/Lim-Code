@@ -526,6 +526,10 @@ const en: LanguageMessages = {
                     label: 'Create Plan',
                     fallbackTitle: 'Plan'
                 },
+                createDesign: {
+                    label: 'Create Design',
+                    fallbackTitle: 'Design'
+                },
                 todoPanel: {
                     title: 'TODO List',
                     modePlan: 'plan',
@@ -558,6 +562,18 @@ const en: LanguageMessages = {
                     executePlanFailed: 'Failed to execute plan',
                     openFileFailed: 'Failed to open file',
                     promptPrefix: 'Please execute the following plan:\n\n{plan}'
+                },
+                designCard: {
+                    title: 'Design',
+                    generateLabel: 'Plan:',
+                    generated: 'Plan Generated',
+                    generating: 'Generating Plan...',
+                    generatePlan: 'Generate Plan',
+                    openFile: 'Open File',
+                    loadChannelsFailed: 'Failed to load channels',
+                    loadModelsFailed: 'Failed to load models',
+                    generatePlanFailed: 'Failed to generate plan',
+                    openFileFailed: 'Failed to open file'
                 }
             },
             attachment: {

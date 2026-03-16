@@ -1,8 +1,8 @@
 <script setup lang="ts">
 /**
- * MessageTaskCards - 在消息正文里显示 Plan 卡片
- * 
- * 风格和 write_file 工具面板保持一致
+ * MessageTaskCards - 在消息正文里显示 Design / Plan 文档卡片
+ *
+ * 第一版复用现有 Plan 卡片结构，同时承载 design 与 plan 的文档交互。
  */
 import { computed, ref, onMounted, watch } from 'vue'
 import { sendToExtension, loadState, saveState } from '@/utils/vscode'
@@ -12,7 +12,8 @@ import ModeSelector from '../input/ModeSelector.vue'
 import ChannelSelector from '../input/ChannelSelector.vue'
 import ModelSelector from '../input/ModelSelector.vue'
 import type { PromptMode, ChannelOption, ModelInfo } from '../input/types'
-import { isPlanDocPath } from '../../utils/taskCards'
+import { isDesignDocPath, isPlanDocPath } from '../../utils/taskCards'
+import { getPlanExecutionPrompt, getPlanGenerationPrompt } from '../../utils/toolContinuations'
 import { generateId } from '../../utils/format'
 import { useChatStore, useSettingsStore } from '@/stores'
 import * as configService from '@/services/config'
@@ -29,32 +30,36 @@ const settingsStore = useSettingsStore()
 const { t } = useI18n()
 
 type CardStatus = 'pending' | 'running' | 'success' | 'error'
+type TaskCardKind = 'design' | 'plan'
 
-type PlanEntry = {
+type TaskEntry = {
+  kind: TaskCardKind
   path: string
   content: string
   success?: boolean
-  executionPrompt?: string
+  continuationPrompt?: string
 }
 
-type PlanCardItem = {
+type TaskCardItem = {
   key: string
+  kind: TaskCardKind
   status: CardStatus
   title: string
   path: string
   content: string
-  badge?: string
   toolId: string
   toolName: string
-  isExecuted: boolean
+  isActionCompleted: boolean
 }
 
 const PLAN_EXECUTION_MODE_STATE_KEY = 'planExecution.preferredModeId'
+const PLAN_GENERATION_MODE_STATE_KEY = 'planGeneration.preferredModeId'
 
 // ============ 渠道选择相关 ============
 const channelConfigs = ref<any[]>([])
 const selectedChannelId = ref('')
-const selectedModeId = ref('code')
+const selectedPlanExecutionModeId = ref('code')
+const selectedPlanGenerationModeId = ref('plan')
 const selectedModelId = ref('')
 const modelOptions = ref<ModelInfo[]>([])
 const isLoadingChannels = ref(false)
@@ -62,8 +67,9 @@ const isLoadingModes = ref(false)
 const promptModeOptions = ref<PromptMode[]>([])
 const isLoadingModels = ref(false)
 const isExecutingPlan = ref(false)
-const expandedPlans = ref<Set<string>>(new Set())
-const autoOpenedPlanCardKeys = ref<Set<string>>(new Set())
+const isGeneratingPlan = ref(false)
+const expandedCards = ref<Set<string>>(new Set())
+const autoOpenedCardKeys = ref<Set<string>>(new Set())
 
 const channelOptions = computed<ChannelOption[]>(() =>
   channelConfigs.value
@@ -76,28 +82,47 @@ const channelOptions = computed<ChannelOption[]>(() =>
     }))
 )
 
+const isAnyTaskActionRunning = computed(() => isExecutingPlan.value || isGeneratingPlan.value)
 
 function openModeSettings() {
   settingsStore.showSettings('prompt')
 }
 
-function resolvePreferredModeId(modes: PromptMode[], currentModeId?: string): string {
-  const persisted = String(loadState<string>(PLAN_EXECUTION_MODE_STATE_KEY, '') || '').trim()
+function resolvePreferredModeId(
+  modes: PromptMode[],
+  storageKey: string,
+  fallbackModeId: string,
+  currentModeId?: string
+): string {
+  const persisted = String(loadState<string>(storageKey, '') || '').trim()
   if (persisted && modes.some(mode => mode.id === persisted)) return persisted
 
-  if (modes.some(mode => mode.id === 'code')) return 'code'
+  if (fallbackModeId && modes.some(mode => mode.id === fallbackModeId)) return fallbackModeId
 
   const current = String(currentModeId || '').trim()
   if (current && modes.some(mode => mode.id === current)) return current
 
-  return modes[0]?.id || 'code'
+  return modes[0]?.id || fallbackModeId || 'code'
 }
 
-function handleModeChange(modeId: string) {
+function getModeIdForKind(kind: TaskCardKind): string {
+  return kind === 'plan'
+    ? selectedPlanExecutionModeId.value
+    : selectedPlanGenerationModeId.value
+}
+
+function handleModeChange(kind: TaskCardKind, modeId: string) {
   const normalized = String(modeId || '').trim()
   if (!normalized) return
-  selectedModeId.value = normalized
-  saveState(PLAN_EXECUTION_MODE_STATE_KEY, normalized)
+
+  if (kind === 'plan') {
+    selectedPlanExecutionModeId.value = normalized
+    saveState(PLAN_EXECUTION_MODE_STATE_KEY, normalized)
+    return
+  }
+
+  selectedPlanGenerationModeId.value = normalized
+  saveState(PLAN_GENERATION_MODE_STATE_KEY, normalized)
 }
 
 async function loadPromptModes() {
@@ -107,12 +132,27 @@ async function loadPromptModes() {
     const modes = Array.isArray(result?.modes) ? result.modes : []
     promptModeOptions.value = modes
 
-    const preferredModeId = resolvePreferredModeId(modes, result?.currentModeId)
-    selectedModeId.value = preferredModeId
-    saveState(PLAN_EXECUTION_MODE_STATE_KEY, preferredModeId)
+    const preferredExecutionModeId = resolvePreferredModeId(
+      modes,
+      PLAN_EXECUTION_MODE_STATE_KEY,
+      'code',
+      result?.currentModeId
+    )
+    const preferredGenerationModeId = resolvePreferredModeId(
+      modes,
+      PLAN_GENERATION_MODE_STATE_KEY,
+      'plan',
+      result?.currentModeId
+    )
+
+    selectedPlanExecutionModeId.value = preferredExecutionModeId
+    selectedPlanGenerationModeId.value = preferredGenerationModeId
+    saveState(PLAN_EXECUTION_MODE_STATE_KEY, preferredExecutionModeId)
+    saveState(PLAN_GENERATION_MODE_STATE_KEY, preferredGenerationModeId)
   } catch (error) {
-    console.error('[plan] Failed to load prompt modes for plan execution:', error)
-    selectedModeId.value = 'code'
+    console.error('[task-cards] Failed to load prompt modes:', error)
+    selectedPlanExecutionModeId.value = 'code'
+    selectedPlanGenerationModeId.value = 'plan'
   } finally {
     isLoadingModes.value = false
   }
@@ -181,19 +221,50 @@ async function loadModelsForChannel(configId: string) {
   }
 }
 
-function togglePlanExpand(key: string) {
-  if (expandedPlans.value.has(key)) {
-    expandedPlans.value.delete(key)
+function toggleCardExpand(key: string) {
+  if (expandedCards.value.has(key)) {
+    expandedCards.value.delete(key)
   } else {
-    expandedPlans.value.add(key)
+    expandedCards.value.add(key)
   }
 }
 
-function isPlanExpanded(key: string): boolean {
-  return expandedPlans.value.has(key)
+function isCardExpanded(key: string): boolean {
+  return expandedCards.value.has(key)
 }
 
-async function openPlanFile(card: PlanCardItem) {
+function getCreateFallbackTitle(kind: TaskCardKind): string {
+  return kind === 'plan'
+    ? t('components.message.tool.createPlan.fallbackTitle')
+    : t('components.message.tool.createDesign.fallbackTitle')
+}
+
+function getDocumentTitle(docContent: string, docPath: string, kind: TaskCardKind): string {
+  const m = (docContent || '').match(/^\s*#\s+(.+)\s*$/m)
+  if (m && m[1] && m[1].trim()) return m[1].trim()
+
+  if (docPath) {
+    const parts = docPath.replace(/\\/g, '/').split('/')
+    const file = parts[parts.length - 1] || docPath
+    return file.replace(/\.md$/i, '') || getCreateFallbackTitle(kind)
+  }
+
+  return getCreateFallbackTitle(kind)
+}
+
+function getOpenFileLabel(kind: TaskCardKind): string {
+  return kind === 'plan'
+    ? t('components.message.tool.planCard.openFile')
+    : t('components.message.tool.designCard.openFile')
+}
+
+function getOpenFileFailedMessage(kind: TaskCardKind): string {
+  return kind === 'plan'
+    ? t('components.message.tool.planCard.openFileFailed')
+    : t('components.message.tool.designCard.openFileFailed')
+}
+
+async function openDocFile(card: TaskCardItem) {
   if (!card?.path) return
   try {
     await sendToExtension('openWorkspaceFileAt', {
@@ -202,121 +273,218 @@ async function openPlanFile(card: PlanCardItem) {
       preview: false
     })
   } catch (error) {
-    console.error(t('components.message.tool.planCard.openFileFailed'), error)
+    console.error(getOpenFileFailedMessage(card.kind), error)
   }
 }
 
-function getPlanTitle(planContent: string, planPath?: string): string {
-  const m = (planContent || '').match(/^\s*#\s+(.+)\s*$/m)
-  if (m && m[1] && m[1].trim()) return m[1].trim()
-
-  if (planPath) {
-    const parts = planPath.replace(/\\/g, '/').split('/')
-    const file = parts[parts.length - 1] || planPath
-    return file.replace(/\.md$/i, '') || t('components.message.tool.planCard.title')
-  }
-
-  return t('components.message.tool.planCard.title')
-}
-
-async function executePlan(card: PlanCardItem) {
-  if (isExecutingPlan.value || card.isExecuted || !card.content.trim()) return
-  isExecutingPlan.value = true
-  let latestPlanContent = card.content
-  
+async function withSelectedChannel<T>(runner: () => Promise<T>): Promise<T> {
   const originalConfigId = chatStore.configId
-  const switchedConfig = !!selectedChannelId.value && selectedChannelId.value !== originalConfigId
+  const nextConfigId = selectedChannelId.value
+  const switchedConfig = !!nextConfigId && nextConfigId !== originalConfigId
 
   try {
-    // one-off：仅本次执行使用所选渠道，不永久切换当前渠道
+    // one-off：仅本次操作使用所选渠道，不永久切换当前渠道
     if (switchedConfig) {
-      chatStore.setConfigId(selectedChannelId.value)
-    }
-    
-    // 后端对比计划文件内容，返回确认/修改 prompt
-    const confirmResult = await sendToExtension<{
-      success: boolean
-      prompt: string
-      planContent: string
-      todos?: Array<{
-        id: string
-        content: string
-        status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
-      }>
-    }>('plan.confirmExecution', {
-      path: card.path,
-      originalContent: card.content,
-      conversationId: chatStore.currentConversationId
-    })
-
-    const prompt = confirmResult.prompt
-    latestPlanContent = confirmResult.planContent || card.content
-    const todosFromPlan = Array.isArray(confirmResult.todos) ? confirmResult.todos : []
-
-
-    // 确认执行后，切换到用户选择的模式，确保后续请求按目标模式运行
-    try {
-      const targetModeId = String(selectedModeId.value || 'code').trim() || 'code'
-      await chatStore.setCurrentPromptModeId(targetModeId)
-      saveState(PLAN_EXECUTION_MODE_STATE_KEY, targetModeId)
-      // InputArea 现在直接读取 chatStore.currentPromptModeId，不需要手动触发刷新
-    } catch (modeError) {
-      // 模式切换失败不阻塞执行
-      console.error('[plan] Failed to switch prompt mode before execution:', modeError)
+      chatStore.setConfigId(nextConfigId)
     }
 
-    // 启动 Build 顶部卡片（Cursor-like）
-    await chatStore.setActiveBuild({
-      id: generateId(),
-      conversationId: chatStore.currentConversationId || '',
-      title: getPlanTitle(latestPlanContent, card.path),
-      planContent: latestPlanContent,
-      planPath: card.path,
-      channelId: selectedChannelId.value || undefined,
-      modelId: selectedModelId.value || undefined,
-      startedAt: Date.now(),
-      status: 'running'
-    })
-
-    // 不创建新的可见 user 消息：把确认信息追加到 create_plan 的 functionResponse 字段里再继续对话
-    await chatStore.sendMessage('', undefined, {
-      modelOverride: selectedModelId.value || undefined,
-      hidden: {
-        functionResponse: {
-          id: card.toolId,
-          name: card.toolName,
-          response: {
-            planExecutionPrompt: prompt,
-            todos: todosFromPlan
-          }
-        }
-      }
-    })
-  } catch (error) {
-    console.error(t('components.message.tool.planCard.executePlanFailed'), error)
+    return await runner()
   } finally {
     if (switchedConfig) {
       chatStore.setConfigId(originalConfigId)
     }
+  }
+}
+
+function isCardActionRunning(kind: TaskCardKind): boolean {
+  return kind === 'plan' ? isExecutingPlan.value : isGeneratingPlan.value
+}
+
+function getActionLabel(kind: TaskCardKind): string {
+  return kind === 'plan'
+    ? t('components.message.tool.planCard.executeLabel')
+    : t('components.message.tool.designCard.generateLabel')
+}
+
+function getActionText(card: TaskCardItem): string {
+  if (card.kind === 'plan') {
+    if (card.isActionCompleted) return t('components.message.tool.planCard.executed')
+    if (isExecutingPlan.value) return t('components.message.tool.planCard.executing')
+    return t('components.message.tool.planCard.executePlan')
+  }
+
+  if (card.isActionCompleted) return t('components.message.tool.designCard.generated')
+  if (isGeneratingPlan.value) return t('components.message.tool.designCard.generating')
+  return t('components.message.tool.designCard.generatePlan')
+}
+
+function getActionIconClass(card: TaskCardItem): string {
+  if (card.isActionCompleted) return 'codicon-check'
+  if (isCardActionRunning(card.kind)) return 'codicon-loading codicon-modifier-spin'
+  return card.kind === 'plan' ? 'codicon-play' : 'codicon-arrow-right'
+}
+
+function isActionDisabled(card: TaskCardItem): boolean {
+  const modeId = getModeIdForKind(card.kind)
+  return (
+    isAnyTaskActionRunning.value ||
+    card.isActionCompleted ||
+    !modeId ||
+    !selectedChannelId.value ||
+    !selectedModelId.value
+  )
+}
+
+async function executePlan(card: TaskCardItem) {
+  if (card.kind !== 'plan') return
+  if (isExecutingPlan.value || card.isActionCompleted || !card.content.trim()) return
+
+  isExecutingPlan.value = true
+  try {
+    await withSelectedChannel(async () => {
+      const confirmResult = await sendToExtension<{
+        success: boolean
+        prompt: string
+        planContent: string
+        todos?: Array<{
+          id: string
+          content: string
+          status: 'pending' | 'in_progress' | 'completed' | 'cancelled'
+        }>
+      }>('plan.confirmExecution', {
+        path: card.path,
+        originalContent: card.content,
+        conversationId: chatStore.currentConversationId
+      })
+
+      const prompt = String(confirmResult?.prompt || '')
+      const latestPlanContent = confirmResult?.planContent || card.content
+      const todosFromPlan = Array.isArray(confirmResult?.todos) ? confirmResult.todos : []
+
+      // 确认执行后，切换到用户选择的模式，确保后续请求按目标模式运行
+      try {
+        const targetModeId = String(selectedPlanExecutionModeId.value || 'code').trim() || 'code'
+        await chatStore.setCurrentPromptModeId(targetModeId)
+        saveState(PLAN_EXECUTION_MODE_STATE_KEY, targetModeId)
+      } catch (modeError) {
+        // 模式切换失败不阻塞执行
+        console.error('[plan] Failed to switch prompt mode before execution:', modeError)
+      }
+
+      // 启动 Build 顶部卡片（Cursor-like）
+      await chatStore.setActiveBuild({
+        id: generateId(),
+        conversationId: chatStore.currentConversationId || '',
+        title: getDocumentTitle(latestPlanContent, card.path, 'plan'),
+        planContent: latestPlanContent,
+        planPath: card.path,
+        channelId: selectedChannelId.value || undefined,
+        modelId: selectedModelId.value || undefined,
+        startedAt: Date.now(),
+        status: 'running'
+      })
+
+      // 不创建新的可见 user 消息：把确认信息追加到对应工具的 functionResponse 字段里再继续对话
+      await chatStore.sendMessage('', undefined, {
+        modelOverride: selectedModelId.value || undefined,
+        hidden: {
+          functionResponse: {
+            id: card.toolId,
+            name: card.toolName,
+            response: {
+              planExecutionPrompt: prompt,
+              todos: todosFromPlan
+            }
+          }
+        }
+      })
+    })
+  } catch (error) {
+    console.error(t('components.message.tool.planCard.executePlanFailed'), error)
+  } finally {
     isExecutingPlan.value = false
   }
 }
 
-async function autoOpenPendingPlanTabs(cards: PlanCardItem[]) {
+async function generatePlan(card: TaskCardItem) {
+  if (card.kind !== 'design') return
+  if (isGeneratingPlan.value || card.isActionCompleted || !card.content.trim()) return
+
+  isGeneratingPlan.value = true
+  try {
+    await withSelectedChannel(async () => {
+      const confirmResult = await sendToExtension<{
+        success: boolean
+        prompt: string
+        designContent: string
+        designPath: string
+      }>('design.confirmPlanGeneration', {
+        path: card.path,
+        originalContent: card.content,
+        conversationId: chatStore.currentConversationId
+      })
+
+      const prompt = String(confirmResult?.prompt || '')
+      const latestDesignContent = confirmResult?.designContent || card.content
+      const latestDesignPath = String(confirmResult?.designPath || card.path || '')
+
+      // 生成计划前，切换到用户选择的目标模式，默认优先 plan
+      try {
+        const targetModeId = String(selectedPlanGenerationModeId.value || 'plan').trim() || 'plan'
+        await chatStore.setCurrentPromptModeId(targetModeId)
+        saveState(PLAN_GENERATION_MODE_STATE_KEY, targetModeId)
+      } catch (modeError) {
+        // 模式切换失败不阻塞继续对话
+        console.error('[design] Failed to switch prompt mode before plan generation:', modeError)
+      }
+
+      // 不创建新的可见 user 消息：把确认信息追加到对应工具的 functionResponse 字段里再继续对话
+      await chatStore.sendMessage('', undefined, {
+        modelOverride: selectedModelId.value || undefined,
+        hidden: {
+          functionResponse: {
+            id: card.toolId,
+            name: card.toolName,
+            response: {
+              planGenerationPrompt: prompt,
+              designPath: latestDesignPath,
+              designContent: latestDesignContent
+            }
+          }
+        }
+      })
+    })
+  } catch (error) {
+    console.error(t('components.message.tool.designCard.generatePlanFailed'), error)
+  } finally {
+    isGeneratingPlan.value = false
+  }
+}
+
+function handleCardAction(card: TaskCardItem) {
+  if (card.kind === 'plan') {
+    void executePlan(card)
+    return
+  }
+
+  void generatePlan(card)
+}
+
+async function autoOpenPendingCardTabs(cards: TaskCardItem[]) {
   for (const card of cards) {
     if (!card?.path) continue
-    if (card.isExecuted) continue
+    if (card.isActionCompleted) continue
     if (card.status === 'error') continue
-    if (autoOpenedPlanCardKeys.value.has(card.key)) continue
+    if (autoOpenedCardKeys.value.has(card.key)) continue
 
-    autoOpenedPlanCardKeys.value.add(card.key)
+    autoOpenedCardKeys.value.add(card.key)
     try {
       await sendToExtension('openWorkspaceFileAt', {
         path: card.path,
         highlight: false
       })
     } catch (error) {
-      console.error(t('components.message.tool.planCard.executePlanFailed'), error)
+      console.error(getOpenFileFailedMessage(card.kind), error)
     }
   }
 }
@@ -324,7 +492,7 @@ async function autoOpenPendingPlanTabs(cards: PlanCardItem[]) {
 onMounted(() => {
   loadChannels()
   void loadPromptModes()
-  void autoOpenPendingPlanTabs(planCards.value)
+  void autoOpenPendingCardTabs(taskCards.value)
 })
 
 watch(
@@ -336,7 +504,6 @@ watch(
   }
 )
 
-
 // ============ 工具状态映射 ============
 function getToolResult(tool: ToolUsage): any {
   const fromTool = tool.result && typeof tool.result === 'object'
@@ -347,7 +514,7 @@ function getToolResult(tool: ToolUsage): any {
     ? chatStore.getToolResponseById(tool.id) as any
     : undefined
 
-  // 优先融合 functionResponse（包含 reload 后的真实结果、以及执行计划确认字段）
+  // 优先融合 functionResponse（包含 reload 后的真实结果、以及后续确认字段）
   if (fromTool && fromResponse && typeof fromResponse === 'object') {
     return { ...fromTool, ...fromResponse }
   }
@@ -369,8 +536,8 @@ function mapToolStatus(tool: ToolUsage): CardStatus {
   return 'pending'
 }
 
-// ============ Plan 数据提取 ============
-function getWriteFilePlanEntries(tool: ToolUsage): PlanEntry[] {
+// ============ 文档数据提取 ============
+function getWriteFileTaskEntries(tool: ToolUsage): TaskEntry[] {
   const args = tool.args as any
   const files = Array.isArray(args?.files) ? args.files : []
 
@@ -383,18 +550,41 @@ function getWriteFilePlanEntries(tool: ToolUsage): PlanEntry[] {
     }
   }
 
-  const entries: PlanEntry[] = []
+  const planExecutionPrompt = getPlanExecutionPrompt(result)
+  const planGenerationPrompt = getPlanGenerationPrompt(result)
+
+  const entries: TaskEntry[] = []
   for (const f of files) {
     const path = f?.path
     const content = f?.content
     if (typeof path !== 'string' || typeof content !== 'string') continue
-    if (!isPlanDocPath(path)) continue
-    entries.push({ path, content, success: successByPath.get(path) })
+
+    if (isDesignDocPath(path)) {
+      entries.push({
+        kind: 'design',
+        path,
+        content,
+        success: successByPath.get(path),
+        continuationPrompt: planGenerationPrompt || undefined
+      })
+      continue
+    }
+
+    if (isPlanDocPath(path)) {
+      entries.push({
+        kind: 'plan',
+        path,
+        content,
+        success: successByPath.get(path),
+        continuationPrompt: planExecutionPrompt || undefined
+      })
+    }
   }
+
   return entries
 }
 
-function getCreatePlanEntries(tool: ToolUsage): PlanEntry[] {
+function getCreatePlanEntries(tool: ToolUsage): TaskEntry[] {
   const args = tool.args as any
   const result = getToolResult(tool)
 
@@ -405,139 +595,173 @@ function getCreatePlanEntries(tool: ToolUsage): PlanEntry[] {
   if (!isPlanDocPath(path)) return []
 
   const success = typeof result?.success === 'boolean' ? result.success : undefined
-  const executionPrompt = typeof result?.planExecutionPrompt === 'string' && result.planExecutionPrompt.trim()
-    ? result.planExecutionPrompt
-    : undefined
-  return [{ path, content, success, executionPrompt }]
+  const continuationPrompt = getPlanExecutionPrompt(result) || undefined
+
+  return [{
+    kind: 'plan',
+    path,
+    content,
+    success,
+    continuationPrompt
+  }]
 }
 
-const planCards = computed<PlanCardItem[]>(() => {
-  const cards: PlanCardItem[] = []
+function getCreateDesignEntries(tool: ToolUsage): TaskEntry[] {
+  const args = tool.args as any
+  const result = getToolResult(tool)
+
+  const path = (result?.data?.path || args?.path) as string | undefined
+  const content = (result?.data?.content || args?.design) as string | undefined
+
+  if (typeof path !== 'string' || typeof content !== 'string') return []
+  if (!isDesignDocPath(path)) return []
+
+  const success = typeof result?.success === 'boolean' ? result.success : undefined
+  const continuationPrompt = getPlanGenerationPrompt(result) || undefined
+
+  return [{
+    kind: 'design',
+    path,
+    content,
+    success,
+    continuationPrompt
+  }]
+}
+
+function getTaskEntries(tool: ToolUsage): TaskEntry[] {
+  if (tool.name === 'write_file') return getWriteFileTaskEntries(tool)
+  if (tool.name === 'create_plan') return getCreatePlanEntries(tool)
+  if (tool.name === 'create_design') return getCreateDesignEntries(tool)
+  return []
+}
+
+const taskCards = computed<TaskCardItem[]>(() => {
+  const cards: TaskCardItem[] = []
 
   for (const tool of props.tools) {
-    const entries = tool.name === 'write_file'
-      ? getWriteFilePlanEntries(tool)
-      : tool.name === 'create_plan'
-        ? getCreatePlanEntries(tool)
-        : []
+    const entries = getTaskEntries(tool)
     if (entries.length === 0) continue
 
     for (const entry of entries) {
-      const status: CardStatus = entry.executionPrompt
+      const status: CardStatus = entry.continuationPrompt
         ? 'success'
         : typeof entry.success === 'boolean'
-        ? (entry.success ? 'success' : 'error')
-        : mapToolStatus(tool)
+          ? (entry.success ? 'success' : 'error')
+          : mapToolStatus(tool)
 
       cards.push({
-        key: `plan:${tool.id}:${entry.path}`,
+        key: `${entry.kind}:${tool.id}:${entry.path}`,
+        kind: entry.kind,
         status,
-        title: t('components.message.tool.planCard.title'),
+        title: getDocumentTitle(entry.content, entry.path, entry.kind),
         path: entry.path,
         content: entry.content,
-        badge: props.messageModelVersion || '',
         toolId: tool.id,
         toolName: tool.name,
-        isExecuted: !!entry.executionPrompt
+        isActionCompleted: !!entry.continuationPrompt
       })
     }
   }
+
   return cards
 })
 
-
 watch(
-  () => planCards.value,
+  () => taskCards.value,
   (cards) => {
-    void autoOpenPendingPlanTabs(cards)
+    void autoOpenPendingCardTabs(cards)
   }
 )
 
-const hasAny = computed(() => planCards.value.length > 0)
+const hasAny = computed(() => taskCards.value.length > 0)
 </script>
 
 <template>
   <div v-if="hasAny" class="message-taskcards">
-    <!-- Plan 卡片（面板风格） -->
-    <div v-for="c in planCards" :key="c.key" class="plan-panel">
-      <div class="plan-header">
-        <div class="plan-info">
-          <span class="codicon codicon-list-unordered plan-icon"></span>
-          <span class="plan-title">{{ c.title }}</span>
-          <span v-if="c.status === 'success'" class="plan-status success">
+    <div v-for="c in taskCards" :key="c.key" class="task-panel">
+      <div class="task-header">
+        <div class="task-info">
+          <span
+            :class="[
+              'codicon',
+              c.kind === 'plan' ? 'codicon-list-unordered' : 'codicon-lightbulb',
+              'task-icon',
+              c.kind
+            ]"
+          ></span>
+          <span class="task-title">{{ c.title }}</span>
+          <span v-if="c.status === 'success'" class="task-status success">
             <span class="codicon codicon-check"></span>
           </span>
-          <span v-else-if="c.status === 'running'" class="plan-status running">
+          <span v-else-if="c.status === 'running'" class="task-status running">
             <span class="codicon codicon-loading codicon-modifier-spin"></span>
           </span>
-          <span v-else-if="c.status === 'error'" class="plan-status error">
+          <span v-else-if="c.status === 'error'" class="task-status error">
             <span class="codicon codicon-error"></span>
           </span>
         </div>
-        <div class="plan-actions">
+        <div class="task-actions">
           <button
             class="action-btn"
-            :title="t('components.message.tool.planCard.openFile')"
+            :title="getOpenFileLabel(c.kind)"
             :disabled="!c.path"
-            @click="openPlanFile(c)"
+            @click="openDocFile(c)"
           >
             <span class="codicon codicon-go-to-file"></span>
           </button>
           <button
             class="action-btn"
-            :title="isPlanExpanded(c.key) ? t('common.collapse') : t('common.expand')"
-            @click="togglePlanExpand(c.key)"
+            :title="isCardExpanded(c.key) ? t('common.collapse') : t('common.expand')"
+            @click="toggleCardExpand(c.key)"
           >
-            <span :class="['codicon', isPlanExpanded(c.key) ? 'codicon-chevron-up' : 'codicon-chevron-down']"></span>
+            <span :class="['codicon', isCardExpanded(c.key) ? 'codicon-chevron-up' : 'codicon-chevron-down']"></span>
           </button>
         </div>
       </div>
-      
-      <div class="plan-path">{{ c.path }}</div>
-      
-      <div class="plan-content">
-        <CustomScrollbar :max-height="isPlanExpanded(c.key) ? 500 : 200">
-          <div class="plan-preview">
+
+      <div class="task-path">{{ c.path }}</div>
+
+      <div class="task-content">
+        <CustomScrollbar :max-height="isCardExpanded(c.key) ? 500 : 200">
+          <div class="task-preview">
             <MarkdownRenderer :content="c.content" />
           </div>
         </CustomScrollbar>
       </div>
-      
-      <div class="plan-execute">
-        <div class="execute-selector">
-          <span class="execute-label">{{ t('components.message.tool.planCard.executeLabel') }}</span>
+
+      <div class="task-footer">
+        <div class="task-selector">
+          <span class="task-label">{{ getActionLabel(c.kind) }}</span>
           <ModeSelector
-            v-model="selectedModeId"
+            :model-value="getModeIdForKind(c.kind)"
             :options="promptModeOptions"
             :drop-up="true"
-            :disabled="isLoadingModes || isExecutingPlan"
+            :disabled="isLoadingModes || isAnyTaskActionRunning"
             class="mode-select"
-            @update:model-value="handleModeChange"
+            @update:model-value="(value) => handleModeChange(c.kind, value)"
             @open-settings="openModeSettings"
           />
           <ChannelSelector
             v-model="selectedChannelId"
             :options="channelOptions"
-            :disabled="isLoadingChannels || isExecutingPlan"
+            :disabled="isLoadingChannels || isAnyTaskActionRunning"
             class="channel-select"
           />
           <ModelSelector
             v-model="selectedModelId"
             :models="modelOptions"
-            :disabled="isLoadingChannels || isLoadingModels || isExecutingPlan || !selectedChannelId"
+            :disabled="isLoadingChannels || isLoadingModels || isAnyTaskActionRunning || !selectedChannelId"
             class="model-select"
           />
         </div>
         <button
-          class="execute-btn"
-          :class="{ done: c.isExecuted }"
-          :disabled="isExecutingPlan || c.isExecuted || !selectedModeId || !selectedChannelId || !selectedModelId"
-          @click="executePlan(c)"
+          class="task-btn"
+          :class="{ done: c.isActionCompleted }"
+          :disabled="isActionDisabled(c)"
+          @click="handleCardAction(c)"
         >
-          <span v-if="c.isExecuted" class="codicon codicon-check"></span>
-          <span v-else-if="isExecutingPlan" class="codicon codicon-loading codicon-modifier-spin"></span>
-          <span v-else class="codicon codicon-play"></span>
-          <span class="btn-text">{{ c.isExecuted ? t('components.message.tool.planCard.executed') : (isExecutingPlan ? t('components.message.tool.planCard.executing') : t('components.message.tool.planCard.executePlan')) }}</span>
+          <span :class="['codicon', getActionIconClass(c)]"></span>
+          <span class="btn-text">{{ getActionText(c) }}</span>
         </button>
       </div>
     </div>
@@ -552,15 +776,14 @@ const hasAny = computed(() => planCards.value.length > 0)
   margin: 8px 0 10px;
 }
 
-/* ============ Plan 面板（继承 write_file 风格） ============ */
-.plan-panel {
+.task-panel {
   border: 1px solid var(--vscode-editorWidget-border, var(--vscode-panel-border));
   border-radius: var(--radius-sm, 2px);
   overflow: hidden;
   background: var(--vscode-editorWidget-background, var(--vscode-editor-background));
 }
 
-.plan-header {
+.task-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -569,7 +792,7 @@ const hasAny = computed(() => planCards.value.length > 0)
   border-bottom: 1px solid var(--vscode-panel-border);
 }
 
-.plan-info {
+.task-info {
   display: flex;
   align-items: center;
   gap: var(--spacing-xs, 4px);
@@ -577,28 +800,39 @@ const hasAny = computed(() => planCards.value.length > 0)
   min-width: 0;
 }
 
-.plan-icon {
+.task-icon {
   font-size: 12px;
-  color: var(--vscode-charts-blue, #3794ff);
   flex-shrink: 0;
 }
 
-.plan-title {
+.task-icon.plan {
+  color: var(--vscode-charts-blue, #3794ff);
+}
+
+.task-icon.design {
+  color: var(--vscode-charts-yellow, #d7ba7d);
+}
+
+.task-title {
   font-size: 11px;
   font-weight: 600;
   color: var(--vscode-foreground);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.plan-status {
+.task-status {
   font-size: 12px;
   margin-left: var(--spacing-xs, 4px);
 }
 
-.plan-status.success { color: var(--vscode-testing-iconPassed); }
-.plan-status.running { color: var(--vscode-charts-blue); }
-.plan-status.error { color: var(--vscode-testing-iconFailed); }
+.task-status.success { color: var(--vscode-testing-iconPassed); }
+.task-status.running { color: var(--vscode-charts-blue); }
+.task-status.error { color: var(--vscode-testing-iconFailed); }
 
-.plan-actions {
+.task-actions {
   display: flex;
   align-items: center;
   gap: var(--spacing-xs, 4px);
@@ -633,7 +867,7 @@ const hasAny = computed(() => planCards.value.length > 0)
   color: var(--vscode-descriptionForeground);
 }
 
-.plan-path {
+.task-path {
   padding: 2px var(--spacing-sm, 8px);
   font-size: 10px;
   color: var(--vscode-descriptionForeground);
@@ -645,15 +879,15 @@ const hasAny = computed(() => planCards.value.length > 0)
   white-space: nowrap;
 }
 
-.plan-content {
+.task-content {
   background: var(--vscode-editor-background);
 }
 
-.plan-preview {
+.task-preview {
   padding: var(--spacing-sm, 8px);
 }
 
-.plan-execute {
+.task-footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -663,7 +897,7 @@ const hasAny = computed(() => planCards.value.length > 0)
   border-top: 1px solid var(--vscode-panel-border);
 }
 
-.execute-selector {
+.task-selector {
   display: flex;
   align-items: center;
   gap: var(--spacing-xs, 4px);
@@ -671,7 +905,7 @@ const hasAny = computed(() => planCards.value.length > 0)
   min-width: 0;
 }
 
-.execute-label {
+.task-label {
   font-size: 10px;
   color: var(--vscode-descriptionForeground);
   white-space: nowrap;
@@ -694,7 +928,7 @@ const hasAny = computed(() => planCards.value.length > 0)
   max-width: 220px;
 }
 
-.execute-btn {
+.task-btn {
   display: flex;
   align-items: center;
   gap: var(--spacing-xs, 4px);
@@ -709,26 +943,26 @@ const hasAny = computed(() => planCards.value.length > 0)
   white-space: nowrap;
 }
 
-.execute-btn:hover:not(:disabled) {
+.task-btn:hover:not(:disabled) {
   background: var(--vscode-button-hoverBackground);
 }
 
-.execute-btn.done {
+.task-btn.done {
   background: var(--vscode-button-secondaryBackground);
   color: var(--vscode-button-secondaryForeground);
   opacity: 0.85;
 }
 
-.execute-btn.done:hover:not(:disabled) {
+.task-btn.done:hover:not(:disabled) {
   background: var(--vscode-button-secondaryBackground);
 }
 
-.execute-btn:disabled {
+.task-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
-.execute-btn.done:disabled {
+.task-btn.done:disabled {
   background: var(--vscode-button-secondaryBackground);
   color: var(--vscode-button-secondaryForeground);
   opacity: 0.7;
@@ -738,8 +972,7 @@ const hasAny = computed(() => planCards.value.length > 0)
   font-size: 11px;
 }
 
-/* 让 ModelSelector 在 Plan 面板里看起来像输入框（与 ChannelSelector 对齐） */
-.plan-execute :deep(.model-trigger) {
+.task-footer :deep(.model-trigger) {
   background: var(--vscode-input-background);
   color: var(--vscode-input-foreground);
   border: 1px solid var(--vscode-input-border);
@@ -747,16 +980,15 @@ const hasAny = computed(() => planCards.value.length > 0)
   padding: 4px 8px;
 }
 
-.plan-execute :deep(.model-trigger:hover:not(:disabled)) {
+.task-footer :deep(.model-trigger:hover:not(:disabled)) {
   border-color: var(--vscode-focusBorder);
   background: var(--vscode-input-background);
   color: var(--vscode-input-foreground);
 }
 
-.plan-execute :deep(.model-selector.open .model-trigger) {
+.task-footer :deep(.model-selector.open .model-trigger) {
   border-color: var(--vscode-focusBorder);
   background: var(--vscode-input-background);
   color: var(--vscode-input-foreground);
 }
-
 </style>

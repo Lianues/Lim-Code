@@ -45,25 +45,22 @@ export function formatSubAgentRuntimeBadge(meta: SubAgentRuntimeMeta): string {
   return channel || model
 }
 
-/**
- * Whether a path looks like a plan doc under .limcode/plans and ends with .md
- * (supports multi-root prefix like "workspace/.limcode/plans/x.plan.md").
- */
-export function isPlanDocPath(path: string): boolean {
+function isScopedMarkdownDocPath(path: string, scopeRoot: string): boolean {
   const normalized = (path || '').replace(/\\/g, '/')
   const lower = normalized.toLowerCase()
+  const scopeLower = scopeRoot.toLowerCase()
 
   // Must be a markdown file
   if (!lower.endsWith('.md')) return false
 
-  // Keep consistent with backend plan path safety rules
-  // (avoid path traversal patterns showing up as “plan docs” in UI)
+  // Keep consistent with backend path safety rules
+  // (avoid path traversal patterns showing up as document cards in UI)
   if (lower.includes('..')) return false
 
-  // Single-root: .limcode/plans/...
-  if (lower.startsWith('.limcode/plans/')) return true
+  // Single-root: .limcode/.../...md
+  if (lower.startsWith(scopeLower)) return true
 
-  // Multi-root: workspaceName/.limcode/plans/...
+  // Multi-root: workspaceName/.limcode/.../...md
   // Only allow a single path segment as workspace prefix.
   const slashIndex = normalized.indexOf('/')
   if (slashIndex <= 0) return false
@@ -74,7 +71,23 @@ export function isPlanDocPath(path: string): boolean {
   if (workspacePrefix.includes(':')) return false
 
   const rest = normalized.slice(slashIndex + 1)
-  return rest.toLowerCase().startsWith('.limcode/plans/')
+  return rest.toLowerCase().startsWith(scopeLower)
+}
+
+/**
+ * Whether a path looks like a plan doc under .limcode/plans and ends with .md
+ * (supports multi-root prefix like "workspace/.limcode/plans/x.plan.md").
+ */
+export function isPlanDocPath(path: string): boolean {
+  return isScopedMarkdownDocPath(path, '.limcode/plans/')
+}
+
+/**
+ * Whether a path looks like a design doc under .limcode/design and ends with .md
+ * (supports multi-root prefix like "workspace/.limcode/design/x.md").
+ */
+export function isDesignDocPath(path: string): boolean {
+  return isScopedMarkdownDocPath(path, '.limcode/design/')
 }
 
 export interface PlanTodoItem {
@@ -141,4 +154,3 @@ export function extractTodosFromPlan(content: string): PlanTodoItem[] {
 
   return todos
 }
-

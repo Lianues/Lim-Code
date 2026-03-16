@@ -4,6 +4,7 @@
 
 import { computed } from 'vue'
 import type { ChatStoreState, ChatStoreComputed } from './types'
+import { isAwaitingToolUserConfirmation } from '../../utils/toolContinuations'
 
 /**
  * 创建 Chat Store 计算属性
@@ -69,10 +70,10 @@ export function createChatComputed(state: ChatStoreState): ChatStoreComputed {
    * 且不在流式响应状态、没有错误、没有正在重试时，
    * 说明对话被中断，需要显示继续按钮
    *
-   * 例外：如果工具返回了 requiresUserConfirmation（如 create_plan），
-   * 说明工具主动要求暂停循环等待用户操作（如点击"执行计划"），
+   * 例外：如果工具返回了 requiresUserConfirmation（如 create_plan / create_design），
+   * 说明工具主动要求暂停循环等待用户操作（如点击"执行计划"或"生成计划"），
    * 此时不应显示此提示。
-   * 但若该工具已被确认执行（response 中已有 planExecutionPrompt），则恢复显示"继续"提示。
+   * 但若该工具已写入 continuation prompt（如 planExecutionPrompt / planGenerationPrompt），则恢复显示"继续"提示。
    */
   const needsContinueButton = computed(() => {
     if (state.allMessages.value.length === 0) return false
@@ -83,20 +84,11 @@ export function createChatComputed(state: ChatStoreState): ChatStoreComputed {
     const lastMessage = state.allMessages.value[state.allMessages.value.length - 1]
     if (!lastMessage.isFunctionResponse) return false
 
-    // 检查是否有工具要求暂停等待用户确认（如 create_plan 的 requiresUserConfirmation）
-    // 此时计划卡片会显示"执行计划"按钮，不需要额外的"继续"提示
+    // 检查是否有工具要求暂停等待用户确认（如 create_plan / create_design）
+    // 此时卡片会显示对应操作按钮，不需要额外的"继续"提示
     const hasPendingUserConfirmation = lastMessage.parts?.some(p => {
       const response = (p.functionResponse?.response as any)
-      if (!response?.requiresUserConfirmation) return false
-
-      // 如果已经写入执行确认提示（执行计划完成态），说明“确认阶段”已结束；
-      // 这时若对话被中断，应显示底部“继续对话”提示用于恢复。
-      const executedPrompt =
-        typeof response?.planExecutionPrompt === 'string'
-          ? response.planExecutionPrompt.trim()
-          : ''
-
-      return executedPrompt.length === 0
+      return isAwaitingToolUserConfirmation(response)
     })
 
     if (hasPendingUserConfirmation) {

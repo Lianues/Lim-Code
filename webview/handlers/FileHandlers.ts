@@ -1163,6 +1163,60 @@ export const showNotification: MessageHandler = async (data, requestId, ctx) => 
   }
 };
 
+// ========== Design 生成计划确认 ==========
+
+export const designConfirmPlanGeneration: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const { path: designPathRaw, originalContent } = data || {};
+    const designPath = typeof designPathRaw === 'string' ? designPathRaw.trim() : '';
+    const originalText = typeof originalContent === 'string' ? originalContent : '';
+    const confirmedPrompt = 'User confirmed this design. Please create an implementation plan document based on it.';
+    const modifiedPrompt = 'User modified this design and confirmed the latest version. Please create an implementation plan document based on the latest design content.';
+
+    const replyWithDesign = async (prompt: string, designContent: string) => {
+      ctx.sendResponse(requestId, {
+        success: true,
+        prompt,
+        designContent,
+        designPath
+      });
+    };
+
+    if (!designPath) {
+      await replyWithDesign(confirmedPrompt, originalText);
+      return;
+    }
+
+    const { uri } = resolveUriWithInfo(designPath);
+    if (!uri) {
+      await replyWithDesign(confirmedPrompt, originalText);
+      return;
+    }
+
+    try {
+      const bytes = await vscode.workspace.fs.readFile(uri);
+      const currentContent = Buffer.from(bytes).toString('utf-8');
+
+      const currentTrimmed = (currentContent || '').trim();
+      const originalTrimmed = originalText.trim();
+
+      if (currentTrimmed !== originalTrimmed) {
+        await replyWithDesign(modifiedPrompt, currentContent);
+      } else {
+        await replyWithDesign(
+          confirmedPrompt,
+          originalText || currentContent || ''
+        );
+      }
+    } catch {
+      // File read failed, fallback to original content
+      await replyWithDesign(confirmedPrompt, originalText);
+    }
+  } catch (error: any) {
+    ctx.sendError(requestId, 'DESIGN_CONFIRM_PLAN_GENERATION_ERROR', error.message || 'Failed to confirm design plan generation');
+  }
+};
+
 // ========== Plan 执行确认 ==========
 
 export const planConfirmExecution: MessageHandler = async (data, requestId, ctx) => {
@@ -1274,6 +1328,9 @@ export function registerFileHandlers(registry: Map<string, MessageHandler>): voi
   // 通知
   registry.set('showNotification', showNotification);
   
+  // Design 生成计划确认
+  registry.set('design.confirmPlanGeneration', designConfirmPlanGeneration);
+
   // Plan 执行确认
   registry.set('plan.confirmExecution', planConfirmExecution);
 }

@@ -447,6 +447,10 @@ export interface LanguageMessages {
                     label: string;
                     fallbackTitle: string;
                 };
+                createDesign: {
+                    label: string;
+                    fallbackTitle: string;
+                };
                 todoPanel: {
                     title: string;
                     modePlan: string;
@@ -479,6 +483,18 @@ export interface LanguageMessages {
                     executePlanFailed: string;
                     openFileFailed: string;
                     promptPrefix: string;
+                };
+                designCard: {
+                    title: string;
+                    generateLabel: string;
+                    generated: string;
+                    generating: string;
+                    generatePlan: string;
+                    openFile: string;
+                    loadChannelsFailed: string;
+                    loadModelsFailed: string;
+                    generatePlanFailed: string;
+                    openFileFailed: string;
                 };
             };
             attachment: {
