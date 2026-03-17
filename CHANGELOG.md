@@ -3,9 +3,14 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.1.10] - 2026-03-17
+
+### Added
+  - 引入 Review 模式并完善审查文档、工具摘要与前端展示
+
 ## [1.1.9] - 2026-03-17
 
-# Added
+### Added
   - 补齐 design 文档产出与 design 到 plan 联动链路
 
 ### Fix
