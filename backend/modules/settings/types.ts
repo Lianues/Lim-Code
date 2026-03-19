@@ -2202,6 +2202,9 @@ export const DESIGN_PROMPT_MODE: PromptMode = {
         'goto_definition',
         'find_references',
         'get_symbols',
+        'history_search',
+        'todo_write',
+        'todo_update',
         'subagents',
         'create_design'
     ]
@@ -2225,6 +2228,7 @@ export const PLAN_PROMPT_MODE: PromptMode = {
         'goto_definition',
         'find_references',
         'get_symbols',
+        'history_search',
         'todo_write',
         'todo_update',
         'subagents',
@@ -2249,7 +2253,11 @@ export const ASK_PROMPT_MODE: PromptMode = {
         'search_in_files',
         'goto_definition',
         'find_references',
-        'get_symbols'
+        'get_symbols',
+        'history_search',
+        'todo_write',
+        'todo_update',
+        'subagents'
     ]
 };
 
@@ -2271,6 +2279,9 @@ export const REVIEW_PROMPT_MODE: PromptMode = {
         'goto_definition',
         'find_references',
         'get_symbols',
+        'history_search',
+        'todo_write',
+        'todo_update',
         'subagents',
         'create_review',
         'validate_review_document',

@@ -1612,54 +1612,24 @@ export class SettingsManager {
         const modes = { ...config.modes };
         let needsUpdate = false;
         
-        // 补齐或更新 design 模式（强制同步 toolPolicy）
+        // 补齐缺失的内置模式（不覆盖已有配置）
         if (!modes[DESIGN_MODE_ID]) {
             modes[DESIGN_MODE_ID] = DESIGN_PROMPT_MODE;
             needsUpdate = true;
-        } else if (!this.arraysEqual(modes[DESIGN_MODE_ID].toolPolicy, DESIGN_PROMPT_MODE.toolPolicy)) {
-            // 已存在但 toolPolicy 不一致，强制更新
-            modes[DESIGN_MODE_ID] = {
-                ...modes[DESIGN_MODE_ID],
-                toolPolicy: DESIGN_PROMPT_MODE.toolPolicy
-            };
-            needsUpdate = true;
         }
         
-        // 补齐或更新 plan 模式（强制同步 toolPolicy）
         if (!modes['plan']) {
             modes['plan'] = PLAN_PROMPT_MODE;
             needsUpdate = true;
-        } else if (!this.arraysEqual(modes['plan'].toolPolicy, PLAN_PROMPT_MODE.toolPolicy)) {
-            // 已存在但 toolPolicy 不一致，强制更新
-            modes['plan'] = {
-                ...modes['plan'],
-                toolPolicy: PLAN_PROMPT_MODE.toolPolicy
-            };
-            needsUpdate = true;
         }
         
-        // 补齐或更新 ask 模式（强制同步 toolPolicy）
         if (!modes['ask']) {
             modes['ask'] = ASK_PROMPT_MODE;
             needsUpdate = true;
-        } else if (!this.arraysEqual(modes['ask'].toolPolicy, ASK_PROMPT_MODE.toolPolicy)) {
-            // 已存在但 toolPolicy 不一致，强制更新
-            modes['ask'] = {
-                ...modes['ask'],
-                toolPolicy: ASK_PROMPT_MODE.toolPolicy
-            };
-            needsUpdate = true;
         }
 
-        // 补齐或更新 review 模式（强制同步 toolPolicy）
         if (!modes[REVIEW_MODE_ID]) {
             modes[REVIEW_MODE_ID] = REVIEW_PROMPT_MODE;
-            needsUpdate = true;
-        } else if (!this.arraysEqual(modes[REVIEW_MODE_ID].toolPolicy, REVIEW_PROMPT_MODE.toolPolicy)) {
-            modes[REVIEW_MODE_ID] = {
-                ...modes[REVIEW_MODE_ID],
-                toolPolicy: REVIEW_PROMPT_MODE.toolPolicy
-            };
             needsUpdate = true;
         }
         

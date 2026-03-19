@@ -1497,6 +1497,10 @@ const zhCN: LanguageMessages = {
                         name: 'MCP 工具',
                         description: '来自 MCP 服务器的额外工具定义（此变量由系统自动填充）',
                         requiresConfig: 'MCP 设置中需要配置并连接服务器'
+                    },
+                    TODO_LIST: {
+                        name: 'TODO 列表',
+                        description: '显示当前会话的 TODO 列表（来自 todo_write / todo_update / create_plan 持久化的 todoList 元数据）'
                     }
                 },
                 exampleOutput: '示例输出：',
@@ -1625,7 +1629,7 @@ const zhCN: LanguageMessages = {
                 appInfo: {
                     title: '应用信息',
                     name: 'Lim Code - Vibe Coding助手',
-                    version: '版本：1.1.10',
+                    version: '版本：1.1.11',
                     repository: '项目仓库',
                     developer: '开发者'
                 }

@@ -1497,6 +1497,10 @@ const en: LanguageMessages = {
                         name: 'MCP Tools',
                         description: 'Additional tool definitions from MCP servers (this variable is automatically filled by the system)',
                         requiresConfig: 'Need to configure and connect servers in MCP settings'
+                    },
+                    TODO_LIST: {
+                        name: 'TODO List',
+                        description: 'Displays the TODO list for the current conversation (from todoList metadata persisted by todo_write / todo_update / create_plan)'
                     }
                 },
                 exampleOutput: 'Example Output:',
@@ -1625,7 +1629,7 @@ const en: LanguageMessages = {
                 appInfo: {
                     title: 'Application Info',
                     name: 'Lim Code - Vibe Coding Assistant',
-                    version: 'Version: 1.1.10',
+                    version: 'Version: 1.1.11',
                     repository: 'Repository',
                     developer: 'Developer'
                 }

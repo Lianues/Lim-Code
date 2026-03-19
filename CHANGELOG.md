@@ -3,6 +3,11 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.1.11] - 2026-03-19
+
+### Fixed
+  - 修复设置-提示词-工具策略修改不能保存的问题，优化默认模式工具配置
+
 ## [1.1.10] - 2026-03-17
 
 ### Added

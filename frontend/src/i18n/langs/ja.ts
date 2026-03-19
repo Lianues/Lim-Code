@@ -1497,6 +1497,10 @@ const ja: LanguageMessages = {
                         name: 'MCP ツール',
                         description: 'MCP サーバーからの追加ツール定義（この変数はシステムによって自動的に入力されます）',
                         requiresConfig: 'MCP 設定でサーバーを設定して接続する必要があります'
+                    },
+                    TODO_LIST: {
+                        name: 'TODO リスト',
+                        description: '現在の会話の TODO リストを表示します（todo_write / todo_update / create_plan によって永続化された todoList メタデータから取得）'
                     }
                 },
                 exampleOutput: '出力例：',
@@ -1625,7 +1629,7 @@ const ja: LanguageMessages = {
                 appInfo: {
                     title: 'アプリケーション情報',
                     name: 'Lim Code - Vibe Coding アシスタント',
-                    version: 'バージョン：1.1.10',
+                    version: 'バージョン：1.1.11',
                     repository: 'リポジトリ',
                     developer: '開発者'
                 }
