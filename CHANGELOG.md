@@ -3,6 +3,12 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.1.12] - 2026-03-19
+
+### Fixed
+  - 兼容旧版 VS Code（移除 nanoid 的 ESM 依赖）
+  - 降低vscode版本限制
+
 ## [1.1.11] - 2026-03-19
 
 ### Fixed
