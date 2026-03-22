@@ -18,6 +18,52 @@ import { StreamAccumulator } from '../../modules/channel/StreamAccumulator';
 import { isPlanPathAllowed } from '../../modules/settings/modeToolsPolicy';
 
 /**
+ * 子代理内部使用的工具调用结构。
+ *
+ * 这里额外保留 id，原因是：
+ * - Anthropic 需要用 tool_use.id 对应回 tool_result.tool_use_id
+ * - OpenAI Responses 需要用 function_call.call_id 对应回 function_call_output.call_id
+ *
+ * 如果这里把 id 丢掉，子代理在第一次工具调用后的续传请求就会直接触发 400。
+ */
+interface ParsedToolCall {
+    name: string;
+    args: Record<string, unknown>;
+    id?: string;
+}
+
+/**
+ * 清理 JSON Schema 中目标模型不接受的字段。
+ *
+ * 目的：
+ * - 子代理会通过 toolOverrides 直接把工具声明传给 ChannelManager.generate()
+ * - 一旦走 toolOverrides，这些工具声明不会再经过 ChannelManager.getFilteredTools()
+ * - 因此这里必须主动做一次与主对话一致的 schema 清理
+ *
+ * 目前至少要移除：
+ * - $schema
+ * - additionalProperties
+ */
+function cleanJsonSchemaForSubAgent(schema: any): any {
+    if (!schema || typeof schema !== 'object') {
+        return schema;
+    }
+
+    if (Array.isArray(schema)) {
+        return schema.map(item => cleanJsonSchemaForSubAgent(item));
+    }
+
+    const cleaned: Record<string, any> = {};
+    for (const [key, value] of Object.entries(schema)) {
+        if (key === '$schema' || key === 'additionalProperties') {
+            continue;
+        }
+        cleaned[key] = cleanJsonSchemaForSubAgent(value);
+    }
+    return cleaned;
+}
+
+/**
  * 子代理执行器上下文存储
  */
 let executorContext: SubAgentExecutorContext | null = null;
@@ -55,7 +101,13 @@ async function getAvailableTools(
     
     // 获取内置工具
     if (mode !== 'mcp' && context.toolRegistry) {
-        const builtinTools = context.toolRegistry.getAvailableDeclarations();
+        const builtinTools = context.toolRegistry.getAvailableDeclarations()
+            .map((tool: ToolDeclaration) => ({
+                ...tool,
+                // 这里补做 schema 清理，避免 toolOverrides 跳过主流程的 cleanJsonSchema。
+                parameters: cleanJsonSchemaForSubAgent(tool.parameters)
+            }));
+
         // 排除 subagents 工具
         tools.push(...builtinTools.filter(t => t.name !== 'subagents'));
     }
@@ -71,7 +123,11 @@ async function getAvailableTools(
                             tools.push({
                                 name: `mcp__${serverTools.serverId}__${tool.name}`,
                                 description: tool.description || '',
-                                parameters: tool.inputSchema || { type: 'object', properties: {} }
+                                // MCP 的原始 inputSchema 可能带有 $schema / additionalProperties。
+                                // 子代理直接走 toolOverrides 时，如果不在这里清理，Gemini 等接口会直接 400。
+                                parameters: cleanJsonSchemaForSubAgent(
+                                    tool.inputSchema || { type: 'object', properties: {} }
+                                )
                             });
                         }
                     }
@@ -298,16 +354,17 @@ async function executeToolCall(
  * 
  * 支持标准化的 GenerateResponse 格式
  */
-function parseToolCalls(response: any): Array<{ name: string; args: Record<string, unknown> }> {
-    const calls: Array<{ name: string; args: Record<string, unknown> }> = [];
+function parseToolCalls(response: any): ParsedToolCall[] {
+    const calls: ParsedToolCall[] = [];
     
-    // 标准化格式: response.content.parts
+    // 标准化格式: response.content.parts。这里必须保留 functionCall.id，供下一轮工具结果回传使用。
     if (response?.content?.parts) {
         for (const part of response.content.parts) {
             if (part.functionCall) {
                 calls.push({
                     name: part.functionCall.name,
-                    args: part.functionCall.args || {}
+                    args: part.functionCall.args || {},
+                    id: part.functionCall.id
                 });
             }
         }
@@ -320,7 +377,8 @@ function parseToolCalls(response: any): Array<{ name: string; args: Record<strin
             if (part.functionCall) {
                 calls.push({
                     name: part.functionCall.name,
-                    args: part.functionCall.args || {}
+                    args: part.functionCall.args || {},
+                    id: part.functionCall.id
                 });
             }
         }
@@ -334,12 +392,14 @@ function parseToolCalls(response: any): Array<{ name: string; args: Record<strin
                 try {
                     calls.push({
                         name: toolCall.function.name,
-                        args: JSON.parse(toolCall.function.arguments || '{}')
+                        args: JSON.parse(toolCall.function.arguments || '{}'),
+                        id: toolCall.id
                     });
                 } catch {
                     calls.push({
                         name: toolCall.function.name,
-                        args: {}
+                        args: {},
+                        id: toolCall.id
                     });
                 }
             }
@@ -353,12 +413,18 @@ function parseToolCalls(response: any): Array<{ name: string; args: Record<strin
             if (block.type === 'tool_use') {
                 calls.push({
                     name: block.name,
-                    args: block.input || {}
+                    args: block.input || {},
+                    id: block.id
                 });
             }
         }
         return calls;
     }
+
+    // 说明：这里暂时不解析 XML / JSON 提示型工具调用。
+    // 子代理默认执行器当前只支持原生 function calling 风格的工具往返。
+    // 如果后续要补齐 xml/json 模式，应复用主流程中的 promptToolParser，
+    // 而不是在这里临时用字符串规则做一套不完整的解析。
     
     return calls;
 }
@@ -678,12 +744,18 @@ export function createDefaultExecutor(
                     // 构建工具结果 part（Gemini 格式）
                     toolResultParts.push({
                         functionResponse: {
+                            // 必须回传原始工具调用 id。
+                            // 原因：
+                            // 1. Anthropic 需要它来生成 tool_result.tool_use_id
+                            // 2. OpenAI Responses 需要它来生成 function_call_output.call_id
+                            // 如果这里不保留，子代理会在第一次工具调用后的下一轮请求直接报 400。
                             name: call.name,
                             response: {
                                 success: result.success,
                                 result: result.result,
                                 error: result.error
-                            }
+                            },
+                            id: call.id
                         }
                     });
                 }
