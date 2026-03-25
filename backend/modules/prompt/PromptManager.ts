@@ -18,8 +18,7 @@ import type { PromptConfig, PromptContext } from './types'
 import type { Content } from '../conversation/types'
 import { getWorkspaceFileTree, getWorkspaceRoot, getWorkspacesDescription, getAllWorkspaces } from './fileTree'
 import { getGlobalSettingsManager } from '../../core/settingsContext'
-import { getSkillsManager } from '../skills'
-import type { PinnedFileItem, SkillConfigItem } from '../settings/types'
+import type { PinnedFileItem } from '../settings/types'
 
 type TodoStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled'
 type NormalizedTodoItem = { id: string; content: string; status: TodoStatus }
@@ -30,9 +29,6 @@ export type DynamicRuntimeContext = {
 
     /** ConversationMetadata.custom['inputPinnedFiles'] */
     pinnedFiles?: unknown
-
-    /** ConversationMetadata.custom['inputSkills'] */
-    skills?: unknown
 }
 
 function isTodoStatus(value: unknown): value is TodoStatus {
@@ -116,25 +112,6 @@ function normalizePinnedFiles(raw: unknown): PinnedFileItem[] {
             && typeof (item as any).addedAt === 'number'
         ))
         .map(item => ({ ...item }))
-}
-
-function normalizeSkillConfigItems(raw: unknown): SkillConfigItem[] {
-    if (!Array.isArray(raw)) return []
-    return raw
-        .filter((item): item is SkillConfigItem => (
-            !!item
-            && typeof (item as any).id === 'string'
-            && typeof (item as any).name === 'string'
-            && typeof (item as any).description === 'string'
-            && typeof (item as any).enabled === 'boolean'
-            && typeof (item as any).sendContent === 'boolean'
-        ))
-        .map(item => ({
-            ...item,
-            id: item.id.trim(),
-            name: (item.name || '').trim() || item.id,
-            description: item.description || ''
-        }))
 }
 
 /**
@@ -259,7 +236,7 @@ export class PromptManager {
             'ENVIRONMENT': this.wrapSection('ENVIRONMENT', this.generateStaticEnvironmentSection()),
             'CONTEXT_BADGE_FORMAT': this.wrapSection('CONTEXT BADGE FORMAT', this.generateContextBadgeFormatSection()),
             // 动态内容占位符 - 这些将被移到动态上下文消息中
-            // 为了向后兼容，如果模板中包含这些占位符，替换为空字符串
+            // 为了向后兼容，如果模板中包含 these placeholders，替换为空字符串
             'WORKSPACE_FILES': '',
             'OPEN_TABS': '',
             'ACTIVE_EDITOR': '',
@@ -291,7 +268,6 @@ export class PromptManager {
      * - {{$ACTIVE_EDITOR}} - 当前活动编辑器
      * - {{$DIAGNOSTICS}} - 诊断信息
      * - {{$PINNED_FILES}} - 固定文件内容
-     * - {{$SKILLS}} - 启用的 Skills 内容
      */
     private generateDynamicFromTemplate(template: string, contextConfig: any, runtime?: DynamicRuntimeContext): string {
         const settingsManager = getGlobalSettingsManager()
@@ -303,8 +279,7 @@ export class PromptManager {
             'OPEN_TABS': '',
             'ACTIVE_EDITOR': '',
             'DIAGNOSTICS': '',
-            'PINNED_FILES': '',
-            'SKILLS': ''
+            'PINNED_FILES': ''
         }
 
         // TODO 列表（来自会话元数据）
@@ -356,12 +331,6 @@ export class PromptManager {
         if (pinnedFilesContent) {
             const sectionTitle = settingsManager?.getPinnedFilesConfig()?.sectionTitle || 'PINNED FILES CONTENT'
             modules['PINNED_FILES'] = this.wrapSection(sectionTitle, pinnedFilesContent)
-        }
-        
-        // Skills 内容
-        const skillsContent = this.generateSkillsSection(runtime?.skills)
-        if (skillsContent) {
-            modules['SKILLS'] = this.wrapSection('ACTIVE SKILLS', skillsContent)
         }
         
         // 替换模板中的占位符
@@ -566,12 +535,6 @@ export class PromptManager {
         if (pinnedFilesContent) {
             const sectionTitle = getGlobalSettingsManager()?.getPinnedFilesConfig()?.sectionTitle || 'PINNED FILES CONTENT'
             sections.push(this.wrapSection(sectionTitle, pinnedFilesContent))
-        }
-        
-        // Skills 内容
-        const skillsContent = this.generateSkillsSection(runtime?.skills)
-        if (skillsContent) {
-            sections.push(this.wrapSection('ACTIVE SKILLS', skillsContent))
         }
         
         // 返回单个动态上下文消息（清理多余空行）
@@ -867,7 +830,7 @@ export class PromptManager {
         const runtimeFiles = hasRuntimeOverride ? normalizePinnedFiles(runtimePinnedFiles) : []
         const workspaceUriToFolder = new Map(workspaceFolders.map(folder => [folder.uri.toString(), folder]))
         const allPinnedFiles = hasRuntimeOverride
-            ? runtimeFiles.filter(file => file.enabled)
+  ? runtimeFiles.filter(file => file.enabled)
             : settingsManager.getEnabledPinnedFiles()
         
         const results: string[] = []
@@ -904,56 +867,6 @@ export class PromptManager {
         }
         
         return `The following are pinned files that should be read and considered for every response:\n\n${results.join('\n\n')}`
-    }
-    
-    /**
-     * 生成 Skills 内容段落
-     *
-     * 获取当前启用的 skills 内容
-     * 支持会话级覆盖（runtimeSkills）
-     */
-    private generateSkillsSection(runtimeSkills?: unknown): string {
-        const skillsManager = getSkillsManager()
-        if (!skillsManager) {
-            return ''
-        }
-
-        // 会话级覆盖：仅使用当前会话的 skills 配置
-        if (runtimeSkills !== undefined) {
-            const sessionSkills = normalizeSkillConfigItems(runtimeSkills)
-            const activeSkills = sessionSkills.filter(skill => skill.enabled && skill.sendContent)
-
-            if (activeSkills.length === 0) {
-                return ''
-            }
-
-            const sections: string[] = []
-            for (const skillConfig of activeSkills) {
-                const actualSkill = skillsManager.getSkill(skillConfig.id)
-                if (!actualSkill) {
-                    continue
-                }
-
-                const displayName = actualSkill.name || skillConfig.name || skillConfig.id
-                sections.push(
-                    `===== SKILL: ${displayName} =====\n\n${actualSkill.content}\n\n===== END: ${displayName} =====`
-                )
-            }
-
-            if (sections.length === 0) {
-                return ''
-            }
-
-            return `The following skills are currently active and provide specialized knowledge and instructions:\n\n${sections.join('\n\n')}`
-        }
-        
-        // 全局模式：沿用原有行为
-        const skillsContent = skillsManager.getEnabledSkillsContent()
-        if (!skillsContent) {
-            return ''
-        }
-        
-        return `The following skills are currently active and provide specialized knowledge and instructions:\n\n${skillsContent}`
     }
     
     /**

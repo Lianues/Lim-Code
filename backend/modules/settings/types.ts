@@ -598,7 +598,8 @@ export interface SkillConfigItem {
     enabled: boolean;
     
     /**
-     * 是否发送具体内容给 AI
+     * @deprecated 不再使用拼接注入模式。保留字段仅为向后兼容配置解析。
+     * Skills 现在通过 read_skill 工具按需读取。
      */
     sendContent: boolean;
 }

@@ -5,8 +5,8 @@
  */
 
 export {
-    generateSkillsToolDeclaration,
-    getSkillsTool,
-    getSkillsToolRegistration,
+    generateReadSkillDeclaration,
+    getReadSkillTool,
+    getReadSkillToolRegistration,
     hasAvailableSkills
-} from './toggleSkills';
+} from './readSkill';

@@ -203,6 +203,13 @@ export class AnthropicFormatter extends BaseFormatter {
             }
         }
         
+        // 如果启用了 Prompt Caching，注入手动缓存断点
+        // 缓存层级顺序：tools -> system -> messages
+        // 在每个层级的最后一个内容块上添加 cache_control: { type: "ephemeral" }
+        if ((config as any).promptCachingEnabled) {
+            this.injectCacheBreakpoints(body);
+        }
+        
         // 应用自定义 body（如果启用）
         const finalBody = applyCustomBody(body, (config as any).customBody, (config as any).customBodyEnabled);
         
@@ -549,6 +556,57 @@ export class AnthropicFormatter extends BaseFormatter {
         }
         
         return genConfig;
+    }
+
+    /**
+     * 注入手动缓存断点
+     *
+     * 根据 Anthropic Prompt Caching 的缓存前缀层级（tools -> system -> messages），
+     * 在各层级的最后一个可缓存内容块上添加 cache_control: { type: "ephemeral" }。
+     *
+     * 最多使用 4 个缓存断点（Anthropic 限制），当前策略使用最多 3 个：
+     * 1. tools 数组的最后一个工具
+     * 2. system 内容（转为数组格式后的最后一个块）
+     * 3. messages 中最后一条 user 消息的最后一个 content block
+     */
+    private injectCacheBreakpoints(body: any): void {
+        const cacheControl = { type: 'ephemeral' as const };
+
+        // 1. 在 tools 的最后一个工具上添加缓存断点
+        if (body.tools && Array.isArray(body.tools) && body.tools.length > 0) {
+            body.tools[body.tools.length - 1].cache_control = cacheControl;
+        }
+
+        // 2. 将 system 从字符串转为内容块数组格式，并在最后一个块上添加缓存断点
+        // Anthropic 支持 system 为字符串或内容块数组，使用数组格式才能添加 cache_control
+        if (body.system && typeof body.system === 'string') {
+            body.system = [
+                {
+                    type: 'text',
+                    text: body.system,
+                    cache_control: cacheControl
+                }
+            ];
+        } else if (Array.isArray(body.system) && body.system.length > 0) {
+            body.system[body.system.length - 1].cache_control = cacheControl;
+        }
+
+        // 3. 在 messages 中最后一条 user 消息的最后一个 content block 上添加缓存断点
+        // 这样可以缓存大部分历史消息前缀
+        if (body.messages && Array.isArray(body.messages) && body.messages.length > 0) {
+            // 从后向前找最后一条 user 消息
+            for (let i = body.messages.length - 1; i >= 0; i--) {
+                const msg = body.messages[i];
+                if (msg.role === 'user' && Array.isArray(msg.content) && msg.content.length > 0) {
+                    // 确保 content block 是对象格式（Anthropic 消息通常已经是对象数组）
+                    const lastBlock = msg.content[msg.content.length - 1];
+                    if (typeof lastBlock === 'object' && lastBlock !== null) {
+                        lastBlock.cache_control = cacheControl;
+                        break;
+                    }
+                }
+            }
+        }
     }
     
     /**

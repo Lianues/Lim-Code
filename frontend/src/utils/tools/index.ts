@@ -34,7 +34,7 @@ import './lsp/goto_definition'
 import './lsp/find_references'
 
 // Skills 工具
-import './skills/toggle_skills'
+import './skills/read_skill'
 
 // SubAgents 工具
 import './subagents/subagents'

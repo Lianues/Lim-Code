@@ -8,6 +8,7 @@
 export type {
     Skill,
     SkillFrontmatter,
+    SkillSource,
     SkillsState,
     SkillsChangeEvent,
     SkillsChangeListener

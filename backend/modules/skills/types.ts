@@ -5,6 +5,11 @@
  */
 
 /**
+ * Skill 来源
+ */
+export type SkillSource = 'project-limcode' | 'project-agents' | 'legacy' | 'user-limcode' | 'user-agents';
+
+/**
  * Skill 定义
  */
 export interface Skill {
@@ -22,11 +27,20 @@ export interface Skill {
     
     /** Skill 文件路径 */
     path: string;
+
+    /** Skill 所在目录的绝对路径（用于 AI 定位相关资源） */
+    basePath: string;
+
+    /** Skill 来源 */
+    source: SkillSource;
     
     /** 是否当前启用（在对话中可用） */
     enabled: boolean;
     
-    /** 是否发送内容给 AI */
+    /** 
+     * 是否发送内容给 AI 
+     * @deprecated 不再使用拼接注入模式。Skills 现在通过 read_skill 工具按需读取。
+     */
     sendContent: boolean;
 }
 

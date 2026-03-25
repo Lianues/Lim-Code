@@ -297,13 +297,12 @@ const ja: LanguageMessages = {
             },
             skillsPanel: {
                 title: 'Skills',
-                description: 'Skills はユーザー定義のナレッジモジュールです。チェックボックス：会話で有効化。スイッチ：詳細内容を AI に送信。',
+                description: 'Skills はユーザー定義のナレッジモジュールです。チェックすると AI がツール説明でこの Skill を確認でき、必要に応じて read_skill ツールで内容を読み込みます。',
                 loading: '読み込み中...',
                 empty: '利用可能な Skills がありません。右上のフォルダーアイコンでディレクトリを開き、SKILL.md ファイルを含むフォルダーを作成すると追加できます。',
                 notExists: '存在しません',
                 enableTooltip: '現在の会話でこの Skill を有効にする',
-                sendContentTooltip: '有効時に Skill の内容を AI に送信する',
-                hint: 'AI も toggle_skills ツールで Skill 内容を送信するかどうかを決定できます',
+                hint: 'AI はタスクが利用可能な Skill に一致すると判断した場合、read_skill ツールで内容を読み込みます',
                 openDirectory: 'Skills ディレクトリを開く',
                 refresh: 'Skills リストを更新'
             },
@@ -1486,8 +1485,8 @@ const ja: LanguageMessages = {
                     },
                     SKILLS: {
                         name: 'Skills の内容',
-                        description: '現在有効な Skills の内容を表示します。Skills はユーザー定義のナレッジモジュールで、AI が toggle_skills ツールで動的に有効/無効にできます。',
-                        requiresConfig: 'AI が toggle_skills ツールで skills を有効にします'
+                        description: 'Skills はユーザー定義のナレッジモジュールです。AI は read_skill ツールでオンデマンドに内容を読み込みます。Skill の名前と説明はツール説明に記載されています。',
+                        requiresConfig: 'Skills パネルで Skill を有効にし、AI が read_skill ツールで内容を読み込みます'
                     },
                     TOOLS: {
                         name: 'ツール定義',
@@ -1992,6 +1991,11 @@ const ja: LanguageMessages = {
                     effortMedium: '中',
                     effortLow: '低',
                     effortHint: 'Claude の思考の深さを制御。レベルが高いほど深く思考しますが、トークン消費が増えます'
+                },
+                promptCaching: {
+                    title: 'Prompt Caching',
+                    enable: 'Prompt Caching を有効化（手動キャッシュブレークポイント）',
+                    hint: 'system、tools、messages のキーコンテンツブロックにキャッシュマーカーを自動追加し、Anthropic の Prompt Caching でコストとレイテンシを削減'
                 }
             },
             gemini: {

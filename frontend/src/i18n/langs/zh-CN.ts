@@ -297,13 +297,12 @@ const zhCN: LanguageMessages = {
             },
             skillsPanel: {
                 title: 'Skills',
-                description: 'Skills 是用户自定义的知识模块。勾选框：在对话中启用。开关：发送详细内容给 AI。',
+                description: 'Skills 是用户自定义的知识模块。勾选后 AI 可在工具描述中看到该 Skill，需要时通过 read_skill 工具按需加载内容。',
                 loading: '加载中...',
                 empty: '暂无可用的 Skills。点击右上角文件夹图标打开目录，创建一个文件夹并包含 SKILL.md 文件即可添加。',
                 notExists: '不存在',
                 enableTooltip: '在当前对话中启用此 Skill',
-                sendContentTooltip: '启用时发送 Skill 内容给 AI',
-                hint: 'AI 也可以通过 toggle_skills 工具来决定是否发送某个 Skill 内容',
+                hint: 'AI 在判断任务匹配可用 Skill 时，会通过 read_skill 工具按需加载内容',
                 openDirectory: '打开 Skills 存储目录',
                 refresh: '刷新 Skills 列表'
             },
@@ -1486,8 +1485,8 @@ const zhCN: LanguageMessages = {
                     },
                     SKILLS: {
                         name: 'Skills 内容',
-                        description: '显示当前启用的 Skills 的内容。Skills 是用户自定义的知识模块，AI 可以通过 toggle_skills 工具动态启用/禁用。',
-                        requiresConfig: 'AI 通过 toggle_skills 工具启用 skills'
+                        description: 'Skills 是用户自定义的知识模块。AI 通过 read_skill 工具按需加载内容，Skill 名称和描述列在工具描述中。',
+                        requiresConfig: '在 Skills 面板中启用 Skill，AI 通过 read_skill 工具加载内容'
                     },
                     TOOLS: {
                         name: '工具定义',
@@ -1992,6 +1991,11 @@ const zhCN: LanguageMessages = {
                     effortMedium: '中等努力',
                     effortLow: '低努力',
                     effortHint: '控制 Claude 的思考深度，级别越高思考越深入但消耗更多 Token'
+                },
+                promptCaching: {
+                    title: 'Prompt Caching',
+                    enable: '启用 Prompt Caching（手动缓存断点）',
+                    hint: '在 system、tools、messages 的关键内容块上自动添加缓存标记，利用 Anthropic 的 Prompt Caching 降低成本和延迟'
                 }
             },
             gemini: {

@@ -617,7 +617,6 @@ export interface LanguageMessages {
                 empty: string;
                 notExists: string;
                 enableTooltip: string;
-                sendContentTooltip: string;
                 hint: string;
                 openDirectory: string;
                 refresh: string;
@@ -2038,6 +2037,11 @@ export interface LanguageMessages {
                     effortMedium: string;
                     effortLow: string;
                     effortHint: string;
+                };
+                promptCaching: {
+                    title: string;
+                    enable: string;
+                    hint: string;
                 };
             };
             

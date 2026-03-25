@@ -1,3 +1,9 @@
+/**
+ * Skills 服务层
+ * 
+ * 重构后 Skill 采用 read_skill 工具按需加载模式，
+ * 不再使用 toggle_skills 拼接注入。
+ */
 import { sendToExtension } from '../utils/vscode'
 
 export interface SkillItem {
@@ -5,8 +11,11 @@ export interface SkillItem {
   name: string
   description: string
   enabled: boolean
+  /** @deprecated 不再使用拼接注入模式，保留字段仅为向后兼容 */
   sendContent: boolean
   exists?: boolean
+  /** Skill 来源层级 */
+  source?: string
 }
 
 export async function listSkills(conversationId?: string | null): Promise<SkillItem[]> {
@@ -22,10 +31,6 @@ export async function checkSkillsExistence(ids: string[]) {
 
 export async function setSkillEnabled(id: string, enabled: boolean, conversationId?: string | null) {
   return await sendToExtension('setSkillEnabled', { id, enabled, conversationId })
-}
-
-export async function setSkillSendContent(id: string, sendContent: boolean, conversationId?: string | null) {
-  return await sendToExtension('setSkillSendContent', { id, sendContent, conversationId })
 }
 
 export async function removeSkillConfig(id: string, conversationId?: string | null) {

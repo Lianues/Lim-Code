@@ -215,7 +215,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         });
         
         // 11. 初始化 Skills 管理器（必须在注册工具之前，因为 skills 工具需要它）
-        await createSkillsManager(this.storagePathManager.getEffectiveDataPath());
+        await createSkillsManager({
+            workspacePath: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+            globalStoragePath: this.storagePathManager.getEffectiveDataPath(),
+        });
         
         // 11.1 从 settingsManager 同步 skills 状态到 SkillsManager
         await this.syncSkillsState();
@@ -438,6 +441,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     /**
      * 同步 skills 状态到 SkillsManager
      * 从 settingsManager 加载已保存的启用状态
+     * 对于 settings 中没有记录的新 Skill，默认设为启用
      */
     private async syncSkillsState(): Promise<void> {
         try {
@@ -450,15 +454,24 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             
             // 从 settingsManager 获取已保存的 skills 配置
             const savedConfig = this.settingsManager.getSkillsConfig() || { skills: [] };
+            const savedSkillIds = new Set(savedConfig.skills.map(s => s.id));
             
-            // 同步状态到 SkillsManager
+            // 同步已保存的 Skill 状态
             for (const savedSkill of savedConfig.skills) {
                 if (savedSkill.enabled) {
                     skillsManager.enableSkill(savedSkill.id);
                 } else {
                     skillsManager.disableSkill(savedSkill.id);
                 }
-                skillsManager.setSkillSendContent(savedSkill.id, savedSkill.sendContent);
+            }
+
+            // 对于 settings 中没有记录的新 Skill，默认启用。
+            // 否则新扫到的 Skill 在 read_skill 工具注册时不会出现在列表中，
+            // 直到前端 getSkillsConfig 被调用才会被默认启用。
+            for (const skill of skillsManager.getAllSkills()) {
+                if (!savedSkillIds.has(skill.id)) {
+                    skillsManager.enableSkill(skill.id);
+                }
             }
         } catch (error) {
             console.error('[ChatViewProvider] Failed to sync skills state:', error);

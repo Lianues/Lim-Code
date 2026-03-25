@@ -399,6 +399,28 @@ function handleThinkingNumberChange(field: string, event: any) {
         </div>
       </div>
     </div>
+
+    <!-- Prompt Caching 配置 -->
+    <div class="option-section">
+      <div class="option-section-header">
+        <span class="option-section-title">
+          <i class="codicon codicon-database"></i>
+          {{ t('components.channels.anthropic.promptCaching.title') }}
+        </span>
+        <label class="toggle-switch" :title="t('components.channels.anthropic.promptCaching.enable')">
+          <input
+            type="checkbox"
+            :checked="config.promptCachingEnabled ?? false"
+            @change="(e: any) => emit('update:field', 'promptCachingEnabled', e.target.checked)"
+          />
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+      
+      <div class="option-section-content">
+        <span class="option-hint">{{ t('components.channels.anthropic.promptCaching.hint') }}</span>
+      </div>
+    </div>
   </div>
 </template>
 

@@ -394,6 +394,62 @@ const ja: BackendLanguageMessages = {
         
         skills: {
             description: 'Skills のオン/オフを切り替えます。Skills はユーザー定義のナレッジモジュールで、専門的なコンテキストと指示を提供します。各パラメータは skill 名です - true で有効、false で無効にします。',
+            exampleSkill: {
+                description: 'Skill 作成前に必読！正しい形式、命名規則、よくある間違いについて。',
+                content: `# Skill 作成前に必読
+
+## ⚠️ よくある間違い
+
+1. **name はフォルダ名と完全に一致する必要があります**
+   - フォルダ名が \\\`my-tool\\\` の場合、frontmatter には \\\`name: my-tool\\\` と書く必要があります
+   - 不一致の場合、Skill はサイレントにスキップされ、パネルに表示されません
+
+2. **name に使用できるのは小文字、数字、ハイフンのみ**
+   - ✅ \\\`my-skill-name\\\`、\\\`tool2\\\`
+   - ❌ \\\`My_Skill\\\`、\\\`ツール\\\`、\\\`my--skill\\\`（連続ハイフン不可）
+   - 長さ：1〜64 文字
+
+3. **frontmatter は必須です**
+   - ファイルは \\\`---\\\` で始まり、\\\`name\\\` と \\\`description\\\` の両フィールドが必要です
+   - frontmatter のない SKILL.md は無視されます
+
+## Skill ファイル形式
+
+\\\`\\\`\\\`markdown
+---
+name: your-skill-name
+description: "このスキルの機能と使用場面の簡単な説明"
+---
+
+# スキル名
+
+## 手順
+[AI に対する明確なステップバイステップの指示]
+
+## 例
+[このスキルの具体的な使用例]
+\\\`\\\`\\\`
+
+## 作成手順
+
+1. skills ディレクトリにフォルダを作成（フォルダ名がスキル名）
+2. フォルダ内に \\\`SKILL.md\\\` ファイルを作成
+3. ファイル先頭に frontmatter を記述（\\\`name\\\` + \\\`description\\\`）
+4. frontmatter の後にスキル内容を記述
+
+## Skills ディレクトリの場所
+
+- プロジェクトレベル：\\\`.limcode/skills/\\\` または \\\`.agents/skills/\\\`
+- ユーザーレベル：\\\`~/.limcode/skills/\\\` または \\\`~/.agents/skills/\\\`
+
+プロジェクトレベルが優先されます。同名の Skill は優先度が最も高いもののみ読み込まれます。
+
+## 仕組み
+
+1. AI はツール説明で有効な全 Skill の名前と説明を確認できます
+2. AI が必要と判断すると \\\`read_skill\\\` ツールで全文を読み込みます
+3. このオンデマンド読み込みにより token を節約し、タスクに応じて最適なナレッジモジュールを動的に選択できます`
+            },
             errors: {
                 managerNotInitialized: 'Skills マネージャーが初期化されていません'
             }

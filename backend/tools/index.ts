@@ -6,7 +6,7 @@
 
 import type { Tool } from './types';
 import { DependencyManager } from '../modules/dependencies';
-import { hasAvailableSkills, getSkillsTool } from './skills';
+import { getReadSkillToolRegistration } from './skills';
 
 // 导出设置上下文（从 core 模块重新导出）
 export { setGlobalSettingsManager, getGlobalSettingsManager } from '../core/settingsContext';
@@ -89,11 +89,9 @@ export function getAllTools(): Tool[] {
     
     const tools = registrations.map(reg => reg());
     
-    // 添加 skills 工具（如果有可用的 skills）
-    if (hasAvailableSkills()) {
-        tools.push(getSkillsTool());
-    }
-    
+    // 始终添加 read_skill 工具（工具描述中会动态反映当前启用的 Skill 列表）
+    tools.push(getReadSkillToolRegistration()());
+
     // 始终添加 subagents 工具（工具内部会动态判断是否有可用的子代理）
     const subAgentRegistrations = getSubAgentsToolRegistrations();
     tools.push(...subAgentRegistrations.map((reg: () => Tool) => reg()));
@@ -111,10 +109,17 @@ export function registerAllTools(
 ): void {
     const tools = getAllTools();
     
-    // 注册所有工具
+    // 注册所有工具（read_skill 除外，它需要特殊处理）
     for (const tool of tools) {
+        // read_skill 已在下面通过工厂函数单独注册，跳过
+        if (tool.declaration.name === 'read_skill') {
+            continue;
+        }
         registry.register(() => tool);
     }
+
+    // 用真正的工厂函数注册 read_skill，使 refreshTool('read_skill') 能重新生成声明
+    registry.register(getReadSkillToolRegistration());
 }
 
 /**

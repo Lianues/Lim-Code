@@ -394,6 +394,62 @@ Output content directly without any prefix.`
         
         skills: {
             description: 'Toggle skills on or off. Skills are user-defined knowledge modules that provide specialized context and instructions. Each parameter is a skill name - set to true to enable, false to disable.',
+            exampleSkill: {
+                description: 'Read before creating a Skill! Learn the correct format, naming rules, and common mistakes.',
+                content: `# Read Before Creating a Skill
+
+## ⚠️ Common Mistakes
+
+1. **name must exactly match the folder name**
+   - If the folder is \\\`my-tool\\\`, the frontmatter must have \\\`name: my-tool\\\`
+   - A mismatch causes the Skill to be silently skipped
+
+2. **name only allows lowercase letters, digits, and hyphens**
+   - ✅ \\\`my-skill-name\\\`, \\\`tool2\\\`
+   - ❌ \\\`My_Skill\\\`, \\\`工具\\\`, \\\`my--skill\\\` (no consecutive hyphens)
+   - Length: 1-64 characters
+
+3. **Frontmatter is required**
+   - The file must start with \\\`---\\\` and contain both \\\`name\\\` and \\\`description\\\` fields
+   - A SKILL.md without frontmatter will be ignored
+
+## Skill File Format
+
+\\\`\\\`\\\`markdown
+---
+name: your-skill-name
+description: "Brief description of what this skill does and when to use it"
+---
+
+# Your Skill Name
+
+## Instructions
+[Clear, step-by-step guidance for the AI to follow]
+
+## Examples
+[Specific examples of using this skill]
+\\\`\\\`\\\`
+
+## Steps to Create
+
+1. Create a folder in the skills directory (the folder name is the skill name)
+2. Create a \\\`SKILL.md\\\` file inside the folder
+3. Add frontmatter at the top (\\\`name\\\` + \\\`description\\\`)
+4. Write your skill content after the frontmatter
+
+## Skills Directory Locations
+
+- Project-level: \\\`.limcode/skills/\\\` or \\\`.agents/skills/\\\`
+- User-level: \\\`~/.limcode/skills/\\\` or \\\`~/.agents/skills/\\\`
+
+Project-level takes priority. Duplicate skill names only load the highest-priority one.
+
+## How It Works
+
+1. The AI sees the name and description of all enabled Skills in the tool description
+2. When the AI needs one, it calls the \\\`read_skill\\\` tool to read the full content
+3. This on-demand loading saves tokens and lets the AI dynamically choose the right knowledge module`
+            },
             errors: {
                 managerNotInitialized: 'Skills manager not initialized'
             }

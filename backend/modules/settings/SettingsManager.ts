@@ -1536,29 +1536,6 @@ export class SettingsManager {
     }
     
     /**
-     * 设置 Skill 发送内容状态
-     */
-    async setSkillSendContent(id: string, sendContent: boolean, metadata?: { name?: string, description?: string }): Promise<void> {
-        const skills = [...this.getSkills()];
-        const skill = skills.find(s => s.id === id);
-        
-        if (skill) {
-            skill.sendContent = sendContent;
-            if (metadata?.name) skill.name = metadata.name;
-            if (metadata?.description) skill.description = metadata.description;
-        } else {
-            // 如果 skill 不存在，创建新的配置项
-            skills.push({
-                id,
-                name: metadata?.name || id,
-                description: metadata?.description || '',
-                enabled: true,
-                sendContent
-            });
-        }
-        
-        await this.updateSkillsConfig({ skills });
-    }
     
     /**
      * 移除 Skill 配置

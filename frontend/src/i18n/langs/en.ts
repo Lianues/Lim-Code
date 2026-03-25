@@ -297,13 +297,12 @@ const en: LanguageMessages = {
             },
             skillsPanel: {
                 title: 'Skills',
-                description: 'Skills are user-defined knowledge modules. Checkbox: enable in conversation. Switch: send detailed content to AI.',
+                description: 'Skills are user-defined knowledge modules. Check the box to make a skill visible to AI. AI loads skill content on demand via the read_skill tool.',
                 loading: 'Loading...',
                 empty: 'No skills available. Click the folder icon in the top right to open the directory. Create a folder containing a SKILL.md file to add a skill.',
                 notExists: 'Does not exist',
                 enableTooltip: 'Enable this skill in current conversation',
-                sendContentTooltip: 'Send skill content to AI when enabled',
-                hint: 'AI can also decide whether to send skill content via toggle_skills tool',
+                hint: 'AI can load skill content on demand via read_skill tool when it determines the task matches a skill',
                 openDirectory: 'Open Skills Directory',
                 refresh: 'Refresh Skills list'
             },
@@ -1486,8 +1485,8 @@ const en: LanguageMessages = {
                     },
                     SKILLS: {
                         name: 'Skills Content',
-                        description: 'Shows content of currently enabled Skills. Skills are user-defined knowledge modules that AI can dynamically enable/disable via toggle_skills tool.',
-                        requiresConfig: 'AI enables skills via toggle_skills tool'
+                        description: 'Skills are user-defined knowledge modules. AI loads content on demand via the read_skill tool. Skill names and descriptions are listed in the tool description.',
+                        requiresConfig: 'Enable skills in the Skills panel, AI loads content via read_skill tool'
                     },
                     TOOLS: {
                         name: 'Tool Definitions',
@@ -1992,6 +1991,11 @@ const en: LanguageMessages = {
                     effortMedium: 'Medium',
                     effortLow: 'Low',
                     effortHint: 'Controls Claude thinking depth. Higher levels think deeper but consume more tokens'
+                },
+                promptCaching: {
+                    title: 'Prompt Caching',
+                    enable: 'Enable Prompt Caching (manual cache breakpoints)',
+                    hint: 'Automatically adds cache markers on key content blocks of system, tools, and messages to leverage Anthropic Prompt Caching for cost and latency reduction'
                 }
             },
             gemini: {

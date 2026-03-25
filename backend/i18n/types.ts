@@ -393,6 +393,10 @@ export interface BackendLanguageMessages {
         /** Skills 工具 */
         skills: {
             description: string;
+            exampleSkill: {
+                description: string;
+                content: string;
+            };
             errors: {
                 managerNotInitialized: string;
             };

@@ -136,4 +136,15 @@ export interface AnthropicConfig extends BaseChannelConfig {
      * 仅当此处的对应字段为 true 时，options 中的值才会被发送
      */
     optionsEnabled?: AnthropicOptionsEnabled;
+
+    /**
+     * 是否启用 Prompt Caching（手动缓存断点）
+     *
+     * 启用后，会在 system、tools、messages 的关键位置
+     * 自动插入 cache_control: { type: "ephemeral" } 标记，
+     * 以利用 Anthropic 的 Prompt Caching 功能降低成本和延迟。
+     *
+     * 注意：这不是最外层的自动缓存，而是手动在内容块上设置缓存断点。
+     */
+    promptCachingEnabled?: boolean;
 }

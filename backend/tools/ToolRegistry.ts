@@ -226,6 +226,27 @@ export class ToolRegistry {
     }
 
     /**
+     * 刷新指定工具的声明
+     * 
+     * 重新调用工厂函数生成新的 Tool 实例，替换缓存的旧实例。
+     * 用于需要动态更新声明的工具（如 read_skill 的描述随 Skill 启用状态变化）。
+     * 
+     * @param name 工具名称
+     * @returns 是否成功刷新
+     */
+    refreshTool(name: string): boolean {
+        const registration = this.registrations.get(name);
+        if (!registration) {
+            return false;
+        }
+        
+        // 重新调用工厂函数，生成包含最新状态的 Tool 实例
+        const tool = registration();
+        this.tools.set(name, tool);
+        return true;
+    }
+
+    /**
      * 清空所有工具
      */
     clear(): void {

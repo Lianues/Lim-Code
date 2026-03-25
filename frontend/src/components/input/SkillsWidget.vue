@@ -11,8 +11,7 @@ import {
   openDirectory,
   refreshSkills,
   removeSkillConfig,
-  setSkillEnabled,
-  setSkillSendContent
+  setSkillEnabled
 } from '../../services/skills'
 
 const { t } = useI18n()
@@ -34,10 +33,9 @@ async function withLoading<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 async function loadSkills() {
-  const conversationId = chatStore.currentConversationId
-
   try {
-    skills.value = await listSkills(conversationId)
+    // Skill 配置是全局的，不传 conversationId，始终读取全局配置。
+    skills.value = await listSkills()
   } catch (error) {
     console.error('Failed to load skills:', error)
     skills.value = []
@@ -68,7 +66,10 @@ async function refreshSkillsExistence() {
 
 async function handleToggleSkillEnabled(id: string, enabled: boolean) {
   try {
-    await setSkillEnabled(id, enabled, chatStore.currentConversationId)
+    // Skill 启用/禁用是全局操作，不传 conversationId。
+    // 原先传了 conversationId 导致走对话级分支，SkillsManager 全局状态和
+    // read_skill 工具声明都不会更新，AI 看到的 Skill 列表锁定在旧值。
+    await setSkillEnabled(id, enabled)
     const skill = skills.value.find(s => s.id === id)
     if (skill) skill.enabled = enabled
   } catch (error: any) {
@@ -76,19 +77,10 @@ async function handleToggleSkillEnabled(id: string, enabled: boolean) {
   }
 }
 
-async function handleToggleSkillSendContent(id: string, sendContent: boolean) {
-  try {
-    await setSkillSendContent(id, sendContent, chatStore.currentConversationId)
-    const skill = skills.value.find(s => s.id === id)
-    if (skill) skill.sendContent = sendContent
-  } catch (error: any) {
-    console.error('Failed to toggle skill send content:', error)
-  }
-}
-
 async function handleRemoveSkillConfig(id: string) {
   try {
-    await removeSkillConfig(id, chatStore.currentConversationId)
+    // Skill 配置是全局的，不传 conversationId。
+    await removeSkillConfig(id)
     skills.value = skills.value.filter(s => s.id !== id)
   } catch (error: any) {
     console.error('Failed to remove skill config:', error)
@@ -221,19 +213,6 @@ watch(() => chatStore.currentConversationId, async () => {
             <span v-if="skill.exists === false" class="skill-not-exists-hint">{{ t('components.input.skillsPanel.notExists') }}</span>
           </div>
           <div class="skill-actions">
-            <label
-              class="skill-toggle-switch"
-              :class="{ disabled: !skill.enabled || skill.exists === false }"
-              :title="t('components.input.skillsPanel.sendContentTooltip')"
-            >
-              <input
-                type="checkbox"
-                :checked="skill.sendContent"
-                @change="handleToggleSkillSendContent(skill.id, !skill.sendContent)"
-                :disabled="!skill.enabled || skill.exists === false"
-              />
-              <span class="skill-toggle-slider"></span>
-            </label>
             <IconButton
               v-if="skill.exists === false"
               icon="codicon-close"
@@ -428,60 +407,6 @@ watch(() => chatStore.currentConversationId, async () => {
 .skill-checkbox-wrapper input:disabled + .skill-checkbox-custom {
   opacity: 0.5;
   cursor: not-allowed;
-}
-
-.skill-toggle-switch {
-  position: relative;
-  display: inline-block;
-  width: 28px;
-  height: 16px;
-  cursor: pointer;
-  flex-shrink: 0;
-}
-
-.skill-toggle-switch.disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.skill-toggle-switch input {
-  opacity: 0;
-  width: 0;
-  height: 0;
-}
-
-.skill-toggle-slider {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-color: var(--vscode-input-background);
-  border: 1px solid var(--vscode-input-border);
-  border-radius: 8px;
-  transition: 0.2s;
-}
-
-.skill-toggle-slider::before {
-  position: absolute;
-  content: "";
-  height: 10px;
-  width: 10px;
-  left: 2px;
-  bottom: 2px;
-  background-color: var(--vscode-foreground);
-  border-radius: 50%;
-  transition: 0.2s;
-}
-
-.skill-toggle-switch input:checked + .skill-toggle-slider {
-  background-color: var(--vscode-charts-yellow);
-  border-color: var(--vscode-charts-yellow);
-}
-
-.skill-toggle-switch input:checked + .skill-toggle-slider::before {
-  transform: translateX(12px);
-  background-color: var(--vscode-editor-background);
 }
 
 .skill-info {
