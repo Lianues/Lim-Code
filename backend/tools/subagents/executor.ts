@@ -16,6 +16,7 @@ import type {
 import type { ToolDeclaration, ToolResult, ToolContext } from '../types';
 import { StreamAccumulator } from '../../modules/channel/StreamAccumulator';
 import { isPlanPathAllowed } from '../../modules/settings/modeToolsPolicy';
+import { coerceToolArgs } from '../coerceToolArgs';
 
 /**
  * 子代理内部使用的工具调用结构。
@@ -325,7 +326,10 @@ async function executeToolCall(
                     toolId: `subagent_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
                 };
                 
-                const result: ToolResult = await tool.handler(args, toolContext);
+                // Coerce args: fix LLM parameter serialization bugs
+                const coercedArgs = coerceToolArgs(args, tool.declaration.parameters);
+
+                const result: ToolResult = await tool.handler(coercedArgs, toolContext);
                 
                 return {
                     result: result.success ? result.data : result.error,

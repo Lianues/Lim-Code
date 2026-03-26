@@ -3,6 +3,24 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.1.16] - 2026-03-25
+
+### Fixed
+  - 修复包管理器锁文件冲突：删除多余的 pnpm-lock.yaml，统一使用 npm（package-lock.json）作为包管理器
+  - 修复 LLM 工具参数序列化问题：新增 coerceToolArgs 模块，自动修正 AI 模型返回的工具参数类型错误（如将字符串 "true" 转为布尔值 true，字符串 "123" 转为数字 123，字符串化的数组/对象自动解析为原类型）
+  - 在主工具执行入口（ToolExecutionService）和子代理执行入口（subagents/executor）中接入 coerceToolArgs，统一参数类型矫正逻辑
+
+### Added
+  - 新增 backend/tools/coerceToolArgs.ts 工具参数类型矫正模块
+  - 新增 coerceToolArgs 单元测试（backend/__tests__/tools/coerceToolArgs.test.ts）
+  - 新增 Jest 测试配置（jest.config.js、tsconfig.test.json）
+
+### Improved
+  - tsconfig.json 排除测试目录，避免测试文件影响生产构建
+
+### Note
+  - ⚠️ 此为初步修复，coerceToolArgs 的类型矫正覆盖了常见场景，但可能存在边界情况未处理，后续会持续完善
+
 ## [1.1.14] - 2026-03-25
 
 ### Added

@@ -22,6 +22,7 @@
   "exclude": [
     "node_modules",
     "dist",
-    "frontend"
+    "frontend",
+    "backend/__tests__"
   ]
 }
