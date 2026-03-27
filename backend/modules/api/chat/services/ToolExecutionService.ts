@@ -7,6 +7,7 @@
 import { t } from '../../../../i18n';
 import type { ToolRegistry } from '../../../../tools/ToolRegistry';
 import type { ConversationStore } from '../../../../tools/types';
+import { coerceToolArgs } from '../../../../tools/coerceToolArgs';
 import type { CheckpointRecord } from '../../../checkpoint';
 import type { SettingsManager } from '../../../settings/SettingsManager';
 import { isPlanPathAllowed } from '../../../settings/modeToolsPolicy';
@@ -583,8 +584,11 @@ export class ToolExecutionService {
         // 为特定工具添加配置
         this.addToolSpecificConfig(call.name, toolContext);
 
-        // 执行工具
-        const result = await tool.handler(call.args, toolContext);
+        // Coerce args: fix LLM parameter serialization bugs
+        // (e.g. array/object/boolean/number params sent as strings)
+        const coercedArgs = coerceToolArgs(call.args, tool.declaration.parameters);
+
+        const result = await tool.handler(coercedArgs, toolContext);
         return result as unknown as Record<string, unknown>;
     }
 
