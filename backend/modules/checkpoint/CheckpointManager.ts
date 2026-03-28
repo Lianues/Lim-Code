@@ -21,6 +21,7 @@ import * as crypto from 'crypto';
 import type { SettingsManager } from '../settings/SettingsManager';
 import type { ConversationManager } from '../conversation/ConversationManager';
 import { getDiffManager } from '../../tools/file/diffManager';
+import { CheckpointIgnoreResolver, normalizeCheckpointPath } from './CheckpointIgnoreResolver';
 
 /**
  * 文件变更记录
@@ -109,6 +110,33 @@ export class CheckpointManager {
     private getWorkspaceRoot(): vscode.Uri | undefined {
         return vscode.workspace.workspaceFolders?.[0]?.uri;
     }
+
+    /**
+     * 为某个根目录创建检查点忽略解析器。
+     *
+     * `includeCustomPatterns` 用于区分两类场景：
+     * - 工作区侧：需要叠加用户配置的自定义忽略模式
+     * - 备份目录侧：只按备份内容本身遍历，不再追加工作区配置
+     */
+    private createIgnoreResolver(rootDir: string, includeCustomPatterns: boolean = true): CheckpointIgnoreResolver {
+        const extraPatterns = includeCustomPatterns
+            ? (this.settingsManager.getCheckpointConfig().customIgnorePatterns ?? [])
+            : [];
+        return new CheckpointIgnoreResolver(rootDir, extraPatterns);
+    }
+
+    /**
+     * 收集某个根目录下应被检查点系统“看见”的文件和空目录。
+     *
+     * 这个包装方法的意义是把具体 ignore 语义留在 resolver 内部，
+     * `CheckpointManager` 只消费结果，不再关心规则细节。
+     */
+    private async collectSnapshotEntries(
+        rootDir: string,
+        includeCustomPatterns: boolean = true
+    ): Promise<{ files: string[]; dirs: string[] }> {
+        return this.createIgnoreResolver(rootDir, includeCustomPatterns).collectEntries();
+    }
     
     /**
      * 创建检查点
@@ -175,7 +203,7 @@ export class CheckpointManager {
             await fs.mkdir(backupDir, { recursive: true });
             
             // 收集需要备份的文件和目录
-            const { files, dirs } = await this.collectFilesAndDirs(workspaceRoot.fsPath);
+            const { files, dirs } = await this.collectSnapshotEntries(workspaceRoot.fsPath);
             
             // 计算当前所有文件的哈希
             const currentHashes: Record<string, string> = {};
@@ -184,7 +212,7 @@ export class CheckpointManager {
             
             for (const file of sortedFiles) {
                 try {
-                    const relativePath = path.relative(workspaceRoot.fsPath, file);
+                    const relativePath = normalizeCheckpointPath(path.relative(workspaceRoot.fsPath, file));
                     const content = await fs.readFile(file);
                     const fileHash = crypto.createHash('md5').update(content).digest('hex');
                     currentHashes[relativePath] = fileHash;
@@ -197,7 +225,7 @@ export class CheckpointManager {
             // 收集空目录的相对路径
             const currentEmptyDirs: string[] = [];
             for (const dir of dirs) {
-                const relativePath = path.relative(workspaceRoot.fsPath, dir);
+                const relativePath = normalizeCheckpointPath(path.relative(workspaceRoot.fsPath, dir));
                 currentEmptyDirs.push(relativePath);
                 hashParts.push(`${relativePath}:empty-dir`);
             }
@@ -222,15 +250,13 @@ export class CheckpointManager {
             let fileCount = 0;
             
             if (lastCheckpoint && lastCheckpoint.fileHashes) {
+                const previousHashes = this.normalizeFileHashMap(lastCheckpoint.fileHashes);
+
                 // 计算变更
                 const { added, modified, deleted } = this.computeChanges(
-                    lastCheckpoint.fileHashes,
+                    previousHashes,
                     currentHashes
                 );
-                
-                // 如果变更的文件数量小于总文件数的一半，使用增量备份
-                const totalChanges = added.length + modified.length + deleted.length;
-                const totalFiles = Object.keys(currentHashes).length;
                 
                 // 始终使用增量备份（只要有上一个检查点）
                 // 增量备份的主要目的是节省磁盘空间，恢复时性能差异可忽略
@@ -267,7 +293,7 @@ export class CheckpointManager {
             if (!isIncremental) {
                 for (const file of sortedFiles) {
                     try {
-                        const relativePath = path.relative(workspaceRoot.fsPath, file);
+                        const relativePath = normalizeCheckpointPath(path.relative(workspaceRoot.fsPath, file));
                         const destPath = path.join(backupDir, relativePath);
                         
                         await fs.mkdir(path.dirname(destPath), { recursive: true });
@@ -281,7 +307,7 @@ export class CheckpointManager {
                 // 备份空目录
                 for (const dir of dirs) {
                     try {
-                        const relativePath = path.relative(workspaceRoot.fsPath, dir);
+                        const relativePath = normalizeCheckpointPath(path.relative(workspaceRoot.fsPath, dir));
                         const destPath = path.join(backupDir, relativePath);
                         await fs.mkdir(destPath, { recursive: true });
                     } catch (err) {
@@ -326,227 +352,6 @@ export class CheckpointManager {
             console.error('[CheckpointManager] Failed to create checkpoint:', err);
             return null;
         }
-    }
-    
-    /**
-     * 解析 .gitignore 文件内容为忽略规则
-     */
-    private parseGitignore(content: string): string[] {
-        return content
-            .split('\n')
-            .map(line => line.trim())
-            .filter(line => line && !line.startsWith('#'));  // 过滤空行和注释
-    }
-    
-    /**
-     * 检查路径是否匹配 gitignore 规则
-     */
-    private matchesGitignore(relativePath: string, patterns: string[]): boolean {
-        const pathParts = relativePath.split(path.sep);
-        
-        for (const pattern of patterns) {
-            // 处理否定模式（以 ! 开头）
-            if (pattern.startsWith('!')) {
-                continue;  // 简化处理，暂不支持否定模式
-            }
-            
-            // 移除末尾的 /
-            const cleanPattern = pattern.endsWith('/') ? pattern.slice(0, -1) : pattern;
-            
-            // 检查是否是目录模式（包含 /）
-            if (cleanPattern.includes('/')) {
-                // 完整路径匹配
-                if (this.matchPattern(relativePath, cleanPattern)) {
-                    return true;
-                }
-            } else {
-                // 匹配任意层级中的文件/目录名
-                for (const part of pathParts) {
-                    if (this.matchPattern(part, cleanPattern)) {
-                        return true;
-                    }
-                }
-            }
-        }
-        
-        return false;
-    }
-    
-    /**
-     * 简单的通配符匹配
-     */
-    private matchPattern(str: string, pattern: string): boolean {
-        // 转换 gitignore 模式为正则表达式
-        let regexStr = pattern
-            .replace(/\./g, '\\.')      // 转义 .
-            .replace(/\*\*/g, '<<<GLOBSTAR>>>')  // 临时替换 **
-            .replace(/\*/g, '[^/]*')    // * 匹配除 / 外的任意字符
-            .replace(/<<<GLOBSTAR>>>/g, '.*')   // ** 匹配任意字符包括 /
-            .replace(/\?/g, '[^/]');    // ? 匹配单个字符
-        
-        // 如果模式不以 / 开头，可以匹配任意前缀
-        if (!pattern.startsWith('/')) {
-            regexStr = '(^|/)' + regexStr;
-        } else {
-            regexStr = '^' + regexStr.slice(1);  // 移除开头的 /
-        }
-        
-        // 如果不以 ** 结尾，添加结尾匹配
-        if (!pattern.endsWith('**')) {
-            regexStr += '(/.*)?$';
-        }
-        
-        try {
-            const regex = new RegExp(regexStr);
-            return regex.test(str);
-        } catch {
-            // 正则表达式无效，使用简单匹配
-            return str === pattern || str.endsWith('/' + pattern);
-        }
-    }
-    
-    /**
-     * 递归收集目录中所有的 .gitignore 文件并合并规则
-     */
-    private async loadAllGitignorePatterns(rootDir: string): Promise<string[]> {
-        const patterns: string[] = [];
-        
-        // 始终忽略 .git 和 node_modules 目录（硬编码，无论 .gitignore 如何配置）
-        patterns.push('.git');
-        patterns.push('node_modules');
-        
-        // 递归查找所有 .gitignore 文件
-        await this.collectGitignoreFiles(rootDir, rootDir, patterns);
-        
-        // 添加用户自定义忽略模式
-        const config = this.settingsManager.getCheckpointConfig();
-        if (config.customIgnorePatterns) {
-            patterns.push(...config.customIgnorePatterns);
-        }
-        
-        return patterns;
-    }
-    
-    /**
-     * 递归收集 .gitignore 文件
-     */
-    private async collectGitignoreFiles(
-        rootDir: string,
-        currentDir: string,
-        patterns: string[]
-    ): Promise<void> {
-        const gitignorePath = path.join(currentDir, '.gitignore');
-        const relativeDirPath = path.relative(rootDir, currentDir);
-        
-        try {
-            const content = await fs.readFile(gitignorePath, 'utf-8');
-            const parsed = this.parseGitignore(content);
-            
-            // 将规则转换为相对于根目录的路径
-            for (const pattern of parsed) {
-                if (relativeDirPath) {
-                    // 子目录的 .gitignore，规则需要加上目录前缀
-                    if (pattern.startsWith('/')) {
-                        // 绝对路径模式，转换为相对于根目录
-                        patterns.push(relativeDirPath + pattern);
-                    } else {
-                        // 相对路径模式，可以匹配子目录中的任意位置
-                        patterns.push(pattern);
-                    }
-                } else {
-                    patterns.push(pattern);
-                }
-            }
-        } catch {
-            // .gitignore 不存在，继续
-        }
-        
-        // 递归处理子目录
-        try {
-            const entries = await fs.readdir(currentDir, { withFileTypes: true });
-            for (const entry of entries) {
-                if (entry.isDirectory()) {
-                    const fullPath = path.join(currentDir, entry.name);
-                    const relativePath = path.relative(rootDir, fullPath);
-                    
-                    // 跳过已经被忽略的目录
-                    if (this.matchesGitignore(relativePath, patterns)) {
-                        continue;
-                    }
-                    
-                    await this.collectGitignoreFiles(rootDir, fullPath, patterns);
-                }
-            }
-        } catch {
-            // 无法读取目录，继续
-        }
-    }
-    
-    /**
-     * 从目录加载 .gitignore 规则（向后兼容）
-     */
-    private async loadGitignorePatterns(rootDir: string): Promise<string[]> {
-        return this.loadAllGitignorePatterns(rootDir);
-    }
-    
-    /**
-     * 收集需要备份的文件和目录
-     */
-    private async collectFilesAndDirs(
-        rootDir: string,
-        currentDir?: string,
-        result?: { files: string[]; dirs: string[] },
-        patterns?: string[]
-    ): Promise<{ files: string[]; dirs: string[] }> {
-        // 首次调用时初始化
-        if (!result) {
-            result = { files: [], dirs: [] };
-        }
-        if (!patterns) {
-            patterns = await this.loadGitignorePatterns(rootDir);
-        }
-        
-        const dir = currentDir || rootDir;
-        
-        try {
-            const entries = await fs.readdir(dir, { withFileTypes: true });
-            let hasChildren = false;
-            
-            for (const entry of entries) {
-                const fullPath = path.join(dir, entry.name);
-                const relativePath = path.relative(rootDir, fullPath);
-                
-                // 检查是否应该忽略
-                if (this.matchesGitignore(relativePath, patterns)) {
-                    continue;
-                }
-                
-                hasChildren = true;
-                
-                if (entry.isDirectory()) {
-                    await this.collectFilesAndDirs(rootDir, fullPath, result, patterns);
-                } else if (entry.isFile()) {
-                    result.files.push(fullPath);
-                }
-            }
-            
-            // 如果当前目录不是根目录且为空目录，记录它
-            if (!hasChildren && dir !== rootDir) {
-                result.dirs.push(dir);
-            }
-        } catch (err) {
-            // 忽略无法读取的目录
-        }
-        
-        return result;
-    }
-    
-    /**
-     * 收集需要备份的文件（向后兼容）
-     */
-    private async collectFiles(rootDir: string, currentDir?: string, files: string[] = [], patterns?: string[]): Promise<string[]> {
-        const result = await this.collectFilesAndDirs(rootDir, currentDir, { files, dirs: [] }, patterns);
-        return result.files;
     }
     
     /**
@@ -598,6 +403,53 @@ export class CheckpointManager {
         } catch {
             return null;
         }
+    }
+
+    private normalizeFileHashMap(fileHashes: Record<string, string>): Record<string, string> {
+        return Object.fromEntries(
+            Object.entries(fileHashes).map(([relativePath, hash]) => [
+                normalizeCheckpointPath(relativePath),
+                hash
+            ])
+        );
+    }
+
+    private normalizePathList(paths: string[]): string[] {
+        return paths.map(relativePath => normalizeCheckpointPath(relativePath));
+    }
+
+    /**
+     * 基于“当前工作区规则”过滤检查点目标状态。
+     *
+     * 目的不是改变检查点历史数据，而是保证 restore 的行为始终围绕
+     * “当前应该触碰哪些路径”展开，避免把现在已经忽略的内容重新写回工作区。
+     */
+    private async filterRestoreTarget(
+        resolver: CheckpointIgnoreResolver,
+        fileHashes: Record<string, string>,
+        emptyDirs: string[]
+    ): Promise<{ fileHashes: Record<string, string>; emptyDirs: string[] }> {
+        const filteredFileHashes: Record<string, string> = {};
+
+        // 文件恢复目标和工作区扫描都使用同一个 resolver，确保比较口径一致。
+        for (const [relativePath, hash] of Object.entries(this.normalizeFileHashMap(fileHashes))) {
+            if (!(await resolver.isIgnored(relativePath, false))) {
+                filteredFileHashes[relativePath] = hash;
+            }
+        }
+
+        const filteredEmptyDirs: string[] = [];
+        // 空目录同样需要按当前规则过滤，否则 restore 会重新创建当前已忽略的目录壳。
+        for (const relativePath of this.normalizePathList(emptyDirs)) {
+            if (!(await resolver.isIgnored(relativePath, true))) {
+                filteredEmptyDirs.push(relativePath);
+            }
+        }
+
+        return {
+            fileHashes: filteredFileHashes,
+            emptyDirs: filteredEmptyDirs
+        };
     }
     
     /**
@@ -788,12 +640,21 @@ export class CheckpointManager {
             } catch (err) {
                 console.warn('[CheckpointManager] Failed to reject pending tool calls:', err);
             }
-            
-            // 获取目标检查点的文件哈希映射（这是最终目标状态）
-            const targetHashes = checkpoint.fileHashes;
-            
+
+            // 当前工作区的 ignore 视图是 restore 的真实边界。
+            const workspaceIgnoreResolver = this.createIgnoreResolver(workspaceRoot.fsPath);
+             
+            // 先用当前规则裁剪目标状态，再进行 diff / restore。
+            const targetState = checkpoint.fileHashes
+                ? await this.filterRestoreTarget(
+                    workspaceIgnoreResolver,
+                    checkpoint.fileHashes,
+                    checkpoint.emptyDirs || []
+                )
+                : undefined;
+             
             // 如果没有 fileHashes（旧版本检查点），回退到原来的逻辑
-            if (!targetHashes) {
+            if (!checkpoint.fileHashes) {
                 const legacyResult = await this.restoreCheckpointLegacy(conversationId, checkpointId, checkpoint);
                 return {
                     ...legacyResult,
@@ -801,7 +662,9 @@ export class CheckpointManager {
                     autoPrunedCheckpointCount: autoPrunedCheckpointCount > 0 ? autoPrunedCheckpointCount : undefined,
                 };
             }
-            
+
+            const targetHashes = targetState.fileHashes;
+             
             // 获取增量链（从基准点到目标点）
             const chain = this.getIncrementalChain(checkpoints, checkpoint);
             if (chain.length === 0) {
@@ -847,14 +710,12 @@ export class CheckpointManager {
                     autoPrunedCheckpointCount: autoPrunedCheckpointCount > 0 ? autoPrunedCheckpointCount : undefined,
                 };
             }
-            
-            const ignorePatterns = await this.loadAllGitignorePatterns(workspaceRoot.fsPath);
-            
-            // 收集当前工作区文件
-            const { files: workspaceFiles } = await this.collectFilesAndDirsWithPatterns(workspaceRoot.fsPath, ignorePatterns);
+             
+            // 工作区当前状态也必须通过同一个 resolver 收集，才能与 targetState 对齐比较。
+            const { files: workspaceFiles } = await workspaceIgnoreResolver.collectEntries();
             const currentHashes: Record<string, string> = {};
             for (const file of workspaceFiles) {
-                const relativePath = path.relative(workspaceRoot.fsPath, file);
+                const relativePath = normalizeCheckpointPath(path.relative(workspaceRoot.fsPath, file));
                 const hash = await this.getFileHash(file);
                 if (hash) {
                     currentHashes[relativePath] = hash;
@@ -881,10 +742,10 @@ export class CheckpointManager {
                     console.warn(`[CheckpointManager] Failed to delete ${relativePath}:`, err);
                 }
             }
-            
-            // 清理空目录
-            await this.cleanupEmptyDirsRecursive(workspaceRoot.fsPath, ignorePatterns);
-            
+             
+            // 删除文件后统一清理由当前规则可见的空目录。
+            await workspaceIgnoreResolver.removeEmptyDirectories();
+             
             // 恢复需要添加/修改的文件
             const filesToRestore = [...added, ...modified];
             for (const relativePath of filesToRestore) {
@@ -917,9 +778,9 @@ export class CheckpointManager {
             
             // 跳过的文件数量（当前哈希与目标哈希相同的文件）
             skipped = Object.keys(targetHashes).length - added.length - modified.length;
-            
-            // 恢复空目录（从检查点元数据中读取）
-            const targetEmptyDirs = checkpoint.emptyDirs || [];
+             
+            // 恢复空目录时使用已经过滤后的目标集合，避免重建当前已忽略目录。
+            const targetEmptyDirs = targetState.emptyDirs;
             for (const relativePath of targetEmptyDirs) {
                 try {
                     const destPath = path.join(workspaceRoot.fsPath, relativePath);
@@ -1006,19 +867,37 @@ export class CheckpointManager {
             return { success: false, restored: 0, deleted: 0, skipped: 0, error: 'Backup directory not found' };
         }
         
-        // 从备份目录递归收集所有 .gitignore 规则
-        const ignorePatterns = await this.loadAllGitignorePatterns(backupPath);
-        
+        // 旧版检查点没有 fileHashes，只能按备份目录直接恢复；
+        // 但“当前哪些路径允许被 restore 触碰”仍然由工作区 resolver 决定。
+        const workspaceIgnoreResolver = this.createIgnoreResolver(workspaceRoot.fsPath);
+
         // 收集备份的文件和目录
-        const { files: backupFiles, dirs: backupDirs } = await this.collectFilesAndDirsWithPatterns(backupPath, ignorePatterns);
+        const { files: backupFiles, dirs: backupDirs } = await this.collectSnapshotEntries(backupPath, false);
+        const restorableBackupFiles: string[] = [];
+        // 先从备份内容里筛出“当前仍允许恢复”的文件集合。
+        for (const backupFile of backupFiles) {
+            const relativePath = normalizeCheckpointPath(path.relative(backupPath, backupFile));
+            if (!(await workspaceIgnoreResolver.isIgnored(relativePath, false))) {
+                restorableBackupFiles.push(backupFile);
+            }
+        }
+        const restorableBackupDirs: string[] = [];
+        // 空目录也遵循同样规则，避免旧版 restore 重建当前已忽略目录。
+        for (const dir of backupDirs) {
+            const relativePath = normalizeCheckpointPath(path.relative(backupPath, dir));
+            if (!(await workspaceIgnoreResolver.isIgnored(relativePath, true))) {
+                restorableBackupDirs.push(dir);
+            }
+        }
+
         const backupRelativePaths = new Set(
-            backupFiles.map(f => path.relative(backupPath, f))
+            restorableBackupFiles.map(f => normalizeCheckpointPath(path.relative(backupPath, f)))
         );
         
         // 收集工作区文件
-        const { files: workspaceFiles } = await this.collectFilesAndDirsWithPatterns(workspaceRoot.fsPath, ignorePatterns);
+        const { files: workspaceFiles } = await workspaceIgnoreResolver.collectEntries();
         const workspaceRelativePaths = new Set(
-            workspaceFiles.map(f => path.relative(workspaceRoot.fsPath, f))
+            workspaceFiles.map(f => normalizeCheckpointPath(path.relative(workspaceRoot.fsPath, f)))
         );
         
         let deleted = 0;
@@ -1029,7 +908,7 @@ export class CheckpointManager {
         
         // 删除工作区中不在备份里的文件
         for (const file of workspaceFiles) {
-            const relativePath = path.relative(workspaceRoot.fsPath, file);
+            const relativePath = normalizeCheckpointPath(path.relative(workspaceRoot.fsPath, file));
             if (!backupRelativePaths.has(relativePath)) {
                 try {
                     await fs.unlink(file);
@@ -1042,11 +921,11 @@ export class CheckpointManager {
         }
         
         // 清理空目录
-        await this.cleanupEmptyDirsRecursive(workspaceRoot.fsPath, ignorePatterns);
+        await workspaceIgnoreResolver.removeEmptyDirectories();
         
         // 复制备份中的文件到工作区
-        for (const backupFile of backupFiles) {
-            const relativePath = path.relative(backupPath, backupFile);
+        for (const backupFile of restorableBackupFiles) {
+            const relativePath = normalizeCheckpointPath(path.relative(backupPath, backupFile));
             const destPath = path.join(workspaceRoot.fsPath, relativePath);
             
             try {
@@ -1070,9 +949,9 @@ export class CheckpointManager {
         }
         
         // 恢复空目录
-        for (const dir of backupDirs) {
+        for (const dir of restorableBackupDirs) {
             try {
-                const relativePath = path.relative(backupPath, dir);
+                const relativePath = normalizeCheckpointPath(path.relative(backupPath, dir));
                 const destPath = path.join(workspaceRoot.fsPath, relativePath);
                 await fs.mkdir(destPath, { recursive: true });
             } catch (err) {
@@ -1096,125 +975,6 @@ export class CheckpointManager {
         vscode.window.setStatusBarMessage(message, 5000);
         
         return { success: true, restored, deleted, skipped };
-    }
-    
-    /**
-     * 递归清理空目录（跳过被忽略的目录）
-     */
-    private async cleanupEmptyDirsRecursive(dir: string, ignorePatterns: string[], rootDir?: string): Promise<void> {
-        const root = rootDir || dir;
-        
-        try {
-            const entries = await fs.readdir(dir, { withFileTypes: true });
-            
-            for (const entry of entries) {
-                if (entry.isDirectory()) {
-                    const fullPath = path.join(dir, entry.name);
-                    const relativePath = path.relative(root, fullPath);
-                    
-                    // 跳过被忽略的目录
-                    if (this.matchesGitignore(relativePath, ignorePatterns)) {
-                        continue;
-                    }
-                    
-                    // 递归处理子目录
-                    await this.cleanupEmptyDirsRecursive(fullPath, ignorePatterns, root);
-                    
-                    // 检查目录是否为空
-                    try {
-                        const subEntries = await fs.readdir(fullPath);
-                        if (subEntries.length === 0) {
-                            await fs.rmdir(fullPath);
-                        }
-                    } catch {
-                        // 忽略错误
-                    }
-                }
-            }
-        } catch {
-            // 忽略错误
-        }
-    }
-    
-    /**
-     * 使用指定的忽略规则收集文件和目录
-     */
-    private async collectFilesAndDirsWithPatterns(
-        rootDir: string,
-        patterns: string[],
-        currentDir?: string,
-        result?: { files: string[]; dirs: string[] }
-    ): Promise<{ files: string[]; dirs: string[] }> {
-        if (!result) {
-            result = { files: [], dirs: [] };
-        }
-        
-        const dir = currentDir || rootDir;
-        
-        try {
-            const entries = await fs.readdir(dir, { withFileTypes: true });
-            let hasChildren = false;
-            
-            for (const entry of entries) {
-                const fullPath = path.join(dir, entry.name);
-                const relativePath = path.relative(rootDir, fullPath);
-                
-                // 检查是否应该忽略
-                if (this.matchesGitignore(relativePath, patterns)) {
-                    continue;
-                }
-                
-                hasChildren = true;
-                
-                if (entry.isDirectory()) {
-                    await this.collectFilesAndDirsWithPatterns(rootDir, patterns, fullPath, result);
-                } else if (entry.isFile()) {
-                    result.files.push(fullPath);
-                }
-            }
-            
-            // 如果当前目录不是根目录且为空目录，记录它
-            if (!hasChildren && dir !== rootDir) {
-                result.dirs.push(dir);
-            }
-        } catch (err) {
-            // 忽略无法读取的目录
-        }
-        
-        return result;
-    }
-    
-    /**
-     * 使用指定的忽略规则收集文件（向后兼容）
-     */
-    private async collectFilesWithPatterns(
-        rootDir: string,
-        patterns: string[],
-        currentDir?: string,
-        files: string[] = []
-    ): Promise<string[]> {
-        const result = await this.collectFilesAndDirsWithPatterns(rootDir, patterns, currentDir, { files, dirs: [] });
-        return result.files;
-    }
-    
-    /**
-     * 清理空目录（从指定目录向上递归，直到工作区根目录）
-     */
-    private async cleanupEmptyDirs(dir: string, stopAt: string): Promise<void> {
-        if (dir === stopAt || !dir.startsWith(stopAt)) {
-            return;
-        }
-        
-        try {
-            const entries = await fs.readdir(dir);
-            if (entries.length === 0) {
-                await fs.rmdir(dir);
-                // 继续向上清理
-                await this.cleanupEmptyDirs(path.dirname(dir), stopAt);
-            }
-        } catch {
-            // 忽略错误
-        }
     }
     
     /**

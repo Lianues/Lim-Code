@@ -257,6 +257,7 @@
   "dependencies": {
     "@vscode/codicons": "^0.0.43",
     "fast-xml-parser": "^4.5.0",
+    "ignore": "^7.0.5",
     "nanoid": "^5.1.6",
     "tree-kill": "^1.2.2",
     "typescript": "^5.9.3",
