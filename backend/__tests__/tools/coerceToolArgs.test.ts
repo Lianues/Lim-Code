@@ -670,4 +670,82 @@ describe('coerceToolArgs', () => {
             expect(result.timeout).toBe(5000);
         });
     });
+
+    // ============================================================
+    // 13. Content with newlines in stringified array (the HANDOVER.md bug)
+    //     When the model stringifies an array whose string fields contain
+    //     newlines, the outer JSON.parse turns \\n into real \n (U+000A),
+    //     making the inner JSON.parse fail. coerceToolArgs must handle this.
+    // ============================================================
+    describe('stringified array with newlines in content (HANDOVER.md bug)', () => {
+        const writeFileSchema = schema({
+            files: {
+                type: 'array',
+                items: {
+                    type: 'object',
+                    properties: {
+                        path: { type: 'string' },
+                        content: { type: 'string' },
+                    },
+                    required: ['path', 'content'],
+                },
+            },
+        }, ['files']);
+
+        it('should parse stringified array when content contains newlines', () => {
+            // Simulate: model outputs files as a JSON string, content has \\n.
+            // After outer JSON.parse, \\n becomes real newlines in the string.
+            const contentWithNewlines = '# Title\n\n## Section\n\nSome text\n';
+            const innerJson = JSON.stringify([{ path: 'README.md', content: contentWithNewlines }]);
+            // innerJson is valid JSON: [{"path":"README.md","content":"# Title\n\n## Section\n\nSome text\n"}]
+            // but with escaped \n. After the outer parse simulating the API layer:
+            const afterOuterParse = JSON.parse(JSON.stringify(innerJson));
+            // afterOuterParse is a string with real newlines inside the content value.
+
+            const args = { files: afterOuterParse };
+            const result = coerceToolArgs(args, writeFileSchema);
+            expect(Array.isArray(result.files)).toBe(true);
+            expect(result.files).toHaveLength(1);
+            expect(result.files[0].path).toBe('README.md');
+            expect(result.files[0].content).toBe(contentWithNewlines);
+        });
+
+        it('should parse stringified array when content contains tabs and carriage returns', () => {
+            const content = 'line1\r\nline2\tindented\n';
+            const innerJson = JSON.stringify([{ path: 'file.txt', content }]);
+            const afterOuterParse = JSON.parse(JSON.stringify(innerJson));
+
+            const args = { files: afterOuterParse };
+            const result = coerceToolArgs(args, writeFileSchema);
+            expect(Array.isArray(result.files)).toBe(true);
+            expect(result.files[0].content).toBe(content);
+        });
+
+        it('should parse stringified array with long multi-line content (HANDOVER.md-like)', () => {
+            // Simulate a realistic markdown document with many newlines
+            const markdownContent = [
+                '# Project Handover',
+                '',
+                '## Server Info',
+                '',
+                '- IP: `1.2.3.4`',
+                '- User: `deploy`',
+                '',
+                '## Commands',
+                '',
+                '```bash',
+                'tmux attach -t app',
+                '```',
+                '',
+            ].join('\n');
+            const innerJson = JSON.stringify([{ path: 'HANDOVER.md', content: markdownContent }]);
+            const afterOuterParse = JSON.parse(JSON.stringify(innerJson));
+
+            const args = { files: afterOuterParse };
+            const result = coerceToolArgs(args, writeFileSchema);
+            expect(Array.isArray(result.files)).toBe(true);
+            expect(result.files[0].path).toBe('HANDOVER.md');
+            expect(result.files[0].content).toBe(markdownContent);
+        });
+    });
 });

@@ -234,11 +234,44 @@ function coerceNumber(value: any): any {
 
 /**
  * Try to JSON.parse a string. Returns undefined if it fails.
+ *
+ * Handles a common LLM double-serialization issue: when the model wraps an
+ * array/object value as a JSON string, and that string contains literal
+ * control characters (e.g. newlines from the outer JSON.parse), the inner
+ * JSON.parse fails because JSON spec forbids unescaped control characters
+ * inside string values.
+ *
+ * Fallback: if the first parse fails, re-escape control characters
+ * (\x00–\x1f) and try parsing again.
  */
 function tryParseJson(str: string): any {
     try {
         return JSON.parse(str);
     } catch {
+        // Fallback: sanitize unescaped control characters that break JSON.parse.
+        // This happens when the LLM double-serializes a value whose string fields
+        // contain newlines/tabs — the outer JSON.parse turns \\n into real \n,
+        // making the inner JSON unparseable.
+        const sanitized = str.replace(/[\x00-\x1f]/g, (ch) => {
+            switch (ch) {
+                case '\n': return '\\n';
+                case '\r': return '\\r';
+                case '\t': return '\\t';
+                case '\b': return '\\b';
+                case '\f': return '\\f';
+                default:
+                    // Other control chars: encode as \uXXXX
+                    return '\\u' + ch.charCodeAt(0).toString(16).padStart(4, '0');
+            }
+        });
+        // Only retry if sanitization actually changed something
+        if (sanitized !== str) {
+            try {
+                return JSON.parse(sanitized);
+            } catch {
+                return undefined;
+            }
+        }
         return undefined;
     }
 }
