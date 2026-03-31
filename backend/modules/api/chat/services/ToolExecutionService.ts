@@ -7,7 +7,7 @@
 import { t } from '../../../../i18n';
 import type { ToolRegistry } from '../../../../tools/ToolRegistry';
 import type { ConversationStore } from '../../../../tools/types';
-import { coerceToolArgs } from '../../../../tools/coerceToolArgs';
+import { coerceToolArgs, getToolArgsArrayValidationError } from '../../../../tools/coerceToolArgs';
 import type { CheckpointRecord } from '../../../checkpoint';
 import type { SettingsManager } from '../../../settings/SettingsManager';
 import { isPlanPathAllowed } from '../../../settings/modeToolsPolicy';
@@ -206,8 +206,33 @@ export class ToolExecutionService {
                 break;
             }
 
+            const preparedCall = this.prepareToolCallForExecution(call);
+            if (preparedCall.error) {
+                const response: Record<string, unknown> = {
+                    success: false,
+                    error: preparedCall.error
+                };
+
+                toolResults.push({
+                    id: preparedCall.call.id,
+                    name: preparedCall.call.name,
+                    result: JSON.parse(JSON.stringify(response))
+                });
+
+                responseParts.push({
+                    functionResponse: {
+                        id: preparedCall.call.id,
+                        name: preparedCall.call.name,
+                        response
+                    }
+                });
+                continue;
+            }
+
+            const executionCall = preparedCall.call;
+
             // 执行前强制过滤（模式 toolPolicy / 全局 toolsEnabled / Plan write_file 路径限制）
-            const rejectionReason = this.getToolRejectionReason(call.name, call.args);
+            const rejectionReason = this.getToolRejectionReason(executionCall.name, executionCall.args);
             if (rejectionReason) {
                 const response: Record<string, unknown> = {
                     success: false,
@@ -216,15 +241,15 @@ export class ToolExecutionService {
                 };
 
                 toolResults.push({
-                    id: call.id,
-                    name: call.name,
+                    id: executionCall.id,
+                    name: executionCall.name,
                     result: JSON.parse(JSON.stringify(response))
                 });
 
                 responseParts.push({
                     functionResponse: {
-                        id: call.id,
-                        name: call.name,
+                        id: executionCall.id,
+                        name: executionCall.name,
                         response
                     }
                 });
@@ -235,10 +260,10 @@ export class ToolExecutionService {
 
             try {
                 // 检查是否是 MCP 工具（格式：mcp__{serverId}__{toolName}）
-                if (call.name.startsWith('mcp__') && this.mcpManager) {
-                    response = await this.executeMcpTool(call);
+                if (executionCall.name.startsWith('mcp__') && this.mcpManager) {
+                    response = await this.executeMcpTool(executionCall);
                 } else {
-                    response = await this.executeBuiltinTool(call, conversationId, config, abortSignal);
+                    response = await this.executeBuiltinTool(executionCall, conversationId, config, abortSignal);
                 }
             } catch (error) {
                 const err = error as Error;
@@ -251,8 +276,8 @@ export class ToolExecutionService {
             // 添加到工具结果（使用深拷贝，保留完整数据供前端显示）
             // 注意：后续会删除 response.multimodal，但 toolResults 需要保留原始数据
             toolResults.push({
-                id: call.id,
-                name: call.name,
+                id: executionCall.id,
+                name: executionCall.name,
                 result: JSON.parse(JSON.stringify(response))
             });
 
@@ -268,7 +293,7 @@ export class ToolExecutionService {
                 this.processMultimodalData(
                     multimodalData,
                     response,
-                    call,
+                    executionCall,
                     config,
                     toolMode,
                     isPromptMode,
@@ -281,9 +306,9 @@ export class ToolExecutionService {
             // 构建函数响应 part（包含 id 用于 Anthropic API）
             responseParts.push({
                 functionResponse: {
-                    name: call.name,
+                    name: executionCall.name,
                     response,
-                    id: call.id
+                    id: executionCall.id
                 }
             });
         }
@@ -386,8 +411,35 @@ export class ToolExecutionService {
                 break;
             }
 
+            const preparedCall = this.prepareToolCallForExecution(call);
+            if (preparedCall.error) {
+                const response: Record<string, unknown> = {
+                    success: false,
+                    error: preparedCall.error
+                };
+
+                const toolResult: ToolExecutionResult = {
+                    id: preparedCall.call.id,
+                    name: preparedCall.call.name,
+                    result: JSON.parse(JSON.stringify(response))
+                };
+                toolResults.push(toolResult);
+                responseParts.push({
+                    functionResponse: {
+                        id: preparedCall.call.id,
+                        name: preparedCall.call.name,
+                        response
+                    }
+                });
+
+                yield { type: 'end', call: preparedCall.call, toolResult };
+                continue;
+            }
+
+            const executionCall = preparedCall.call;
+
             // 执行前强制过滤（模式 toolPolicy / 全局 toolsEnabled / Plan write_file 路径限制）
-            const rejectionReason = this.getToolRejectionReason(call.name, call.args);
+            const rejectionReason = this.getToolRejectionReason(executionCall.name, executionCall.args);
             if (rejectionReason) {
                 const response: Record<string, unknown> = {
                     success: false,
@@ -396,33 +448,33 @@ export class ToolExecutionService {
                 };
 
                 const toolResult: ToolExecutionResult = {
-                    id: call.id,
-                    name: call.name,
+                    id: executionCall.id,
+                    name: executionCall.name,
                     result: JSON.parse(JSON.stringify(response))
                 };
                 toolResults.push(toolResult);
                 responseParts.push({
                     functionResponse: {
-                        id: call.id,
-                        name: call.name,
+                        id: executionCall.id,
+                        name: executionCall.name,
                         response
                     }
                 });
 
                 // 被策略拒绝的工具：直接给 end 事件（不发 start，避免 UI 把它当作“执行中”）
-                yield { type: 'end', call, toolResult };
+                yield { type: 'end', call: executionCall, toolResult };
                 continue;
             }
 
-            yield { type: 'start', call };
+            yield { type: 'start', call: executionCall };
 
             let response: Record<string, unknown>;
 
             try {
-                if (call.name.startsWith('mcp__') && this.mcpManager) {
-                    response = await this.executeMcpTool(call);
+                if (executionCall.name.startsWith('mcp__') && this.mcpManager) {
+                    response = await this.executeMcpTool(executionCall);
                 } else {
-                    response = await this.executeBuiltinTool(call, conversationId, config, abortSignal);
+                    response = await this.executeBuiltinTool(executionCall, conversationId, config, abortSignal);
                 }
             } catch (error) {
                 const err = error as Error;
@@ -433,8 +485,8 @@ export class ToolExecutionService {
             }
 
             const toolResult: ToolExecutionResult = {
-                id: call.id,
-                name: call.name,
+                id: executionCall.id,
+                name: executionCall.name,
                 // 深拷贝：保留完整数据供前端显示
                 result: JSON.parse(JSON.stringify(response))
             };
@@ -451,7 +503,7 @@ export class ToolExecutionService {
                 this.processMultimodalData(
                     multimodalData,
                     response,
-                    call,
+                    executionCall,
                     config,
                     toolMode,
                     isPromptMode,
@@ -461,14 +513,14 @@ export class ToolExecutionService {
             } else {
                 responseParts.push({
                     functionResponse: {
-                        name: call.name,
+                        name: executionCall.name,
                         response,
-                        id: call.id
+                        id: executionCall.id
                     }
                 });
             }
 
-            yield { type: 'end', call, toolResult };
+            yield { type: 'end', call: executionCall, toolResult };
         }
 
         // 在所有工具执行后创建一个检查点
@@ -544,6 +596,38 @@ export class ToolExecutionService {
         }
     }
 
+    private prepareToolCallForExecution(
+        call: FunctionCallInfo
+    ): { call: FunctionCallInfo; error: string | null } {
+        if (call.name.startsWith('mcp__')) {
+            return { call, error: null };
+        }
+
+        const tool = this.toolRegistry?.getTool(call.name);
+        if (!tool) {
+            return { call, error: null };
+        }
+
+        const normalizedArgs = coerceToolArgs(call.args, tool.declaration.parameters);
+        const error = getToolArgsArrayValidationError(
+            call.name,
+            normalizedArgs,
+            tool.declaration.parameters
+        );
+
+        if (normalizedArgs === call.args) {
+            return { call, error };
+        }
+
+        return {
+            call: {
+                ...call,
+                args: normalizedArgs
+            },
+            error
+        };
+    }
+
     /**
      * 执行内置工具
      */
@@ -584,11 +668,7 @@ export class ToolExecutionService {
         // 为特定工具添加配置
         this.addToolSpecificConfig(call.name, toolContext);
 
-        // Coerce args: fix LLM parameter serialization bugs
-        // (e.g. array/object/boolean/number params sent as strings)
-        const coercedArgs = coerceToolArgs(call.args, tool.declaration.parameters);
-
-        const result = await tool.handler(coercedArgs, toolContext);
+        const result = await tool.handler(call.args, toolContext);
         return result as unknown as Record<string, unknown>;
     }
 

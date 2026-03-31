@@ -2,6 +2,10 @@
 
 All notable changes to the "Lim Code" extension will be documented in this file.
 
+## [1.1.19] - 2026-03-31
+
+### Fixed
+  - 调整工具解析兜底策略，降低解析失败问题
 
 ## [1.1.18] - 2026-03-30
 

@@ -16,7 +16,7 @@ import type {
 import type { ToolDeclaration, ToolResult, ToolContext } from '../types';
 import { StreamAccumulator } from '../../modules/channel/StreamAccumulator';
 import { isPlanPathAllowed } from '../../modules/settings/modeToolsPolicy';
-import { coerceToolArgs } from '../coerceToolArgs';
+import { coerceToolArgs, getToolArgsArrayValidationError } from '../coerceToolArgs';
 
 /**
  * 子代理内部使用的工具调用结构。
@@ -235,6 +235,22 @@ async function executeToolCall(
             return null;
         }
 
+        const builtinTool = context.toolRegistry?.getTool(toolName);
+        const normalizedArgs = builtinTool
+            ? coerceToolArgs(args, builtinTool.declaration.parameters)
+            : args;
+        const arrayArgsError = builtinTool
+            ? getToolArgsArrayValidationError(toolName, normalizedArgs, builtinTool.declaration.parameters)
+            : null;
+
+        if (arrayArgsError) {
+            return {
+                result: null,
+                success: false,
+                error: arrayArgsError
+            };
+        }
+
         if (context.settingsManager) {
             const currentMode = context.settingsManager.getCurrentPromptMode?.();
             const allowlist = currentMode?.toolPolicy;
@@ -259,7 +275,7 @@ async function executeToolCall(
             }
 
             if (currentMode?.id === 'plan' && toolName === 'write_file') {
-                const files = (args as any)?.files;
+                const files = (normalizedArgs as any)?.files;
                 if (!Array.isArray(files) || files.length === 0) {
                     return {
                         result: null,
@@ -318,25 +334,19 @@ async function executeToolCall(
         }
         
         // 内置工具
-        if (context.toolRegistry) {
-            const tool = context.toolRegistry.getTool(toolName);
-            if (tool) {
-                const toolContext: ToolContext = {
-                    abortSignal,
-                    toolId: `subagent_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
-                };
-                
-                // Coerce args: fix LLM parameter serialization bugs
-                const coercedArgs = coerceToolArgs(args, tool.declaration.parameters);
+        if (builtinTool) {
+            const toolContext: ToolContext = {
+                abortSignal,
+                toolId: `subagent_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+            };
 
-                const result: ToolResult = await tool.handler(coercedArgs, toolContext);
-                
-                return {
-                    result: result.success ? result.data : result.error,
-                    success: result.success,
-                    error: result.error
-                };
-            }
+            const result: ToolResult = await builtinTool.handler(normalizedArgs, toolContext);
+
+            return {
+                result: result.success ? result.data : result.error,
+                success: result.success,
+                error: result.error
+            };
         }
         
         return {
