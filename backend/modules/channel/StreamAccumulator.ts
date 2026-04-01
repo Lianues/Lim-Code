@@ -936,8 +936,18 @@ export class StreamAccumulator {
             if (!part.functionCall) continue;
 
             const fc = part.functionCall as any;
-            // args 已有值 = JSON.parse(partialArgs) 成功 = functionCall 参数完整
-            if (fc.args && typeof fc.args === 'object' && fc.name) {
+            // "完成"判定：args 必须包含至少一个键，排除初始占位空壳 {}。
+            //
+            // Anthropic content_block_start 发送 input: {}，formatter 存为
+            // args: {}；OpenAI 首个 tool_call chunk 也设 args: {}。
+            // 真正的参数通过后续增量（input_json_delta / arguments delta）
+            // 拼接到 partialArgs，JSON.parse 成功后才更新 args。
+            // 仅检查 args 是否为对象会在初始阶段误判为完成，导致以空参数执行。
+            //
+            // 检查 Object.keys(args).length > 0 可同时兼容所有 provider：
+            // 只有 partialArgs 被成功 JSON.parse 后，args 才会含有实际的键。
+            const hasRealArgs = fc.args && typeof fc.args === 'object' && Object.keys(fc.args).length > 0;
+            if (hasRealArgs && fc.name) {
                 this.reportedFunctionCallIndices.add(i);
                 result.push({
                     index: i,

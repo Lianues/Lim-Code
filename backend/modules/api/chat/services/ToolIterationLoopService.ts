@@ -439,8 +439,10 @@ export class ToolIterationLoopService {
             let finalContent: Content;
 
             // 流式边执行工具：跟踪流式期间已启动异步执行的工具 ID 和 Promise（仅流式模式使用）
-            const streamingToolPromises = new Map<string, Promise<Record<string, unknown>>>();
-            const streamingToolResults = new Map<string, Record<string, unknown>>();
+            // 存储 ToolExecutionFullResult，既包含 responseParts（写入历史），
+            // 也包含 toolResults（通知前端，result 字段是工具本身的业务返回值）。
+            const streamingToolPromises = new Map<string, Promise<ToolExecutionFullResult>>();
+            const streamingToolResults = new Map<string, ToolExecutionFullResult>();
 
             if (isAsyncGenerator(response)) {
                 // 流式响应处理
@@ -464,17 +466,28 @@ export class ToolIterationLoopService {
                             // 只对不需要确认的工具提前执行
                             if (!this.toolExecutionService.toolNeedsConfirmation(fc.name)) {
                                 this.log.info('stream.early_tool_start', { conversationId, iteration, toolName: fc.name, toolId: fc.id });
-                                const promise = this.toolExecutionService.executeFunctionCalls(
+                                // 使用 executeFunctionCallsWithResults 而非 executeFunctionCalls，
+                                // 这样既能拿到 responseParts（写入历史），
+                                // 又能拿到 toolResults（其中 result 字段是工具本身的业务返回值，
+                                // 用于 toolStatus / toolIteration 事件通知前端正确渲染）。
+                                const promise = this.toolExecutionService.executeFunctionCallsWithResults(
                                     [{ id: fc.id, name: fc.name, args: fc.args }],
                                     conversationId
-                                ).then(responseParts => {
-                                    const result = { success: true, responseParts };
-                                    streamingToolResults.set(fc.id, result);
-                                    return result;
-                                }).catch(err => {
-                                    const result = { success: false, error: (err as Error).message };
-                                    streamingToolResults.set(fc.id, result);
-                                    return result;
+                                ).catch(err => {
+                                    // 执行异常时构造一个包含错误信息的 ToolExecutionFullResult，
+                                    // 确保 toolResults.result 仍是工具业务返回值格式，前端能正确渲染。
+                                    const errorResponse: Record<string, unknown> = {
+                                        success: false,
+                                        error: (err as Error).message
+                                    };
+                                    return {
+                                        responseParts: [{ functionResponse: { id: fc.id, name: fc.name, response: errorResponse } }],
+                                        toolResults: [{ id: fc.id, name: fc.name, result: errorResponse }],
+                                        checkpoints: []
+                                    } as ToolExecutionFullResult;
+                                }).then(fullResult => {
+                                    streamingToolResults.set(fc.id, fullResult);
+                                    return fullResult;
                                 });
                                 streamingToolPromises.set(fc.id, promise);
                             }
@@ -572,9 +585,10 @@ export class ToolIterationLoopService {
 
                 for (const call of autoPrefix) {
                     if (streamingToolResults.has(call.id)) {
-                        const r = streamingToolResults.get(call.id)!;
-                        const parts = (r as any).responseParts as ContentPart[] | undefined;
-                        if (parts) earlyResponseParts.push(...parts);
+                        // streamingToolResults 现在存储的是 ToolExecutionFullResult，
+                        // 从中提取 responseParts 用于写入历史。
+                        const fullResult = streamingToolResults.get(call.id)!;
+                        earlyResponseParts.push(...fullResult.responseParts);
                         this.log.info('stream.early_tool_done', { conversationId, toolName: call.name, toolId: call.id });
                     } else {
                         remainingAutoPrefix.push(call);
@@ -595,7 +609,45 @@ export class ToolIterationLoopService {
                     parts: earlyResponseParts,
                     isFunctionResponse: true
                 });
-                // 所有工具已处理完，继续下一轮循环让 LLM 处理工具结果
+
+                // 通知前端所有工具已执行完毕（构造与传统路径一致的 toolResults 格式）。
+                // 流式提前执行的工具绕过了 executeFunctionCallsWithProgress 的
+                // start/end 进度事件，需要在这里补发 toolIteration 让前端更新 UI。
+                // 直接从 ToolExecutionFullResult.toolResults 中提取，
+                // 其 result 字段就是工具本身的业务返回值，与传统路径格式一致。
+                const earlyToolResults: ToolExecutionResult[] = [];
+                for (const call of functionCalls) {
+                    if (streamingToolResults.has(call.id)) {
+                        earlyToolResults.push(...streamingToolResults.get(call.id)!.toolResults);
+                    }
+                }
+
+                // 发送每个工具的完成状态（让前端逐个显示工具结果）
+                for (const tr of earlyToolResults) {
+                    const r = tr.result as any;
+                    // 状态判断逻辑与传统路径（executeFunctionCallsWithProgress end 事件）保持一致
+                    let status: ChatStreamToolStatusData['tool']['status'] = 'success';
+                    if (r?.success === false || r?.error || r?.cancelled || r?.rejected) {
+                        status = 'error';
+                    } else if (r?.data && r.data.appliedCount > 0 && r.data.failedCount > 0) {
+                        status = 'warning';
+                    }
+                    yield {
+                        conversationId,
+                        toolStatus: true as const,
+                        tool: { id: tr.id, name: tr.name, status, result: tr.result },
+                    } satisfies ChatStreamToolStatusData;
+                }
+
+                yield {
+                    conversationId,
+                    content: finalContent,
+                    toolIteration: true as const,
+                    toolResults: earlyToolResults,
+                    checkpoints: [],
+                };
+
+                // 继续下一轮循环让 LLM 处理工具结果
                 continue;
             }
 
