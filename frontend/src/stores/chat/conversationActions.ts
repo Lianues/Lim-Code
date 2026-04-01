@@ -10,7 +10,12 @@ import { contentToMessageEnhanced } from './parsers'
 import type { Content } from '../../types'
 import { perfLog, perfMeasureAsync } from '../../utils/perf'
 import { trimWindowFromTop, syncTotalMessagesFromWindow } from './windowUtils'
-import { applyConversationModelConfig, applyConversationPromptMode } from './configActions'
+import {
+  applyConversationModelConfig,
+  applyConversationPromptMode,
+  type ConversationModelConfig,
+  type ConversationPromptModeConfig
+} from './configActions'
 
 // ============ 对话列表分页加载配置 ============
 
@@ -69,6 +74,16 @@ async function mapWithConcurrency<T, R>(
  * 取消流式并拒绝工具的回调类型
  */
 export type CancelStreamAndRejectToolsCallback = () => Promise<void>
+
+interface ConversationViewPayload {
+  metadata?: any
+  totalMessages?: number
+  messages?: Content[]
+  checkpoints?: CheckpointRecord[]
+  modelConfig?: ConversationModelConfig
+  promptMode?: ConversationPromptModeConfig
+  activeBuild?: unknown
+}
 
 export function parsePersistedBuildSession(raw: any, conversationId: string): BuildSession | null {
   if (!raw || typeof raw !== 'object') return null
@@ -505,21 +520,37 @@ export async function switchConversation(
   try {
     if (conv.isPersisted) {
       state.isLoading.value = true
-      await syncConversationWorkspaceUri(state, id)
-    // 恢复该对话保存的渠道/模型选择（若无则回落到当前配置）
-    await applyConversationModelConfig(state, id)
+      const view = await perfMeasureAsync('conversation.loadConversationForView', () =>
+        sendToExtension<ConversationViewPayload>('conversation.loadConversationForView', {
+          conversationId: id,
+          limit: MESSAGES_PAGE_SIZE
+        })
+      )
 
-    // 恢复该对话保存的 Prompt 模式（若无则回落到默认 'code'）
-    await applyConversationPromptMode(state, id)
+      await Promise.all([
+        applyConversationModelConfig(state, id, view?.modelConfig ?? {}),
+        // 恢复该对话保存的 Prompt 模式（若无则回落到默认 'code'）
+        applyConversationPromptMode(state, id, view?.promptMode ?? {})
+      ])
 
-    await loadHistory(state)
-    await loadCheckpoints(state)
+      const page = view?.messages || []
+      state.totalMessages.value = view?.totalMessages ?? page.length
+      state.allMessages.value = page.map(content => contentToMessageEnhanced(content))
+      state.windowStartIndex.value = page[0]?.index ?? 0
+      syncTotalMessagesFromWindow(state)
 
-    // 更新对话的消息数量（在加载后才有准确数据）
-    conv.messageCount = state.totalMessages.value || state.allMessages.value.length
+      state.checkpoints.value = Array.isArray(view?.checkpoints) ? view.checkpoints : []
+      state.activeBuild.value = parsePersistedBuildSession(view?.activeBuild, id)
 
-    // 恢复该对话的 Build 会话（用于重进应用后显示顶部 Build 卡片）
-    state.activeBuild.value = await loadConversationBuildSession(id)
+      if (view?.metadata?.workspaceUri) {
+        conv.workspaceUri = view.metadata.workspaceUri
+      }
+
+      // 更新对话的消息数量（在加载后才有准确数据）
+      conv.messageCount = state.totalMessages.value || state.allMessages.value.length
+
+      // 工作区同步不阻塞切换主链路
+      void syncConversationWorkspaceUri(state, id)
     } else {
       state.activeBuild.value = null
     }

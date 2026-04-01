@@ -46,6 +46,12 @@
         "icon": "$(settings-gear)"
       },
       {
+        "command": "limcode.migrateConversationHistories",
+        "title": "迁移旧对话历史",
+        "icon": "$(history)",
+        "category": "LimCode"
+      },
+      {
         "command": "limcode.diff.acceptAll",
         "title": "Accept All Changes",
         "icon": "$(check-all)",

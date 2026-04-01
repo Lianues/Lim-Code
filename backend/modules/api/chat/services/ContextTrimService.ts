@@ -23,6 +23,7 @@
 import type { Content } from '../../../conversation/types';
 import type { ConversationManager, GetHistoryOptions } from '../../../conversation/ConversationManager';
 import type { PromptManager } from '../../../prompt';
+import type { ResolvedPromptModeSnapshot } from '../../../settings/types';
 import type { BaseChannelConfig, ModelInfo } from '../../../config/configs/base';
 import type { ConversationRound, ContextTrimInfo } from '../utils';
 import type { TokenEstimationService } from './TokenEstimationService';
@@ -411,6 +412,7 @@ export class ContextTrimService {
         config: BaseChannelConfig,
         historyOptions: GetHistoryOptions,
         precomputedDynamicContextText?: string,
+        promptModeSnapshot?: ResolvedPromptModeSnapshot,
         modelOverride?: string
     ): Promise<ContextTrimInfo> {
         // 先获取完整的原始历史
@@ -454,14 +456,14 @@ export class ContextTrimService {
 
         // 收集需要计算 token 的内容：系统提示词、动态上下文、缺失 token 数的用户消息
         // 传入 runtime 以便正确解析模板中的变量
-        const systemPrompt = this.promptManager.getSystemPrompt(false, runtime);
+        const systemPrompt = this.promptManager.getSystemPrompt(promptModeSnapshot, false, runtime);
         
         // 使用预生成的动态上下文文本（如果传入），否则内部生成
         let dynamicContextText: string;
         if (precomputedDynamicContextText !== undefined) {
             dynamicContextText = precomputedDynamicContextText;
         } else {
-            dynamicContextText = this.promptManager.getDynamicContextText(runtime);
+            dynamicContextText = this.promptManager.getDynamicContextText(promptModeSnapshot, runtime);
         }
         
         // 查找缺失 token 数的用户消息
@@ -1049,9 +1051,10 @@ export class ContextTrimService {
         config: BaseChannelConfig,
         historyOptions: GetHistoryOptions,
         precomputedDynamicContextText?: string,
+        promptModeSnapshot?: ResolvedPromptModeSnapshot,
         modelOverride?: string
     ): Promise<Content[]> {
-        const result = await this.getHistoryWithContextTrimInfo(conversationId, config, historyOptions, precomputedDynamicContextText, modelOverride);
+        const result = await this.getHistoryWithContextTrimInfo(conversationId, config, historyOptions, precomputedDynamicContextText, promptModeSnapshot, modelOverride);
         return result.history;
     }
 }

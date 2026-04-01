@@ -15,6 +15,7 @@ import type { ConversationManager } from '../../../conversation/ConversationMana
 import type { SettingsManager } from '../../../settings/SettingsManager';
 import type { BaseChannelConfig } from '../../../config/configs/base';
 import { ChannelError, ErrorType } from '../../../channel/types';
+import type { ResolvedPromptModeSnapshot } from '../../../settings/types';
 import type { Content, ContentPart } from '../../../conversation/types';
 import type { CheckpointRecord } from '../../../checkpoint';
 
@@ -64,6 +65,8 @@ export type ChatStreamOutput =
 type TodoStatusValue = 'pending' | 'in_progress' | 'completed' | 'cancelled';
 type TodoItemValue = { id: string; content: string; status: TodoStatusValue };
 
+const CONVERSATION_PROMPT_MODE_KEY = 'promptModeConfig';
+
 export class ChatFlowService {
   constructor(
     private configManager: ConfigManager,
@@ -91,6 +94,27 @@ export class ChatFlowService {
    */
   private async ensureConversation(conversationId: string): Promise<void> {
     await this.conversationManager.getHistory(conversationId);
+  }
+
+  private normalizePromptModeId(value: unknown): string | undefined {
+    if (typeof value !== 'string') return undefined;
+    const normalized = value.trim();
+    return normalized || undefined;
+  }
+
+  private async resolvePromptModeSnapshot(
+    conversationId: string,
+    requestedModeId?: string,
+  ): Promise<ResolvedPromptModeSnapshot | undefined> {
+    if (!this.settingsManager) return undefined;
+
+    const directModeId = this.normalizePromptModeId(requestedModeId);
+    if (directModeId) {
+      return this.settingsManager.resolvePromptMode(directModeId);
+    }
+
+    const stored = await this.conversationManager.getCustomMetadata(conversationId, CONVERSATION_PROMPT_MODE_KEY);
+    return this.settingsManager.resolvePromptMode(this.normalizePromptModeId((stored as any)?.modeId));
   }
 
   private mergeResponseWithCleanup(
@@ -394,6 +418,8 @@ export class ChatFlowService {
       };
     }
 
+    const promptModeSnapshot = await this.resolvePromptModeSnapshot(conversationId, request.promptModeId);
+
     // 3. 添加输入到历史
     if (hiddenFunctionResponse) {
       await this.upsertHiddenFunctionResponse(conversationId, hiddenFunctionResponse);
@@ -412,6 +438,7 @@ export class ChatFlowService {
       config,
       maxToolIterations,
       modelOverride,
+      promptModeSnapshot,
     );
 
     if (loopResult.exceededMaxIterations) {
@@ -461,6 +488,8 @@ export class ChatFlowService {
       };
     }
 
+    const promptModeSnapshot = await this.resolvePromptModeSnapshot(conversationId, request.promptModeId);
+
     // 3. 工具调用循环（委托给 ToolIterationLoopService，非流式）
     const maxToolIterations = this.getMaxToolIterations();
     const loopResult = await this.toolIterationLoopService.runNonStreamLoop(
@@ -469,6 +498,7 @@ export class ChatFlowService {
       config,
       maxToolIterations,
       modelOverride,
+      promptModeSnapshot,
     );
 
     if (loopResult.exceededMaxIterations) {
@@ -542,6 +572,8 @@ export class ChatFlowService {
       };
     }
 
+    const promptModeSnapshot = await this.resolvePromptModeSnapshot(conversationId, request.promptModeId);
+
     // 4. 更新消息内容，并标记为动态提示词插入点
     await this.conversationManager.updateMessage(conversationId, messageIndex, {
       parts: [{ text: newMessage }],
@@ -572,6 +604,7 @@ export class ChatFlowService {
       config,
       maxToolIterations,
       modelOverride,
+      promptModeSnapshot,
     );
 
     if (loopResult.exceededMaxIterations) {
@@ -624,6 +657,8 @@ export class ChatFlowService {
       };
       return;
     }
+
+    const promptModeSnapshot = await this.resolvePromptModeSnapshot(conversationId, request.promptModeId);
 
     // 3. 中断之前未完成的 diff 等待并关闭编辑器
     this.diffInterruptService.markUserInterrupt();
@@ -695,6 +730,7 @@ export class ChatFlowService {
       summarizeAbortSignal: request.summarizeAbortSignal,
       isFirstMessage,
       maxIterations: maxToolIterations,
+      promptModeSnapshot,
     })) {
       yield output as ChatStreamOutput;
     }
@@ -735,6 +771,8 @@ export class ChatFlowService {
       return;
     }
 
+    const promptModeSnapshot = await this.resolvePromptModeSnapshot(conversationId, request.promptModeId);
+
     // 3. 中断之前未完成的 diff 等待并关闭编辑器
     this.diffInterruptService.markUserInterrupt();
     await this.diffInterruptService.cancelAllPending();
@@ -744,7 +782,7 @@ export class ChatFlowService {
 
     // 4. 检查并处理孤立的函数调用
     const orphanedFunctionCalls =
-      await this.orphanedToolCallService.checkAndExecuteOrphanedFunctionCalls(conversationId);
+      await this.orphanedToolCallService.checkAndExecuteOrphanedFunctionCalls(conversationId, promptModeSnapshot);
     if (orphanedFunctionCalls) {
       // 注：工具响应消息的 token 计数将在 getHistoryWithContextTrimInfo 中并行计算
       
@@ -781,6 +819,7 @@ export class ChatFlowService {
       createBeforeModelCheckpoint: false,
       // 重试的是 AI 回复，回合起始用户消息不变，复用其上缓存的动态上下文
       isNewTurn: false,
+      promptModeSnapshot,
     })) {
       yield output as ChatStreamOutput;
     }
@@ -820,6 +859,8 @@ export class ChatFlowService {
       };
       return;
     }
+
+    const promptModeSnapshot = await this.resolvePromptModeSnapshot(conversationId, request.promptModeId);
 
     // 3. 验证消息索引和角色
     const message = await this.conversationManager.getMessage(conversationId, messageIndex);
@@ -923,6 +964,7 @@ export class ChatFlowService {
       summarizeAbortSignal: request.summarizeAbortSignal,
       isFirstMessage: isEditFirstMessage,
       maxIterations: maxToolIterations,
+      promptModeSnapshot,
     })) {
       yield output as ChatStreamOutput;
     }
@@ -951,6 +993,8 @@ export class ChatFlowService {
       };
       return;
     }
+
+    const promptModeSnapshot = await this.resolvePromptModeSnapshot(conversationId, request.promptModeId);
 
     // 3. 寻找最后一条包含工具调用的 model 消息及其索引
     const history = await this.conversationManager.getHistoryRef(conversationId);
@@ -1022,6 +1066,7 @@ export class ChatFlowService {
         maxIterations: this.getMaxToolIterations(),
         createBeforeModelCheckpoint: false,
         isNewTurn: false,
+        promptModeSnapshot,
       })) {
         yield output as ChatStreamOutput;
       }
@@ -1091,6 +1136,7 @@ export class ChatFlowService {
         messageIndex,
         config,
         request.abortSignal,
+        promptModeSnapshot,
       );
 
       while (true) {
@@ -1178,7 +1224,7 @@ export class ChatFlowService {
       if (respondedToolIds.has(c.id) || resolvedIdsThisTurn.has(c.id)) {
         continue;
       }
-      if (this.toolExecutionService.toolNeedsConfirmation(c.name)) {
+      if (this.toolExecutionService.toolNeedsConfirmation(c.name, promptModeSnapshot)) {
         nextConfirmTool = c;
         break;
       }
@@ -1192,6 +1238,7 @@ export class ChatFlowService {
         messageIndex,
         config,
         request.abortSignal,
+        promptModeSnapshot,
       );
 
       while (true) {
@@ -1335,6 +1382,7 @@ export class ChatFlowService {
       // 原逻辑未在确认后的循环中创建模型消息前检查点，这里保持一致
       createBeforeModelCheckpoint: false,
       isNewTurn: false,
+      promptModeSnapshot,
     })) {
       yield output as ChatStreamOutput;
     }

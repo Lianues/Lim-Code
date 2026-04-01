@@ -24,8 +24,6 @@ const props = defineProps<{
   messages: Message[]
   /** 标签页 ID，标识此 MessageList 实例所属的标签页 */
   tabId: string
-  /** 当前是否为活跃（可见）标签页 */
-  isActive: boolean
 }>()
 
 // 从 store 读取等待状态
@@ -515,25 +513,70 @@ const scrollbarRef = ref<InstanceType<typeof CustomScrollbar> | null>(null)
 
 // 标记是否需要滚动到底部（切换对话时设置）
 const needsScrollToBottom = ref(false)
+const suppressConversationReset = ref(false)
+
+interface MessageListUiState {
+  scrollTop: number
+  visibleCount: number
+  buildExpanded: boolean
+  todoExpanded: boolean
+}
+
+const uiStateByTab = new Map<string, MessageListUiState>()
+
+function saveCurrentUiState(tabId?: string) {
+  if (!tabId) return
+  const container = scrollbarRef.value?.getContainer()
+  uiStateByTab.set(tabId, {
+    scrollTop: container?.scrollTop || 0,
+    visibleCount: visibleCount.value,
+    buildExpanded: isBuildExpanded.value,
+    todoExpanded: isTodoExpanded.value
+  })
+}
+
+function restoreUiState(tabId?: string) {
+  if (!tabId) return
+  const saved = uiStateByTab.get(tabId)
+  if (saved) {
+    visibleCount.value = saved.visibleCount
+    isBuildExpanded.value = saved.buildExpanded
+    isTodoExpanded.value = saved.todoExpanded
+    needsScrollToBottom.value = false
+    nextTick(() => {
+      const container = scrollbarRef.value?.getContainer()
+      if (container) {
+        container.scrollTop = saved.scrollTop
+        scrollTop.value = saved.scrollTop
+      }
+      suppressConversationReset.value = false
+    })
+    return
+  }
+
+  visibleCount.value = VISIBLE_INCREMENT
+  needsScrollToBottom.value = true
+  restoreTodoExpandedState()
+  nextTick(() => {
+    tryScrollToBottom({ instant: true })
+    suppressConversationReset.value = false
+  })
+}
 
 // ResizeObserver 引用
 let resizeObserver: ResizeObserver | null = null
 
-// 多实例模式下：当此标签页变为活跃时，滚动到底部并恢复 TODO 展开状态
-// （不再重置 visibleCount，因为每个实例独立维护自己的分页状态）
-watch(() => props.isActive, (active, wasActive: boolean | undefined) => {
-  if (active && (wasActive === undefined || !wasActive)) {
-    // 刚切换到此标签页，标记需要滚动到底部
-    needsScrollToBottom.value = true
-    restoreTodoExpandedState()
-    // 尝试即时滚动（如果容器已就绪）
-    nextTick(() => tryScrollToBottom({ instant: true }))
+watch(() => props.tabId, (newTabId, oldTabId) => {
+  suppressConversationReset.value = true
+  if (oldTabId && oldTabId !== newTabId) {
+    saveCurrentUiState(oldTabId)
   }
+  restoreUiState(newTabId)
 }, { immediate: true })
 
 // 监听对话切换：当前活跃标签页内加载新对话时，重置分页并滚动到底部
 watch(() => chatStore.currentConversationId, (newId, oldId) => {
-  if (!props.isActive) return
+  if (suppressConversationReset.value) return
   if (newId === oldId) return
 
   // 重置分页计数（新对话从最后一页开始显示）
@@ -617,6 +660,7 @@ onBeforeUnmount(() => {
     resizeObserver.disconnect()
     resizeObserver = null
   }
+  saveCurrentUiState(props.tabId)
 })
 
 const emit = defineEmits<{

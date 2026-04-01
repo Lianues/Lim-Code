@@ -11,6 +11,7 @@ import { coerceToolArgs, getToolArgsArrayValidationError } from '../../../../too
 import { validateToolArgs } from '../../../../tools/validateToolArgs';
 import type { CheckpointRecord } from '../../../checkpoint';
 import type { SettingsManager } from '../../../settings/SettingsManager';
+import type { ResolvedPromptModeSnapshot } from '../../../settings/types';
 import { isPlanPathAllowed } from '../../../settings/modeToolsPolicy';
 import type { McpManager } from '../../../mcp/McpManager';
 import { mcpResultToToolResult } from '../../../mcp/toolAdapter';
@@ -110,12 +111,18 @@ export class ToolExecutionService {
     async executeFunctionCalls(
         calls: FunctionCallInfo[],
         conversationId?: string,
-        messageIndex?: number
+        messageIndex?: number,
+        config?: BaseChannelConfig,
+        abortSignal?: AbortSignal,
+        promptModeSnapshot?: ResolvedPromptModeSnapshot
     ): Promise<ContentPart[]> {
         const { responseParts } = await this.executeFunctionCallsWithResults(
             calls,
             conversationId,
-            messageIndex
+            messageIndex,
+            config,
+            abortSignal,
+            promptModeSnapshot
         );
         return responseParts;
     }
@@ -144,7 +151,8 @@ export class ToolExecutionService {
         conversationId?: string,
         messageIndex?: number,
         config?: BaseChannelConfig,
-        abortSignal?: AbortSignal
+        abortSignal?: AbortSignal,
+        promptModeSnapshot?: ResolvedPromptModeSnapshot
     ): Promise<ToolExecutionFullResult> {
         const responseParts: ContentPart[] = [];
         const toolResults: ToolExecutionResult[] = [];
@@ -233,7 +241,7 @@ export class ToolExecutionService {
             const executionCall = preparedCall.call;
 
             // 执行前强制过滤（模式 toolPolicy / 全局 toolsEnabled / Plan write_file 路径限制）
-            const rejectionReason = this.getToolRejectionReason(executionCall.name, executionCall.args);
+            const rejectionReason = this.getToolRejectionReason(executionCall.name, executionCall.args, promptModeSnapshot);
             if (rejectionReason) {
                 const response: Record<string, unknown> = {
                     success: false,
@@ -264,7 +272,7 @@ export class ToolExecutionService {
                 if (executionCall.name.startsWith('mcp__') && this.mcpManager) {
                     response = await this.executeMcpTool(executionCall);
                 } else {
-                    response = await this.executeBuiltinTool(executionCall, conversationId, config, abortSignal);
+                    response = await this.executeBuiltinTool(executionCall, conversationId, config, abortSignal, promptModeSnapshot);
                 }
             } catch (error) {
                 const err = error as Error;
@@ -349,7 +357,8 @@ export class ToolExecutionService {
         conversationId?: string,
         messageIndex?: number,
         config?: BaseChannelConfig,
-        abortSignal?: AbortSignal
+        abortSignal?: AbortSignal,
+        promptModeSnapshot?: ResolvedPromptModeSnapshot
     ): AsyncGenerator<ToolExecutionProgressEvent, ToolExecutionFullResult, void> {
         const responseParts: ContentPart[] = [];
         const toolResults: ToolExecutionResult[] = [];
@@ -440,7 +449,7 @@ export class ToolExecutionService {
             const executionCall = preparedCall.call;
 
             // 执行前强制过滤（模式 toolPolicy / 全局 toolsEnabled / Plan write_file 路径限制）
-            const rejectionReason = this.getToolRejectionReason(executionCall.name, executionCall.args);
+            const rejectionReason = this.getToolRejectionReason(executionCall.name, executionCall.args, promptModeSnapshot);
             if (rejectionReason) {
                 const response: Record<string, unknown> = {
                     success: false,
@@ -475,7 +484,7 @@ export class ToolExecutionService {
                 if (executionCall.name.startsWith('mcp__') && this.mcpManager) {
                     response = await this.executeMcpTool(executionCall);
                 } else {
-                    response = await this.executeBuiltinTool(executionCall, conversationId, config, abortSignal);
+                    response = await this.executeBuiltinTool(executionCall, conversationId, config, abortSignal, promptModeSnapshot);
                 }
             } catch (error) {
                 const err = error as Error;
@@ -642,7 +651,8 @@ export class ToolExecutionService {
         call: FunctionCallInfo,
         conversationId?: string,
         config?: BaseChannelConfig,
-        abortSignal?: AbortSignal
+        abortSignal?: AbortSignal,
+        promptModeSnapshot?: ResolvedPromptModeSnapshot
     ): Promise<Record<string, unknown>> {
         const tool = this.toolRegistry?.getTool(call.name);
 
@@ -671,6 +681,8 @@ export class ToolExecutionService {
             conversationId,
             conversationStore: this.conversationStore
         };
+
+        toolContext.promptModeSnapshot = promptModeSnapshot;
 
         // 为特定工具添加配置
         this.addToolSpecificConfig(call.name, toolContext);
@@ -824,13 +836,13 @@ export class ToolExecutionService {
      * @param toolName 工具名称
      * @returns 是否需要确认
      */
-    toolNeedsConfirmation(toolName: string): boolean {
-        if (!this.settingsManager) {
+    toolNeedsConfirmation(toolName: string, promptModeSnapshot?: ResolvedPromptModeSnapshot): boolean {
+        // 如果工具在当前模式被禁用（mode allowlist / Plan write_file 路径限制 / toolsEnabled），则不等待确认
+        if (this.getToolRejectionReason(toolName, undefined, promptModeSnapshot) !== null) {
             return false;
         }
 
-        // 如果工具在当前模式被禁用（mode allowlist / Plan write_file 路径限制 / toolsEnabled），则不等待确认
-        if (this.getToolRejectionReason(toolName) !== null) {
+        if (!this.settingsManager) {
             return false;
         }
 
@@ -846,8 +858,8 @@ export class ToolExecutionService {
      * @param calls 函数调用列表
      * @returns 需要确认的函数调用列表
      */
-    getToolsNeedingConfirmation(calls: FunctionCallInfo[]): FunctionCallInfo[] {
-        return calls.filter(call => this.toolNeedsConfirmation(call.name));
+    getToolsNeedingConfirmation(calls: FunctionCallInfo[], promptModeSnapshot?: ResolvedPromptModeSnapshot): FunctionCallInfo[] {
+        return calls.filter(call => this.toolNeedsConfirmation(call.name, promptModeSnapshot));
     }
 
     /**
@@ -903,23 +915,22 @@ export class ToolExecutionService {
      * - 当前模式 allowlist（mode.toolPolicy 仅当为非空数组时启用过滤）
      * - Plan 模式 write_file 仅允许写入 .limcode/plans/**.md（多工作区支持 workspaceName/.limcode/plans/**.md）
      */
-    private getToolRejectionReason(toolName: string, args?: Record<string, unknown>): string | null {
+    private getToolRejectionReason(toolName: string, args?: Record<string, unknown>, promptModeSnapshot?: ResolvedPromptModeSnapshot): string | null {
         // 1) 全局 toolsEnabled
         if (this.settingsManager && this.settingsManager.isToolEnabled(toolName) === false) {
             return `Tool "${toolName}" is disabled by settings (toolsEnabled).`;
         }
 
-        // 2) 当前模式 allowlist（仅当 toolPolicy 为非空数组时启用过滤）
-        const mode = this.settingsManager?.getCurrentPromptMode();
-        const allowlist = Array.isArray(mode?.toolPolicy) && mode.toolPolicy.length > 0
-            ? mode.toolPolicy
+        // 2) 当前请求模式 allowlist（仅当 toolPolicy 为非空数组时启用过滤）
+        const allowlist = Array.isArray(promptModeSnapshot?.toolPolicy) && promptModeSnapshot.toolPolicy.length > 0
+            ? promptModeSnapshot.toolPolicy
             : undefined;
         if (allowlist && !allowlist.includes(toolName)) {
-            return `Tool "${toolName}" is not allowed in mode "${mode?.id ?? 'unknown'}".`;
+            return `Tool "${toolName}" is not allowed in mode "${promptModeSnapshot?.id ?? 'unknown'}".`;
         }
 
         // 3) Plan 模式 write_file 受控例外：只允许写入 .limcode/plans/**.md
-        if (mode?.id === 'plan' && toolName === 'write_file') {
+        if (promptModeSnapshot?.id === 'plan' && toolName === 'write_file') {
             const validation = this.validatePlanModeWriteFileArgs(args);
             if (validation.ok === false) {
                 return validation.error;

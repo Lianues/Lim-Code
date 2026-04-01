@@ -465,14 +465,11 @@ onMounted(async () => {
           v-if="chatStore.showEmptyState"
         />
 
-        <!-- 多实例消息列表：每个标签页维护独立 DOM，切换时零成本 -->
+        <!-- 单实例消息列表：仅渲染当前活跃标签页，减少隐藏实例的重算成本 -->
         <MessageList
-          v-for="tab in chatStore.openTabs"
-          :key="tab.id"
-          v-show="tab.id === chatStore.activeTabId && !chatStore.showEmptyState"
+          v-if="chatStore.activeTabId && !chatStore.showEmptyState"
           :messages="chatStore.messages"
-          :tab-id="tab.id"
-          :is-active="tab.id === chatStore.activeTabId"
+          :tab-id="chatStore.activeTabId"
           @edit="handleEdit"
           @delete="handleDelete"
           @retry="handleRetry"

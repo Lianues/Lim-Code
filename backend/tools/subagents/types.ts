@@ -5,6 +5,7 @@
  */
 
 import type { Tool, ToolDeclaration } from '../types';
+import type { ResolvedPromptModeSnapshot } from '../../modules/settings/types';
 
 /**
  * 子代理类型
@@ -168,6 +169,9 @@ export interface SubAgentExecutorContext {
     
     /** 设置管理器 */
     settingsManager?: any; // SettingsManager 类型
+
+    /** 父请求继承下来的提示词模式快照（可选） */
+    promptModeSnapshot?: ResolvedPromptModeSnapshot;
 }
 
 /**

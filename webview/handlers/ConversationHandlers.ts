@@ -87,6 +87,30 @@ export const getMessagesPaged: MessageHandler = async (data, requestId, ctx) => 
 };
 
 /**
+ * 获取对话视图所需数据
+ *
+ * 用于切换对话时一次性加载 metadata、最后一页消息和 checkpoints，减少重复 IPC。
+ */
+export const loadConversationForView: MessageHandler = async (data, requestId, ctx) => {
+  const { conversationId, beforeIndex, offset, limit } = data || {};
+  const [metadata, result] = await Promise.all([
+    ctx.conversationManager.getMetadata(conversationId),
+    ctx.conversationManager.getMessagesPaged(conversationId, { beforeIndex, offset, limit })
+  ]);
+
+  const custom = (metadata?.custom || {}) as Record<string, unknown>;
+  ctx.sendResponse(requestId, {
+    metadata,
+    totalMessages: result.total,
+    messages: result.messages,
+    checkpoints: Array.isArray(custom.checkpoints) ? custom.checkpoints : [],
+    modelConfig: custom.inputModelConfig,
+    promptMode: custom.promptModeConfig,
+    activeBuild: custom.activeBuild ?? null
+  });
+};
+
+/**
  * 拒绝工具调用
  */
 export const rejectToolCalls: MessageHandler = async (data, requestId, ctx) => {
@@ -112,5 +136,6 @@ export function registerConversationHandlers(registry: Map<string, MessageHandle
   registry.set('conversation.deleteConversation', deleteConversation);
   registry.set('conversation.getMessages', getMessages);
   registry.set('conversation.getMessagesPaged', getMessagesPaged);
+  registry.set('conversation.loadConversationForView', loadConversationForView);
   registry.set('conversation.rejectToolCalls', rejectToolCalls);
 }

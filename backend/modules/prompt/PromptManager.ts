@@ -18,7 +18,7 @@ import type { PromptConfig, PromptContext } from './types'
 import type { Content } from '../conversation/types'
 import { getWorkspaceFileTree, getWorkspaceRoot, getWorkspacesDescription, getAllWorkspaces } from './fileTree'
 import { getGlobalSettingsManager } from '../../core/settingsContext'
-import type { PinnedFileItem } from '../settings/types'
+import type { PinnedFileItem, ResolvedPromptModeSnapshot } from '../settings/types'
 
 type TodoStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled'
 type NormalizedTodoItem = { id: string; content: string; status: TodoStatus }
@@ -140,8 +140,9 @@ function normalizePinnedFiles(raw: unknown): PinnedFileItem[] {
  */
 export class PromptManager {
     private config: PromptConfig
-    private cachedPrompt: string | null = null
+    private cachedPromptValue: string | null = null
     private lastGeneratedAt: number = 0
+    private cachedPromptKey: string | null = null
     
     // 缓存有效期（毫秒）- 1分钟
     private static readonly CACHE_TTL = 60000
@@ -167,28 +168,55 @@ export class PromptManager {
      * 使缓存失效
      */
     invalidateCache(): void {
-        this.cachedPrompt = null
+        this.cachedPromptValue = null
+        this.cachedPromptKey = null
         this.lastGeneratedAt = 0
+    }
+
+    private resolvePromptModeSnapshot(modeSnapshot?: ResolvedPromptModeSnapshot): ResolvedPromptModeSnapshot | undefined {
+        if (modeSnapshot) {
+            return {
+                ...modeSnapshot,
+                toolPolicy: Array.isArray(modeSnapshot.toolPolicy)
+                    ? [...modeSnapshot.toolPolicy]
+                    : undefined
+            }
+        }
+
+        const settingsManager = getGlobalSettingsManager()
+        return settingsManager?.resolvePromptMode()
+    }
+
+    private buildPromptCacheKey(modeSnapshot?: ResolvedPromptModeSnapshot): string {
+        const settingsManager = getGlobalSettingsManager()
+        const promptConfig = settingsManager?.getSystemPromptConfig()
+        const resolvedMode = this.resolvePromptModeSnapshot(modeSnapshot)
+        const prefix = promptConfig?.customPrefix || ''
+        const suffix = promptConfig?.customSuffix || ''
+        return `${resolvedMode?.id || 'default'}::${prefix}::${suffix}`
     }
     
     /**
      * 获取系统提示词（使用缓存）
      */
-    getSystemPrompt(forceRefresh: boolean = false, runtime?: DynamicRuntimeContext): string {
+    getSystemPrompt(modeSnapshot?: ResolvedPromptModeSnapshot, forceRefresh: boolean = false, runtime?: DynamicRuntimeContext): string {
         const now = Date.now()
+        const cacheKey = this.buildPromptCacheKey(modeSnapshot)
         
         // 检查缓存是否有效
         if (!forceRefresh && 
-            this.cachedPrompt !== null && 
+            this.cachedPromptValue !== null &&
+            this.cachedPromptKey === cacheKey &&
             (now - this.lastGeneratedAt) < PromptManager.CACHE_TTL) {
-            return this.cachedPrompt
+            return this.cachedPromptValue
         }
         
         // 生成新的提示词
-        this.cachedPrompt = this.generatePrompt(runtime)
+        this.cachedPromptValue = this.generatePrompt(modeSnapshot, runtime)
+        this.cachedPromptKey = cacheKey
         this.lastGeneratedAt = now
         
-        return this.cachedPrompt
+        return this.cachedPromptValue
     }
     
     /**
@@ -199,8 +227,8 @@ export class PromptManager {
      * - 用户删除首条消息后重新发送
      * - 用户编辑首条消息后重试
      */
-    refreshAndGetPrompt(runtime?: DynamicRuntimeContext): string {
-        return this.getSystemPrompt(true, runtime)
+    refreshAndGetPrompt(modeSnapshot?: ResolvedPromptModeSnapshot, runtime?: DynamicRuntimeContext): string {
+        return this.getSystemPrompt(modeSnapshot, true, runtime)
     }
     
     /**
@@ -210,12 +238,13 @@ export class PromptManager {
      * 用户可以通过设置自定义模板内容
      * 根据当前模式使用对应的模板
      */
-    private generatePrompt(runtime?: DynamicRuntimeContext): string {
+    private generatePrompt(modeSnapshot?: ResolvedPromptModeSnapshot, runtime?: DynamicRuntimeContext): string {
         const settingsManager = getGlobalSettingsManager()
         const promptConfig = settingsManager?.getSystemPromptConfig()
+        const resolvedMode = this.resolvePromptModeSnapshot(modeSnapshot)
         
-        // 获取当前模式的模板（SettingsManager 会根据 currentModeId 返回正确的模板）
-        const template = settingsManager?.getSystemPromptTemplate() || promptConfig?.template || ''
+        // 请求运行时必须显式使用本次解析出的模式快照，不能依赖全局当前模式。
+        const template = resolvedMode?.template || promptConfig?.template || ''
         return this.generateFromTemplate(template, promptConfig?.customPrefix || '', promptConfig?.customSuffix || '', runtime)
     }
     
@@ -452,19 +481,19 @@ export class PromptManager {
      * 
      * @returns 动态上下文消息数组（一条 user 消息）
      */
-    getDynamicContextMessages(runtime?: DynamicRuntimeContext): Content[] {
+    getDynamicContextMessages(modeSnapshot?: ResolvedPromptModeSnapshot, runtime?: DynamicRuntimeContext): Content[] {
         const settingsManager = getGlobalSettingsManager()
         const promptConfig = settingsManager?.getSystemPromptConfig()
         const contextConfig = settingsManager?.getContextAwarenessConfig()
+        const resolvedMode = this.resolvePromptModeSnapshot(modeSnapshot)
         
-        // 检查是否启用动态上下文模板（使用当前模式的配置）
-        const dynamicTemplateEnabled = settingsManager?.isDynamicTemplateEnabled() ?? promptConfig?.dynamicTemplateEnabled ?? true
+        // 检查是否启用动态上下文模板（使用本次请求的模式快照）
+        const dynamicTemplateEnabled = resolvedMode?.dynamicTemplateEnabled ?? promptConfig?.dynamicTemplateEnabled ?? true
         if (!dynamicTemplateEnabled) {
             return []
         }
         
-        // 获取当前模式的动态模板
-        const dynamicTemplate = settingsManager?.getDynamicContextTemplate() || promptConfig?.dynamicTemplate || ''
+        const dynamicTemplate = resolvedMode?.dynamicTemplate || promptConfig?.dynamicTemplate || ''
         if (dynamicTemplate.trim()) {
             const content = this.generateDynamicFromTemplate(dynamicTemplate, contextConfig, runtime)
             if (content) {
@@ -553,8 +582,8 @@ export class PromptManager {
      * 
      * @returns 动态上下文的纯文本，如果没有内容则返回空字符串
      */
-    getDynamicContextText(runtime?: DynamicRuntimeContext): string {
-        const messages = this.getDynamicContextMessages(runtime)
+    getDynamicContextText(modeSnapshot?: ResolvedPromptModeSnapshot, runtime?: DynamicRuntimeContext): string {
+        const messages = this.getDynamicContextMessages(modeSnapshot, runtime)
         if (messages.length === 0) {
             return ''
         }

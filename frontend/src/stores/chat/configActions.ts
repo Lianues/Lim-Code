@@ -12,9 +12,13 @@ const CONVERSATION_PROMPT_MODE_KEY = 'promptModeConfig'
 
 const DEFAULT_PROMPT_MODE_ID = 'code'
 
-interface ConversationModelConfig {
+export interface ConversationModelConfig {
   configId?: string
   modelId?: string
+}
+
+export interface ConversationPromptModeConfig {
+  modeId?: string
 }
 
 function normalizeModelId(modelId: string | null | undefined): string { return (modelId || '').trim() }
@@ -71,11 +75,14 @@ export async function persistConversationModelConfig(state: ChatStoreState): Pro
  */
 export async function applyConversationModelConfig(
   state: ChatStoreState,
-  conversationId: string
+  conversationId: string,
+  storedOverride?: ConversationModelConfig
 ): Promise<void> {
   try {
-    const metadata = await sendToExtension<any>('conversation.getConversationMetadata', { conversationId })
-    const stored = metadata?.custom?.[CONVERSATION_MODEL_CONFIG_KEY] as ConversationModelConfig | undefined
+    const stored = storedOverride || await (async () => {
+      const metadata = await sendToExtension<any>('conversation.getConversationMetadata', { conversationId })
+      return metadata?.custom?.[CONVERSATION_MODEL_CONFIG_KEY] as ConversationModelConfig | undefined
+    })()
 
     const storedConfigId = typeof stored?.configId === 'string' ? stored.configId.trim() : ''
     const storedModelId = typeof stored?.modelId === 'string' ? stored.modelId.trim() : ''
@@ -101,19 +108,10 @@ export async function applyConversationModelConfig(
 /**
  * 设置当前对话的 Prompt 模式 ID（对话级隔离）
  *
- * 同时同步到后端全局设置（保持兼容），并持久化到对话元数据
+ * 仅更新当前会话状态并持久化到对话元数据。
  */
 export async function setCurrentPromptModeId(state: ChatStoreState, modeId: string): Promise<void> {
   state.currentPromptModeId.value = modeId
-
-  // 同步到后端全局设置（兼容：让后端当前全局 mode 也跟着切换）
-  try {
-    await sendToExtension('setCurrentPromptMode', { modeId })
-  } catch (error) {
-    console.error('Failed to sync prompt mode to backend:', error)
-  }
-
-  // 持久化到对话元数据
   await persistConversationPromptMode(state)
 }
 
@@ -143,21 +141,17 @@ export async function persistConversationPromptMode(state: ChatStoreState): Prom
  */
 export async function applyConversationPromptMode(
   state: ChatStoreState,
-  conversationId: string
+  conversationId: string,
+  storedOverride?: ConversationPromptModeConfig
 ): Promise<void> {
   try {
-    const metadata = await sendToExtension<any>('conversation.getConversationMetadata', { conversationId })
-    const stored = metadata?.custom?.[CONVERSATION_PROMPT_MODE_KEY] as { modeId?: string } | undefined
+    const stored = storedOverride || await (async () => {
+      const metadata = await sendToExtension<any>('conversation.getConversationMetadata', { conversationId })
+      return metadata?.custom?.[CONVERSATION_PROMPT_MODE_KEY] as ConversationPromptModeConfig | undefined
+    })()
     const modeId = typeof stored?.modeId === 'string' ? stored.modeId.trim() : ''
 
     state.currentPromptModeId.value = modeId || DEFAULT_PROMPT_MODE_ID
-
-    // 同步到后端全局设置
-    try {
-      await sendToExtension('setCurrentPromptMode', { modeId: state.currentPromptModeId.value })
-    } catch {
-      // 非致命，忽略
-    }
   } catch (error) {
     console.error('Failed to apply conversation prompt mode:', error)
     state.currentPromptModeId.value = DEFAULT_PROMPT_MODE_ID

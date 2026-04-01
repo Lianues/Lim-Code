@@ -362,9 +362,8 @@ export class CheckpointManager {
         checkpoint: CheckpointRecord
     ): Promise<void> {
         try {
-            // 获取现有检查点
-            const metadata = await this.conversationManager.getMetadata(conversationId);
-            const existingCheckpoints: CheckpointRecord[] = (metadata?.custom?.checkpoints as CheckpointRecord[]) || [];
+            const existing = await this.conversationManager.getCustomMetadata(conversationId, 'checkpoints');
+            const existingCheckpoints: CheckpointRecord[] = Array.isArray(existing) ? existing as CheckpointRecord[] : [];
             
             // 添加新检查点
             existingCheckpoints.push(checkpoint);
@@ -385,8 +384,8 @@ export class CheckpointManager {
      */
     async getCheckpoints(conversationId: string): Promise<CheckpointRecord[]> {
         try {
-            const metadata = await this.conversationManager.getMetadata(conversationId);
-            return (metadata?.custom?.checkpoints as CheckpointRecord[]) || [];
+            const checkpoints = await this.conversationManager.getCustomMetadata(conversationId, 'checkpoints');
+            return Array.isArray(checkpoints) ? checkpoints as CheckpointRecord[] : [];
         } catch (err) {
             console.error('[CheckpointManager] Failed to get checkpoints:', err);
             return [];

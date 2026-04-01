@@ -692,6 +692,13 @@ export interface PromptMode {
 }
 
 /**
+ * 已解析的提示词模式快照
+ *
+ * 运行中的请求应使用这个快照，而不是读取全局当前模式。
+ */
+export type ResolvedPromptModeSnapshot = PromptMode;
+
+/**
  * 系统提示词配置
  *
  * 允许用户自定义系统提示词模板

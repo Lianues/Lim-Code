@@ -8,6 +8,7 @@ import { t } from '../../i18n';
 import type { ConfigManager } from '../config/ConfigManager';
 import type { ToolRegistry } from '../../tools/ToolRegistry';
 import type { SettingsManager } from '../settings/SettingsManager';
+import type { ResolvedPromptModeSnapshot } from '../settings/types';
 import type { McpManager } from '../mcp/McpManager';
 import { formatterRegistry } from './formatters';
 import { createReadFileTool } from '../../tools/file/read_file';
@@ -215,7 +216,8 @@ export class ChannelManager {
                 : this.getFilteredTools(
                     (config as any).multimodalToolsEnabled,
                     config.type as 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom',
-                    (config as any).toolMode
+                    (config as any).toolMode,
+                    request.promptModeSnapshot
                 ));
         
         // 6. 构建请求
@@ -386,7 +388,8 @@ export class ChannelManager {
                 : this.getFilteredTools(
                     (config as any).multimodalToolsEnabled,
                     config.type as 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom',
-                    (config as any).toolMode
+                    (config as any).toolMode,
+                    request.promptModeSnapshot
                 ));
         
         // 5. 构建请求
@@ -956,11 +959,13 @@ export class ChannelManager {
     private getFilteredTools(
         multimodalEnabled?: boolean,
         channelType?: 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom',
-        toolMode?: 'function_call' | 'xml' | 'json'
+        toolMode?: 'function_call' | 'xml' | 'json',
+        promptModeSnapshot?: ResolvedPromptModeSnapshot
     ) {
-        // 获取当前模式的工具策略（allowlist）
-        const mode = this.settingsManager?.getCurrentPromptMode();
-        const allowlist = mode?.toolPolicy;
+        // 获取本次请求模式的工具策略（allowlist）
+        const allowlist = Array.isArray(promptModeSnapshot?.toolPolicy) && promptModeSnapshot.toolPolicy.length > 0
+            ? promptModeSnapshot.toolPolicy
+            : undefined;
         
         const tools: any[] = [];
         

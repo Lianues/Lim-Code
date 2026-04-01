@@ -32,6 +32,7 @@ import type {
     PinnedFileItem,
     SystemPromptConfig,
     PromptMode,
+    ResolvedPromptModeSnapshot,
     StoragePathConfig,
     StorageStats,
     TokenCountConfig,
@@ -1648,19 +1649,65 @@ export class SettingsManager {
     }
     
     /**
-     * 获取当前激活的模式 ID
+     * 获取默认提示词模式 ID
      */
-    getCurrentPromptModeId(): string {
+    getDefaultPromptModeId(): string {
         return this.getSystemPromptConfig().currentModeId || DEFAULT_MODE_ID;
     }
     
     /**
-     * 获取当前激活的模式
+     * 获取默认提示词模式
+     */
+    getDefaultPromptMode(): PromptMode | null {
+        const config = this.getSystemPromptConfig();
+        const modeId = this.getDefaultPromptModeId();
+        return config.modes?.[modeId] || null;
+    }
+
+    /**
+     * 解析提示词模式快照
+     *
+     * 优先使用传入的 modeId；如果未提供或无效，则回退到设置中的默认模式。
+     */
+    resolvePromptMode(modeId?: string): ResolvedPromptModeSnapshot {
+        const config = this.getSystemPromptConfig();
+        const normalizedModeId = typeof modeId === 'string' ? modeId.trim() : '';
+
+        const fallbackModeId = this.getDefaultPromptModeId();
+        const resolvedMode =
+            (normalizedModeId ? config.modes?.[normalizedModeId] : undefined)
+            || config.modes?.[fallbackModeId]
+            || config.modes?.[DEFAULT_MODE_ID];
+
+        if (!resolvedMode) {
+            return {
+                ...CODE_PROMPT_MODE,
+                toolPolicy: Array.isArray(CODE_PROMPT_MODE.toolPolicy)
+                    ? [...CODE_PROMPT_MODE.toolPolicy]
+                    : undefined
+            };
+        }
+
+        return {
+            ...resolvedMode,
+            toolPolicy: Array.isArray(resolvedMode.toolPolicy)
+                ? [...resolvedMode.toolPolicy]
+                : undefined
+        };
+    }
+
+    /**
+     * 获取当前激活的模式 ID（向后兼容，语义等同于默认模式 ID）
+     */
+    getCurrentPromptModeId(): string {
+        return this.getDefaultPromptModeId();
+    }
+    
+    /**
+     * 获取当前激活的模式（向后兼容，语义等同于默认模式）
      */
     getCurrentPromptMode(): PromptMode | null {
-        const config = this.getSystemPromptConfig();
-        const modeId = config.currentModeId || DEFAULT_MODE_ID;
-        return config.modes?.[modeId] || null;
+        return this.getDefaultPromptMode();
     }
     
     /**
@@ -1672,7 +1719,7 @@ export class SettingsManager {
     }
     
     /**
-     * 切换当前模式
+     * 设置默认提示词模式
      */
     async setCurrentPromptMode(modeId: string): Promise<void> {
         const config = this.getSystemPromptConfig();
@@ -1718,7 +1765,7 @@ export class SettingsManager {
      * 获取系统提示词模板（根据当前模式）
      */
     getSystemPromptTemplate(): string {
-        const mode = this.getCurrentPromptMode();
+        const mode = this.getDefaultPromptMode();
         return mode?.template || this.getSystemPromptConfig().template;
     }
     
@@ -1726,7 +1773,7 @@ export class SettingsManager {
      * 获取动态上下文模板（根据当前模式）
      */
     getDynamicContextTemplate(): string {
-        const mode = this.getCurrentPromptMode();
+        const mode = this.getDefaultPromptMode();
         return mode?.dynamicTemplate || this.getSystemPromptConfig().dynamicTemplate || '';
     }
     
@@ -1734,7 +1781,7 @@ export class SettingsManager {
      * 检查动态上下文是否启用（根据当前模式）
      */
     isDynamicTemplateEnabled(): boolean {
-        const mode = this.getCurrentPromptMode();
+        const mode = this.getDefaultPromptMode();
         return mode?.dynamicTemplateEnabled ?? this.getSystemPromptConfig().dynamicTemplateEnabled;
     }
     

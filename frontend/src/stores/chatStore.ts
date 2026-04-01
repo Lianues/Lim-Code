@@ -47,7 +47,6 @@ import {
   loadOlderMessagesPage as loadOlderMessagesPageAction,
   loadCheckpoints,
   switchConversation as switchConvAction,
-  syncConversationWorkspaceUri as syncConversationWorkspaceUriAction,
   deleteConversation as deleteConvAction,
   isDeletingConversation,
   updateConversationAfterMessage
@@ -241,13 +240,11 @@ export const useChatStore = defineStore('chat', () => {
     if (existingTab) {
       // 直接切换到已打开的标签页
       switchTabWrapped(existingTab.id)
-      await syncConversationWorkspaceUriAction(state, id)
       return
     }
 
     // 在当前标签页中加载该对话
     await switchConvAction(state, id, cancelStreamAndRejectTools)
-    await syncConversationWorkspaceUriAction(state, id)
 
     // 更新当前标签页的信息
     if (state.activeTabId.value) {
@@ -515,7 +512,6 @@ export const useChatStore = defineStore('chat', () => {
       switchTabWrapped(tabId)
       // 切换后需要从后端加载历史
       await switchConvAction(state, conversationId, cancelStreamAndRejectTools)
-      // 更新标签页信息
       if (conv) {
         updateTabTitle(state, tabId, conv.title)
       }

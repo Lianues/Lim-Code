@@ -149,6 +149,12 @@ async function getAvailableTools(
         const blacklistSet = new Set(blacklist);
         filteredTools = tools.filter(t => !blacklistSet.has(t.name));
     }
+
+    const inheritedAllowlist = context.promptModeSnapshot?.toolPolicy;
+    if (Array.isArray(inheritedAllowlist) && inheritedAllowlist.length > 0) {
+        const allowlistSet = new Set(inheritedAllowlist);
+        filteredTools = filteredTools.filter(t => allowlistSet.has(t.name));
+    }
     
     return filteredTools;
 }
@@ -252,7 +258,7 @@ async function executeToolCall(
         }
 
         if (context.settingsManager) {
-            const currentMode = context.settingsManager.getCurrentPromptMode?.();
+            const currentMode = context.promptModeSnapshot || context.settingsManager.getCurrentPromptMode?.();
             const allowlist = currentMode?.toolPolicy;
 
             if (Array.isArray(allowlist) && allowlist.length > 0) {
