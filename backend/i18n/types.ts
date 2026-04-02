@@ -422,6 +422,102 @@ export interface BackendLanguageMessages {
                 searchFailed: string;
             };
         };
+        reviewDocument: {
+            sections: {
+                scope: string;
+                summary: string;
+                findings: string;
+                milestones: string;
+                finalConclusion: string;
+                snapshot: string;
+            };
+            header: {
+                date: string;
+                overview: string;
+                status: string;
+                overallDecision: string;
+            };
+            summary: {
+                currentStatus: string;
+                reviewedModules: string;
+                currentProgress: string;
+                totalMilestones: string;
+                completedMilestones: string;
+                totalFindings: string;
+                findingsBySeverity: string;
+                latestConclusion: string;
+                recommendedNextAction: string;
+                overallDecision: string;
+            };
+            finding: {
+                severity: string;
+                category: string;
+                trackingStatus: string;
+                description: string;
+                recommendation: string;
+                relatedMilestones: string;
+                evidenceFiles: string;
+            };
+            milestone: {
+                status: string;
+                recordedAt: string;
+                reviewedModules: string;
+                summary: string;
+                conclusion: string;
+                evidenceFiles: string;
+                recommendedNextAction: string;
+                findings: string;
+            };
+            values: {
+                pending: string;
+                milestoneStatus: {
+                    inProgress: string;
+                    completed: string;
+                };
+                overallDecision: {
+                    pending: string;
+                    accepted: string;
+                    conditionallyAccepted: string;
+                    rejected: string;
+                    needsFollowUp: string;
+                };
+                severity: {
+                    high: string;
+                    medium: string;
+                    low: string;
+                };
+                category: {
+                    html: string;
+                    css: string;
+                    javascript: string;
+                    accessibility: string;
+                    performance: string;
+                    maintainability: string;
+                    docs: string;
+                    test: string;
+                    other: string;
+                };
+                trackingStatus: {
+                    open: string;
+                    acceptedRisk: string;
+                    fixed: string;
+                    wontFix: string;
+                    duplicate: string;
+                };
+            };
+            placeholders: {
+                noMilestones: string;
+                noFindings: string;
+                defaultReviewScope: string;
+                defaultFinalConclusion: string;
+            };
+            templates: {
+                currentProgressWithLatest: string;
+                currentProgressEmpty: string;
+                findingsBySeverity: string;
+            };
+        };
+
     };
     /** 工作区相关 */
     workspace: {

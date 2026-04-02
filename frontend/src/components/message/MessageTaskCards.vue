@@ -58,6 +58,7 @@ type TaskCardItem = {
   toolId: string
   toolName: string
   isActionCompleted: boolean
+  continuationPrompt?: string
   reviewCardData?: ReviewCardData
 }
 
@@ -470,6 +471,54 @@ async function generatePlan(card: TaskCardItem) {
   }
 }
 
+async function generatePlanFromReview(card: TaskCardItem) {
+  if (card.kind !== 'review') return
+  if (isGeneratingPlan.value || card.isActionCompleted || !card.content.trim()) return
+
+  isGeneratingPlan.value = true
+  try {
+    await withSelectedChannel(async () => {
+      const confirmResult = await sendToExtension<{
+        success: boolean
+        prompt: string
+        reviewContent: string
+        reviewPath: string
+      }>('review.confirmPlanGeneration', {
+        path: card.path,
+        originalContent: card.content,
+        conversationId: chatStore.currentConversationId
+      })
+
+      const prompt = String(confirmResult?.prompt || '')
+      const latestReviewContent = confirmResult?.reviewContent || card.content
+      const latestReviewPath = String(confirmResult?.reviewPath || card.path || '')
+
+      try {
+        const targetModeId = String(selectedPlanGenerationModeId.value || 'plan').trim() || 'plan'
+        await chatStore.setCurrentPromptModeId(targetModeId)
+        saveState(PLAN_GENERATION_MODE_STATE_KEY, targetModeId)
+      } catch (modeError) {
+        console.error('[review] Failed to switch prompt mode before plan generation:', modeError)
+      }
+
+      await chatStore.sendMessage('', undefined, {
+        modelOverride: selectedModelId.value || undefined,
+        hidden: {
+          functionResponse: {
+            id: card.toolId,
+            name: card.toolName,
+            response: { planGenerationPrompt: prompt, reviewPath: latestReviewPath, reviewContent: latestReviewContent }
+          }
+        }
+      })
+    })
+  } catch (error) {
+    console.error(t('components.message.tool.reviewCard.generatePlanFailed'), error)
+  } finally {
+    isGeneratingPlan.value = false
+  }
+}
+
 function handleCardAction(card: TaskCardItem) {
   if (card.kind === 'plan') {
     void executePlan(card)
@@ -648,11 +697,13 @@ function getReviewTaskEntries(tool: ToolUsage): TaskEntry[] {
 
   const reviewCardData = extractReviewCardData(tool.name, args, reviewResult)
   if (!reviewCardData) return []
+  const continuationPrompt = getPlanGenerationPrompt(reviewResult) || undefined
 
   return [{
     kind: 'review',
     path: reviewCardData.path || '',
     content: formatReviewToolFallbackContent(tool.name, args, reviewResult),
+    continuationPrompt,
     success: typeof reviewResult.success === 'boolean' ? reviewResult.success : undefined,
     reviewCardData
   }]
@@ -693,7 +744,8 @@ const taskCards = computed<TaskCardItem[]>(() => {
         content: entry.content,
         toolId: tool.id,
         toolName: tool.name,
-        isActionCompleted: entry.kind === 'review' ? false : !!entry.continuationPrompt,
+        isActionCompleted: !!entry.continuationPrompt,
+        continuationPrompt: entry.continuationPrompt,
         reviewCardData: entry.reviewCardData
       })
     }
@@ -718,8 +770,12 @@ const hasAny = computed(() => taskCards.value.length > 0)
       <ReviewTaskCard
         v-if="c.kind === 'review' && c.reviewCardData"
         :card="c.reviewCardData"
+        :plan-generation-enabled="!c.isActionCompleted && !!c.path && !!c.content && c.reviewCardData?.status === 'completed'"
+        :plan-generation-completed="c.isActionCompleted"
+        :is-generating-plan="isGeneratingPlan"
         :content="c.content"
         :status="c.status"
+        @generate-plan="generatePlanFromReview(c)"
       />
       <div v-else class="task-panel">
       <div class="task-header">

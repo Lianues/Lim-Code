@@ -9,10 +9,10 @@ import type { Tool, ToolDeclaration, ToolResult } from '../types';
 import { getAllWorkspaces, normalizeLineEndingsToLF, resolveUriWithInfo } from '../utils';
 import { isReviewPathAllowed } from '../../modules/settings/modeToolsPolicy';
 import {
-  normalizeReviewDocumentStructure,
   summarizeReviewDocument,
   validateReviewDocument
 } from './reviewDocumentSection';
+import { buildReviewValidationSummary } from './resultProjection';
 
 export interface ValidateReviewDocumentArgs {
   path: string;
@@ -79,18 +79,26 @@ export function createValidateReviewDocumentTool(): Tool {
         let summary: ReturnType<typeof summarizeReviewDocument> | undefined;
 
         try {
-          if (validation.detectedFormat === 'v2' || validation.detectedFormat === 'v3') {
-            summary = summarizeReviewDocument(normalizeReviewDocumentStructure(content));
+          if (validation.detectedFormat !== 'unknown') {
+            summary = summarizeReviewDocument(content);
           }
         } catch {
           summary = undefined;
         }
+
+        const reviewValidation = buildReviewValidationSummary(content);
 
         return {
           success: true,
           data: {
             path,
             ...validation,
+            reviewSnapshot: validation.reviewSnapshot,
+            reviewValidation,
+            reviewDelta: {
+              type: 'validated',
+              changedFields: []
+            },
             metadata: validation.metadata,
             title: summary?.title,
             date: summary?.date,
@@ -106,9 +114,9 @@ export function createValidateReviewDocumentTool(): Tool {
             latestConclusion: summary?.latestConclusion,
             recommendedNextAction: summary?.recommendedNextAction,
             reviewedModules: summary?.reviewedModules,
-            issueCount: validation.issues.length,
-            errorCount: validation.issues.filter((item) => item.severity === 'error').length,
-            warningCount: validation.issues.filter((item) => item.severity === 'warning').length
+            issueCount: reviewValidation.issueCount,
+            errorCount: reviewValidation.errorCount,
+            warningCount: reviewValidation.warningCount
           }
         };
       } catch (e: any) {

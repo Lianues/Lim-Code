@@ -1217,6 +1217,57 @@ export const designConfirmPlanGeneration: MessageHandler = async (data, requestI
   }
 };
 
+export const reviewConfirmPlanGeneration: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const { path: reviewPathRaw, originalContent } = data || {};
+    const reviewPath = typeof reviewPathRaw === 'string' ? reviewPathRaw.trim() : '';
+    const originalText = typeof originalContent === 'string' ? originalContent : '';
+    const confirmedPrompt = 'User confirmed this review. Please create an implementation plan document based on the review findings, conclusions, and follow-up items.';
+    const modifiedPrompt = 'User modified this review and confirmed the latest version. Please create an implementation plan document based on the latest review content.';
+
+    const replyWithReview = async (prompt: string, reviewContent: string) => {
+      ctx.sendResponse(requestId, {
+        success: true,
+        prompt,
+        reviewContent,
+        reviewPath
+      });
+    };
+
+    if (!reviewPath) {
+      await replyWithReview(confirmedPrompt, originalText);
+      return;
+    }
+
+    const { uri } = resolveUriWithInfo(reviewPath);
+    if (!uri) {
+      await replyWithReview(confirmedPrompt, originalText);
+      return;
+    }
+
+    try {
+      const bytes = await vscode.workspace.fs.readFile(uri);
+      const currentContent = Buffer.from(bytes).toString('utf-8');
+
+      const currentTrimmed = (currentContent || '').trim();
+      const originalTrimmed = originalText.trim();
+
+      if (currentTrimmed !== originalTrimmed) {
+        await replyWithReview(modifiedPrompt, currentContent);
+      } else {
+        await replyWithReview(
+          confirmedPrompt,
+          originalText || currentContent || ''
+        );
+      }
+    } catch {
+      await replyWithReview(confirmedPrompt, originalText);
+    }
+  } catch (error: any) {
+    ctx.sendError(requestId, 'REVIEW_CONFIRM_PLAN_GENERATION_ERROR', error.message || 'Failed to confirm review plan generation');
+  }
+};
+
 // ========== Plan 执行确认 ==========
 
 export const planConfirmExecution: MessageHandler = async (data, requestId, ctx) => {
@@ -1330,6 +1381,9 @@ export function registerFileHandlers(registry: Map<string, MessageHandler>): voi
   
   // Design 生成计划确认
   registry.set('design.confirmPlanGeneration', designConfirmPlanGeneration);
+
+  // Review 生成计划确认
+  registry.set('review.confirmPlanGeneration', reviewConfirmPlanGeneration);
 
   // Plan 执行确认
   registry.set('plan.confirmExecution', planConfirmExecution);

@@ -618,14 +618,16 @@ export class ToolExecutionService {
             return { call, error: null };
         }
 
+        const schema = tool.declaration?.parameters;
+
         // 1. 类型容错：将 "true"→true, "30"→30, "[...]"字符串→数组
-        const normalizedArgs = coerceToolArgs(call.args, tool.declaration.parameters);
+        const normalizedArgs = coerceToolArgs(call.args, schema);
 
         // 2. 数组专项校验：coerceToolArgs 处理后仍不是数组的，直接报错
         const error = getToolArgsArrayValidationError(
             call.name,
             normalizedArgs,
-            tool.declaration.parameters
+            schema
         );
         if (error) {
             return {
@@ -636,7 +638,7 @@ export class ToolExecutionService {
 
         // 3. 完整 schema 校验：检查必需字段、类型匹配、多余字段
         
-        const schemaError = validateToolArgs(call.name, normalizedArgs, tool.declaration.parameters);
+        const schemaError = validateToolArgs(call.name, normalizedArgs, schema);
 
         return {
             call: normalizedArgs === call.args ? call : { ...call, args: normalizedArgs },

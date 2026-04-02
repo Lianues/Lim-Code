@@ -65,6 +65,23 @@ function getCurrentMessages(): BackendLanguageMessages {
 }
 
 /**
+ * 获取指定语言的消息对象
+ *
+ * 当传入 auto 或空值时，返回当前实际语言对应的消息对象。
+ */
+export function getMessagesForLanguage(lang?: SupportedLanguage | string): BackendLanguageMessages {
+    if (!lang || lang === 'auto') {
+        return getCurrentMessages();
+    }
+
+    if (typeof lang === 'string' && messages[lang]) return messages[lang];
+    if (typeof lang === 'string' && lang.startsWith('zh')) return messages['zh-CN'];
+    if (typeof lang === 'string' && lang.startsWith('en')) return messages['en'];
+    if (typeof lang === 'string' && lang.startsWith('ja')) return messages['ja'];
+    return messages['zh-CN'];
+}
+
+/**
  * 设置语言
  */
 export function setLanguage(lang: SupportedLanguage): void {
@@ -126,5 +143,6 @@ export default {
     t,
     setLanguage,
     getLanguage,
-    setDetectedLanguage
+    setDetectedLanguage,
+    getMessagesForLanguage
 };

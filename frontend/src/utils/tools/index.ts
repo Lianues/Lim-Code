@@ -54,6 +54,8 @@ import './review/create_review'
 import './review/record_review_milestone'
 import './review/finalize_review'
 import './review/validate_review_document'
+import './review/reopen_review'
+import './review/compare_review_documents'
 
 // History 工具
 import './history/history_search'

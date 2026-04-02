@@ -1610,6 +1610,25 @@ export class SettingsManager {
             modes[REVIEW_MODE_ID] = REVIEW_PROMPT_MODE;
             needsUpdate = true;
         }
+
+        const builtInModes = [
+            DESIGN_PROMPT_MODE,
+            PLAN_PROMPT_MODE,
+            ASK_PROMPT_MODE,
+            REVIEW_PROMPT_MODE,
+        ];
+
+        for (const builtInMode of builtInModes) {
+            const currentMode = modes[builtInMode.id];
+            if (!currentMode) continue;
+            if (!this.arraysEqual(currentMode.toolPolicy, builtInMode.toolPolicy)) {
+                modes[builtInMode.id] = {
+                    ...currentMode,
+                    toolPolicy: builtInMode.toolPolicy ? [...builtInMode.toolPolicy] : undefined,
+                };
+                needsUpdate = true;
+            }
+        }
         
         if (needsUpdate) {
             return {
@@ -1617,7 +1636,7 @@ export class SettingsManager {
                 modes
             };
         }
-        
+
         return config;
     }
     

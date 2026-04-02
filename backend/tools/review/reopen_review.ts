@@ -1,7 +1,7 @@
 /**
- * finalize_review 工具
+ * reopen_review 工具
  *
- * 目标：结束当前 review 文档，更新最终摘要，不创建新文档。
+ * 目标：重新打开一个已完成的 review 文档，使其重新进入 in_progress 状态。
  */
 
 import * as vscode from 'vscode';
@@ -9,19 +9,14 @@ import type { Tool, ToolContext, ToolDeclaration, ToolResult } from '../types';
 import { getAllWorkspaces, normalizeLineEndingsToLF, resolveUriWithInfo } from '../utils';
 import { isReviewPathAllowed } from '../../modules/settings/modeToolsPolicy';
 import {
-  finalizeReviewDocument,
   getCurrentReviewDocumentLocale,
-  type ReviewOverallDecision
+  reopenReviewDocument
 } from './reviewDocumentSection';
 import { projectReviewToolResultData } from './resultProjection';
-import { ensureMatchingActiveReviewSession, saveReviewSessionState } from './sessionState';
+import { loadReviewSessionState, saveReviewSessionState } from './sessionState';
 
-export interface FinalizeReviewArgs {
+export interface ReopenReviewArgs {
   path: string;
-  conclusion: string;
-  overallDecision?: ReviewOverallDecision;
-  recommendedNextAction?: string;
-  reviewedModules?: string[];
 }
 
 function isReviewModePathAllowedWithMultiRoot(pathStr: string): boolean {
@@ -42,59 +37,43 @@ function isReviewModePathAllowedWithMultiRoot(pathStr: string): boolean {
   return isReviewPathAllowed(rest);
 }
 
-export function createFinalizeReviewToolDeclaration(): ToolDeclaration {
+export function createReopenReviewToolDeclaration(): ToolDeclaration {
   return {
-    name: 'finalize_review',
+    name: 'reopen_review',
     description:
-      'Finalize an existing review document under .limcode/review/**.md, normalize its structure, and update the final review summary.',
+      'Reopen a finalized review document under .limcode/review/**.md so the same review run can continue recording milestones.',
     category: 'review',
     parameters: {
       type: 'object',
       properties: {
-        path: { type: 'string', description: 'Target review document path under .limcode/review/**.md' },
-        conclusion: { type: 'string', description: 'Final review conclusion' },
-        overallDecision: {
-          type: 'string',
-          enum: ['accepted', 'conditionally_accepted', 'rejected', 'needs_follow_up'],
-          description: 'Optional overall review decision'
-        },
-        recommendedNextAction: {
-          type: 'string',
-          description: 'Optional recommended next action for the summary section'
-        },
-        reviewedModules: {
-          type: 'array',
-          description: 'Optional reviewed modules to merge into the summary section',
-          items: { type: 'string' }
-        }
+        path: { type: 'string', description: 'Target finalized review document path under .limcode/review/**.md' }
       },
-      required: ['path', 'conclusion']
+      required: ['path']
     }
   };
 }
 
-export function createFinalizeReviewTool(): Tool {
+export function createReopenReviewTool(): Tool {
   return {
-    declaration: createFinalizeReviewToolDeclaration(),
+    declaration: createReopenReviewToolDeclaration(),
     handler: async (rawArgs: Record<string, unknown>, context?: ToolContext): Promise<ToolResult> => {
-      const args = rawArgs as unknown as FinalizeReviewArgs;
+      const args = rawArgs as unknown as ReopenReviewArgs;
       const path = typeof args.path === 'string' ? args.path.trim() : '';
-      const conclusion = typeof args.conclusion === 'string' ? args.conclusion : '';
 
       if (!path) {
         return { success: false, error: 'path is required and must be a non-empty string' };
-      }
-      if (!conclusion.trim()) {
-        return { success: false, error: 'conclusion is required and must be a non-empty string' };
       }
 
       if (!isReviewModePathAllowedWithMultiRoot(path)) {
         return { success: false, error: `Invalid review path. Only ".limcode/review/**.md" is allowed. Rejected path: ${path}` };
       }
 
-      const sessionCheck = await ensureMatchingActiveReviewSession(context, path);
-      if (sessionCheck.ok === false) {
-        return { success: false, error: sessionCheck.error };
+      const session = await loadReviewSessionState(context);
+      if (session?.status === 'in_progress') {
+        if (session.reviewPath === path) {
+          return { success: false, error: `The review session is already active for path: ${path}` };
+        }
+        return { success: false, error: `Another active review session already exists for this conversation: ${session.reviewPath}` };
       }
 
       const { uri, error } = resolveUriWithInfo(path);
@@ -106,15 +85,9 @@ export function createFinalizeReviewTool(): Tool {
         const contentBytes = await vscode.workspace.fs.readFile(uri);
         const originalContent = normalizeLineEndingsToLF(new TextDecoder().decode(contentBytes));
         const locale = getCurrentReviewDocumentLocale();
-        const next = finalizeReviewDocument(originalContent, {
-          conclusion,
-          overallDecision: args.overallDecision,
-          recommendedNextAction: typeof args.recommendedNextAction === 'string' ? args.recommendedNextAction : '',
-          reviewedModules: Array.isArray(args.reviewedModules) ? args.reviewedModules : []
-        }, locale);
+        const next = reopenReviewDocument(originalContent, locale);
 
         await vscode.workspace.fs.writeFile(uri, new TextEncoder().encode(next.content));
-
         await saveReviewSessionState(context, {
           reviewRunId: next.reviewSnapshot.reviewRunId,
           reviewPath: path,
@@ -129,8 +102,8 @@ export function createFinalizeReviewTool(): Tool {
             path,
             content: next.content,
             delta: {
-              type: 'finalized',
-              changedFields: ['status', 'overallDecision', 'finalizedAt', 'summary', 'reviewSnapshot', 'reviewSession']
+              type: 'reopened',
+              changedFields: ['status', 'overallDecision', 'finalizedAt', 'reviewSnapshot', 'reviewSession']
             },
             extra: {
               findings: next.findings,
@@ -145,6 +118,6 @@ export function createFinalizeReviewTool(): Tool {
   };
 }
 
-export function registerFinalizeReview(): Tool {
-  return createFinalizeReviewTool();
+export function registerReopenReview(): Tool {
+  return createReopenReviewTool();
 }
