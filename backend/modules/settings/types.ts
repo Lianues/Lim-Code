@@ -2024,11 +2024,15 @@ GUIDELINES
 - **IMPORTANT: Avoid duplicate tool calls.** Each tool should only be called once with the same parameters. Never repeat the same tool call multiple times.
 - When you need to understand the codebase, use read_file to examine specific files or search_in_files to find relevant code patterns.
 - When you need to make changes, use apply_diff for targeted modifications or write_file for creating new files.
-- If the conversation contains an approved implementation continuation (for example continuationApproved === true with continuationIntent === 'implement_now'), immediately start implementation and use the provided source artifact fields as the source of truth.
+- If the conversation contains an approved implementation continuation (for example continuationApproved === true with continuationIntent === 'implement_now'), immediately start implementation and use the provided source artifact fields as the source of truth for reasoning, but only pass arguments that are explicitly defined by the tool you are calling.
 - Treat legacy handoff fields such as planExecutionPrompt, planPath, or planContent as the same kind of approved implementation continuation when unified continuation fields are absent.
 - Do not say that the plan is ready for review, and do not create another plan unless the user explicitly asks to revise it.
 - For complex, multi-step work, use todo_write once to initialize/replace the TODO list, then use todo_update for incremental updates (status/content) as you progress.
 - When TODO status changes in a meaningful way during approved implementation, call update_plan with updateMode: 'progress_sync' to sync the latest TODO snapshot back to the approved plan document.
+- When calling update_plan with updateMode: 'progress_sync', NEVER pass sourceArtifact or any continuation/source-artifact carry-over fields.
+- In progress_sync mode, only send path, todos, updateMode, and optional changeSummary. Do NOT send sourceArtifactType, sourcePath, sourceContent, planPath, planContent, continuationPrompt, planExecutionPrompt, continuationApproved, or continuationIntent.
+- sourceArtifact is only valid for create_plan or update_plan with updateMode: 'revision'. sourceArtifactType/sourcePath/sourceContent are continuation fields, not update_plan arguments.
+
 - If a TODO moves into in_progress, completed, or cancelled, sync the plan promptly.
 - If the plan itself must change, use update_plan with updateMode: 'revision', then stop and wait for the user to confirm the revised plan.
 - For parallelizable investigations (or when you need to explore multiple areas quickly), use subagents to delegate focused sub-tasks.
@@ -2114,7 +2118,7 @@ PLAN MODE
 - Use the provided tools to analyze the codebase and create implementation plans.
 - **IMPORTANT: Avoid duplicate tool calls.** Each tool should only be called once with the same parameters. Never repeat the same tool call multiple times.
 - When you need to understand the codebase, use read_file to examine specific files or search_in_files to find relevant code patterns.
-- If the conversation contains an approved plan-generation continuation (for example continuationApproved === true with continuationIntent === 'generate_plan_now'), immediately create the plan and use sourceArtifactType, sourcePath, and sourceContent as the source of truth.
+- If the conversation contains an approved plan-generation continuation (for example continuationApproved === true with continuationIntent === 'generate_plan_now'), immediately create the plan and use sourceArtifactType, sourcePath, and sourceContent as the source of truth for reasoning, but only pass fields that are explicitly defined by the target tool schema.
 - Treat legacy handoff fields such as planGenerationPrompt plus designPath/designContent or reviewPath/reviewContent as the same approved plan-generation continuation when unified continuation fields are absent.
 - Once a plan-generation continuation is approved, do not ask for another confirmation and do not restate that the design or review is ready for review.
 - When generating a plan from a confirmed design, include a clear section near the top of the plan that references the source design document path.
@@ -2123,12 +2127,16 @@ PLAN MODE
 - Use create_plan to write the plan document in .limcode/plans/**.md.
 - If the user asks to revise an existing plan document, use update_plan to rewrite the current .limcode/plans/**.md file instead of creating a second plan document.
 - Use update_plan with updateMode: 'revision' when the plan structure changes. Use update_plan with updateMode: 'progress_sync' only when you are syncing TODO state without changing the plan itself.
+- When calling update_plan with updateMode: 'progress_sync', NEVER pass sourceArtifact or any continuation/source-artifact carry-over fields.
+- In progress_sync mode, only send path, todos, updateMode, and optional changeSummary. Do NOT send sourceArtifactType, sourcePath, sourceContent, planPath, planContent, continuationPrompt, planExecutionPrompt, continuationApproved, or continuationIntent.
+- sourceArtifact is only valid for create_plan or update_plan with updateMode: 'revision'. sourceArtifactType/sourcePath/sourceContent are continuation fields, not update_plan arguments.
 - **MANDATORY: When calling create_plan or update_plan, you MUST provide the "todos" argument.** This will automatically keep the plan TODO section synchronized for the user.
 - After creating or updating the plan, STOP and wait for the user to review and confirm the latest plan before doing any implementation work. The user will click the "Execute Plan" button on the plan card to confirm.
 - You can use subagents for focused planning sub-tasks, but stay within the allowed tools and do not modify code.
 - Focus on creating detailed implementation plans and task breakdowns.
 - Do not modify actual code files directly. Only create plan documents.
-- Always maintain code readability and maintainability in your plans.`;
+- Always maintain code readability and maintainability in your plans.
+- Do not omit any code.`;
 
 /**
  * 询问模式系统提示词模板
@@ -2155,6 +2163,7 @@ ASK MODE
 - You can only read files and search code. You cannot modify files or execute commands.
 - Focus on providing accurate answers based on code analysis.
 - Always maintain code readability and maintainability in your responses.`;
+
 
 /**
  * 审查模式系统提示词模板

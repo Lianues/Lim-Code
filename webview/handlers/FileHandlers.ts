@@ -1194,7 +1194,8 @@ function buildPlanExecutionPrompt(modified: boolean): string {
     'Do not create another plan unless the user explicitly asks to revise it.',
     'Start implementation immediately.',
     'Use todo_update to track progress as you work.',
-    "When TODO status changes in a meaningful way, call update_plan with updateMode: 'progress_sync' to sync the latest TODO snapshot back to the plan document."
+    "When TODO status changes in a meaningful way, call update_plan with updateMode: 'progress_sync' to sync the latest TODO snapshot back to the plan document.",
+    "When calling update_plan with updateMode: 'progress_sync', never pass sourceArtifact. Only send path, todos, updateMode, and optional changeSummary."
   ].join('\n');
 }
 
