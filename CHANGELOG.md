@@ -3,6 +3,11 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.1.23] - 2026-04-03
+
+### Fixed
+  - 修复流式工具id问题
+
 ## [1.1.22] - 2026-04-02
 
 ### Fixed
