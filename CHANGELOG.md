@@ -3,6 +3,14 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.1.21] - 2026-04-02
+
+### Improved
+  - 将 prompt mode 的使用范围从全局切换，收敛到会话和请求链路，并补齐运行时上下文。
+  - 完善 review mode 的文档生命周期、结构化结果处理与对比流程。
+  - 为 design / plan 文档增加更新能力，并让计划文档与任务卡、续写流程保持同步。
+  - 提升 Webview 声音提醒的稳定性，处理音频解锁、并发播放、过期事件丢弃和隐藏态折叠等问题。
+
 ## [1.1.20] - 2026-04-01
 
 ### Added
