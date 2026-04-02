@@ -7,7 +7,8 @@
 import { t } from '../../../../i18n';
 import type { ToolRegistry } from '../../../../tools/ToolRegistry';
 import type { ConversationStore } from '../../../../tools/types';
-import { coerceToolArgs, getToolArgsArrayValidationError } from '../../../../tools/coerceToolArgs';
+import { coerceToolArgs, getToolArgsArrayValidationError, type ToolParameterSchema } from '../../../../tools/coerceToolArgs';
+
 import { validateToolArgs } from '../../../../tools/validateToolArgs';
 import type { CheckpointRecord } from '../../../checkpoint';
 import type { SettingsManager } from '../../../settings/SettingsManager';
@@ -606,6 +607,42 @@ export class ToolExecutionService {
         }
     }
 
+    private stripKnownUpdatePlanContinuationFields(
+        args: Record<string, any>,
+        schema: ToolParameterSchema | undefined
+    ): Record<string, any> {
+        if (!args || typeof args !== 'object' || !schema?.properties) {
+            return args;
+        }
+
+        const knownCarryOverFields = [
+            'continuationApproved',
+            'continuationIntent',
+            'continuationPrompt',
+            'sourceArtifactType',
+            'sourcePath',
+            'sourceContent',
+            'planExecutionPrompt',
+            'planGenerationPrompt',
+            'planPath',
+            'planContent',
+            'designPath',
+            'designContent',
+            'reviewPath',
+            'reviewContent'
+        ];
+
+        const nextArgs = { ...args };
+        let modified = false;
+        for (const key of knownCarryOverFields) {
+            if (key in nextArgs && !(key in schema.properties)) {
+                delete nextArgs[key];
+                modified = true;
+            }
+        }
+        return modified ? nextArgs : args;
+    }
+
     private prepareToolCallForExecution(
         call: FunctionCallInfo
     ): { call: FunctionCallInfo; error: string | null } {
@@ -622,29 +659,33 @@ export class ToolExecutionService {
 
         // 1. 类型容错：将 "true"→true, "30"→30, "[...]"字符串→数组
         const normalizedArgs = coerceToolArgs(call.args, schema);
+        const preparedArgs = call.name === 'update_plan'
+            ? this.stripKnownUpdatePlanContinuationFields(normalizedArgs, schema)
+            : normalizedArgs;
 
         // 2. 数组专项校验：coerceToolArgs 处理后仍不是数组的，直接报错
         const error = getToolArgsArrayValidationError(
             call.name,
-            normalizedArgs,
+            preparedArgs,
             schema
         );
         if (error) {
             return {
-                call: normalizedArgs === call.args ? call : { ...call, args: normalizedArgs },
+                call: preparedArgs === call.args ? call : { ...call, args: preparedArgs },
                 error
             };
         }
 
         // 3. 完整 schema 校验：检查必需字段、类型匹配、多余字段
         
-        const schemaError = validateToolArgs(call.name, normalizedArgs, schema);
+        const schemaError = validateToolArgs(call.name, preparedArgs, schema);
 
         return {
-            call: normalizedArgs === call.args ? call : { ...call, args: normalizedArgs },
+            call: preparedArgs === call.args ? call : { ...call, args: preparedArgs },
             error: schemaError
         };
     }
+
 
     /**
      * 执行内置工具

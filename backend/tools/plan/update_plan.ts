@@ -29,6 +29,8 @@ export interface UpdatePlanArgs {
   sourceArtifact?: PlanSourceArtifactInput;
 }
 
+const PROGRESS_SYNC_SOURCE_ARTIFACT_WARNING =
+  'sourceArtifact was provided in progress_sync mode and has been ignored. Use updateMode: \'revision\' if you need to change the plan source.';
 function normalizeUpdateMode(value: unknown): PlanUpdateMode {
   return value === 'progress_sync' ? 'progress_sync' : 'revision';
 }
@@ -36,15 +38,16 @@ function normalizeUpdateMode(value: unknown): PlanUpdateMode {
 export function createUpdatePlanToolDeclaration(): ToolDeclaration {
   return {
     name: 'update_plan',
+    strict: true,
     description:
-      'Update an existing plan document (markdown) under .limcode/plans/**.md. Use revision mode to revise the plan itself, or progress_sync mode to sync the latest TODO snapshot during implementation.',
+      'Update an existing plan document (markdown) under .limcode/plans/**.md. Use revision mode to revise the plan itself, or progress_sync mode to sync the latest TODO snapshot during implementation. In progress_sync mode, only send path, todos, updateMode, and optional changeSummary. If sourceArtifact is accidentally included, it will be ignored with a warning. Do NOT forward continuation/source-artifact carry-over fields such as sourceArtifactType, sourcePath, sourceContent, planPath, planContent, or continuationPrompt.',
     category: 'plan',
     parameters: {
       type: 'object',
       properties: {
         path: {
           type: 'string',
-          description: 'Target existing plan document path under .limcode/plans/**.md.'
+          description: 'Target existing plan document path under .limcode/plans/**.md. Reuse the approved plan path here; do not send separate sourcePath or planPath fields.'
         },
         title: { type: 'string', description: 'Optional updated plan title.' },
         overview: { type: 'string', description: 'Optional updated one-line overview.' },
@@ -64,12 +67,12 @@ export function createUpdatePlanToolDeclaration(): ToolDeclaration {
         },
         updateMode: {
           type: 'string',
-          description: 'revision rewrites the plan and requires re-confirmation. progress_sync only updates TODO state during implementation.',
+          description: 'revision rewrites the plan and requires re-confirmation. progress_sync only updates TODO state during implementation. In progress_sync mode, only send path, todos, updateMode, and optional changeSummary. If sourceArtifact is included by mistake, it will be ignored with a warning.',
           enum: ['revision', 'progress_sync']
         },
         sourceArtifact: {
           type: 'object',
-          description: 'Optional source artifact to rebind the plan to the latest confirmed design or review. Allowed only in revision mode.',
+          description: 'Optional source artifact to rebind the plan to the latest confirmed design or review. Allowed only in revision mode. Use this nested object only when the schema explicitly allows it. Do NOT send sibling carry-over fields such as sourceArtifactType, sourcePath, or sourceContent.',
           properties: {
             type: { type: 'string', enum: ['design', 'review'] },
             path: { type: 'string' }
@@ -86,6 +89,7 @@ export function createUpdatePlanToolDeclaration(): ToolDeclaration {
   };
 }
 
+
 export function createUpdatePlanTool(): Tool {
   return {
     declaration: createUpdatePlanToolDeclaration(),
@@ -95,6 +99,10 @@ export function createUpdatePlanTool(): Tool {
       const plan = typeof args.plan === 'string' ? args.plan : '';
       const changeSummary = typeof args.changeSummary === 'string' ? args.changeSummary.trim() : '';
       const updateMode = normalizeUpdateMode(args.updateMode);
+      const hasSourceArtifactArg = Object.prototype.hasOwnProperty.call(rawArgs, 'sourceArtifact');
+      const shouldIgnoreSourceArtifact = updateMode === 'progress_sync' && hasSourceArtifactArg;
+      const warnings = shouldIgnoreSourceArtifact ? [PROGRESS_SYNC_SOURCE_ARTIFACT_WARNING] : [];
+      const nextSourceArtifact = shouldIgnoreSourceArtifact ? undefined : args.sourceArtifact;
 
       if (!targetPath) {
         return { success: false, error: 'path is required and must be a non-empty string' };
@@ -102,10 +110,6 @@ export function createUpdatePlanTool(): Tool {
 
       if (updateMode === 'revision' && !plan.trim()) {
         return { success: false, error: 'plan is required and must be a non-empty string in revision mode' };
-      }
-
-      if (updateMode === 'progress_sync' && args.sourceArtifact) {
-        return { success: false, error: 'sourceArtifact is not allowed in progress_sync mode' };
       }
 
       if (!isPlanModePathAllowedWithMultiRoot(targetPath)) {
@@ -129,8 +133,8 @@ export function createUpdatePlanTool(): Tool {
         await ensureParentDir(uri.fsPath);
 
         const existingSourceSection = extractPlanSourceArtifactSection(existingContent);
-        const sourceSection = args.sourceArtifact
-          ? renderPlanSourceArtifactSection(await buildTrackedPlanSourceArtifact(args.sourceArtifact))
+        const sourceSection = nextSourceArtifact
+          ? renderPlanSourceArtifactSection(await buildTrackedPlanSourceArtifact(nextSourceArtifact))
           : existingSourceSection;
 
         const bodyContent = updateMode === 'progress_sync'
@@ -149,7 +153,8 @@ export function createUpdatePlanTool(): Tool {
             content,
             todos,
             updateMode,
-            changeSummary: changeSummary || undefined
+            changeSummary: changeSummary || undefined,
+            warnings: warnings.length > 0 ? warnings : undefined
           }
         };
       } catch (e: any) {

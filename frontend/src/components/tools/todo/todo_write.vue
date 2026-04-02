@@ -46,6 +46,11 @@ function debugTodoOnce(key: string, data: Record<string, unknown>) {
 
 const resultData = computed(() => (props.result as any)?.data || {})
 
+const toolWarnings = computed<string[]>(() => {
+  const w = resultData.value?.warnings
+  return Array.isArray(w) ? w.filter((s: unknown) => typeof s === 'string' && s.trim()) : []
+})
+
 const snapshotTodoState = computed(() =>
   replayTodoStateFromMessages(chatStore.allMessages, {
     resolveToolResponseById: (toolCallId) => chatStore.getToolResponseById(toolCallId),
@@ -237,6 +242,12 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
+    <!-- 工具警告 -->
+    <div v-for="(w, idx) in toolWarnings" :key="`warn-${idx}`" class="panel-warning">
+      <span class="codicon codicon-warning warning-icon"></span>
+      <span class="warning-text">{{ w }}</span>
+    </div>
+
     <!-- 全局错误 -->
     <div v-if="props.error || (props.result as any)?.error" class="panel-error">
       <span class="codicon codicon-error error-icon"></span>
@@ -375,6 +386,29 @@ onBeforeUnmount(() => {
   background: var(--vscode-inputValidation-errorBackground);
   border: 1px solid var(--vscode-inputValidation-errorBorder);
   border-radius: var(--radius-sm, 2px);
+}
+
+/* 工具警告 */
+.panel-warning {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--spacing-sm, 8px);
+  padding: var(--spacing-sm, 8px);
+  background: var(--vscode-inputValidation-warningBackground, rgba(255, 170, 0, 0.1));
+  border: 1px solid var(--vscode-inputValidation-warningBorder, #ffaa00);
+  border-radius: var(--radius-sm, 2px);
+}
+
+.warning-icon {
+  color: var(--vscode-editorWarning-foreground, #ffaa00);
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.warning-text {
+  font-size: 12px;
+  color: var(--vscode-editorWarning-foreground, #ffaa00);
+  line-height: 1.4;
 }
 
 .error-icon {
