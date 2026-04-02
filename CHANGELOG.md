@@ -3,6 +3,11 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.1.22] - 2026-04-02
+
+### Fixed
+  - progress_sync 模式下误传 sourceArtifact 时改为忽略并警告，不再报错
+
 ## [1.1.21] - 2026-04-02
 
 ### Improved
