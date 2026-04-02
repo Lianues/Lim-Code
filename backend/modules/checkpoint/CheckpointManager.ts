@@ -354,6 +354,23 @@ export class CheckpointManager {
         }
     }
     
+    private async readCheckpointListFromConversation(conversationId: string): Promise<CheckpointRecord[]> {
+        const conversationManager = this.conversationManager as any;
+
+        if (typeof conversationManager.getCustomMetadata === 'function') {
+            const checkpoints = await conversationManager.getCustomMetadata(conversationId, 'checkpoints');
+            return Array.isArray(checkpoints) ? checkpoints as CheckpointRecord[] : [];
+        }
+
+        if (typeof conversationManager.getMetadata === 'function') {
+            const metadata = await conversationManager.getMetadata(conversationId);
+            const checkpoints = metadata?.custom?.checkpoints;
+            return Array.isArray(checkpoints) ? checkpoints as CheckpointRecord[] : [];
+        }
+
+        return [];
+    }
+
     /**
      * 保存检查点到对话元数据
      */
@@ -362,9 +379,7 @@ export class CheckpointManager {
         checkpoint: CheckpointRecord
     ): Promise<void> {
         try {
-            // 获取现有检查点
-            const metadata = await this.conversationManager.getMetadata(conversationId);
-            const existingCheckpoints: CheckpointRecord[] = (metadata?.custom?.checkpoints as CheckpointRecord[]) || [];
+            const existingCheckpoints = await this.readCheckpointListFromConversation(conversationId);
             
             // 添加新检查点
             existingCheckpoints.push(checkpoint);
@@ -385,8 +400,7 @@ export class CheckpointManager {
      */
     async getCheckpoints(conversationId: string): Promise<CheckpointRecord[]> {
         try {
-            const metadata = await this.conversationManager.getMetadata(conversationId);
-            return (metadata?.custom?.checkpoints as CheckpointRecord[]) || [];
+            return await this.readCheckpointListFromConversation(conversationId);
         } catch (err) {
             console.error('[CheckpointManager] Failed to get checkpoints:', err);
             return [];

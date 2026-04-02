@@ -5,14 +5,16 @@
  */
 
 import * as vscode from 'vscode';
-import type { Tool, ToolDeclaration, ToolResult } from '../types';
+import type { Tool, ToolContext, ToolDeclaration, ToolResult } from '../types';
 import { getAllWorkspaces, normalizeLineEndingsToLF, resolveUriWithInfo } from '../utils';
 import { isReviewPathAllowed } from '../../modules/settings/modeToolsPolicy';
 import {
   finalizeReviewDocument,
-  summarizeReviewDocument,
+  getCurrentReviewDocumentLocale,
   type ReviewOverallDecision
 } from './reviewDocumentSection';
+import { projectReviewToolResultData } from './resultProjection';
+import { ensureMatchingActiveReviewSession, saveReviewSessionState } from './sessionState';
 
 export interface FinalizeReviewArgs {
   path: string;
@@ -74,7 +76,7 @@ export function createFinalizeReviewToolDeclaration(): ToolDeclaration {
 export function createFinalizeReviewTool(): Tool {
   return {
     declaration: createFinalizeReviewToolDeclaration(),
-    handler: async (rawArgs: Record<string, unknown>): Promise<ToolResult> => {
+    handler: async (rawArgs: Record<string, unknown>, context?: ToolContext): Promise<ToolResult> => {
       const args = rawArgs as unknown as FinalizeReviewArgs;
       const path = typeof args.path === 'string' ? args.path.trim() : '';
       const conclusion = typeof args.conclusion === 'string' ? args.conclusion : '';
@@ -90,6 +92,11 @@ export function createFinalizeReviewTool(): Tool {
         return { success: false, error: `Invalid review path. Only ".limcode/review/**.md" is allowed. Rejected path: ${path}` };
       }
 
+      const sessionCheck = await ensureMatchingActiveReviewSession(context, path);
+      if (sessionCheck.ok === false) {
+        return { success: false, error: sessionCheck.error };
+      }
+
       const { uri, error } = resolveUriWithInfo(path);
       if (!uri) {
         return { success: false, error: error || 'No workspace folder open' };
@@ -98,38 +105,38 @@ export function createFinalizeReviewTool(): Tool {
       try {
         const contentBytes = await vscode.workspace.fs.readFile(uri);
         const originalContent = normalizeLineEndingsToLF(new TextDecoder().decode(contentBytes));
+        const locale = getCurrentReviewDocumentLocale();
         const next = finalizeReviewDocument(originalContent, {
           conclusion,
           overallDecision: args.overallDecision,
           recommendedNextAction: typeof args.recommendedNextAction === 'string' ? args.recommendedNextAction : '',
           reviewedModules: Array.isArray(args.reviewedModules) ? args.reviewedModules : []
-        });
+        }, locale);
 
         await vscode.workspace.fs.writeFile(uri, new TextEncoder().encode(next.content));
-        const summaryData = summarizeReviewDocument(next.content);
+
+        await saveReviewSessionState(context, {
+          reviewRunId: next.reviewSnapshot.reviewRunId,
+          reviewPath: path,
+          status: next.reviewSnapshot.status,
+          createdAt: next.reviewSnapshot.createdAt,
+          finalizedAt: next.reviewSnapshot.finalizedAt
+        });
 
         return {
           success: true,
-          data: {
+          data: projectReviewToolResultData({
             path,
             content: next.content,
-            milestoneCount: next.milestoneCount,
-            completedMilestones: next.completedMilestones,
-            findings: next.findings,
-            structuredFindings: next.structuredFindings,
-            reviewedModules: summaryData.reviewedModules,
-            title: summaryData.title,
-            date: summaryData.date,
-            status: summaryData.status,
-            currentStatus: summaryData.status,
-            overallDecision: summaryData.overallDecision,
-            totalMilestones: summaryData.totalMilestones,
-            currentProgress: summaryData.currentProgress,
-            totalFindings: summaryData.totalFindings,
-            findingsBySeverity: summaryData.findingsBySeverity,
-            latestConclusion: summaryData.latestConclusion,
-            recommendedNextAction: summaryData.recommendedNextAction
-          }
+            delta: {
+              type: 'finalized',
+              changedFields: ['status', 'overallDecision', 'finalizedAt', 'summary', 'reviewSnapshot', 'reviewSession']
+            },
+            extra: {
+              findings: next.findings,
+              structuredFindings: next.structuredFindings
+            }
+          })
         };
       } catch (e: any) {
         return { success: false, error: e?.message || String(e) };

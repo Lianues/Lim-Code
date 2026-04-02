@@ -1,4 +1,5 @@
 import type { Message, ToolUsage } from '../types'
+import { getPlanExecutionPrompt, getPlanUpdateMode } from './toolContinuations'
 
 export type TodoStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled'
 
@@ -132,7 +133,7 @@ function isToolFailed(tool: ToolUsage, mergedResult?: Record<string, unknown>): 
 
 /**
  * 通过当前会话消息重放 todo 列表。
- * - create_plan.todos / todo_write.todos 视作全量重置
+ * - create_plan / update_plan(progress_sync) / todo_write 的 todos 视作全量快照
  * - todo_update.ops 视作增量更新
  */
 export interface ReplayTodoState {
@@ -187,9 +188,10 @@ export function replayTodoStateFromMessages(
         }
 
         if (tool.name === 'create_plan') {
-          const hasPlanExecutionPrompt = typeof (mergedResult as any)?.planExecutionPrompt === 'string' &&
-            String((mergedResult as any)?.planExecutionPrompt).trim().length > 0
-          if (!hasPlanExecutionPrompt) continue
+          const planExecutionPrompt = getPlanExecutionPrompt(mergedResult)
+          if (!planExecutionPrompt) {
+            continue
+          }
 
           const todosInput = Array.isArray((mergedResult as any)?.todos)
             ? (mergedResult as any)?.todos
@@ -202,6 +204,34 @@ export function replayTodoStateFromMessages(
             list = normalizeTodoList(todosInput)
             markTouched()
           }
+        }
+
+        if (tool.name === 'update_plan') {
+          const updateMode = getPlanUpdateMode(mergedResult, tool.args)
+          const todosInput = Array.isArray((mergedResult as any)?.todos)
+            ? (mergedResult as any)?.todos
+            : Array.isArray((mergedResult as any)?.data?.todos)
+              ? (mergedResult as any)?.data?.todos
+              : Array.isArray((tool.args as any)?.todos)
+                ? (tool.args as any)?.todos
+                : undefined
+
+          if (updateMode === 'progress_sync') {
+            if (!Array.isArray(todosInput)) continue
+            list = normalizeTodoList(todosInput)
+            markTouched()
+            continue
+          }
+
+          const planExecutionPrompt = getPlanExecutionPrompt(mergedResult)
+          if (!planExecutionPrompt) {
+            list = []
+            markTouched()
+            continue
+          }
+
+          list = Array.isArray(todosInput) ? normalizeTodoList(todosInput) : []
+          markTouched()
         }
 
         if (tool.name === 'todo_write') {

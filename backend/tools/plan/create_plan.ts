@@ -6,11 +6,11 @@
  */
 
 import * as vscode from 'vscode';
-import * as path from 'path';
 import type { Tool, ToolDeclaration, ToolResult } from '../types';
-import { getAllWorkspaces, resolveUriWithInfo, normalizeLineEndingsToLF } from '../utils';
-import { isPlanPathAllowed } from '../../modules/settings/modeToolsPolicy';
-import { appendPlanTodoListSection } from './todoListSection';
+import { normalizeLineEndingsToLF, resolveUriWithInfo } from '../utils';
+import { buildPlanDocument } from './documentLayout';
+import { ensureParentDir, isPlanModePathAllowedWithMultiRoot } from './pathUtils';
+import { buildTrackedPlanSourceArtifact, renderPlanSourceArtifactSection, type PlanSourceArtifactInput } from './sourceArtifactSection';
 
 export interface CreatePlanArgs {
   title?: string;
@@ -18,6 +18,7 @@ export interface CreatePlanArgs {
   plan: string;
   todos?: Array<{ id: string; content: string; status: 'pending' | 'in_progress' | 'completed' | 'cancelled' }>;
   path?: string;
+  sourceArtifact?: PlanSourceArtifactInput;
 }
 
 function slugify(input: string): string {
@@ -28,27 +29,6 @@ function slugify(input: string): string {
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '');
   return slug || `plan-${Date.now()}`;
-}
-
-function isPlanModePathAllowedWithMultiRoot(pathStr: string): boolean {
-  // 单工作区格式：.limcode/plans/...
-  if (isPlanPathAllowed(pathStr)) return true;
-
-  // 多工作区：允许 workspaceName/.limcode/plans/...
-  const workspaces = getAllWorkspaces();
-  if (workspaces.length <= 1) return false;
-
-  const normalized = (pathStr || '').replace(/\\/g, '/');
-  const slashIndex = normalized.indexOf('/');
-  if (slashIndex <= 0) return false;
-
-  const workspacePrefix = normalized.slice(0, slashIndex);
-  // 基本拒绝：伪前缀/盘符
-  if (workspacePrefix === '.' || workspacePrefix === '..') return false;
-  if (workspacePrefix.includes(':')) return false;
-
-  const rest = normalized.slice(slashIndex + 1);
-  return isPlanPathAllowed(rest);
 }
 
 export function createCreatePlanToolDeclaration(): ToolDeclaration {
@@ -76,6 +56,15 @@ export function createCreatePlanToolDeclaration(): ToolDeclaration {
             required: ['id', 'content', 'status']
           }
         },
+        sourceArtifact: {
+          type: 'object',
+          description: 'Optional source artifact to track plan freshness against a confirmed design or review.',
+          properties: {
+            type: { type: 'string', enum: ['design', 'review'] },
+            path: { type: 'string' }
+          },
+          required: ['type', 'path']
+        },
         path: {
           type: 'string',
           description:
@@ -85,11 +74,6 @@ export function createCreatePlanToolDeclaration(): ToolDeclaration {
       required: ['plan', 'todos']
     }
   };
-}
-
-async function ensureParentDir(uriFsPath: string): Promise<void> {
-  const dir = path.dirname(uriFsPath);
-  await vscode.workspace.fs.createDirectory(vscode.Uri.file(dir));
 }
 
 export function createCreatePlanTool(): Tool {
@@ -119,7 +103,13 @@ export function createCreatePlanTool(): Tool {
         await ensureParentDir(uri.fsPath);
 
         const normalizedPlan = normalizeLineEndingsToLF(plan);
-        const { content, todos } = appendPlanTodoListSection(normalizedPlan, args.todos);
+        const trackedSourceArtifact = args.sourceArtifact
+          ? await buildTrackedPlanSourceArtifact(args.sourceArtifact)
+          : undefined;
+        const sourceSection = trackedSourceArtifact
+          ? renderPlanSourceArtifactSection(trackedSourceArtifact)
+          : undefined;
+        const { content, todos } = buildPlanDocument(normalizedPlan, args.todos, sourceSection);
         const bytes = new TextEncoder().encode(content);
         await vscode.workspace.fs.writeFile(uri, bytes);
 
@@ -129,7 +119,8 @@ export function createCreatePlanTool(): Tool {
           data: {
             path: outPath,
             content,
-            todos
+            todos,
+            sourceArtifact: trackedSourceArtifact
           }
         };
       } catch (e: any) {
@@ -142,4 +133,3 @@ export function createCreatePlanTool(): Tool {
 export function registerCreatePlan(): Tool {
   return createCreatePlanTool();
 }
-

@@ -7,13 +7,16 @@
 
 import * as vscode from 'vscode';
 import * as path from 'path';
-import type { Tool, ToolDeclaration, ToolResult } from '../types';
+import type { Tool, ToolContext, ToolDeclaration, ToolResult } from '../types';
 import { getAllWorkspaces, resolveUriWithInfo } from '../utils';
 import { isReviewPathAllowed } from '../../modules/settings/modeToolsPolicy';
 import {
   buildInitialReviewDocument,
+  getCurrentReviewDocumentLocale,
   summarizeReviewDocument
 } from './reviewDocumentSection';
+import { projectReviewToolResultData } from './resultProjection';
+import { ensureNoActiveReviewSession, saveReviewSessionState } from './sessionState';
 
 export interface CreateReviewArgs {
   title?: string;
@@ -81,7 +84,7 @@ export function createCreateReviewToolDeclaration(): ToolDeclaration {
 export function createCreateReviewTool(): Tool {
   return {
     declaration: createCreateReviewToolDeclaration(),
-    handler: async (rawArgs: Record<string, unknown>): Promise<ToolResult> => {
+    handler: async (rawArgs: Record<string, unknown>, context?: ToolContext): Promise<ToolResult> => {
       const args = rawArgs as unknown as CreateReviewArgs;
       const review = typeof args.review === 'string' ? args.review : '';
       if (!review.trim()) {
@@ -96,6 +99,11 @@ export function createCreateReviewTool(): Tool {
         return { success: false, error: `Invalid review path. Only ".limcode/review/**.md" is allowed. Rejected path: ${outPath}` };
       }
 
+      const sessionCheck = await ensureNoActiveReviewSession(context, outPath);
+      if (sessionCheck.ok === false) {
+        return { success: false, error: sessionCheck.error };
+      }
+
       const { uri, error } = resolveUriWithInfo(outPath);
       if (!uri) {
         return { success: false, error: error || 'No workspace folder open' };
@@ -104,35 +112,36 @@ export function createCreateReviewTool(): Tool {
       try {
         await ensureParentDir(uri.fsPath);
 
+        const locale = getCurrentReviewDocumentLocale();
         const content = buildInitialReviewDocument({
           title,
           overview: typeof args.overview === 'string' ? args.overview : '',
           review
-        });
+        }, locale);
         const summary = summarizeReviewDocument(content);
         const bytes = new TextEncoder().encode(content);
         await vscode.workspace.fs.writeFile(uri, bytes);
 
+        if (summary.reviewSnapshot) {
+          await saveReviewSessionState(context, {
+            reviewRunId: summary.reviewSnapshot.reviewRunId,
+            reviewPath: outPath,
+            status: summary.reviewSnapshot.status,
+            createdAt: summary.reviewSnapshot.createdAt,
+            finalizedAt: summary.reviewSnapshot.finalizedAt
+          });
+        }
+
         return {
           success: true,
-          data: {
+          data: projectReviewToolResultData({
             path: outPath,
             content,
-            title: summary.title,
-            date: summary.date,
-            status: summary.status,
-            currentStatus: summary.status,
-            overallDecision: summary.overallDecision,
-            milestoneCount: summary.totalMilestones,
-            totalMilestones: summary.totalMilestones,
-            completedMilestones: summary.completedMilestones,
-            currentProgress: summary.currentProgress,
-            totalFindings: summary.totalFindings,
-            findingsBySeverity: summary.findingsBySeverity,
-            reviewedModules: summary.reviewedModules,
-            latestConclusion: summary.latestConclusion,
-            recommendedNextAction: summary.recommendedNextAction
-          }
+            delta: {
+              type: 'created',
+              changedFields: ['header', 'scope', 'reviewSnapshot', 'reviewSession']
+            }
+          })
         };
       } catch (e: any) {
         return { success: false, error: e?.message || String(e) };

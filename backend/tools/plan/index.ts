@@ -6,13 +6,15 @@ import type { Tool, ToolRegistration } from '../types';
 
 // 导出各个工具的注册函数
 export { registerCreatePlan } from './create_plan';
+export { registerUpdatePlan } from './update_plan';
 
 /**
  * 获取所有 Plan 工具的注册函数
  */
 export function getPlanToolRegistrations(): ToolRegistration[] {
     const { registerCreatePlan } = require('./create_plan');
-    return [registerCreatePlan];
+    const { registerUpdatePlan } = require('./update_plan');
+    return [registerCreatePlan, registerUpdatePlan];
 }
 
 /**
@@ -20,5 +22,6 @@ export function getPlanToolRegistrations(): ToolRegistration[] {
  */
 export function getAllPlanTools(): Tool[] {
     const { registerCreatePlan } = require('./create_plan');
-    return [registerCreatePlan()];
+    const { registerUpdatePlan } = require('./update_plan');
+    return [registerCreatePlan(), registerUpdatePlan()];
 }

@@ -6,10 +6,9 @@
  */
 
 import * as vscode from 'vscode';
-import * as path from 'path';
 import type { Tool, ToolDeclaration, ToolResult } from '../types';
-import { getAllWorkspaces, normalizeLineEndingsToLF, resolveUriWithInfo } from '../utils';
-import { isDesignPathAllowed } from '../../modules/settings/modeToolsPolicy';
+import { normalizeLineEndingsToLF, resolveUriWithInfo } from '../utils';
+import { ensureParentDir, isDesignModePathAllowedWithMultiRoot } from './pathUtils';
 
 export interface CreateDesignArgs {
   title?: string;
@@ -26,27 +25,6 @@ function slugify(input: string): string {
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '');
   return slug || `design-${Date.now()}`;
-}
-
-function isDesignModePathAllowedWithMultiRoot(pathStr: string): boolean {
-  // 单工作区格式：.limcode/design/...
-  if (isDesignPathAllowed(pathStr)) return true;
-
-  // 多工作区：允许 workspaceName/.limcode/design/...
-  const workspaces = getAllWorkspaces();
-  if (workspaces.length <= 1) return false;
-
-  const normalized = (pathStr || '').replace(/\\/g, '/');
-  const slashIndex = normalized.indexOf('/');
-  if (slashIndex <= 0) return false;
-
-  const workspacePrefix = normalized.slice(0, slashIndex);
-  // 基本拒绝：伪前缀/盘符
-  if (workspacePrefix === '.' || workspacePrefix === '..') return false;
-  if (workspacePrefix.includes(':')) return false;
-
-  const rest = normalized.slice(slashIndex + 1);
-  return isDesignPathAllowed(rest);
 }
 
 export function createCreateDesignToolDeclaration(): ToolDeclaration {
@@ -70,11 +48,6 @@ export function createCreateDesignToolDeclaration(): ToolDeclaration {
       required: ['design']
     }
   };
-}
-
-async function ensureParentDir(uriFsPath: string): Promise<void> {
-  const dir = path.dirname(uriFsPath);
-  await vscode.workspace.fs.createDirectory(vscode.Uri.file(dir));
 }
 
 export function createCreateDesignTool(): Tool {

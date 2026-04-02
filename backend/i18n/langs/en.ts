@@ -474,6 +474,101 @@ Project-level takes priority. Duplicate skill names only load the highest-priori
                 queryRequired: 'query parameter is required for search mode',
                 searchFailed: 'History search failed: {error}'
             }
+        },
+        reviewDocument: {
+            sections: {
+                scope: 'Review Scope',
+                summary: 'Review Summary',
+                findings: 'Review Findings',
+                milestones: 'Review Milestones',
+                finalConclusion: 'Review Final Conclusion',
+                snapshot: 'Review Snapshot'
+            },
+            header: {
+                date: 'Date',
+                overview: 'Overview',
+                status: 'Status',
+                overallDecision: 'Overall decision'
+            },
+            summary: {
+                currentStatus: 'Current status',
+                reviewedModules: 'Reviewed modules',
+                currentProgress: 'Current progress',
+                totalMilestones: 'Total milestones',
+                completedMilestones: 'Completed milestones',
+                totalFindings: 'Total findings',
+                findingsBySeverity: 'Findings by severity',
+                latestConclusion: 'Latest conclusion',
+                recommendedNextAction: 'Recommended next action',
+                overallDecision: 'Overall decision'
+            },
+            finding: {
+                severity: 'Severity',
+                category: 'Category',
+                trackingStatus: 'Tracking status',
+                description: 'Description',
+                recommendation: 'Recommendation',
+                relatedMilestones: 'Related milestones',
+                evidenceFiles: 'Evidence'
+            },
+            milestone: {
+                status: 'Status',
+                recordedAt: 'Recorded at',
+                reviewedModules: 'Reviewed modules',
+                summary: 'Summary',
+                conclusion: 'Conclusion',
+                evidenceFiles: 'Evidence',
+                recommendedNextAction: 'Recommended next action',
+                findings: 'Findings'
+            },
+            values: {
+                pending: 'Pending',
+                milestoneStatus: {
+                    inProgress: 'In Progress',
+                    completed: 'Completed'
+                },
+                overallDecision: {
+                    pending: 'Pending',
+                    accepted: 'Accepted',
+                    conditionallyAccepted: 'Conditionally Accepted',
+                    rejected: 'Rejected',
+                    needsFollowUp: 'Needs Follow-up'
+                },
+                severity: {
+                    high: 'High',
+                    medium: 'Medium',
+                    low: 'Low'
+                },
+                category: {
+                    html: 'HTML',
+                    css: 'CSS',
+                    javascript: 'JavaScript',
+                    accessibility: 'Accessibility',
+                    performance: 'Performance',
+                    maintainability: 'Maintainability',
+                    docs: 'Docs',
+                    test: 'Test',
+                    other: 'Other'
+                },
+                trackingStatus: {
+                    open: 'Open',
+                    acceptedRisk: 'Accepted Risk',
+                    fixed: 'Fixed',
+                    wontFix: "Won\'t Fix",
+                    duplicate: 'Duplicate'
+                }
+            },
+            placeholders: {
+                noMilestones: '<!-- no milestones -->',
+                noFindings: '<!-- no findings -->',
+                defaultReviewScope: '_Review scope not provided._',
+                defaultFinalConclusion: '_Final conclusion is pending._'
+            },
+            templates: {
+                currentProgressWithLatest: '{count} milestones recorded; latest: {latestId}',
+                currentProgressEmpty: '0 milestones recorded',
+                findingsBySeverity: 'high {high} / medium {medium} / low {low}'
+            }
         }
     },
     

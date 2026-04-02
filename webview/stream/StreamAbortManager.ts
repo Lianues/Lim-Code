@@ -104,6 +104,7 @@ export class StreamAbortManager {
         view?.webview.postMessage({
           type: 'streamChunk',
           data: {
+            createdAt: Date.now(),
             conversationId,
             type: 'cancelled'
           }

@@ -5,6 +5,7 @@
  */
 
 import type { Content, ContentPart } from '../conversation/types';
+import type { ResolvedPromptModeSnapshot } from '../settings/types';
 
 /**
  * 生成请求
@@ -101,6 +102,13 @@ export interface GenerateRequest {
      * 渠道层本身不使用该字段。
      */
     conversationId?: string;
+
+    /**
+     * 本次请求已解析好的提示词模式快照（可选）
+     *
+     * 用于在请求链路中传递模板和工具策略，避免依赖全局当前模式。
+     */
+    promptModeSnapshot?: ResolvedPromptModeSnapshot;
 }
 
 /**

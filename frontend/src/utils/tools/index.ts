@@ -45,15 +45,19 @@ import './todo/todo_update'
 
 // Design 工具
 import './design/create_design'
+import './design/update_design'
 
 // Plan 工具
 import './plan/create_plan'
+import './plan/update_plan'
 
 // Review 工具
 import './review/create_review'
 import './review/record_review_milestone'
 import './review/finalize_review'
 import './review/validate_review_document'
+import './review/reopen_review'
+import './review/compare_review_documents'
 
 // History 工具
 import './history/history_search'

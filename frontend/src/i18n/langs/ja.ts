@@ -525,8 +525,16 @@ const ja: LanguageMessages = {
                     label: 'プランを作成',
                     fallbackTitle: 'プラン'
                 },
+                updatePlan: {
+                    label: 'プランを更新',
+                    fallbackTitle: 'プラン'
+                },
                 createDesign: {
                     label: '設計を作成',
+                    fallbackTitle: '設計'
+                },
+                updateDesign: {
+                    label: '設計を更新',
                     fallbackTitle: '設計'
                 },
                 createReview: {
@@ -544,6 +552,21 @@ const ja: LanguageMessages = {
                 recordReviewMilestone: {
                     label: 'レビューのマイルストーンを記録',
                     fallbackTitle: 'レビューマイルストーン'
+                },
+                reopenReview: {
+                    label: 'レビューを再開',
+                    fallbackTitle: 'レビュー再開'
+                },
+                compareReviewDocuments: {
+                    label: 'レビュー文書を比較',
+                    fallbackTitle: 'レビュー比較',
+                    base: '基準文書',
+                    target: '比較対象文書',
+                    addedFindings: '追加された問題',
+                    removedFindings: '解消された問題',
+                    persistedFindings: '継続中の問題',
+                    severityChanged: '重大度の変化',
+                    trackingChanged: '追跡状態の変化'
                 },
                 todoPanel: {
                     title: 'TODO リスト',
@@ -576,7 +599,13 @@ const ja: LanguageMessages = {
                     loadModelsFailed: 'モデルの読み込みに失敗しました',
                     executePlanFailed: 'プランの実行に失敗しました',
                     openFileFailed: 'ファイルを開くのに失敗しました',
-                    promptPrefix: '以下のプランに従って実行してください:\n\n{plan}'
+                    promptPrefix: '以下のプランに従って実行してください:\n\n{plan}',
+                    sourceUpToDate: 'ソース: 最新',
+                    sourceUntracked: 'ソース: 未追跡',
+                    sourceMismatched: 'ソース: 変更あり',
+                    sourceMissing: 'ソース: ファイルなし',
+                    sourceBlockedMismatched: 'ソース文書が変更されました。先にプランを再生成または修正してください。',
+                    sourceBlockedMissing: 'ソース文書が見つからないか読み取れません。先にプランを修正してください。'
                 },
                 designCard: {
                     title: '設計',
@@ -594,7 +623,9 @@ const ja: LanguageMessages = {
                     sourceCreate: '作成',
                     sourceMilestone: 'マイルストーン',
                     sourceFinalize: '完了',
+                    sourceReopen: '再開',
                     sourceValidate: '検証',
+                    sourceCompare: '比較',
                     statusCompleted: '完了',
                     statusInProgress: '進行中',
                     decisionAccepted: '承認',
@@ -607,6 +638,9 @@ const ja: LanguageMessages = {
                     validationValid: '正常',
                     issueError: 'エラー',
                     issueWarning: '警告',
+                    severityHigh: '高',
+                    severityMedium: '中',
+                    severityLow: '低',
                     milestonesChip: '{completed}/{total} マイルストーン',
                     findingsChip: '問題 {total} · 高{high} 中{medium} 低{low}',
                     modulesChip: 'モジュール {count}',
@@ -618,6 +652,40 @@ const ja: LanguageMessages = {
                     format: '形式',
                     latestConclusion: '最新の結論',
                     recommendedNextAction: '次の対応',
+                    tracking: '追跡状態',
+                    trackingOpen: 'オープン',
+                    trackingAcceptedRisk: 'リスク受容',
+                    trackingFixed: '修正済み',
+                    trackingWontFix: '修正しない',
+                    trackingDuplicate: '重複',
+                    categoryHtml: 'HTML',
+                    categoryCss: 'CSS',
+                    categoryJavascript: 'JavaScript',
+                    categoryAccessibility: 'アクセシビリティ',
+                    categoryPerformance: 'パフォーマンス',
+                    categoryMaintainability: '保守性',
+                    categoryDocs: 'ドキュメント',
+                    categoryTest: 'テスト',
+                    categoryOther: 'その他',
+                    evidence: '証拠',
+                    findingDetails: '問題詳細',
+                    compareBase: '基準文書',
+                    compareTarget: '比較対象文書',
+                    compareAdded: '追加された問題',
+                    compareRemoved: '解消された問題',
+                    comparePersisted: '継続中の問題',
+                    compareSeverityChanged: '重大度の変化',
+                    compareTrackingChanged: '追跡状態の変化',
+                    compareEvidenceChanged: '証拠の変化',
+                    compareRelatedMilestonesChanged: '関連マイルストーンの変化',
+                    compareChanges: '変更項目',
+                    changeSeverity: '重大度',
+                    changeTrackingStatus: '追跡状態',
+                    changeTitle: 'タイトル',
+                    changeDescription: '説明',
+                    changeRecommendation: '提案',
+                    changeEvidence: '証拠',
+                    changeRelatedMilestoneIds: '関連マイルストーン',
                     validation: '検証情報',
                     progress: '進捗',
                     modules: 'レビュー済みモジュール',
@@ -628,7 +696,11 @@ const ja: LanguageMessages = {
                     copyFailed: 'パスのコピーに失敗しました',
                     copyPath: 'パスをコピー',
                     copied: 'コピー済み',
-                    rawResult: '完全な結果'
+                    rawResult: '完全な結果',
+                    generatePlan: 'プランを生成',
+                    generatingPlan: 'プランを生成中...',
+                    planGenerated: 'プラン生成済み',
+                    generatePlanFailed: 'プラン生成に失敗しました'
                 }
             },
             attachment: {

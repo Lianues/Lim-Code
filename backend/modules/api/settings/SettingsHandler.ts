@@ -770,10 +770,11 @@ export class SettingsHandler {
 
             // 使用 PromptManager 生成实际的系统提示词（替换占位符后的内容）
             const promptManager = getPromptManager();
-            const actualSystemPrompt = promptManager.refreshAndGetPrompt(runtime);
+            const promptModeSnapshot = this.settingsManager.resolvePromptMode();
+            const actualSystemPrompt = promptManager.refreshAndGetPrompt(promptModeSnapshot, runtime);
             
             // 获取实际的动态上下文内容
-            const dynamicText = promptManager.getDynamicContextText(runtime);
+            const dynamicText = promptManager.getDynamicContextText(promptModeSnapshot, runtime);
             
             // 准备静态模板的 token 计数请求
             const staticContents = [{

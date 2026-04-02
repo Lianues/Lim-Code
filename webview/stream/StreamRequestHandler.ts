@@ -31,19 +31,12 @@ export class StreamRequestHandler {
   constructor(private deps: StreamHandlerDeps) {}
 
   /**
-   * 在处理请求前，临时切换到请求指定的 Prompt 模式
-   *
-   * 确保后端 PromptManager / ChannelManager 在本次请求期间使用正确的模式模板和工具策略。
-   * 由于前端已在 setCurrentPromptModeId 中同步过一次，这里是防御性保障（防止多标签竞态）。
+   * 规范化请求携带的 Prompt 模式 ID。
    */
-  private async applyPromptModeIfNeeded(promptModeId?: string): Promise<void> {
-    if (!promptModeId || !this.deps.settingsManager) return;
-    try {
-      await this.deps.settingsManager.setCurrentPromptMode(promptModeId);
-    } catch (err) {
-      // 模式不存在等情况下静默忽略，使用全局当前模式
-      console.warn('[StreamRequestHandler] Failed to apply promptModeId:', promptModeId, err);
-    }
+  private normalizePromptModeId(promptModeId: unknown): string | undefined {
+    if (typeof promptModeId !== 'string') return undefined
+    const normalized = promptModeId.trim()
+    return normalized || undefined
   }
 
   private isAbortError(error: any): boolean {
@@ -103,9 +96,6 @@ export class StreamRequestHandler {
     const processor = new StreamChunkProcessor(this.deps.getView(), conversationId, streamId);
     
     try {
-      // 在发起请求前切换到对话指定的 Prompt 模式
-      await this.applyPromptModeIfNeeded(promptModeId);
-
       const stream = this.deps.chatHandler.handleChatStream({
         conversationId,
         message,
@@ -113,6 +103,7 @@ export class StreamRequestHandler {
         modelOverride,
         attachments,
         hiddenFunctionResponse,
+        promptModeId: this.normalizePromptModeId(promptModeId),
         abortSignal: controller.signal,
         summarizeAbortSignal: summarizeController.signal
       });
@@ -156,12 +147,11 @@ export class StreamRequestHandler {
     const processor = new StreamChunkProcessor(this.deps.getView(), conversationId, streamId);
     
     try {
-      await this.applyPromptModeIfNeeded(promptModeId);
-
       const stream = this.deps.chatHandler.handleRetryStream({
         conversationId,
         configId,
         modelOverride,
+        promptModeId: this.normalizePromptModeId(promptModeId),
         abortSignal: controller.signal,
         summarizeAbortSignal: summarizeController.signal
       });
@@ -202,8 +192,6 @@ export class StreamRequestHandler {
     const processor = new StreamChunkProcessor(this.deps.getView(), conversationId, streamId);
     
     try {
-      await this.applyPromptModeIfNeeded(promptModeId);
-
       const stream = this.deps.chatHandler.handleEditAndRetryStream({
         conversationId,
         messageIndex,
@@ -211,6 +199,7 @@ export class StreamRequestHandler {
         configId,
         modelOverride,
         attachments,
+        promptModeId: this.normalizePromptModeId(promptModeId),
         abortSignal: controller.signal,
         summarizeAbortSignal: summarizeController.signal
       });
@@ -251,14 +240,13 @@ export class StreamRequestHandler {
     const processor = new StreamChunkProcessor(this.deps.getView(), conversationId, streamId);
     
     try {
-      await this.applyPromptModeIfNeeded(promptModeId);
-
       const stream = this.deps.chatHandler.handleToolConfirmation({
         conversationId,
         toolResponses,
         annotation,
         configId,
         modelOverride,
+        promptModeId: this.normalizePromptModeId(promptModeId),
         summarizeAbortSignal: summarizeController.signal,
         abortSignal: controller.signal
       });

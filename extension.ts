@@ -78,6 +78,41 @@ export function activate(context: vscode.ExtensionContext) {
         })
     );
 
+    // 注册命令：迁移旧版单文件对话历史到分段存储格式
+    context.subscriptions.push(
+        vscode.commands.registerCommand('limcode.migrateConversationHistories', async () => {
+            if (!chatViewProvider) {
+                vscode.window.showErrorMessage('LimCode 尚未完成初始化，无法迁移旧对话历史。');
+                return;
+            }
+
+            try {
+                const result = await vscode.window.withProgress({
+                    location: vscode.ProgressLocation.Notification,
+                    title: 'LimCode：正在迁移旧对话历史',
+                    cancellable: false
+                }, async progress => {
+                    return await chatViewProvider!.migrateConversationHistories(({ current, total, conversationId }) => {
+                        progress.report({
+                            message: total > 0 ? `${current}/${total}${conversationId ? ` · ${conversationId}` : ''}` : '没有需要迁移的旧对话',
+                            increment: total > 0 ? (100 / total) : undefined
+                        });
+                    });
+                });
+
+                const basePath = chatViewProvider.getEffectiveConversationDataPath();
+                const summary = `迁移完成。已迁移 ${result.migrated} 个对话，已跳过 ${result.skipped} 个对话，失败 ${result.failed.length} 个。存储路径：${basePath}`;
+                if (result.failed.length > 0) {
+                    vscode.window.showWarningMessage(summary);
+                } else {
+                    vscode.window.showInformationMessage(summary);
+                }
+            } catch (error: any) {
+                vscode.window.showErrorMessage(`LimCode 迁移旧对话历史失败：${error?.message || String(error)}`);
+            }
+        })
+    );
+
     // 注册 DiffCodeLensProvider
     const diffCodeLensProvider = getDiffCodeLensProvider();
     

@@ -447,7 +447,15 @@ export interface LanguageMessages {
                     label: string;
                     fallbackTitle: string;
                 };
+                updatePlan: {
+                    label: string;
+                    fallbackTitle: string;
+                };
                 createDesign: {
+                    label: string;
+                    fallbackTitle: string;
+                };
+                updateDesign: {
                     label: string;
                     fallbackTitle: string;
                 };
@@ -466,6 +474,21 @@ export interface LanguageMessages {
                 recordReviewMilestone: {
                     label: string;
                     fallbackTitle: string;
+                };
+                reopenReview: {
+                    label: string;
+                    fallbackTitle: string;
+                };
+                compareReviewDocuments: {
+                    label: string;
+                    fallbackTitle: string;
+                    base: string;
+                    target: string;
+                    addedFindings: string;
+                    removedFindings: string;
+                    persistedFindings: string;
+                    severityChanged: string;
+                    trackingChanged: string;
                 };
                 todoPanel: {
                     title: string;
@@ -499,6 +522,12 @@ export interface LanguageMessages {
                     executePlanFailed: string;
                     openFileFailed: string;
                     promptPrefix: string;
+                    sourceUpToDate: string;
+                    sourceUntracked: string;
+                    sourceMismatched: string;
+                    sourceMissing: string;
+                    sourceBlockedMismatched: string;
+                    sourceBlockedMissing: string;
                 };
                 designCard: {
                     title: string;
@@ -516,7 +545,9 @@ export interface LanguageMessages {
                     sourceCreate: string;
                     sourceMilestone: string;
                     sourceFinalize: string;
+                    sourceReopen: string;
                     sourceValidate: string;
+                    sourceCompare: string;
                     statusCompleted: string;
                     statusInProgress: string;
                     decisionAccepted: string;
@@ -529,6 +560,9 @@ export interface LanguageMessages {
                     validationValid: string;
                     issueError: string;
                     issueWarning: string;
+                    severityHigh: string;
+                    severityMedium: string;
+                    severityLow: string;
                     milestonesChip: string;
                     findingsChip: string;
                     modulesChip: string;
@@ -540,6 +574,40 @@ export interface LanguageMessages {
                     format: string;
                     latestConclusion: string;
                     recommendedNextAction: string;
+                    tracking: string;
+                    trackingOpen: string;
+                    trackingAcceptedRisk: string;
+                    trackingFixed: string;
+                    trackingWontFix: string;
+                    trackingDuplicate: string;
+                    categoryHtml: string;
+                    categoryCss: string;
+                    categoryJavascript: string;
+                    categoryAccessibility: string;
+                    categoryPerformance: string;
+                    categoryMaintainability: string;
+                    categoryDocs: string;
+                    categoryTest: string;
+                    categoryOther: string;
+                    evidence: string;
+                    findingDetails: string;
+                    compareBase: string;
+                    compareTarget: string;
+                    compareAdded: string;
+                    compareRemoved: string;
+                    comparePersisted: string;
+                    compareSeverityChanged: string;
+                    compareTrackingChanged: string;
+                    compareEvidenceChanged: string;
+                    compareRelatedMilestonesChanged: string;
+                    compareChanges: string;
+                    changeSeverity: string;
+                    changeTrackingStatus: string;
+                    changeTitle: string;
+                    changeDescription: string;
+                    changeRecommendation: string;
+                    changeEvidence: string;
+                    changeRelatedMilestoneIds: string;
                     validation: string;
                     progress: string;
                     modules: string;
@@ -551,6 +619,10 @@ export interface LanguageMessages {
                     copyPath: string;
                     copied: string;
                     rawResult: string;
+                    generatePlan: string;
+                    generatingPlan: string;
+                    planGenerated: string;
+                    generatePlanFailed: string;
                 };
             };
             attachment: {

@@ -78,7 +78,7 @@ export function renderPlanTodoListSection(todosInput: unknown): string {
   ].join('\n');
 }
 
-function stripExistingGeneratedTodoSection(content: string): string {
+export function stripPlanTodoListSection(content: string): string {
   const start = content.indexOf(TODO_SECTION_START);
   const end = start >= 0 ? content.indexOf(TODO_SECTION_END, start + TODO_SECTION_START.length) : -1;
   if (start < 0 || end < 0 || end < start) {
@@ -104,7 +104,7 @@ export function appendPlanTodoListSection(planContent: string, todosInput: unkno
 } {
   const todos = normalizePlanTodoList(todosInput);
   const normalizedPlan = (planContent || '').replace(/\r\n?/g, '\n').trimEnd();
-  const base = stripExistingGeneratedTodoSection(normalizedPlan).trimEnd();
+  const base = stripPlanTodoListSection(normalizedPlan).trimEnd();
   const todoSection = renderPlanTodoListSection(todos);
 
   const finalContent = base

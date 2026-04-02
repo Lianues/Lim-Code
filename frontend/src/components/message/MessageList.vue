@@ -17,6 +17,7 @@ import {
   normalizeTodoStatus,
   type TodoStatus as BuildTodoStatus
 } from '../../utils/todoList'
+import { getPlanExecutionPrompt, getPlanUpdateMode } from '../../utils/toolContinuations'
 
 const { t } = useI18n()
 
@@ -24,8 +25,6 @@ const props = defineProps<{
   messages: Message[]
   /** 标签页 ID，标识此 MessageList 实例所属的标签页 */
   tabId: string
-  /** 当前是否为活跃（可见）标签页 */
-  isActive: boolean
 }>()
 
 // 从 store 读取等待状态
@@ -64,9 +63,21 @@ const todoExpandedMap = new Map<string, boolean>()
 const isTodoExpanded = ref(false)
 
 
-function isExecutedCreatePlanTool(tool: any): boolean {
-  if (!tool || tool.name !== 'create_plan') return false
+function getMergedToolResult(tool: any): Record<string, unknown> {
+  const fromTool = tool?.result && typeof tool.result === 'object' ? tool.result as Record<string, unknown> : {}
+  const fromResponseRaw = typeof tool?.id === 'string' && tool.id
+    ? chatStore.getToolResponseById(tool.id)
+    : undefined
+  const fromResponse = fromResponseRaw && typeof fromResponseRaw === 'object'
+    ? fromResponseRaw as Record<string, unknown>
+    : {}
 
+  return { ...fromTool, ...fromResponse }
+}
+
+function hasConfirmedPlanExecution(tool: any): boolean {
+  if (!tool) return false
+  if (tool.name !== 'create_plan' && tool.name !== 'update_plan') return false
   const fromTool = tool.result && typeof tool.result === 'object' ? tool.result as Record<string, unknown> : undefined
   const fromResponseRaw = typeof tool.id === 'string' && tool.id
     ? chatStore.getToolResponseById(tool.id)
@@ -79,14 +90,16 @@ function isExecutedCreatePlanTool(tool: any): boolean {
     ...(fromResponse || {})
   }
 
-  const prompt = (merged as any)?.planExecutionPrompt
-  return typeof prompt === 'string' && prompt.trim().length > 0
+  return getPlanExecutionPrompt(merged).length > 0
 }
 
 function isTodoInitToolForSticky(tool: any): boolean {
   if (!tool) return false
   if (tool.name === 'todo_write') return true
-  if (tool.name === 'create_plan') return isExecutedCreatePlanTool(tool)
+  if (tool.name === 'create_plan') return hasConfirmedPlanExecution(tool)
+  if (tool.name === 'update_plan') {
+    return getPlanUpdateMode(getMergedToolResult(tool), tool.args) !== 'progress_sync' && hasConfirmedPlanExecution(tool)
+  }
   return false
 }
 
@@ -117,7 +130,7 @@ const todoStickyMeta = computed(() => {
     if (!initTool) continue
 
     let panelName = fallbackName
-    if (initTool.name === 'create_plan') {
+    if (initTool.name === 'create_plan' || initTool.name === 'update_plan') {
       const title = typeof (initTool.args as any)?.title === 'string' ? (initTool.args as any).title.trim() : ''
       if (title) {
         panelName = title
@@ -272,6 +285,61 @@ const buildCurrentText = computed(() => {
   return ''
 })
 
+const activeBuildPlanSync = computed<null | {
+  kind: 'revision' | 'progress_sync'
+  content?: string
+  signature: string
+}>(() => {
+  const build = chatStore.activeBuild
+  if (!build?.planPath) return null
+
+  const buildAnchor = typeof build.anchorBackendIndex === 'number' ? build.anchorBackendIndex : null
+  let latest: { kind: 'revision' | 'progress_sync'; content?: string; order: number } | null = null
+
+  for (const msg of chatStore.allMessages) {
+    if (msg.role !== 'assistant' || !Array.isArray(msg.tools) || msg.tools.length === 0) continue
+
+    const isAfterBuildStart = (
+      typeof msg.backendIndex === 'number' && buildAnchor !== null
+        ? msg.backendIndex >= buildAnchor
+        : typeof msg.timestamp === 'number'
+          ? msg.timestamp >= build.startedAt
+          : false
+    )
+    if (!isAfterBuildStart) continue
+
+    for (const tool of msg.tools) {
+      if (tool.name !== 'update_plan') continue
+
+      const mergedResult = getMergedToolResult(tool)
+      if (tool.status === 'error' || mergedResult.success === false) continue
+
+      const toolPath = typeof (mergedResult as any)?.data?.path === 'string'
+        ? String((mergedResult as any).data.path).trim()
+        : typeof (tool.args as any)?.path === 'string'
+          ? String((tool.args as any).path).trim()
+          : ''
+      if (!toolPath || toolPath !== build.planPath) continue
+
+      const updateMode = getPlanUpdateMode(mergedResult, tool.args)
+      const order = typeof msg.backendIndex === 'number' ? msg.backendIndex : (msg.timestamp || 0)
+      if (updateMode === 'revision') {
+        latest = { kind: 'revision', order }
+        continue
+      }
+
+      const content = typeof (mergedResult as any)?.data?.content === 'string' ? String((mergedResult as any).data.content) : ''
+      if (!content) continue
+      latest = { kind: 'progress_sync', content, order }
+    }
+  }
+
+  if (!latest) return null
+  return latest.kind === 'revision'
+    ? { kind: 'revision', signature: `revision:${latest.order}` }
+    : { kind: 'progress_sync', content: latest.content, signature: `progress_sync:${latest.order}:${latest.content || ''}` }
+})
+
 watch(
   () => chatStore.activeBuild?.id,
   (id, prev) => {
@@ -288,6 +356,25 @@ watch(
       void chatStore.setActiveBuild({ ...chatStore.activeBuild, status: 'done' })
     }
   }
+)
+
+watch(
+  () => activeBuildPlanSync.value?.signature,
+  async () => {
+    const build = chatStore.activeBuild
+    const sync = activeBuildPlanSync.value
+    if (!build || !sync) return
+
+    if (sync.kind === 'revision') {
+      await chatStore.setActiveBuild(null)
+      return
+    }
+
+    if (sync.kind === 'progress_sync' && sync.content && sync.content !== build.planContent) {
+      await chatStore.setActiveBuild({ ...build, planContent: sync.content })
+    }
+  },
+  { immediate: true }
 )
 
 watch(showBuildBar, (visible) => {
@@ -515,25 +602,70 @@ const scrollbarRef = ref<InstanceType<typeof CustomScrollbar> | null>(null)
 
 // 标记是否需要滚动到底部（切换对话时设置）
 const needsScrollToBottom = ref(false)
+const suppressConversationReset = ref(false)
+
+interface MessageListUiState {
+  scrollTop: number
+  visibleCount: number
+  buildExpanded: boolean
+  todoExpanded: boolean
+}
+
+const uiStateByTab = new Map<string, MessageListUiState>()
+
+function saveCurrentUiState(tabId?: string) {
+  if (!tabId) return
+  const container = scrollbarRef.value?.getContainer()
+  uiStateByTab.set(tabId, {
+    scrollTop: container?.scrollTop || 0,
+    visibleCount: visibleCount.value,
+    buildExpanded: isBuildExpanded.value,
+    todoExpanded: isTodoExpanded.value
+  })
+}
+
+function restoreUiState(tabId?: string) {
+  if (!tabId) return
+  const saved = uiStateByTab.get(tabId)
+  if (saved) {
+    visibleCount.value = saved.visibleCount
+    isBuildExpanded.value = saved.buildExpanded
+    isTodoExpanded.value = saved.todoExpanded
+    needsScrollToBottom.value = false
+    nextTick(() => {
+      const container = scrollbarRef.value?.getContainer()
+      if (container) {
+        container.scrollTop = saved.scrollTop
+        scrollTop.value = saved.scrollTop
+      }
+      suppressConversationReset.value = false
+    })
+    return
+  }
+
+  visibleCount.value = VISIBLE_INCREMENT
+  needsScrollToBottom.value = true
+  restoreTodoExpandedState()
+  nextTick(() => {
+    tryScrollToBottom({ instant: true })
+    suppressConversationReset.value = false
+  })
+}
 
 // ResizeObserver 引用
 let resizeObserver: ResizeObserver | null = null
 
-// 多实例模式下：当此标签页变为活跃时，滚动到底部并恢复 TODO 展开状态
-// （不再重置 visibleCount，因为每个实例独立维护自己的分页状态）
-watch(() => props.isActive, (active, wasActive: boolean | undefined) => {
-  if (active && (wasActive === undefined || !wasActive)) {
-    // 刚切换到此标签页，标记需要滚动到底部
-    needsScrollToBottom.value = true
-    restoreTodoExpandedState()
-    // 尝试即时滚动（如果容器已就绪）
-    nextTick(() => tryScrollToBottom({ instant: true }))
+watch(() => props.tabId, (newTabId, oldTabId) => {
+  suppressConversationReset.value = true
+  if (oldTabId && oldTabId !== newTabId) {
+    saveCurrentUiState(oldTabId)
   }
+  restoreUiState(newTabId)
 }, { immediate: true })
 
 // 监听对话切换：当前活跃标签页内加载新对话时，重置分页并滚动到底部
 watch(() => chatStore.currentConversationId, (newId, oldId) => {
-  if (!props.isActive) return
+  if (suppressConversationReset.value) return
   if (newId === oldId) return
 
   // 重置分页计数（新对话从最后一页开始显示）
@@ -617,6 +749,7 @@ onBeforeUnmount(() => {
     resizeObserver.disconnect()
     resizeObserver = null
   }
+  saveCurrentUiState(props.tabId)
 })
 
 const emit = defineEmits<{

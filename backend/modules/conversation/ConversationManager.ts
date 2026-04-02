@@ -129,6 +129,19 @@ export class ConversationManager {
         );
     }
 
+    private async loadStoredMetadata(conversationId: string): Promise<ConversationMetadata | null> {
+        const result = await this.storage.loadMetadataWithStatus(conversationId);
+        if (result.value) {
+            return result.value;
+        }
+        if (!result.errorCode || result.errorCode === 'not_found') {
+            return null;
+        }
+        throw new Error(
+            `Failed to load conversation metadata (${result.errorCode}) for ${conversationId}: ${result.errorMessage || 'Unknown error'}`
+        );
+    }
+
     private createFallbackMetadata(
         conversationId: string,
         history: ConversationHistory | null
@@ -421,6 +434,18 @@ export class ConversationManager {
         conversationId: string,
         options: { beforeIndex?: number; offset?: number; limit?: number } = {}
     ): Promise<{ total: number; messages: Content[] }> {
+        const pagedHistory = await this.storage.loadHistoryPage(conversationId, options);
+        if (pagedHistory.value && pagedHistory.value.format === 'paged') {
+            return {
+                total: pagedHistory.value.total,
+                messages: pagedHistory.value.messages.map((message, i) => {
+                    const index = pagedHistory.value!.startIndex + i;
+                    const { turnDynamicContext, ...rest } = message;
+                    return { ...JSON.parse(JSON.stringify(rest)), index } as Content;
+                })
+            };
+        }
+
         let history = await this.loadHistory(conversationId);
         history = await this.normalizeHistoryForDisplay(conversationId, history);
 
@@ -1297,26 +1322,39 @@ export class ConversationManager {
      * 获取对话元数据
      */
     async getMetadata(conversationId: string): Promise<ConversationMetadata | null> {
-        const [metadataResult, historyResult, integrity] = await Promise.all([
+        const [metadataResult, historyPageResult] = await Promise.all([
             this.storage.loadMetadataWithStatus(conversationId),
-            this.storage.loadHistoryWithStatus(conversationId),
-            this.storage.getConversationIntegrity(conversationId),
+            this.storage.loadHistoryPage(conversationId, { limit: 1 }),
         ]);
 
+        const historyExists = historyPageResult.value !== null || historyPageResult.errorCode !== 'not_found';
+        const integrity: ConversationStorageIntegrity = {
+            historyExists,
+            metadataExists: metadataResult.value !== null || metadataResult.errorCode !== 'not_found',
+            historyReadable: historyPageResult.value !== null,
+            metadataReadable: metadataResult.value !== null,
+            historyErrorCode: historyPageResult.errorCode,
+            metadataErrorCode: metadataResult.errorCode,
+            historyErrorMessage: historyPageResult.errorMessage,
+            metadataErrorMessage: metadataResult.errorMessage,
+        };
         const integrityStatus = this.resolveIntegrityStatus(integrity);
 
         if (metadataResult.value) {
             const metadata = JSON.parse(JSON.stringify(metadataResult.value)) as ConversationMetadata;
-            if (integrityStatus) {
+            if (integrityStatus && integrityStatus !== 'ok') {
                 metadata.integrityStatus = integrityStatus;
+            } else {
+                delete metadata.integrityStatus;
             }
             return metadata;
         }
 
-        if (historyResult.errorCode === 'not_found' && !historyResult.value) {
+        if (historyPageResult.errorCode === 'not_found' && !historyPageResult.value) {
             return null;
         }
 
+        const historyResult = await this.storage.loadHistoryWithStatus(conversationId);
         const fallback = this.createFallbackMetadata(conversationId, historyResult.value);
         if (integrityStatus) {
             fallback.integrityStatus = integrityStatus;
@@ -1356,7 +1394,7 @@ export class ConversationManager {
      * 获取自定义元数据
      */
     async getCustomMetadata(conversationId: string, key: string): Promise<unknown> {
-        const meta = await this.getMetadata(conversationId);
+        const meta = await this.loadStoredMetadata(conversationId);
         return meta?.custom?.[key];
     }
 

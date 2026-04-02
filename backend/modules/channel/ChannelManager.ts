@@ -8,6 +8,7 @@ import { t } from '../../i18n';
 import type { ConfigManager } from '../config/ConfigManager';
 import type { ToolRegistry } from '../../tools/ToolRegistry';
 import type { SettingsManager } from '../settings/SettingsManager';
+import type { ResolvedPromptModeSnapshot } from '../settings/types';
 import type { McpManager } from '../mcp/McpManager';
 import { formatterRegistry } from './formatters';
 import { createReadFileTool } from '../../tools/file/read_file';
@@ -33,6 +34,7 @@ export type RetryStatusCallback = (status: {
     error?: string;
     errorDetails?: any;  // 完整的错误详情（如 API 响应体）
     nextRetryIn?: number;
+    createdAt: number;
     /** 触发重试的对话 ID（如果请求中提供了 conversationId） */
     conversationId?: string;
 }) => void;
@@ -215,7 +217,8 @@ export class ChannelManager {
                 : this.getFilteredTools(
                     (config as any).multimodalToolsEnabled,
                     config.type as 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom',
-                    (config as any).toolMode
+                    (config as any).toolMode,
+                    request.promptModeSnapshot
                 ));
         
         // 6. 构建请求
@@ -266,6 +269,7 @@ export class ChannelManager {
                         type: 'retrySuccess',
                         attempt: attempt - 1,
                         maxAttempts: maxRetries,
+                        createdAt: Date.now(),
                         conversationId: request.conversationId
                     });
                 }
@@ -297,6 +301,7 @@ export class ChannelManager {
                             maxAttempts: maxRetries,
                             error: errorMessage,
                             errorDetails,
+                            createdAt: Date.now(),
                             conversationId: request.conversationId
                         });
                     }
@@ -320,6 +325,7 @@ export class ChannelManager {
                         error: errorMessage,
                         errorDetails,
                         nextRetryIn: retryInterval,
+                        createdAt: Date.now(),
                         conversationId: request.conversationId
                     });
                 }
@@ -386,7 +392,8 @@ export class ChannelManager {
                 : this.getFilteredTools(
                     (config as any).multimodalToolsEnabled,
                     config.type as 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom',
-                    (config as any).toolMode
+                    (config as any).toolMode,
+                    request.promptModeSnapshot
                 ));
         
         // 5. 构建请求
@@ -411,6 +418,7 @@ export class ChannelManager {
                         type: 'retrySuccess',
                         attempt: attempt - 1,
                         maxAttempts: maxRetries,
+                        createdAt: Date.now(),
                         conversationId: request.conversationId
                     });
                 }
@@ -448,6 +456,7 @@ export class ChannelManager {
                             maxAttempts: maxRetries,
                             error: errorMessage,
                             errorDetails,
+                            createdAt: Date.now(),
                             conversationId: request.conversationId
                         });
                     }
@@ -471,6 +480,7 @@ export class ChannelManager {
                         error: errorMessage,
                         errorDetails,
                         nextRetryIn: retryInterval,
+                        createdAt: Date.now(),
                         conversationId: request.conversationId
                     });
                 }
@@ -956,11 +966,13 @@ export class ChannelManager {
     private getFilteredTools(
         multimodalEnabled?: boolean,
         channelType?: 'gemini' | 'openai' | 'anthropic' | 'openai-responses' | 'custom',
-        toolMode?: 'function_call' | 'xml' | 'json'
+        toolMode?: 'function_call' | 'xml' | 'json',
+        promptModeSnapshot?: ResolvedPromptModeSnapshot
     ) {
-        // 获取当前模式的工具策略（allowlist）
-        const mode = this.settingsManager?.getCurrentPromptMode();
-        const allowlist = mode?.toolPolicy;
+        // 获取本次请求模式的工具策略（allowlist）
+        const allowlist = Array.isArray(promptModeSnapshot?.toolPolicy) && promptModeSnapshot.toolPolicy.length > 0
+            ? promptModeSnapshot.toolPolicy
+            : undefined;
         
         const tools: any[] = [];
         

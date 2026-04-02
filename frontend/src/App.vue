@@ -4,7 +4,7 @@
  * 使用Pinia store管理状态
  */
 
-import { onMounted, ref, watch, reactive } from 'vue'
+import { onMounted, onBeforeUnmount, ref, watch, reactive } from 'vue'
 import { storeToRefs } from 'pinia'
 import { MessageList } from './components/message'
 import { InputArea } from './components/input'
@@ -19,7 +19,8 @@ import { useI18n, setLanguage } from './i18n'
 import { copyToClipboard } from './utils'
 import { sendToExtension, onMessageFromExtension } from './utils/vscode'
 import type { Attachment, Message, StreamChunk } from './types'
-import { configureSoundSettings, playCue } from './services/soundCues'
+import { configureSoundSettings } from './services/soundCues'
+import { handleSoundEvent, registerGlobalAudioUnlockHooks, registerVisibilityChangeHooks } from './services/soundEventController'
 
 // i18n
 const { t } = useI18n()
@@ -37,6 +38,10 @@ const lastErrorKey = ref('')
 // 从 store 获取原始 Ref（Pinia 会自动解包 ref，storeToRefs 保持 Ref 不被解包）
 const { storeAttachments: storeAttachmentsRef, error: errorRef } = storeToRefs(chatStore)
 watch(errorRef, (err) => {
+  // 仅在错误消息变化时触发一次声音，具体播放由统一控制器处理
+  // 这里不再直接调用 playCue，避免绕过过期丢弃与隐藏态折叠逻辑
+  // createdAt 使用前端接收到错误变化的当前时间即可
+
   if (!err) {
     lastErrorKey.value = ''
     return
@@ -44,7 +49,7 @@ watch(errorRef, (err) => {
   const key = `${err.code}:${err.message}`
   if (key === lastErrorKey.value) return
   lastErrorKey.value = key
-  void playCue('error')
+  void handleSoundEvent({ cue: 'error', source: 'chatError', createdAt: Date.now() })
 })
 
 // ============ 声音事件：去重状态 & 辅助函数 ============
@@ -58,14 +63,26 @@ const todoAllDoneByConv = reactive(new Map<string, boolean>())
 /** 上一次重试 attempt 编号（同一 attempt 不重复播放） */
 const lastRetryAttempt = ref(-1)
 
+let disposeMessageListener: (() => void) | null = null
+let disposeAudioUnlockHooks: (() => void) | null = null
+let disposeVisibilityHooks: (() => void) | null = null
+
 /**
  * 从 toolStatus chunk 中检测特定工具完成并播放音效：
  * - create_plan 成功 → taskComplete
  * - todo_write / todo_update 导致 TODO 全部完成 → taskComplete
  */
-function playConversationCue(cue: 'warning' | 'error' | 'taskComplete' | 'taskError', conversationId?: string): void {
-  void playCue(cue, {
-    cooldownKey: conversationId ? `conv:${conversationId}` : undefined
+function dispatchConversationCue(
+  cue: 'warning' | 'error' | 'taskComplete' | 'taskError',
+  source: 'taskEvent' | 'retryStatus' | 'streamChunk' | 'chatError',
+  conversationId?: string,
+  createdAt?: number
+): void {
+  void handleSoundEvent({
+    cue,
+    source,
+    conversationId,
+    createdAt
   })
 }
 
@@ -80,7 +97,7 @@ function handleSoundForToolStatus(chunk: StreamChunk): void {
   // create_plan 成功
   if (tool.name === 'create_plan') {
     soundPlayedToolIds.add(tool.id)
-    playConversationCue('taskComplete', chunk.conversationId)
+    dispatchConversationCue('taskComplete', 'streamChunk', chunk.conversationId, chunk.createdAt)
     return
   }
 
@@ -106,7 +123,7 @@ function handleSoundForToolStatus(chunk: StreamChunk): void {
     // 仅在 false→true 时播放
     if (isAllDone && !wasAllDone) {
       soundPlayedToolIds.add(tool.id)
-      playConversationCue('taskComplete', convId)
+      dispatchConversationCue('taskComplete', 'streamChunk', convId, chunk.createdAt)
     }
   }
 }
@@ -116,7 +133,7 @@ function handleSoundForToolStatus(chunk: StreamChunk): void {
  */
 function handleSoundForStreamChunk(chunk: StreamChunk): void {
   if (chunk.type === 'complete') {
-    playConversationCue('taskComplete', chunk.conversationId)
+    dispatchConversationCue('taskComplete', 'streamChunk', chunk.conversationId, chunk.createdAt)
   } else if (chunk.type === 'toolStatus') {
     handleSoundForToolStatus(chunk)
   }
@@ -368,12 +385,15 @@ onMounted(async () => {
   
   // 初始化终端 store（监听终端输出事件）
   terminalStore.initialize()
+
+  disposeAudioUnlockHooks = registerGlobalAudioUnlockHooks()
+  disposeVisibilityHooks = registerVisibilityChangeHooks()
   
   // 先加载语言设置，确保 UI 语言正确
   await loadLanguageSettings()
   
   // 立即注册命令监听器，确保在初始化期间也能响应用户操作
-  onMessageFromExtension((message: any) => {
+  disposeMessageListener = onMessageFromExtension((message: any) => {
     if (message.type === 'command') {
       switch (message.command) {
         case 'newChat':
@@ -392,9 +412,9 @@ onMounted(async () => {
     if (message.type === 'taskEvent') {
       const event = message.data
       if (event?.type === 'complete') {
-        playConversationCue('taskComplete')
+        dispatchConversationCue('taskComplete', 'taskEvent', undefined, event?.createdAt)
       } else if (event?.type === 'error') {
-        playConversationCue('taskError')
+        dispatchConversationCue('taskError', 'taskEvent', undefined, event?.createdAt)
       }
     }
 
@@ -423,7 +443,7 @@ onMounted(async () => {
         if (attempt !== lastRetryAttempt.value) {
           lastRetryAttempt.value = attempt
           const convId = typeof status.conversationId === 'string' ? status.conversationId : undefined
-          playConversationCue('warning', convId)
+          dispatchConversationCue('warning', 'retryStatus', convId, status?.createdAt)
         }
       } else {
         // retrySuccess / retryFailed -> 重置 attempt 去重计数
@@ -434,6 +454,17 @@ onMounted(async () => {
   
   // 异步初始化 chatStore（加载历史对话等）
   chatStore.initialize()
+})
+
+onBeforeUnmount(() => {
+  disposeMessageListener?.()
+  disposeMessageListener = null
+
+  disposeAudioUnlockHooks?.()
+  disposeAudioUnlockHooks = null
+
+  disposeVisibilityHooks?.()
+  disposeVisibilityHooks = null
 })
 </script>
 
@@ -465,14 +496,11 @@ onMounted(async () => {
           v-if="chatStore.showEmptyState"
         />
 
-        <!-- 多实例消息列表：每个标签页维护独立 DOM，切换时零成本 -->
+        <!-- 单实例消息列表：仅渲染当前活跃标签页，减少隐藏实例的重算成本 -->
         <MessageList
-          v-for="tab in chatStore.openTabs"
-          :key="tab.id"
-          v-show="tab.id === chatStore.activeTabId && !chatStore.showEmptyState"
+          v-if="chatStore.activeTabId && !chatStore.showEmptyState"
           :messages="chatStore.messages"
-          :tab-id="tab.id"
-          :is-active="tab.id === chatStore.activeTabId"
+          :tab-id="chatStore.activeTabId"
           @edit="handleEdit"
           @delete="handleDelete"
           @retry="handleRetry"

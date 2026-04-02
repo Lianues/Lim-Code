@@ -501,6 +501,8 @@ export interface StreamChunk {
     | 'autoSummary'
   conversationId: string
   /** 前端生成的流请求 ID，用于过滤迟到/过期 chunk */
+  /** 事件创建时间戳（毫秒），用于声音提醒过期丢弃等场景 */
+  createdAt?: number
   streamId?: string
   chunk?: BackendStreamChunk
   content?: Content

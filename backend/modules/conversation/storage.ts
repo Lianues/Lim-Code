@@ -12,7 +12,7 @@
  * 3. 元数据与历史分离,便于管理
  */
 
-import { ConversationHistory, ConversationMetadata, HistorySnapshot } from './types';
+import { ConversationHistory, ConversationMetadata, HistorySnapshot, Content } from './types';
 
 export type StorageReadErrorCode = 'not_found' | 'parse_error' | 'io_error';
 
@@ -20,6 +20,13 @@ export interface StorageReadResult<T> {
     value: T | null;
     errorCode?: StorageReadErrorCode;
     errorMessage?: string;
+}
+
+export interface StorageHistoryPage {
+    total: number;
+    startIndex: number;
+    messages: ConversationHistory;
+    format: 'paged' | 'legacy';
 }
 
 export interface ConversationStorageIntegrity {
@@ -55,6 +62,7 @@ export interface IStorageAdapter {
      */
     loadHistory(conversationId: string): Promise<ConversationHistory | null>;
     loadHistoryWithStatus(conversationId: string): Promise<StorageReadResult<ConversationHistory>>;
+    loadHistoryPage(conversationId: string, options?: { beforeIndex?: number; offset?: number; limit?: number }): Promise<StorageReadResult<StorageHistoryPage>>;
     
     /**
      * 删除对话历史
@@ -130,6 +138,30 @@ export class MemoryStorageAdapter implements IStorageAdapter {
             return { value: null, errorCode: 'not_found' };
         }
         return { value };
+    }
+
+    async loadHistoryPage(
+        conversationId: string,
+        options: { beforeIndex?: number; offset?: number; limit?: number } = {}
+    ): Promise<StorageReadResult<StorageHistoryPage>> {
+        const historyResult = await this.loadHistoryWithStatus(conversationId);
+        if (!historyResult.value) {
+            return { value: null, errorCode: historyResult.errorCode, errorMessage: historyResult.errorMessage };
+        }
+
+        const history = historyResult.value;
+        const total = history.length;
+        const limit = Math.max(1, Math.min(options.limit ?? 120, 1000));
+        let startIndex = 0;
+        let endExclusive = total;
+        if (typeof options.beforeIndex === 'number' && Number.isFinite(options.beforeIndex)) {
+            endExclusive = Math.max(0, Math.min(total, Math.floor(options.beforeIndex)));
+            startIndex = Math.max(0, endExclusive - limit);
+        } else if (typeof options.offset === 'number' && Number.isFinite(options.offset)) {
+            startIndex = Math.max(0, Math.min(total, Math.floor(options.offset)));
+            endExclusive = Math.max(startIndex, Math.min(total, startIndex + limit));
+        } else { startIndex = Math.max(0, total - limit); }
+        return { value: { total, startIndex, messages: JSON.parse(JSON.stringify(history.slice(startIndex, endExclusive))), format: 'legacy' } };
     }
 
     async deleteHistory(conversationId: string): Promise<void> {
@@ -236,6 +268,30 @@ export class VSCodeStorageAdapter implements IStorageAdapter {
         return { value };
     }
 
+    async loadHistoryPage(
+        conversationId: string,
+        options: { beforeIndex?: number; offset?: number; limit?: number } = {}
+    ): Promise<StorageReadResult<StorageHistoryPage>> {
+        const historyResult = await this.loadHistoryWithStatus(conversationId);
+        if (!historyResult.value) {
+            return { value: null, errorCode: historyResult.errorCode, errorMessage: historyResult.errorMessage };
+        }
+
+        const history = historyResult.value;
+        const total = history.length;
+        const limit = Math.max(1, Math.min(options.limit ?? 120, 1000));
+        let startIndex = 0;
+        let endExclusive = total;
+        if (typeof options.beforeIndex === 'number' && Number.isFinite(options.beforeIndex)) {
+            endExclusive = Math.max(0, Math.min(total, Math.floor(options.beforeIndex)));
+            startIndex = Math.max(0, endExclusive - limit);
+        } else if (typeof options.offset === 'number' && Number.isFinite(options.offset)) {
+            startIndex = Math.max(0, Math.min(total, Math.floor(options.offset)));
+            endExclusive = Math.max(startIndex, Math.min(total, startIndex + limit));
+        } else { startIndex = Math.max(0, total - limit); }
+        return { value: { total, startIndex, messages: JSON.parse(JSON.stringify(history.slice(startIndex, endExclusive))), format: 'legacy' } };
+    }
+
     async deleteHistory(conversationId: string): Promise<void> {
         const historyKey = `limcode.history.${conversationId}`;
         const metaKey = `limcode.meta.${conversationId}`;
@@ -315,26 +371,60 @@ export class VSCodeStorageAdapter implements IStorageAdapter {
     }
 }
 
+interface FileHistorySegmentIndexEntry {
+    file: string;
+    startIndex: number;
+    endIndex: number;
+    count: number;
+}
+
+interface FileHistoryIndex {
+    version: 1;
+    segmentSize: number;
+    totalMessages: number;
+    segments: FileHistorySegmentIndexEntry[];
+}
+
 /**
  * 文件系统存储适配器（使用 VS Code workspace.fs API）
  * 
  * 文件结构:
- * - {baseDir}/conversations/{conversationId}.json        # 对话历史(Gemini 格式)
+ * - {baseDir}/conversations/{conversationId}.json        # 旧版对话历史(Gemini 格式，向后兼容)
  * - {baseDir}/conversations/{conversationId}.meta.json   # 对话元数据
+ * - {baseDir}/conversations/{conversationId}/history.index.json
+ * - {baseDir}/conversations/{conversationId}/history/*.ndjson
  * - {baseDir}/snapshots/{snapshotId}.json                # 快照
  */
 export class FileSystemStorageAdapter implements IStorageAdapter {
+    private static readonly HISTORY_SEGMENT_SIZE = 200;
+
     constructor(
         private vscode: any, // VS Code API
         private baseDir: string // 存储目录的 URI
     ) {}
 
-    private getHistoryPath(conversationId: string): any {
+    private getLegacyHistoryPath(conversationId: string): any {
         return this.vscode.Uri.joinPath(
             this.vscode.Uri.parse(this.baseDir),
             'conversations',
             `${conversationId}.json`
         );
+    }
+
+    private getConversationDir(conversationId: string): any {
+        return this.vscode.Uri.joinPath(
+            this.vscode.Uri.parse(this.baseDir),
+            'conversations',
+            conversationId
+        );
+    }
+
+    private getHistoryDir(conversationId: string): any {
+        return this.vscode.Uri.joinPath(this.getConversationDir(conversationId), 'history');
+    }
+
+    private getHistoryIndexPath(conversationId: string): any {
+        return this.vscode.Uri.joinPath(this.getConversationDir(conversationId), 'history.index.json');
     }
 
     private getMetadataPath(conversationId: string): any {
@@ -370,6 +460,11 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
         );
     }
 
+    private async exists(uri: any): Promise<boolean> {
+        try { await this.vscode.workspace.fs.stat(uri); return true; }
+        catch { return false; }
+    }
+
     private async readJsonFile<T>(uri: any): Promise<StorageReadResult<T>> {
         try {
             const content = await this.vscode.workspace.fs.readFile(uri);
@@ -399,10 +494,206 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
         }
     }
 
+    private buildPageRange(total: number, options: { beforeIndex?: number; offset?: number; limit?: number }) {
+        const limit = Math.max(1, Math.min(options.limit ?? 120, 1000));
+        let startIndex = 0;
+        let endExclusive = total;
+
+        if (typeof options.beforeIndex === 'number' && Number.isFinite(options.beforeIndex)) {
+            endExclusive = Math.max(0, Math.min(total, Math.floor(options.beforeIndex)));
+            startIndex = Math.max(0, endExclusive - limit);
+        } else if (typeof options.offset === 'number' && Number.isFinite(options.offset)) {
+            startIndex = Math.max(0, Math.min(total, Math.floor(options.offset)));
+            endExclusive = Math.max(startIndex, Math.min(total, startIndex + limit));
+        } else {
+            startIndex = Math.max(0, total - limit);
+            endExclusive = total;
+        }
+
+        return { startIndex, endExclusive };
+    }
+
+    private async readHistorySegment(uri: any): Promise<StorageReadResult<ConversationHistory>> {
+        try {
+            const content = await this.vscode.workspace.fs.readFile(uri);
+            const text = Buffer.from(content).toString('utf8');
+            if (!text.trim()) {
+                return { value: [] };
+            }
+
+            const messages: ConversationHistory = [];
+            for (const rawLine of text.split(/\r?\n/)) {
+                const line = rawLine.trim();
+                if (!line) continue;
+                try {
+                    messages.push(JSON.parse(line) as Content);
+                } catch (parseError: any) {
+                    return {
+                        value: null,
+                        errorCode: 'parse_error',
+                        errorMessage: parseError?.message || 'Failed to parse history segment',
+                    };
+                }
+            }
+
+            return { value: messages };
+        } catch (error: any) {
+            if (this.isNotFoundError(error)) {
+                return {
+                    value: null,
+                    errorCode: 'not_found',
+                    errorMessage: error?.message,
+                };
+            }
+            return {
+                value: null,
+                errorCode: 'io_error',
+                errorMessage: error?.message || String(error),
+            };
+        }
+    }
+
+    private async readHistoryIndex(conversationId: string): Promise<StorageReadResult<FileHistoryIndex>> {
+        return await this.readJsonFile<FileHistoryIndex>(this.getHistoryIndexPath(conversationId));
+    }
+
+    private async writeSegmentedHistory(conversationId: string, history: ConversationHistory): Promise<void> {
+        const conversationDir = this.getConversationDir(conversationId);
+        const historyDir = this.getHistoryDir(conversationId);
+        const historyIndexPath = this.getHistoryIndexPath(conversationId);
+
+        await this.vscode.workspace.fs.createDirectory(conversationDir);
+        try {
+            await this.vscode.workspace.fs.delete(historyDir, { recursive: true, useTrash: false });
+        } catch {
+            // ignore
+        }
+        await this.vscode.workspace.fs.createDirectory(historyDir);
+
+        const segments: FileHistorySegmentIndexEntry[] = [];
+        for (let startIndex = 0; startIndex < history.length; startIndex += FileSystemStorageAdapter.HISTORY_SEGMENT_SIZE) {
+            const endExclusive = Math.min(history.length, startIndex + FileSystemStorageAdapter.HISTORY_SEGMENT_SIZE);
+            const chunk = history.slice(startIndex, endExclusive);
+            const file = `${String(segments.length).padStart(6, '0')}.ndjson`;
+            const uri = this.vscode.Uri.joinPath(historyDir, file);
+            const content = chunk.map(item => JSON.stringify(item)).join('\n');
+            await this.vscode.workspace.fs.writeFile(uri, Buffer.from(content, 'utf8'));
+            segments.push({ file, startIndex, endIndex: endExclusive - 1, count: chunk.length });
+        }
+
+        const index: FileHistoryIndex = {
+            version: 1,
+            segmentSize: FileSystemStorageAdapter.HISTORY_SEGMENT_SIZE,
+            totalMessages: history.length,
+            segments,
+        };
+
+        await this.vscode.workspace.fs.writeFile(historyIndexPath, Buffer.from(JSON.stringify(index, null, 2), 'utf8'));
+
+        try {
+            await this.vscode.workspace.fs.delete(this.getLegacyHistoryPath(conversationId), { useTrash: false });
+        } catch {
+            // ignore
+        }
+    }
+
+    private async loadSegmentedHistory(conversationId: string): Promise<StorageReadResult<ConversationHistory>> {
+        const indexResult = await this.readHistoryIndex(conversationId);
+        if (!indexResult.value) {
+            return { value: null, errorCode: indexResult.errorCode, errorMessage: indexResult.errorMessage };
+        }
+
+        const historyDir = this.getHistoryDir(conversationId);
+        const history: ConversationHistory = [];
+        for (const segment of indexResult.value.segments) {
+            const segmentResult = await this.readHistorySegment(this.vscode.Uri.joinPath(historyDir, segment.file));
+            if (!segmentResult.value) {
+                return { value: null, errorCode: segmentResult.errorCode, errorMessage: segmentResult.errorMessage };
+            }
+            history.push(...segmentResult.value);
+        }
+
+        return { value: history };
+    }
+
+    private async loadSegmentedHistoryPage(
+        conversationId: string,
+        options: { beforeIndex?: number; offset?: number; limit?: number } = {}
+    ): Promise<StorageReadResult<StorageHistoryPage>> {
+        const indexResult = await this.readHistoryIndex(conversationId);
+        if (!indexResult.value) {
+            return { value: null, errorCode: indexResult.errorCode, errorMessage: indexResult.errorMessage };
+        }
+
+        const index = indexResult.value;
+        const { startIndex, endExclusive } = this.buildPageRange(index.totalMessages, options);
+        const historyDir = this.getHistoryDir(conversationId);
+        const messages: ConversationHistory = [];
+
+        for (const segment of index.segments) {
+            if (segment.endIndex < startIndex || segment.startIndex >= endExclusive) continue;
+            const segmentResult = await this.readHistorySegment(this.vscode.Uri.joinPath(historyDir, segment.file));
+            if (!segmentResult.value) {
+                return { value: null, errorCode: segmentResult.errorCode, errorMessage: segmentResult.errorMessage };
+            }
+
+            const localStart = Math.max(0, startIndex - segment.startIndex);
+            const localEndExclusive = Math.min(segment.count, endExclusive - segment.startIndex);
+            messages.push(...segmentResult.value.slice(localStart, localEndExclusive));
+        }
+
+        return {
+            value: {
+                total: index.totalMessages,
+                startIndex,
+                messages,
+                format: 'paged'
+            }
+        };
+    }
+
+    async migrateLegacyConversationsToSegmented(progressCallback?: (status: { current: number; total: number; conversationId?: string }) => void): Promise<{
+        migrated: number;
+        skipped: number;
+        failed: Array<{ conversationId: string; error: string }>;
+    }> {
+        const conversationIds = await this.listConversations();
+        const failed: Array<{ conversationId: string; error: string }> = [];
+        let migrated = 0;
+        let skipped = 0;
+
+        const resolvedLegacyIds: string[] = [];
+        for (const id of conversationIds) {
+            if (await this.exists(this.getLegacyHistoryPath(id))) {
+                resolvedLegacyIds.push(id);
+            }
+        }
+
+        const total = resolvedLegacyIds.length;
+        for (let i = 0; i < resolvedLegacyIds.length; i++) {
+            const conversationId = resolvedLegacyIds[i];
+            progressCallback?.({ current: i + 1, total, conversationId });
+            try {
+                if (await this.exists(this.getHistoryIndexPath(conversationId))) {
+                    await this.vscode.workspace.fs.delete(this.getLegacyHistoryPath(conversationId), { useTrash: false });
+                    skipped++;
+                    continue;
+                }
+                const historyResult = await this.readJsonFile<ConversationHistory>(this.getLegacyHistoryPath(conversationId));
+                if (!historyResult.value) throw new Error(historyResult.errorMessage || historyResult.errorCode || 'Failed to read legacy history');
+                await this.writeSegmentedHistory(conversationId, historyResult.value);
+                migrated++;
+            } catch (error: any) {
+                failed.push({ conversationId, error: error?.message || String(error) });
+            }
+        }
+
+        return { migrated, skipped, failed };
+    }
+
+
     async saveHistory(conversationId: string, history: ConversationHistory): Promise<void> {
-        const uri = this.getHistoryPath(conversationId);
-        const content = JSON.stringify(history, null, 2);
-        await this.vscode.workspace.fs.writeFile(uri, Buffer.from(content, 'utf8'));
+        await this.writeSegmentedHistory(conversationId, history);
         
         // 更新元数据的 updatedAt
         try {
@@ -422,18 +713,56 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
     }
 
     async loadHistoryWithStatus(conversationId: string): Promise<StorageReadResult<ConversationHistory>> {
-        const uri = this.getHistoryPath(conversationId);
-        return await this.readJsonFile<ConversationHistory>(uri);
+        if (await this.exists(this.getHistoryIndexPath(conversationId))) {
+            return await this.loadSegmentedHistory(conversationId);
+        }
+
+        return await this.readJsonFile<ConversationHistory>(this.getLegacyHistoryPath(conversationId));
+    }
+
+    async loadHistoryPage(
+        conversationId: string,
+        options: { beforeIndex?: number; offset?: number; limit?: number } = {}
+    ): Promise<StorageReadResult<StorageHistoryPage>> {
+        if (await this.exists(this.getHistoryIndexPath(conversationId))) {
+            return await this.loadSegmentedHistoryPage(conversationId, options);
+        }
+
+        const historyResult = await this.loadHistoryWithStatus(conversationId);
+        if (!historyResult.value) {
+            return { value: null, errorCode: historyResult.errorCode, errorMessage: historyResult.errorMessage };
+        }
+
+        const history = historyResult.value;
+        const { startIndex, endExclusive } = this.buildPageRange(history.length, options);
+        return {
+            value: {
+                total: history.length,
+                startIndex,
+                messages: history.slice(startIndex, endExclusive),
+                format: 'legacy'
+            }
+        };
     }
 
     async deleteHistory(conversationId: string): Promise<void> {
+        const historyUri = this.getLegacyHistoryPath(conversationId);
+        const metaUri = this.getMetadataPath(conversationId);
+        const conversationDir = this.getConversationDir(conversationId);
         try {
-            const historyUri = this.getHistoryPath(conversationId);
-            const metaUri = this.getMetadataPath(conversationId);
-            await this.vscode.workspace.fs.delete(historyUri);
-            await this.vscode.workspace.fs.delete(metaUri);
+            await this.vscode.workspace.fs.delete(historyUri, { useTrash: false });
         } catch {
-            // 文件不存在，忽略
+            // ignore
+        }
+        try {
+            await this.vscode.workspace.fs.delete(conversationDir, { recursive: true, useTrash: false });
+        } catch {
+            // ignore
+        }
+        try {
+            await this.vscode.workspace.fs.delete(metaUri, { useTrash: false });
+        } catch {
+            // ignore
         }
     }
 
@@ -444,11 +773,17 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
                 'conversations'
             );
             const entries = await this.vscode.workspace.fs.readDirectory(dirUri);
-            return entries
-                .filter(([name, type]: [string, number]) => 
-                    type === 1 && name.endsWith('.json') && !name.endsWith('.meta.json')
-                )
-                .map(([name]: [string, number]) => name.replace('.json', ''));
+            const ids = new Set<string>();
+            for (const [name, type] of entries as Array<[string, number]>) {
+                if (type === 1 && name.endsWith('.json') && !name.endsWith('.meta.json')) {
+                    ids.add(name.replace('.json', ''));
+                    continue;
+                }
+                if (type === 2) {
+                    ids.add(name);
+                }
+            }
+            return Array.from(ids);
         } catch {
             return [];
         }

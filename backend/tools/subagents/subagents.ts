@@ -8,6 +8,7 @@
 import type { Tool, ToolResult, ToolContext, ToolDeclaration } from '../types';
 import type { SubAgentRequest, SubAgentResult, SubAgentConfig } from './types';
 import { subAgentRegistry } from './registry';
+import { createDefaultExecutor, getSubAgentExecutorContext } from './executor';
 import { getGlobalToolRegistry, getGlobalMcpManager, getGlobalSettingsManager, getGlobalConfigManager } from '../../core/settingsContext';
 
 /**
@@ -214,6 +215,19 @@ async function subAgentsHandler(args: Record<string, any>, context?: ToolContext
     if (!agentEntry.executor) {
         return { success: false, error: `SubAgent "${agentName}" has no executor. Please ensure the executor context is initialized.` };
     }
+
+    const promptModeSnapshot = context?.promptModeSnapshot as any;
+    const baseExecutorContext = getSubAgentExecutorContext();
+    const runtimeExecutor = baseExecutorContext
+        ? createDefaultExecutor(agentEntry.config, {
+            ...baseExecutorContext,
+            promptModeSnapshot: promptModeSnapshot || baseExecutorContext.promptModeSnapshot
+        })
+        : agentEntry.executor;
+
+    if (!runtimeExecutor) {
+        return { success: false, error: `SubAgent "${agentName}" has no runtime executor context.` };
+    }
     
     const abortSignal = context?.abortSignal;
     if (abortSignal?.aborted) {
@@ -221,7 +235,7 @@ async function subAgentsHandler(args: Record<string, any>, context?: ToolContext
     }
     
     try {
-        const result = await agentEntry.executor({
+        const result = await runtimeExecutor({
             agentType: agentEntry.config.type,
             prompt,
             context: additionalContext

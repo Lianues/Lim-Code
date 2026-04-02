@@ -1,9 +1,14 @@
 {
     "extends": "./tsconfig.json",
     "compilerOptions": {
-        "types": ["node", "jest"]
+        "types": ["node", "jest"],
+        "lib": ["ES2020", "DOM"]
     },
     "include": [
-        "backend/**/*.ts"
+        "backend/**/*.ts",
+        "webview/**/*.ts",
+        "frontend/src/**/*.ts",
+        "test/**/*.ts",
+        "extension.ts"
     ]
 }

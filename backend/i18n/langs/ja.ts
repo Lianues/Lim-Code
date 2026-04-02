@@ -474,6 +474,101 @@ description: "このスキルの機能と使用場面の簡単な説明"
                 queryRequired: 'search モードには query パラメータが必要です',
                 searchFailed: '履歴検索に失敗しました：{error}'
             }
+        },
+        reviewDocument: {
+            sections: {
+                scope: 'レビュー範囲',
+                summary: 'レビュー要約',
+                findings: 'レビュー所見',
+                milestones: 'レビューマイルストーン',
+                finalConclusion: '最終結論',
+                snapshot: 'レビュースナップショット'
+            },
+            header: {
+                date: '日付',
+                overview: '概要',
+                status: '状態',
+                overallDecision: '総合結論'
+            },
+            summary: {
+                currentStatus: '現在の状態',
+                reviewedModules: 'レビュー済みモジュール',
+                currentProgress: '現在の進捗',
+                totalMilestones: 'マイルストーン総数',
+                completedMilestones: '完了済みマイルストーン',
+                totalFindings: '問題総数',
+                findingsBySeverity: '重大度別の問題',
+                latestConclusion: '最新の結論',
+                recommendedNextAction: '次の対応',
+                overallDecision: '総合結論'
+            },
+            finding: {
+                severity: '重大度',
+                category: '分類',
+                trackingStatus: '追跡状態',
+                description: '説明',
+                recommendation: '提案',
+                relatedMilestones: '関連マイルストーン',
+                evidenceFiles: '証拠'
+            },
+            milestone: {
+                status: '状態',
+                recordedAt: '記録時刻',
+                reviewedModules: 'レビュー済みモジュール',
+                summary: '要約',
+                conclusion: '結論',
+                evidenceFiles: '証拠',
+                recommendedNextAction: '次の対応',
+                findings: '問題'
+            },
+            values: {
+                pending: '保留',
+                milestoneStatus: {
+                    inProgress: '進行中',
+                    completed: '完了'
+                },
+                overallDecision: {
+                    pending: '保留',
+                    accepted: '承認',
+                    conditionallyAccepted: '条件付き承認',
+                    rejected: '却下',
+                    needsFollowUp: '追加対応が必要'
+                },
+                severity: {
+                    high: '高',
+                    medium: '中',
+                    low: '低'
+                },
+                category: {
+                    html: 'HTML',
+                    css: 'CSS',
+                    javascript: 'JavaScript',
+                    accessibility: 'アクセシビリティ',
+                    performance: 'パフォーマンス',
+                    maintainability: '保守性',
+                    docs: 'ドキュメント',
+                    test: 'テスト',
+                    other: 'その他'
+                },
+                trackingStatus: {
+                    open: 'オープン',
+                    acceptedRisk: 'リスク受容',
+                    fixed: '修正済み',
+                    wontFix: '修正しない',
+                    duplicate: '重複'
+                }
+            },
+            placeholders: {
+                noMilestones: '<!-- no milestones -->',
+                noFindings: '<!-- no findings -->',
+                defaultReviewScope: '_レビュー範囲は未記入です。_',
+                defaultFinalConclusion: '_最終結論は未確定です。_'
+            },
+            templates: {
+                currentProgressWithLatest: '{count} 件のマイルストーンを記録済み；最新: {latestId}',
+                currentProgressEmpty: '記録済みマイルストーン 0 件',
+                findingsBySeverity: '高 {high} / 中 {medium} / 低 {low}'
+            }
         }
     },
     

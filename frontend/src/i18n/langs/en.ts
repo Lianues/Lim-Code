@@ -525,8 +525,16 @@ const en: LanguageMessages = {
                     label: 'Create Plan',
                     fallbackTitle: 'Plan'
                 },
+                updatePlan: {
+                    label: 'Update Plan',
+                    fallbackTitle: 'Plan'
+                },
                 createDesign: {
                     label: 'Create Design',
+                    fallbackTitle: 'Design'
+                },
+                updateDesign: {
+                    label: 'Update Design',
                     fallbackTitle: 'Design'
                 },
                 createReview: {
@@ -544,6 +552,21 @@ const en: LanguageMessages = {
                 recordReviewMilestone: {
                     label: 'Record Review Milestone',
                     fallbackTitle: 'Review Milestone'
+                },
+                reopenReview: {
+                    label: 'Reopen Review',
+                    fallbackTitle: 'Reopen Review'
+                },
+                compareReviewDocuments: {
+                    label: 'Compare Review Documents',
+                    fallbackTitle: 'Review Compare',
+                    base: 'Base Review',
+                    target: 'Target Review',
+                    addedFindings: 'Added Findings',
+                    removedFindings: 'Removed Findings',
+                    persistedFindings: 'Persisted Findings',
+                    severityChanged: 'Severity Changed',
+                    trackingChanged: 'Tracking Changed'
                 },
                 todoPanel: {
                     title: 'TODO List',
@@ -576,7 +599,13 @@ const en: LanguageMessages = {
                     loadModelsFailed: 'Failed to load models',
                     executePlanFailed: 'Failed to execute plan',
                     openFileFailed: 'Failed to open file',
-                    promptPrefix: 'Please execute the following plan:\n\n{plan}'
+                    promptPrefix: 'Please execute the following plan:\n\n{plan}',
+                    sourceUpToDate: 'Source: up to date',
+                    sourceUntracked: 'Source: untracked',
+                    sourceMismatched: 'Source: changed',
+                    sourceMissing: 'Source: missing',
+                    sourceBlockedMismatched: 'The source document has changed. Please regenerate or revise the plan first.',
+                    sourceBlockedMissing: 'The source document is missing or unreadable. Please revise the plan first.'
                 },
                 designCard: {
                     title: 'Design',
@@ -594,7 +623,9 @@ const en: LanguageMessages = {
                     sourceCreate: 'Create',
                     sourceMilestone: 'Milestone',
                     sourceFinalize: 'Finalize',
+                    sourceReopen: 'Reopen',
                     sourceValidate: 'Validate',
+                    sourceCompare: 'Compare',
                     statusCompleted: 'Completed',
                     statusInProgress: 'In Progress',
                     decisionAccepted: 'Accepted',
@@ -607,6 +638,9 @@ const en: LanguageMessages = {
                     validationValid: 'Valid',
                     issueError: 'Error',
                     issueWarning: 'Warning',
+                    severityHigh: 'High',
+                    severityMedium: 'Medium',
+                    severityLow: 'Low',
                     milestonesChip: '{completed}/{total} milestones',
                     findingsChip: '{total} findings · H{high} M{medium} L{low}',
                     modulesChip: '{count} modules',
@@ -618,6 +652,40 @@ const en: LanguageMessages = {
                     format: 'Format',
                     latestConclusion: 'Latest Conclusion',
                     recommendedNextAction: 'Recommended Next Action',
+                    tracking: 'Tracking Status',
+                    trackingOpen: 'Open',
+                    trackingAcceptedRisk: 'Accepted Risk',
+                    trackingFixed: 'Fixed',
+                    trackingWontFix: "Won't Fix",
+                    trackingDuplicate: 'Duplicate',
+                    categoryHtml: 'HTML',
+                    categoryCss: 'CSS',
+                    categoryJavascript: 'JavaScript',
+                    categoryAccessibility: 'Accessibility',
+                    categoryPerformance: 'Performance',
+                    categoryMaintainability: 'Maintainability',
+                    categoryDocs: 'Docs',
+                    categoryTest: 'Test',
+                    categoryOther: 'Other',
+                    evidence: 'Evidence',
+                    findingDetails: 'Finding Details',
+                    compareBase: 'Base Review',
+                    compareTarget: 'Target Review',
+                    compareAdded: 'Added Findings',
+                    compareRemoved: 'Removed Findings',
+                    comparePersisted: 'Persisted Findings',
+                    compareSeverityChanged: 'Severity Changed',
+                    compareTrackingChanged: 'Tracking Changed',
+                    compareEvidenceChanged: 'Evidence Changed',
+                    compareRelatedMilestonesChanged: 'Related Milestones Changed',
+                    compareChanges: 'Changes',
+                    changeSeverity: 'Severity',
+                    changeTrackingStatus: 'Tracking Status',
+                    changeTitle: 'Title',
+                    changeDescription: 'Description',
+                    changeRecommendation: 'Recommendation',
+                    changeEvidence: 'Evidence',
+                    changeRelatedMilestoneIds: 'Related Milestones',
                     validation: 'Validation',
                     progress: 'Progress',
                     modules: 'Reviewed Modules',
@@ -628,7 +696,11 @@ const en: LanguageMessages = {
                     copyFailed: 'Failed to copy path',
                     copyPath: 'Copy Path',
                     copied: 'Copied',
-                    rawResult: 'Full Result'
+                    rawResult: 'Full Result',
+                    generatePlan: 'Generate Plan',
+                    generatingPlan: 'Generating Plan...',
+                    planGenerated: 'Plan Generated',
+                    generatePlanFailed: 'Failed to generate plan'
                 }
             },
             attachment: {

@@ -5,7 +5,7 @@
  * 当前同时承载 design、plan 与 review 的结果摘要展示。
  */
 import { computed, ref, onMounted, watch } from 'vue'
-import { sendToExtension, loadState, saveState } from '@/utils/vscode'
+import { sendToExtension, loadState, saveState, showNotification } from '@/utils/vscode'
 import type { ToolUsage } from '../../types'
 import ReviewTaskCard from './ReviewTaskCard.vue'
 import { MarkdownRenderer, CustomScrollbar } from '../common'
@@ -13,8 +13,8 @@ import ModeSelector from '../input/ModeSelector.vue'
 import ChannelSelector from '../input/ChannelSelector.vue'
 import ModelSelector from '../input/ModelSelector.vue'
 import type { PromptMode, ChannelOption, ModelInfo } from '../input/types'
-import { isDesignDocPath, isPlanDocPath } from '../../utils/taskCards'
-import { getPlanExecutionPrompt, getPlanGenerationPrompt } from '../../utils/toolContinuations'
+import { isDesignDocPath, isPlanDocPath, stripPlanSourceArtifactSection } from '../../utils/taskCards'
+import { getPlanExecutionPrompt, getPlanGenerationPrompt, getPlanUpdateMode, type PlanUpdateMode } from '../../utils/toolContinuations'
 import { generateId } from '../../utils/format'
 import {
   extractReviewCardData,
@@ -45,6 +45,7 @@ type TaskEntry = {
   content: string
   success?: boolean
   continuationPrompt?: string
+  updateMode?: PlanUpdateMode
   reviewCardData?: ReviewCardData
 }
 
@@ -58,7 +59,37 @@ type TaskCardItem = {
   toolId: string
   toolName: string
   isActionCompleted: boolean
+  continuationPrompt?: string
+  updateMode?: PlanUpdateMode
   reviewCardData?: ReviewCardData
+}
+
+type PlanSourceStatus = 'up_to_date' | 'mismatched' | 'missing_source' | 'untracked'
+
+type PlanSourceState = {
+  sourceStatus: PlanSourceStatus
+  sourceArtifactType?: 'design' | 'review'
+  sourcePath?: string
+  blocked?: boolean
+  error?: string
+}
+
+function normalizePlanSourceState(input: unknown): PlanSourceState {
+  const raw = input && typeof input === 'object' ? input as Record<string, unknown> : {}
+  const sourceStatus = raw.sourceStatus === 'up_to_date'
+    || raw.sourceStatus === 'mismatched'
+    || raw.sourceStatus === 'missing_source'
+    || raw.sourceStatus === 'untracked'
+    ? raw.sourceStatus
+    : 'untracked'
+
+  return {
+    sourceStatus,
+    sourceArtifactType: raw.sourceArtifactType === 'design' || raw.sourceArtifactType === 'review' ? raw.sourceArtifactType : undefined,
+    sourcePath: typeof raw.sourcePath === 'string' && raw.sourcePath.trim() ? raw.sourcePath : undefined,
+    blocked: raw.blocked === true,
+    error: typeof raw.error === 'string' && raw.error.trim() ? raw.error : undefined
+  }
 }
 
 const PLAN_EXECUTION_MODE_STATE_KEY = 'planExecution.preferredModeId'
@@ -79,6 +110,7 @@ const isExecutingPlan = ref(false)
 const isGeneratingPlan = ref(false)
 const expandedCards = ref<Set<string>>(new Set())
 const autoOpenedCardKeys = ref<Set<string>>(new Set())
+const planSourceStatusByPath = ref<Map<string, PlanSourceState>>(new Map())
 
 const channelOptions = computed<ChannelOption[]>(() =>
   channelConfigs.value
@@ -305,6 +337,78 @@ async function withSelectedChannel<T>(runner: () => Promise<T>): Promise<T> {
   }
 }
 
+function getPlanSourceState(card: TaskCardItem): PlanSourceState | null {
+  if (card.kind !== 'plan' || !card.path) return null
+  return planSourceStatusByPath.value.get(card.path) || null
+}
+
+function isPlanSourceBlocked(card: TaskCardItem): boolean {
+  const state = getPlanSourceState(card)
+  return !!state && (state.sourceStatus === 'mismatched' || state.sourceStatus === 'missing_source' || state.blocked === true)
+}
+
+function getPlanSourceLabel(card: TaskCardItem): string {
+  const state = getPlanSourceState(card)
+  if (!state) return ''
+
+  if (state.sourceStatus === 'up_to_date') return t('components.message.tool.planCard.sourceUpToDate')
+  if (state.sourceStatus === 'mismatched') return t('components.message.tool.planCard.sourceMismatched')
+  if (state.sourceStatus === 'missing_source') return t('components.message.tool.planCard.sourceMissing')
+  return t('components.message.tool.planCard.sourceUntracked')
+}
+
+function getPlanBlockedReason(card: TaskCardItem): string {
+  const state = getPlanSourceState(card)
+  if (!state) return ''
+  if (typeof state.error === 'string' && state.error.trim()) return state.error
+  if (state.sourceStatus === 'mismatched') return t('components.message.tool.planCard.sourceBlockedMismatched')
+  if (state.sourceStatus === 'missing_source') return t('components.message.tool.planCard.sourceBlockedMissing')
+  return ''
+}
+
+function isCardActionCompleted(card: TaskCardItem): boolean {
+  if (card.kind === 'plan' && isPlanSourceBlocked(card)) return false
+  return card.isActionCompleted
+}
+
+function getCardActionTitle(card: TaskCardItem): string {
+  if (card.kind === 'plan' && isPlanSourceBlocked(card)) {
+    return getPlanBlockedReason(card)
+  }
+  return getActionText(card)
+}
+
+async function refreshPlanSourceStatuses(cards: TaskCardItem[]) {
+  const next = new Map<string, PlanSourceState>()
+  const uniquePlanCards = new Map<string, TaskCardItem>()
+
+  for (const card of cards) {
+    if (card.kind !== 'plan' || !card.path) continue
+    if (!uniquePlanCards.has(card.path)) {
+      uniquePlanCards.set(card.path, card)
+    }
+  }
+
+  for (const [path, card] of uniquePlanCards.entries()) {
+    try {
+      const result = await sendToExtension<unknown>('plan.getSourceStatus', {
+        path,
+        originalContent: card.content
+      })
+      next.set(path, normalizePlanSourceState(result))
+    } catch (error) {
+      console.error('[task-cards] Failed to load plan source status:', error)
+    }
+  }
+
+  planSourceStatusByPath.value = next
+}
+
+function getCardPreviewContent(card: TaskCardItem): string {
+  if (card.kind !== 'plan') return card.content
+  return stripPlanSourceArtifactSection(card.content)
+}
+
 function isCardActionRunning(kind: TaskCardKind): boolean {
   return kind === 'plan' ? isExecutingPlan.value : isGeneratingPlan.value
 }
@@ -317,18 +421,18 @@ function getActionLabel(kind: TaskCardKind): string {
 
 function getActionText(card: TaskCardItem): string {
   if (card.kind === 'plan') {
-    if (card.isActionCompleted) return t('components.message.tool.planCard.executed')
+    if (isCardActionCompleted(card)) return t('components.message.tool.planCard.executed')
     if (isExecutingPlan.value) return t('components.message.tool.planCard.executing')
     return t('components.message.tool.planCard.executePlan')
   }
 
-  if (card.isActionCompleted) return t('components.message.tool.designCard.generated')
+  if (isCardActionCompleted(card)) return t('components.message.tool.designCard.generated')
   if (isGeneratingPlan.value) return t('components.message.tool.designCard.generating')
   return t('components.message.tool.designCard.generatePlan')
 }
 
 function getActionIconClass(card: TaskCardItem): string {
-  if (card.isActionCompleted) return 'codicon-check'
+  if (isCardActionCompleted(card)) return 'codicon-check'
   if (isCardActionRunning(card.kind)) return 'codicon-loading codicon-modifier-spin'
   return card.kind === 'plan' ? 'codicon-play' : 'codicon-arrow-right'
 }
@@ -337,7 +441,8 @@ function isActionDisabled(card: TaskCardItem): boolean {
   const modeId = getModeIdForKind(card.kind)
   return (
     isAnyTaskActionRunning.value ||
-    card.isActionCompleted ||
+    isCardActionCompleted(card) ||
+    (card.kind === 'plan' && isPlanSourceBlocked(card)) ||
     !modeId ||
     !selectedChannelId.value ||
     !selectedModelId.value
@@ -346,7 +451,7 @@ function isActionDisabled(card: TaskCardItem): boolean {
 
 async function executePlan(card: TaskCardItem) {
   if (card.kind !== 'plan') return
-  if (isExecutingPlan.value || card.isActionCompleted || !card.content.trim()) return
+  if (isExecutingPlan.value || isCardActionCompleted(card) || isPlanSourceBlocked(card) || !card.content.trim()) return
 
   isExecutingPlan.value = true
   try {
@@ -355,6 +460,12 @@ async function executePlan(card: TaskCardItem) {
         success: boolean
         prompt: string
         planContent: string
+        blocked?: boolean
+        blockReason?: 'source_mismatched' | 'source_missing'
+        sourceStatus?: PlanSourceStatus
+        sourceArtifactType?: 'design' | 'review'
+        sourcePath?: string
+        error?: string
         todos?: Array<{
           id: string
           content: string
@@ -365,6 +476,13 @@ async function executePlan(card: TaskCardItem) {
         originalContent: card.content,
         conversationId: chatStore.currentConversationId
       })
+
+      if (!confirmResult?.success) {
+        const message = String(confirmResult?.error || t('components.message.tool.planCard.executePlanFailed'))
+        await showNotification(message, 'warning')
+        await refreshPlanSourceStatuses(taskCards.value)
+        return
+      }
 
       const prompt = String(confirmResult?.prompt || '')
       const latestPlanContent = confirmResult?.planContent || card.content
@@ -401,6 +519,14 @@ async function executePlan(card: TaskCardItem) {
             id: card.toolId,
             name: card.toolName,
             response: {
+              continuationApproved: true,
+              continuationIntent: 'implement_now',
+              sourceArtifactType: 'plan',
+              sourcePath: card.path,
+              sourceContent: latestPlanContent,
+              continuationPrompt: prompt,
+              planPath: card.path,
+              planContent: latestPlanContent,
               planExecutionPrompt: prompt,
               todos: todosFromPlan
             }
@@ -417,7 +543,7 @@ async function executePlan(card: TaskCardItem) {
 
 async function generatePlan(card: TaskCardItem) {
   if (card.kind !== 'design') return
-  if (isGeneratingPlan.value || card.isActionCompleted || !card.content.trim()) return
+  if (isGeneratingPlan.value || isCardActionCompleted(card) || !card.content.trim()) return
 
   isGeneratingPlan.value = true
   try {
@@ -455,6 +581,12 @@ async function generatePlan(card: TaskCardItem) {
             id: card.toolId,
             name: card.toolName,
             response: {
+              continuationApproved: true,
+              continuationIntent: 'generate_plan_now',
+              sourceArtifactType: 'design',
+              sourcePath: latestDesignPath,
+              sourceContent: latestDesignContent,
+              continuationPrompt: prompt,
               planGenerationPrompt: prompt,
               designPath: latestDesignPath,
               designContent: latestDesignContent
@@ -465,6 +597,64 @@ async function generatePlan(card: TaskCardItem) {
     })
   } catch (error) {
     console.error(t('components.message.tool.designCard.generatePlanFailed'), error)
+  } finally {
+    isGeneratingPlan.value = false
+  }
+}
+
+async function generatePlanFromReview(card: TaskCardItem) {
+  if (card.kind !== 'review') return
+  if (isGeneratingPlan.value || isCardActionCompleted(card) || !card.content.trim()) return
+
+  isGeneratingPlan.value = true
+  try {
+    await withSelectedChannel(async () => {
+      const confirmResult = await sendToExtension<{
+        success: boolean
+        prompt: string
+        reviewContent: string
+        reviewPath: string
+      }>('review.confirmPlanGeneration', {
+        path: card.path,
+        originalContent: card.content,
+        conversationId: chatStore.currentConversationId
+      })
+
+      const prompt = String(confirmResult?.prompt || '')
+      const latestReviewContent = confirmResult?.reviewContent || card.content
+      const latestReviewPath = String(confirmResult?.reviewPath || card.path || '')
+
+      try {
+        const targetModeId = String(selectedPlanGenerationModeId.value || 'plan').trim() || 'plan'
+        await chatStore.setCurrentPromptModeId(targetModeId)
+        saveState(PLAN_GENERATION_MODE_STATE_KEY, targetModeId)
+      } catch (modeError) {
+        console.error('[review] Failed to switch prompt mode before plan generation:', modeError)
+      }
+
+      await chatStore.sendMessage('', undefined, {
+        modelOverride: selectedModelId.value || undefined,
+        hidden: {
+          functionResponse: {
+            id: card.toolId,
+            name: card.toolName,
+            response: {
+              continuationApproved: true,
+              continuationIntent: 'generate_plan_now',
+              sourceArtifactType: 'review',
+              sourcePath: latestReviewPath,
+              sourceContent: latestReviewContent,
+              continuationPrompt: prompt,
+              planGenerationPrompt: prompt,
+              reviewPath: latestReviewPath,
+              reviewContent: latestReviewContent
+            }
+          }
+        }
+      })
+    })
+  } catch (error) {
+    console.error(t('components.message.tool.reviewCard.generatePlanFailed'), error)
   } finally {
     isGeneratingPlan.value = false
   }
@@ -483,7 +673,7 @@ async function autoOpenPendingCardTabs(cards: TaskCardItem[]) {
   for (const card of cards) {
     if (!card?.path) continue
     if (card.kind === 'review') continue
-    if (card.isActionCompleted) continue
+    if (isCardActionCompleted(card)) continue
     if (card.status === 'error') continue
     if (autoOpenedCardKeys.value.has(card.key)) continue
 
@@ -502,6 +692,7 @@ async function autoOpenPendingCardTabs(cards: TaskCardItem[]) {
 onMounted(() => {
   loadChannels()
   void loadPromptModes()
+  void refreshPlanSourceStatuses(taskCards.value)
   void autoOpenPendingCardTabs(taskCards.value)
 })
 
@@ -616,7 +807,54 @@ function getCreatePlanEntries(tool: ToolUsage): TaskEntry[] {
   }]
 }
 
+function getUpdatePlanEntries(tool: ToolUsage): TaskEntry[] {
+  const args = tool.args as any
+  const result = getToolResult(tool)
+  const updateMode = getPlanUpdateMode(result, args)
+
+  const path = (result?.data?.path || args?.path) as string | undefined
+  const content = (result?.data?.content || args?.plan) as string | undefined
+
+  if (typeof path !== 'string' || typeof content !== 'string') return []
+  if (!isPlanDocPath(path)) return []
+  if (updateMode === 'progress_sync') return []
+
+  const success = typeof result?.success === 'boolean' ? result.success : undefined
+  const continuationPrompt = getPlanExecutionPrompt(result) || undefined
+
+  return [{
+    kind: 'plan',
+    path,
+    content,
+    success,
+    continuationPrompt,
+    updateMode
+  }]
+}
+
 function getCreateDesignEntries(tool: ToolUsage): TaskEntry[] {
+  const args = tool.args as any
+  const result = getToolResult(tool)
+
+  const path = (result?.data?.path || args?.path) as string | undefined
+  const content = (result?.data?.content || args?.design) as string | undefined
+
+  if (typeof path !== 'string' || typeof content !== 'string') return []
+  if (!isDesignDocPath(path)) return []
+
+  const success = typeof result?.success === 'boolean' ? result.success : undefined
+  const continuationPrompt = getPlanGenerationPrompt(result) || undefined
+
+  return [{
+    kind: 'design',
+    path,
+    content,
+    success,
+    continuationPrompt
+  }]
+}
+
+function getUpdateDesignEntries(tool: ToolUsage): TaskEntry[] {
   const args = tool.args as any
   const result = getToolResult(tool)
 
@@ -648,11 +886,13 @@ function getReviewTaskEntries(tool: ToolUsage): TaskEntry[] {
 
   const reviewCardData = extractReviewCardData(tool.name, args, reviewResult)
   if (!reviewCardData) return []
+  const continuationPrompt = getPlanGenerationPrompt(reviewResult) || undefined
 
   return [{
     kind: 'review',
     path: reviewCardData.path || '',
     content: formatReviewToolFallbackContent(tool.name, args, reviewResult),
+    continuationPrompt,
     success: typeof reviewResult.success === 'boolean' ? reviewResult.success : undefined,
     reviewCardData
   }]
@@ -661,7 +901,9 @@ function getReviewTaskEntries(tool: ToolUsage): TaskEntry[] {
 function getTaskEntries(tool: ToolUsage): TaskEntry[] {
   if (tool.name === 'write_file') return getWriteFileTaskEntries(tool)
   if (tool.name === 'create_plan') return getCreatePlanEntries(tool)
+  if (tool.name === 'update_plan') return getUpdatePlanEntries(tool)
   if (tool.name === 'create_design') return getCreateDesignEntries(tool)
+  if (tool.name === 'update_design') return getUpdateDesignEntries(tool)
   if (isReviewToolName(tool.name)) return getReviewTaskEntries(tool)
   return []
 }
@@ -693,7 +935,9 @@ const taskCards = computed<TaskCardItem[]>(() => {
         content: entry.content,
         toolId: tool.id,
         toolName: tool.name,
-        isActionCompleted: entry.kind === 'review' ? false : !!entry.continuationPrompt,
+        isActionCompleted: !!entry.continuationPrompt,
+        continuationPrompt: entry.continuationPrompt,
+        updateMode: entry.updateMode,
         reviewCardData: entry.reviewCardData
       })
     }
@@ -705,6 +949,7 @@ const taskCards = computed<TaskCardItem[]>(() => {
 watch(
   () => taskCards.value,
   (cards) => {
+    void refreshPlanSourceStatuses(cards)
     void autoOpenPendingCardTabs(cards)
   }
 )
@@ -718,8 +963,12 @@ const hasAny = computed(() => taskCards.value.length > 0)
       <ReviewTaskCard
         v-if="c.kind === 'review' && c.reviewCardData"
         :card="c.reviewCardData"
+        :plan-generation-enabled="!c.isActionCompleted && !!c.path && !!c.content && c.reviewCardData?.status === 'completed'"
+        :plan-generation-completed="c.isActionCompleted"
+        :is-generating-plan="isGeneratingPlan"
         :content="c.content"
         :status="c.status"
+        @generate-plan="generatePlanFromReview(c)"
       />
       <div v-else class="task-panel">
       <div class="task-header">
@@ -764,10 +1013,18 @@ const hasAny = computed(() => taskCards.value.length > 0)
 
       <div class="task-path">{{ c.path }}</div>
 
+      <div
+        v-if="c.kind === 'plan' && getPlanSourceLabel(c)"
+        :class="['task-source', `status-${getPlanSourceState(c)?.sourceStatus || 'untracked'}`]"
+        :title="getPlanBlockedReason(c) || getPlanSourceLabel(c)"
+      >
+        {{ getPlanSourceLabel(c) }}
+      </div>
+
       <div class="task-content">
         <CustomScrollbar :max-height="isCardExpanded(c.key) ? 500 : 200">
           <div class="task-preview">
-            <MarkdownRenderer :content="c.content" />
+            <MarkdownRenderer :content="getCardPreviewContent(c)" />
           </div>
         </CustomScrollbar>
       </div>
@@ -799,8 +1056,9 @@ const hasAny = computed(() => taskCards.value.length > 0)
         </div>
         <button
           class="task-btn"
-          :class="{ done: c.isActionCompleted }"
+          :class="{ done: isCardActionCompleted(c) }"
           :disabled="isActionDisabled(c)"
+          :title="getCardActionTitle(c)"
           @click="handleCardAction(c)"
         >
           <span :class="['codicon', getActionIconClass(c)]"></span>
@@ -921,6 +1179,35 @@ const hasAny = computed(() => taskCards.value.length > 0)
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.task-source {
+  padding: 4px var(--spacing-sm, 8px);
+  font-size: 10px;
+  color: var(--vscode-descriptionForeground);
+  background: var(--vscode-editor-background);
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.task-source.status-up_to_date {
+  color: var(--vscode-testing-iconPassed, #73c991);
+}
+
+.task-source.status-untracked {
+  color: var(--vscode-descriptionForeground);
+}
+
+.task-source.status-mismatched,
+.task-source.status-missing_source {
+  color: var(--vscode-testing-iconFailed, #f48771);
+}
+
+.task-source.status-mismatched {
+  background: color-mix(in srgb, var(--vscode-editor-background) 82%, var(--vscode-inputValidation-errorBackground, #5a1d1d) 18%);
+}
+
+.task-source.status-missing_source {
+  background: color-mix(in srgb, var(--vscode-editor-background) 82%, var(--vscode-inputValidation-warningBackground, #4d2d00) 18%);
 }
 
 .task-content {

@@ -46,6 +46,12 @@
         "icon": "$(settings-gear)"
       },
       {
+        "command": "limcode.migrateConversationHistories",
+        "title": "迁移旧对话历史",
+        "icon": "$(history)",
+        "category": "LimCode"
+      },
+      {
         "command": "limcode.diff.acceptAll",
         "title": "Accept All Changes",
         "icon": "$(check-all)",
@@ -250,9 +256,9 @@
     "build:frontend": "cd frontend && pnpm run build",
     "dev:frontend": "cd frontend && pnpm run dev:local",
     "build": "pnpm run compile && pnpm run build:frontend",
-    "test": "jest",
-    "test:watch": "jest --watch",
-    "test:coverage": "jest --coverage"
+    "test": "jest --config jest.backend.config.js",
+    "test:watch": "jest --config jest.backend.config.js --watch",
+    "test:coverage": "jest --config jest.backend.config.js --coverage"
   },
   "dependencies": {
     "@vscode/codicons": "^0.0.43",

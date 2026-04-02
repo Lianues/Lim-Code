@@ -20,6 +20,7 @@ import { PromptManager } from '../../../prompt';
 import { t } from '../../../../i18n';
 import { Logger } from '../../../../core/logger';
 import type { CheckpointService } from './CheckpointService';
+import type { ResolvedPromptModeSnapshot } from '../../../settings/types';
 
 import type {
     ChatStreamChunkData,
@@ -79,6 +80,8 @@ export interface ToolIterationLoopConfig {
      * 回合继续时（如工具确认后）从元数据读取缓存的动态上下文，保证回合内一致性。
      */
     isNewTurn?: boolean;
+
+    promptModeSnapshot?: ResolvedPromptModeSnapshot;
 }
 
 /**
@@ -240,6 +243,7 @@ export class ToolIterationLoopService {
             abortSignal,
             summarizeAbortSignal,
             isFirstMessage = false,
+            promptModeSnapshot,
             maxIterations,
             startIteration = 0,
             createBeforeModelCheckpoint = true
@@ -264,8 +268,8 @@ export class ToolIterationLoopService {
         if (isNewTurn || turnStartIndex < 0 || !historyRef[turnStartIndex]?.turnDynamicContext) {
             // 新回合开始 / 缓存不存在：生成动态上下文并存到回合起始用户消息上
             runtimeContext = await this.loadDynamicRuntimeContext(conversationId);
-            dynamicContextMessages = this.promptManager.getDynamicContextMessages(runtimeContext);
-            dynamicContextText = this.promptManager.getDynamicContextText(runtimeContext);
+            dynamicContextMessages = this.promptManager.getDynamicContextMessages(promptModeSnapshot, runtimeContext);
+            dynamicContextText = this.promptManager.getDynamicContextText(promptModeSnapshot, runtimeContext);
 
             // 存到回合起始用户消息上
             if (turnStartIndex >= 0) {
@@ -315,6 +319,7 @@ export class ToolIterationLoopService {
                 config,
                 historyOptions,
                 dynamicContextText,
+                promptModeSnapshot,
                 modelOverride
             );
 
@@ -418,8 +423,8 @@ export class ToolIterationLoopService {
             // 4. 获取静态系统提示词（可被 API provider 缓存）
             // 静态部分包含：操作系统、时区、用户语言、工作区路径、工具定义
             const dynamicSystemPrompt = (isFirstMessage && iteration === 1)
-                ? this.promptManager.refreshAndGetPrompt(runtimeContext)
-                : this.promptManager.getSystemPrompt(false, runtimeContext);
+                ? this.promptManager.refreshAndGetPrompt(promptModeSnapshot, runtimeContext)
+                : this.promptManager.getSystemPrompt(promptModeSnapshot, false, runtimeContext);
 
             // 5. 记录请求开始时间
             const requestStartTime = Date.now();
@@ -432,6 +437,7 @@ export class ToolIterationLoopService {
                 dynamicSystemPrompt,
                 dynamicContextMessages,
                 modelOverride,
+                promptModeSnapshot,
                 conversationId
             });
 
@@ -562,7 +568,7 @@ export class ToolIterationLoopService {
             let firstConfirmTool: FunctionCallInfo | null = null;
 
             for (const call of functionCalls) {
-                if (this.toolExecutionService.toolNeedsConfirmation(call.name)) {
+                if (this.toolExecutionService.toolNeedsConfirmation(call.name, promptModeSnapshot)) {
                     firstConfirmTool = call;
                     break;
                 }
@@ -674,7 +680,8 @@ export class ToolIterationLoopService {
                     conversationId,
                     messageIndex,
                     config,
-                    abortSignal
+                    abortSignal,
+                    promptModeSnapshot
                 );
 
                 while (true) {
@@ -817,16 +824,17 @@ export class ToolIterationLoopService {
         configId: string,
         config: BaseChannelConfig,
         maxIterations: number,
-        modelOverride?: string
+        modelOverride?: string,
+        promptModeSnapshot?: ResolvedPromptModeSnapshot
     ): Promise<NonStreamToolLoopResult> {
         let iteration = 0;
         const historyOptions = this.messageBuilderService.buildHistoryOptions(config);
 
         // 在回合开始时一次性生成动态上下文，回合内所有迭代复用，并存到回合起始用户消息上
         const runtimeContext = await this.loadDynamicRuntimeContext(conversationId);
-        const dynamicContextMessages = this.promptManager.getDynamicContextMessages(runtimeContext);
+        const dynamicContextMessages = this.promptManager.getDynamicContextMessages(promptModeSnapshot, runtimeContext);
         // 预计算动态上下文文本，用于 ContextTrimService 的 token 计数
-        const dynamicContextText = this.promptManager.getDynamicContextText(runtimeContext);
+        const dynamicContextText = this.promptManager.getDynamicContextText(promptModeSnapshot, runtimeContext);
 
         // 存到回合起始用户消息上
         const historyRef = await this.conversationManager.getHistoryRef(conversationId);
@@ -847,6 +855,7 @@ export class ToolIterationLoopService {
                 config,
                 historyOptions,
                 dynamicContextText,
+                promptModeSnapshot,
                 modelOverride
             );
 
@@ -886,7 +895,7 @@ export class ToolIterationLoopService {
             const history = trimResult.history;
 
             // 获取静态系统提示词（可被 API provider 缓存）
-            const dynamicSystemPrompt = this.promptManager.getSystemPrompt(false, runtimeContext);
+            const dynamicSystemPrompt = this.promptManager.getSystemPrompt(promptModeSnapshot, false, runtimeContext);
 
             // 调用 AI（非流式）
             const response = await this.channelManager.generate({
@@ -895,6 +904,7 @@ export class ToolIterationLoopService {
                 dynamicSystemPrompt,
                 dynamicContextMessages,
                 modelOverride,
+                promptModeSnapshot,
                 conversationId
             });
 
@@ -935,7 +945,10 @@ export class ToolIterationLoopService {
             const functionResponses = await this.toolExecutionService.executeFunctionCalls(
                 functionCalls,
                 conversationId,
-                messageIndex
+                messageIndex,
+                config,
+                undefined,
+                promptModeSnapshot
             );
 
             // 将函数响应添加到历史（作为 user 消息，标记为函数响应）

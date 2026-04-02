@@ -96,6 +96,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private dependencyManager!: DependencyManager;
     private storagePathManager!: StoragePathManager;
     private diffStorageManager!: DiffStorageManager;
+    private conversationStorageAdapter?: FileSystemStorageAdapter;
     
     // 消息路由器
     private messageRouter!: MessageRouter;
@@ -164,6 +165,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         
         // 4. 初始化存储适配器（使用文件系统存储，避免 globalState 过大）
         const storageAdapter = new FileSystemStorageAdapter(vscode, effectiveDataUri);
+        this.conversationStorageAdapter = storageAdapter;
         
         // 5. 初始化 Diff 存储管理器（用于 apply_diff 的大文件内容抽离）
         this.diffStorageManager = DiffStorageManager.initialize(this.storagePathManager.getEffectiveDataPath());
@@ -171,6 +173,16 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         
         // 6. 初始化对话管理器
         this.conversationManager = new ConversationManager(storageAdapter);
+
+        // 6.1 后台迁移旧版单文件历史到分段存储格式，不阻塞主初始化链路
+        void storageAdapter.migrateLegacyConversationsToSegmented().then(result => {
+            console.log(`[LimCode][ConversationMigration] migrated=${result.migrated}, skipped=${result.skipped}, failed=${result.failed.length}`);
+            if (result.failed.length > 0) {
+                console.warn('[LimCode][ConversationMigration] failed conversations:', result.failed);
+            }
+        }).catch(error => {
+            console.warn('[LimCode][ConversationMigration] background migration failed:', error);
+        });
         
         // 7. 初始化配置管理器（使用Memento存储）
         const configStorage = new MementoStorageAdapter(
@@ -760,6 +772,30 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             command,
             data
         });
+    }
+
+    /**
+     * 手动迁移旧版对话历史到分段存储格式
+     */
+    public async migrateConversationHistories(progressCallback?: (status: { current: number; total: number; conversationId?: string }) => void): Promise<{
+        migrated: number;
+        skipped: number;
+        failed: Array<{ conversationId: string; error: string }>;
+    }> {
+        await this.initPromise;
+
+        if (!this.conversationStorageAdapter) {
+            throw new Error('Conversation storage adapter is not initialized.');
+        }
+
+        return await this.conversationStorageAdapter.migrateLegacyConversationsToSegmented(progressCallback);
+    }
+
+    public getEffectiveConversationDataPath(): string {
+        if (!this.storagePathManager) {
+            throw new Error('StoragePathManager is not initialized.');
+        }
+        return this.storagePathManager.getEffectiveDataPath();
     }
 
     /**

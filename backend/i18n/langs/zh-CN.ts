@@ -474,6 +474,101 @@ description: "简要描述该技能的功能及使用场景"
                 queryRequired: 'search 模式需要 query 参数',
                 searchFailed: '历史搜索失败：{error}'
             }
+        },
+        reviewDocument: {
+            sections: {
+                scope: '评审范围',
+                summary: '评审摘要',
+                findings: '评审发现',
+                milestones: '评审里程碑',
+                finalConclusion: '最终结论',
+                snapshot: '评审快照'
+            },
+            header: {
+                date: '日期',
+                overview: '概述',
+                status: '状态',
+                overallDecision: '总体结论'
+            },
+            summary: {
+                currentStatus: '当前状态',
+                reviewedModules: '已审模块',
+                currentProgress: '当前进度',
+                totalMilestones: '里程碑总数',
+                completedMilestones: '已完成里程碑',
+                totalFindings: '问题总数',
+                findingsBySeverity: '问题严重级别分布',
+                latestConclusion: '最新结论',
+                recommendedNextAction: '下一步建议',
+                overallDecision: '总体结论'
+            },
+            finding: {
+                severity: '严重级别',
+                category: '分类',
+                trackingStatus: '跟踪状态',
+                description: '说明',
+                recommendation: '建议',
+                relatedMilestones: '相关里程碑',
+                evidenceFiles: '证据'
+            },
+            milestone: {
+                status: '状态',
+                recordedAt: '记录时间',
+                reviewedModules: '已审模块',
+                summary: '摘要',
+                conclusion: '结论',
+                evidenceFiles: '证据',
+                recommendedNextAction: '下一步建议',
+                findings: '问题'
+            },
+            values: {
+                pending: '待定',
+                milestoneStatus: {
+                    inProgress: '进行中',
+                    completed: '已完成'
+                },
+                overallDecision: {
+                    pending: '待定',
+                    accepted: '通过',
+                    conditionallyAccepted: '有条件通过',
+                    rejected: '不通过',
+                    needsFollowUp: '需要后续跟进'
+                },
+                severity: {
+                    high: '高',
+                    medium: '中',
+                    low: '低'
+                },
+                category: {
+                    html: 'HTML',
+                    css: 'CSS',
+                    javascript: 'JavaScript',
+                    accessibility: '可访问性',
+                    performance: '性能',
+                    maintainability: '可维护性',
+                    docs: '文档',
+                    test: '测试',
+                    other: '其他'
+                },
+                trackingStatus: {
+                    open: '开放',
+                    acceptedRisk: '接受风险',
+                    fixed: '已修复',
+                    wontFix: '不修复',
+                    duplicate: '重复'
+                }
+            },
+            placeholders: {
+                noMilestones: '<!-- no milestones -->',
+                noFindings: '<!-- no findings -->',
+                defaultReviewScope: '_未提供评审范围。_',
+                defaultFinalConclusion: '_最终结论待补充。_'
+            },
+            templates: {
+                currentProgressWithLatest: '已记录 {count} 个里程碑；最新：{latestId}',
+                currentProgressEmpty: '已记录 0 个里程碑',
+                findingsBySeverity: '高 {high} / 中 {medium} / 低 {low}'
+            }
         }
     },
     

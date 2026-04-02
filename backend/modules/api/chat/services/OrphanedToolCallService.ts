@@ -11,6 +11,7 @@ import type { ConversationManager } from '../../../conversation/ConversationMana
 import type { Content } from '../../../conversation/types';
 import type { FunctionCallInfo } from '../utils';
 import type { ToolExecutionService } from './ToolExecutionService';
+import type { ResolvedPromptModeSnapshot } from '../../../settings/types';
 import type { ToolCallParserService } from './ToolCallParserService';
 
 export interface OrphanedToolCallResult {
@@ -37,7 +38,8 @@ export class OrphanedToolCallService {
    * @returns 如果有孤立调用，返回执行结果；否则返回 null
    */
   async checkAndExecuteOrphanedFunctionCalls(
-    conversationId: string
+    conversationId: string,
+    promptModeSnapshot?: ResolvedPromptModeSnapshot
   ): Promise<OrphanedToolCallResult | null> {
     const history = await this.conversationManager.getHistoryRef(conversationId);
 
@@ -71,7 +73,10 @@ export class OrphanedToolCallService {
     const { responseParts, toolResults } = await this.toolExecutionService.executeFunctionCallsWithResults(
       functionCalls,
       conversationId,
-      orphanedMessageIndex
+      orphanedMessageIndex,
+      undefined,
+      undefined,
+      promptModeSnapshot
     );
 
     // 将函数响应添加到历史（作为 user 消息，标记为函数响应）
