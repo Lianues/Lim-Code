@@ -3,7 +3,7 @@
  */
 
 import type { VSCodeMessage, VSCodeRequest } from '../types'
-import { playCue } from '../services/soundCues'
+import { handleSoundEvent } from '../services/soundEventController'
 
 // 获取 VSCode API
 declare function acquireVsCodeApi(): any
@@ -156,9 +156,17 @@ export async function showNotification(
   try {
     // 声音提醒（失败不影响通知本身）
     if (type === 'warning') {
-      void playCue('warning')
+      void handleSoundEvent({
+        cue: 'warning',
+        source: 'notification',
+        createdAt: Date.now()
+      })
     } else if (type === 'error') {
-      void playCue('error')
+      void handleSoundEvent({
+        cue: 'error',
+        source: 'notification',
+        createdAt: Date.now()
+      })
     }
 
     await sendToExtension('showNotification', { message, type })

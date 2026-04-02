@@ -157,6 +157,8 @@ const decodingPromises = new Map<string, Promise<AudioBuffer>>()
 
 // 冷却按 key 维度隔离（默认全局；可按 conversation 分组）
 const lastPlayedAtByKey = new Map<string, number>()
+// 播放中的 key 预占位，避免异步解码/恢复期间并发穿透冷却
+const inFlightPlayByKey = new Map<string, { token: string; reservedAt: number }>()
 
 function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
   const n = typeof value === 'number' && Number.isFinite(value) ? value : fallback
@@ -510,6 +512,43 @@ function getCooldownKey(options: { cooldownKey?: string }): string {
   return options.cooldownKey || '__global__'
 }
 
+function createPlaybackReservationToken(): string {
+  return `play_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`
+}
+
+function reservePlaybackSlot(cooldownKey: string, now: number): string | null {
+  if (inFlightPlayByKey.has(cooldownKey)) return null
+
+  const cooldown = currentSettings.cooldownMs
+  const lastPlayedAt = lastPlayedAtByKey.get(cooldownKey) || 0
+  if (cooldown > 0 && now - lastPlayedAt < cooldown) {
+    return null
+  }
+
+  const token = createPlaybackReservationToken()
+  inFlightPlayByKey.set(cooldownKey, { token, reservedAt: now })
+
+  if (inFlightPlayByKey.size > 200) {
+    const firstKey = inFlightPlayByKey.keys().next().value
+    if (firstKey) inFlightPlayByKey.delete(firstKey)
+  }
+
+  return token
+}
+
+function releasePlaybackSlot(cooldownKey: string, token: string | null): void {
+  if (!token) return
+  const reserved = inFlightPlayByKey.get(cooldownKey)
+  if (reserved?.token === token) {
+    inFlightPlayByKey.delete(cooldownKey)
+  }
+}
+
+function commitPlaybackSlot(cooldownKey: string, token: string | null, timestamp: number): void {
+  releasePlaybackSlot(cooldownKey, token)
+  setLastPlayedAt(cooldownKey, timestamp)
+}
+
 function setLastPlayedAt(cooldownKey: string, timestamp: number): void {
   lastPlayedAtByKey.set(cooldownKey, timestamp)
 
@@ -534,98 +573,106 @@ export async function playCue(
 
     const now = Date.now()
     const cooldownKey = getCooldownKey(options)
-    if (!options.bypassCooldown) {
-      const cooldown = currentSettings.cooldownMs
-      const lastPlayedAt = lastPlayedAtByKey.get(cooldownKey) || 0
-      if (cooldown > 0 && now - lastPlayedAt < cooldown) {
-        return false
-      }
+    const reservationToken = options.bypassCooldown ? null : reservePlaybackSlot(cooldownKey, now)
+    if (!options.bypassCooldown && !reservationToken) {
+      return false
     }
 
-    const ctx = getOrCreateAudioGraph()
-    if (!ctx || !masterGain) return false
+    let committed = false
 
-    // 尝试自动恢复（可能会因 autoplay 策略失败）
-    if (ctx.state === 'suspended') {
-      try {
-        await ctx.resume()
-      } catch {
-        // ignore
-      }
-    }
-    if (options.abortSignal?.aborted) return false
-    if (ctx.state !== 'running') return false
+    try {
+      const ctx = getOrCreateAudioGraph()
+      if (!ctx || !masterGain) return false
 
-    // 优先播放自定义音效
-    const asset = currentSettings.assets[cue]
-    if (asset) {
-      const ok = await playSoundAsset(ctx, asset, options.abortSignal)
-      if (ok) {
-        setLastPlayedAt(cooldownKey, now)
-        return true
-      }
-    }
-
-    // 默认内置提示音（resources/sound）
-    const builtin = getBuiltinSoundAsset(cue)
-    if (builtin?.url) {
-      const ok = await playSoundUrl(ctx, builtin.url, options.abortSignal)
-      if (ok) {
-        setLastPlayedAt(cooldownKey, now)
-        return true
-      }
-    }
-
-    const pattern = getPatternForCue(cue)
-    if (pattern.length === 0) return false
-
-    const oscType = getOscillatorType(currentSettings.theme)
-
-    // 留一点点时间给调度，避免 currentTime 太接近导致 start/stop 报错
-    let t = ctx.currentTime + 0.01
-
-    for (const beep of pattern) {
-      if (options.abortSignal?.aborted) return false
-      const durationSec = Math.max(0.01, beep.durationMs / 1000)
-
-      const osc = ctx.createOscillator()
-      osc.type = oscType
-      osc.frequency.setValueAtTime(beep.freq, t)
-
-      const gain = ctx.createGain()
-      gain.gain.setValueAtTime(0, t)
-
-      // 简单包络，避免“咔哒”声
-      const attack = Math.min(0.01, durationSec / 3)
-      const release = Math.min(0.02, durationSec / 2)
-      const sustainEnd = Math.max(t + attack, t + durationSec - release)
-
-      gain.gain.linearRampToValueAtTime(1, t + attack)
-      gain.gain.setValueAtTime(1, sustainEnd)
-      gain.gain.linearRampToValueAtTime(0, t + durationSec)
-
-      osc.connect(gain)
-      gain.connect(masterGain)
-
-      activeOscillators.add(osc)
-      osc.start(t)
-      osc.stop(t + durationSec + 0.03)
-
-      osc.onended = () => {
+      // 尝试自动恢复（可能会因 autoplay 策略失败）
+      if (ctx.state === 'suspended') {
         try {
-          activeOscillators.delete(osc)
-          osc.disconnect()
-          gain.disconnect()
+          await ctx.resume()
         } catch {
           // ignore
         }
       }
+      if (options.abortSignal?.aborted) return false
+      if (ctx.state !== 'running') return false
 
-      t = t + durationSec + (beep.gapMs ? beep.gapMs / 1000 : 0)
+      // 优先播放自定义音效
+      const asset = currentSettings.assets[cue]
+      if (asset) {
+        const ok = await playSoundAsset(ctx, asset, options.abortSignal)
+        if (ok) {
+          commitPlaybackSlot(cooldownKey, reservationToken, now)
+          committed = true
+          return true
+        }
+      }
+
+      // 默认内置提示音（resources/sound）
+      const builtin = getBuiltinSoundAsset(cue)
+      if (builtin?.url) {
+        const ok = await playSoundUrl(ctx, builtin.url, options.abortSignal)
+        if (ok) {
+          commitPlaybackSlot(cooldownKey, reservationToken, now)
+          committed = true
+          return true
+        }
+      }
+
+      const pattern = getPatternForCue(cue)
+      if (pattern.length === 0) return false
+
+      const oscType = getOscillatorType(currentSettings.theme)
+
+      // 留一点点时间给调度，避免 currentTime 太接近导致 start/stop 报错
+      let t = ctx.currentTime + 0.01
+
+      for (const beep of pattern) {
+        if (options.abortSignal?.aborted) return false
+        const durationSec = Math.max(0.01, beep.durationMs / 1000)
+
+        const osc = ctx.createOscillator()
+        osc.type = oscType
+        osc.frequency.setValueAtTime(beep.freq, t)
+
+        const gain = ctx.createGain()
+        gain.gain.setValueAtTime(0, t)
+
+        // 简单包络，避免“咔哒”声
+        const attack = Math.min(0.01, durationSec / 3)
+        const release = Math.min(0.02, durationSec / 2)
+        const sustainEnd = Math.max(t + attack, t + durationSec - release)
+
+        gain.gain.linearRampToValueAtTime(1, t + attack)
+        gain.gain.setValueAtTime(1, sustainEnd)
+        gain.gain.linearRampToValueAtTime(0, t + durationSec)
+
+        osc.connect(gain)
+        gain.connect(masterGain)
+
+        activeOscillators.add(osc)
+        osc.start(t)
+        osc.stop(t + durationSec + 0.03)
+
+        osc.onended = () => {
+          try {
+            activeOscillators.delete(osc)
+            osc.disconnect()
+            gain.disconnect()
+          } catch {
+            // ignore
+          }
+        }
+
+        t = t + durationSec + (beep.gapMs ? beep.gapMs / 1000 : 0)
+      }
+
+      commitPlaybackSlot(cooldownKey, reservationToken, now)
+      committed = true
+      return true
+    } finally {
+      if (!committed) {
+        releasePlaybackSlot(cooldownKey, reservationToken)
+      }
     }
-
-    setLastPlayedAt(cooldownKey, now)
-    return true
   } catch (err) {
     // 绝不能影响主流程
     console.warn('[soundCues] playCue failed:', err)

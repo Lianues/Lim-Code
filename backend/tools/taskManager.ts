@@ -51,6 +51,8 @@ export type TaskEventType = 'start' | 'progress' | 'complete' | 'cancelled' | 'e
  * 任务事件
  */
 export interface TaskEvent {
+    /** 事件创建时间戳 */
+    createdAt?: number;
     /** 任务 ID */
     taskId: string;
     /** 任务类型 */
@@ -290,9 +292,14 @@ class TaskManagerClass {
      * 发送任务事件
      */
     emitEvent(event: TaskEvent): void {
-        this.eventEmitter.emit('taskEvent', event);
+        const normalizedEvent: TaskEvent = {
+            ...event,
+            createdAt: typeof event.createdAt === 'number' && Number.isFinite(event.createdAt) ? event.createdAt : Date.now()
+        };
+
+        this.eventEmitter.emit('taskEvent', normalizedEvent);
         // 也发送特定类型的事件
-        this.eventEmitter.emit(`taskEvent:${event.taskType}`, event);
+        this.eventEmitter.emit(`taskEvent:${normalizedEvent.taskType}`, normalizedEvent);
     }
     
     /**

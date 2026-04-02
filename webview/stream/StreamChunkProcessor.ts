@@ -207,11 +207,13 @@ export class StreamChunkProcessor {
    * 从而将同一 tick 内 for-await 循环产生的多条消息自动合并。
    */
   private enqueue(type: string, data: Record<string, any>): void {
+    const createdAt = typeof data.createdAt === 'number' && Number.isFinite(data.createdAt) ? data.createdAt : Date.now()
     this.messageBuffer.push({
       conversationId: this.conversationId,
       streamId: this.streamId,
       type,
-      ...data
+      ...data,
+      createdAt
     });
 
     if (this.flushTimer === null) {

@@ -34,6 +34,7 @@ export type RetryStatusCallback = (status: {
     error?: string;
     errorDetails?: any;  // 完整的错误详情（如 API 响应体）
     nextRetryIn?: number;
+    createdAt: number;
     /** 触发重试的对话 ID（如果请求中提供了 conversationId） */
     conversationId?: string;
 }) => void;
@@ -268,6 +269,7 @@ export class ChannelManager {
                         type: 'retrySuccess',
                         attempt: attempt - 1,
                         maxAttempts: maxRetries,
+                        createdAt: Date.now(),
                         conversationId: request.conversationId
                     });
                 }
@@ -299,6 +301,7 @@ export class ChannelManager {
                             maxAttempts: maxRetries,
                             error: errorMessage,
                             errorDetails,
+                            createdAt: Date.now(),
                             conversationId: request.conversationId
                         });
                     }
@@ -322,6 +325,7 @@ export class ChannelManager {
                         error: errorMessage,
                         errorDetails,
                         nextRetryIn: retryInterval,
+                        createdAt: Date.now(),
                         conversationId: request.conversationId
                     });
                 }
@@ -414,6 +418,7 @@ export class ChannelManager {
                         type: 'retrySuccess',
                         attempt: attempt - 1,
                         maxAttempts: maxRetries,
+                        createdAt: Date.now(),
                         conversationId: request.conversationId
                     });
                 }
@@ -451,6 +456,7 @@ export class ChannelManager {
                             maxAttempts: maxRetries,
                             error: errorMessage,
                             errorDetails,
+                            createdAt: Date.now(),
                             conversationId: request.conversationId
                         });
                     }
@@ -474,6 +480,7 @@ export class ChannelManager {
                         error: errorMessage,
                         errorDetails,
                         nextRetryIn: retryInterval,
+                        createdAt: Date.now(),
                         conversationId: request.conversationId
                     });
                 }

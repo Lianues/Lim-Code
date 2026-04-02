@@ -98,6 +98,31 @@ export function isReviewDocPath(path: string): boolean {
   return isScopedMarkdownDocPath(path, '.limcode/review/')
 }
 
+const PLAN_SOURCE_ARTIFACT_SECTION_START = '<!-- LIMCODE_SOURCE_ARTIFACT_START -->'
+const PLAN_SOURCE_ARTIFACT_SECTION_END = '<!-- LIMCODE_SOURCE_ARTIFACT_END -->'
+
+/**
+ * Hide the tracked source metadata block from plan markdown when rendering task cards.
+ *
+ * The metadata remains in the saved document for machine-readable tracking,
+ * but the card preview should focus on user-facing plan content.
+ */
+export function stripPlanSourceArtifactSection(content: string): string {
+  const normalized = (content || '').replace(/\r\n?/g, '\n')
+  const start = normalized.indexOf(PLAN_SOURCE_ARTIFACT_SECTION_START)
+  const end = start >= 0
+    ? normalized.indexOf(PLAN_SOURCE_ARTIFACT_SECTION_END, start + PLAN_SOURCE_ARTIFACT_SECTION_START.length)
+    : -1
+
+  if (start < 0 || end < 0 || end < start) return normalized
+
+  const before = normalized.slice(0, start).trimEnd()
+  const after = normalized.slice(end + PLAN_SOURCE_ARTIFACT_SECTION_END.length).trim()
+  if (before && after) return `${before}\n\n${after}`
+  return before || after || ''
+}
+
+
 export interface PlanTodoItem {
   text: string
   completed: boolean

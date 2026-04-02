@@ -13,7 +13,7 @@ import ModeSelector from '../input/ModeSelector.vue'
 import ChannelSelector from '../input/ChannelSelector.vue'
 import ModelSelector from '../input/ModelSelector.vue'
 import type { PromptMode, ChannelOption, ModelInfo } from '../input/types'
-import { isDesignDocPath, isPlanDocPath } from '../../utils/taskCards'
+import { isDesignDocPath, isPlanDocPath, stripPlanSourceArtifactSection } from '../../utils/taskCards'
 import { getPlanExecutionPrompt, getPlanGenerationPrompt, getPlanUpdateMode, type PlanUpdateMode } from '../../utils/toolContinuations'
 import { generateId } from '../../utils/format'
 import {
@@ -402,6 +402,11 @@ async function refreshPlanSourceStatuses(cards: TaskCardItem[]) {
   }
 
   planSourceStatusByPath.value = next
+}
+
+function getCardPreviewContent(card: TaskCardItem): string {
+  if (card.kind !== 'plan') return card.content
+  return stripPlanSourceArtifactSection(card.content)
 }
 
 function isCardActionRunning(kind: TaskCardKind): boolean {
@@ -1019,7 +1024,7 @@ const hasAny = computed(() => taskCards.value.length > 0)
       <div class="task-content">
         <CustomScrollbar :max-height="isCardExpanded(c.key) ? 500 : 200">
           <div class="task-preview">
-            <MarkdownRenderer :content="c.content" />
+            <MarkdownRenderer :content="getCardPreviewContent(c)" />
           </div>
         </CustomScrollbar>
       </div>
