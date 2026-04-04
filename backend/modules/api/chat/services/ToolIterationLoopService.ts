@@ -693,6 +693,25 @@ export class ToolIterationLoopService {
                     isFunctionResponse: true
                 });
 
+                if (firstConfirmTool) {
+                    yield {
+                        conversationId,
+                        pendingToolCalls: [{
+                            id: firstConfirmTool.id,
+                            name: firstConfirmTool.name,
+                            args: firstConfirmTool.args
+                        }],
+                        content: finalContent,
+                        awaitingConfirmation: true as const,
+                        // 已在流式期间自动完成的前缀工具结果仍需同步给前端，
+                        // 但不能 continue 到下一轮，否则后续待确认工具会变成“无响应的 functionCall”。
+                        toolResults: earlyToolResults,
+                        checkpoints: []
+                    } satisfies ChatStreamToolConfirmationData;
+
+                    return;
+                }
+
                 // 通知前端所有工具已执行完毕（构造与传统路径一致的 toolResults 格式）。
                 // 流式提前执行的工具绕过了 executeFunctionCallsWithProgress 的
                 // start/end 进度事件，需要在这里补发 toolIteration 让前端更新 UI。
@@ -826,18 +845,6 @@ export class ToolIterationLoopService {
                 const functionResponseParts = executionResult.multimodalAttachments
                     ? [...executionResult.multimodalAttachments, ...orderedFunctionResponseParts]
                     : orderedFunctionResponseParts;
-
-                if (earlyToolResults.length > 0 && autoPrefix.length > 0) {
-                    try {
-                        this.log.warn('stream.early_tool_mixed_with_sequential', {
-                            conversationId,
-                            iteration,
-                            earlyToolIds: earlyToolResults.map(result => result.id),
-                            sequentialToolIds: executionResult.toolResults.map(result => result.id),
-                            callOrder: functionCalls.map(call => call.id)
-                        });
-                    } catch {}
-                }
 
                 executionResult = {
                     ...executionResult,
