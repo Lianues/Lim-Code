@@ -258,7 +258,8 @@
     "build": "pnpm run compile && pnpm run build:frontend",
     "test": "jest --config jest.backend.config.js",
     "test:watch": "jest --config jest.backend.config.js --watch",
-    "test:coverage": "jest --config jest.backend.config.js --coverage"
+    "test:coverage": "jest --config jest.backend.config.js --coverage",
+    "test:diagnose-execute-command-order": "jest --config jest.backend.config.js test/unit/chat/tool_iteration_loop.execute_command_diagnostic.test.ts --runInBand"
   },
   "dependencies": {
     "@vscode/codicons": "^0.0.43",

@@ -163,6 +163,73 @@ export class ToolIterationLoopService {
             skills
         };
     }
+
+    private orderToolResultsByCallSequence(
+        calls: FunctionCallInfo[],
+        groups: Array<ToolExecutionResult[] | undefined>
+    ): ToolExecutionResult[] {
+        const byId = new Map<string, ToolExecutionResult>();
+        const extras: ToolExecutionResult[] = [];
+
+        for (const group of groups) {
+            if (!group) continue;
+            for (const result of group) {
+                if (!result?.id) {
+                    extras.push(result);
+                    continue;
+                }
+                if (!byId.has(result.id)) {
+                    byId.set(result.id, result);
+                }
+            }
+        }
+
+        const ordered: ToolExecutionResult[] = [];
+        for (const call of calls) {
+            const match = byId.get(call.id);
+            if (match) {
+                ordered.push(match);
+                byId.delete(call.id);
+            }
+        }
+
+        ordered.push(...byId.values(), ...extras);
+        return ordered;
+    }
+
+    private orderFunctionResponsePartsByCallSequence(
+        calls: FunctionCallInfo[],
+        groups: Array<ContentPart[] | undefined>
+    ): ContentPart[] {
+        const byId = new Map<string, ContentPart>();
+        const extras: ContentPart[] = [];
+
+        for (const group of groups) {
+            if (!group) continue;
+            for (const part of group) {
+                const id = part.functionResponse?.id;
+                if (!id) {
+                    extras.push(part);
+                    continue;
+                }
+                if (!byId.has(id)) {
+                    byId.set(id, part);
+                }
+            }
+        }
+
+        const ordered: ContentPart[] = [];
+        for (const call of calls) {
+            const match = byId.get(call.id);
+            if (match) {
+                ordered.push(match);
+                byId.delete(call.id);
+            }
+        }
+
+        ordered.push(...byId.values(), ...extras);
+        return ordered;
+    }
     
     /**
      * 找到当前回合的起始用户消息索引（最后一个 isUserInput=true 的 user 消息）
@@ -605,6 +672,16 @@ export class ToolIterationLoopService {
                 autoPrefix.push(...remainingAutoPrefix);
             }
 
+            const earlyToolResults = this.orderToolResultsByCallSequence(
+                functionCalls,
+                [Array.from(streamingToolResults.values()).flatMap(result => result.toolResults)]
+            );
+            const orderedEarlyResponseParts = this.orderFunctionResponsePartsByCallSequence(
+                functionCalls,
+                [Array.from(streamingToolResults.values()).flatMap(result => result.responseParts)]
+            );
+            earlyResponseParts = orderedEarlyResponseParts;
+
             // 如果所有工具都已在流式期间执行完，autoPrefix 为空，
             // 但 earlyResponseParts 中有结果需要写入历史。
             // 必须写入，否则下一轮 LLM 调用时 assistant 的 tool_use 没有对应的 tool_result，
@@ -616,18 +693,30 @@ export class ToolIterationLoopService {
                     isFunctionResponse: true
                 });
 
+                if (firstConfirmTool) {
+                    yield {
+                        conversationId,
+                        pendingToolCalls: [{
+                            id: firstConfirmTool.id,
+                            name: firstConfirmTool.name,
+                            args: firstConfirmTool.args
+                        }],
+                        content: finalContent,
+                        awaitingConfirmation: true as const,
+                        // 已在流式期间自动完成的前缀工具结果仍需同步给前端，
+                        // 但不能 continue 到下一轮，否则后续待确认工具会变成“无响应的 functionCall”。
+                        toolResults: earlyToolResults,
+                        checkpoints: []
+                    } satisfies ChatStreamToolConfirmationData;
+
+                    return;
+                }
+
                 // 通知前端所有工具已执行完毕（构造与传统路径一致的 toolResults 格式）。
                 // 流式提前执行的工具绕过了 executeFunctionCallsWithProgress 的
                 // start/end 进度事件，需要在这里补发 toolIteration 让前端更新 UI。
                 // 直接从 ToolExecutionFullResult.toolResults 中提取，
                 // 其 result 字段就是工具本身的业务返回值，与传统路径格式一致。
-                const earlyToolResults: ToolExecutionResult[] = [];
-                for (const call of functionCalls) {
-                    if (streamingToolResults.has(call.id)) {
-                        earlyToolResults.push(...streamingToolResults.get(call.id)!.toolResults);
-                    }
-                }
-
                 // 发送每个工具的完成状态（让前端逐个显示工具结果）
                 for (const tr of earlyToolResults) {
                     const r = tr.result as any;
@@ -744,11 +833,25 @@ export class ToolIterationLoopService {
                 }
 
                 // 将函数响应添加到历史（合并流式期间提前执行的 + 后续执行的结果）
-                const laterResponseParts = executionResult.multimodalAttachments
-                    ? [...executionResult.multimodalAttachments, ...executionResult.responseParts]
-                    : executionResult.responseParts;
-                // earlyResponseParts 排在前面，保持与模型输出顺序一致
-                const functionResponseParts = [...earlyResponseParts, ...laterResponseParts];
+
+                const combinedToolResults = this.orderToolResultsByCallSequence(
+                    functionCalls,
+                    [earlyToolResults, executionResult.toolResults]
+                );
+                const orderedFunctionResponseParts = this.orderFunctionResponsePartsByCallSequence(
+                    functionCalls,
+                    [earlyResponseParts, executionResult.responseParts]
+                );
+                const functionResponseParts = executionResult.multimodalAttachments
+                    ? [...executionResult.multimodalAttachments, ...orderedFunctionResponseParts]
+                    : orderedFunctionResponseParts;
+
+                executionResult = {
+                    ...executionResult,
+                    responseParts: orderedFunctionResponseParts,
+                    toolResults: combinedToolResults,
+                    multimodalAttachments: executionResult.multimodalAttachments
+                };
 
                 await this.conversationManager.addContent(conversationId, {
                     role: 'user',
