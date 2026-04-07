@@ -3,6 +3,12 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.1.24] - 2026-04-04
+
+### Fixed
+  - 新增 Progress 文档能力
+  - 修复命令执行的个别bug
+
 ## [1.1.23] - 2026-04-03
 
 ### Fixed
