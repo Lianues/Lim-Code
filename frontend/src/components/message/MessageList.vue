@@ -58,7 +58,7 @@ const todoBarItems = computed<BuildTodoItem[]>(() => {
 })
 
 // 每个对话独立记忆 TODO 展开状态；key = conversationId, value = 用户最后设定的展开/折叠
-// undefined 表示该对话从未手动设置过（首次出现 TODO 时自动展开）
+// undefined 表示该对话从未手动设置过（首次出现 TODO 时默认折叠）
 const todoExpandedMap = new Map<string, boolean>()
 const isTodoExpanded = ref(false)
 
@@ -344,7 +344,7 @@ watch(
   () => chatStore.activeBuild?.id,
   (id, prev) => {
     if (id && id !== prev) {
-      isBuildExpanded.value = true
+      isBuildExpanded.value = false
     }
   }
 )
@@ -389,8 +389,8 @@ function restoreTodoExpandedState() {
   if (convId && todoExpandedMap.has(convId)) {
     isTodoExpanded.value = todoExpandedMap.get(convId)!
   } else {
-    isTodoExpanded.value = true
-    if (convId) todoExpandedMap.set(convId, true)
+    isTodoExpanded.value = false
+    if (convId) todoExpandedMap.set(convId, false)
   }
 }
 
@@ -1371,9 +1371,12 @@ function formatCheckpointTime(timestamp: number): string {
 }
 
 .build-body {
+  max-height: min(40vh, 320px);
   padding: 8px 10px 10px;
   background: var(--vscode-editor-background);
   border-top: 1px solid var(--vscode-panel-border);
+  overflow: auto;
+  overscroll-behavior: contain;
 }
 
 .build-empty {
@@ -1389,6 +1392,7 @@ function formatCheckpointTime(timestamp: number): string {
 .build-todos {
   display: flex;
   flex-direction: column;
+  min-height: 0;
   gap: 6px;
 }
 

@@ -388,21 +388,21 @@ onBeforeUnmount(() => {
         <div v-if="card.latestConclusion" class="progress-block">
           <div class="progress-label">{{ t('components.message.tool.progressCard.latestConclusion') }}</div>
           <div class="progress-rich-content">
-            <MarkdownRenderer :content="card.latestConclusion" />
+            <MarkdownRenderer :content="card.latestConclusion" render-profile="artifactSafe" />
           </div>
         </div>
 
         <div v-if="card.currentBlocker" class="progress-block">
           <div class="progress-label">{{ t('components.message.tool.progressCard.currentBlocker') }}</div>
           <div class="progress-rich-content">
-            <MarkdownRenderer :content="card.currentBlocker" />
+            <MarkdownRenderer :content="card.currentBlocker" render-profile="artifactSafe" />
           </div>
         </div>
 
         <div v-if="card.nextAction" class="progress-block">
           <div class="progress-label">{{ t('components.message.tool.progressCard.nextAction') }}</div>
           <div class="progress-rich-content">
-            <MarkdownRenderer :content="card.nextAction" />
+            <MarkdownRenderer :content="card.nextAction" render-profile="artifactSafe" />
           </div>
         </div>
 
@@ -431,7 +431,7 @@ onBeforeUnmount(() => {
         <div v-if="showRawContent" class="progress-block">
           <div class="progress-label">{{ t('components.message.tool.progressCard.rawResult') }}</div>
           <div class="progress-raw-result">
-            <MarkdownRenderer :content="props.content" />
+            <MarkdownRenderer :content="props.content" render-profile="artifactSafe" />
           </div>
         </div>
       </div>

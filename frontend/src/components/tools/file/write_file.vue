@@ -717,7 +717,7 @@ onBeforeUnmount(() => {
         <div class="plan-content">
           <CustomScrollbar :max-height="isPlanExpanded(file.path) ? 500 : 200">
             <div class="plan-preview">
-              <MarkdownRenderer :content="isPlanExpanded(file.path) ? file.content : extractPreviewText(file.content, { maxLines: 12, maxChars: 1600 })" />
+              <MarkdownRenderer :content="isPlanExpanded(file.path) ? file.content : extractPreviewText(file.content, { maxLines: 12, maxChars: 1600 })" render-profile="artifactSafe" />
             </div>
           </CustomScrollbar>
         </div>

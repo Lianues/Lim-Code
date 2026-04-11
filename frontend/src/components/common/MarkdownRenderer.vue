@@ -36,9 +36,12 @@ import footnote from 'markdown-it-footnote'
 import deflist from 'markdown-it-deflist'
 import taskLists from 'markdown-it-task-lists'
 
+type RenderProfile = 'default' | 'artifactSafe'
+
 const props = withDefaults(defineProps<{
   content: string
   latexOnly?: boolean  // 仅渲染 LaTeX，不渲染 Markdown（用于用户消息）
+  renderProfile?: RenderProfile
   /**
    * 是否处于流式更新中
    *
@@ -47,6 +50,7 @@ const props = withDefaults(defineProps<{
   isStreaming?: boolean
 }>(), {
   latexOnly: false,
+  renderProfile: 'default',
   isStreaming: false
 })
 
@@ -510,9 +514,9 @@ function markdownItWorkspaceFileLinks(md: MarkdownIt) {
 /**
  * 创建并配置 markdown-it 实例
  */
-function createMarkdownIt() {
+function createMarkdownIt(options: { allowHtml: boolean }) {
   const md = new MarkdownIt({
-    html: true,           // 允许 HTML 标签
+    html: options.allowHtml,
     xhtmlOut: false,
     breaks: true,         // 换行转 <br>
     linkify: true,        // 自动检测链接
@@ -674,7 +678,12 @@ function createMarkdownIt() {
 }
 
 // 创建 markdown-it 实例
-const md = createMarkdownIt()
+const defaultMd = createMarkdownIt({ allowHtml: true })
+const artifactSafeMd = createMarkdownIt({ allowHtml: false })
+
+function getMarkdownItInstance(renderProfile: RenderProfile): MarkdownIt {
+  return renderProfile === 'artifactSafe' ? artifactSafeMd : defaultMd
+}
 
 /**
  * 仅渲染 LaTeX（保留原始文本格式）
@@ -896,17 +905,19 @@ function markdownItKatex(md: MarkdownIt) {
 /**
  * 渲染 Markdown 和 LaTeX
  */
-function renderContent(content: string, latexOnly: boolean): string {
+function renderContent(content: string, latexOnly: boolean, renderProfile: RenderProfile): string {
   if (!content) return ''
   
   // 仅 LaTeX 模式（用户消息）
   if (latexOnly) {
     return renderLatexOnly(content)
   }
+
+  const markdownIt = getMarkdownItInstance(renderProfile)
   
   // 完整 Markdown 模式：LaTeX 由 markdown-it 插件解析（$...$ / $$...$$）
   // 每次渲染传入独立 env，保证 code block 的序号从 1 开始
-  let html = md.render(content, {})
+  let html = markdownIt.render(content, {})
   
   // 保留多个连续空格（在段落内容中）
   html = html.replace(/(<(?:p|li|td|th|dd|dt)[^>]*>)([\s\S]*?)(<\/(?:p|li|td|th|dd|dt)>)/g,
@@ -936,9 +947,11 @@ const STREAM_RENDER_DEBOUNCE_MS = 120
 let renderTimer: number | null = null
 /** 上一次实际渲染时使用的内容快照，用于跳过无变化的重渲染 */
 let lastRenderedSource = ''
+let lastRenderedProfile: RenderProfile = 'default'
 let lastRenderedLatexOnly = false
 /** 后处理（图片/Mermaid/链接校验）是否已对当前内容完成 */
 let postProcessedSource = ''
+let postProcessedProfile: RenderProfile = 'default'
 
 function clearRenderTimer() {
   if (renderTimer !== null) {
@@ -955,22 +968,28 @@ function scheduleRender() {
   if (!props.isStreaming && renderedContent.value === '') {
     const contentChanged = !(
       props.content === lastRenderedSource &&
-      props.latexOnly === lastRenderedLatexOnly
+      props.latexOnly === lastRenderedLatexOnly &&
+      props.renderProfile === lastRenderedProfile
     )
     if (contentChanged) {
       lastRenderedSource = props.content
       lastRenderedLatexOnly = props.latexOnly
-      renderedContent.value = renderContent(props.content, props.latexOnly)
+      lastRenderedProfile = props.renderProfile
+      renderedContent.value = renderContent(props.content, props.latexOnly, props.renderProfile)
     }
     // 后处理（图片/Mermaid/链接校验、代码块换行状态）仍异步执行
     renderTimer = window.setTimeout(async () => {
       await nextTick()
       applyCodeBlockWrapStates()
-      if (!props.isStreaming && postProcessedSource !== props.content) {
+      if (!props.isStreaming && (
+        postProcessedSource !== props.content ||
+        postProcessedProfile !== props.renderProfile
+      )) {
         await prevalidateFilePaths(props.content)
         await loadWorkspaceImages()
         await renderMermaid()
         postProcessedSource = props.content
+        postProcessedProfile = props.renderProfile
       }
     }, 0)
     return
@@ -981,26 +1000,30 @@ function scheduleRender() {
     const contentChanged = !(
       props.content === lastRenderedSource &&
       props.latexOnly === lastRenderedLatexOnly &&
+      props.renderProfile === lastRenderedProfile &&
       renderedContent.value !== ''
     )
 
     // 需要后处理（图片/Mermaid）且尚未完成
-    const needsPostProcess = !props.isStreaming && postProcessedSource !== props.content
+    const needsPostProcess = !props.isStreaming && (
+      postProcessedSource !== props.content ||
+      postProcessedProfile !== props.renderProfile
+    )
 
     if (contentChanged || needsPostProcess) {
       // 非流式阶段：渲染前预校验文件路径，写入缓存供 markdown-it 插件查询
       // 这样不存在的路径从一开始就不会生成 <a> 标签，无闪烁
-      if (!props.isStreaming) {
+      if (!props.isStreaming && contentChanged) {
         await prevalidateFilePaths(props.content)
       }
 
       lastRenderedSource = props.content
       lastRenderedLatexOnly = props.latexOnly
-      renderedContent.value = renderContent(props.content, props.latexOnly)
+      lastRenderedProfile = props.renderProfile
+      renderedContent.value = renderContent(props.content, props.latexOnly, props.renderProfile)
 
       // Mermaid / workspace images 需要基于最新 DOM 执行
       await nextTick()
-
       // 回填代码块换行状态（流式阶段也需要保持）
       applyCodeBlockWrapStates()
     }
@@ -1014,6 +1037,7 @@ function scheduleRender() {
     await renderMermaid()
 
     postProcessedSource = props.content
+    postProcessedProfile = props.renderProfile
   }, delay)
 }
 
@@ -1315,7 +1339,7 @@ onMounted(() => {
 })
 
 watch(
-  () => [props.content, props.latexOnly, props.isStreaming] as const,
+  () => [props.content, props.latexOnly, props.renderProfile, props.isStreaming] as const,
   () => {
     scheduleRender()
   },

@@ -92,7 +92,7 @@ const statusClass = computed(() => {
     <div v-if="hasPreview" class="preview">
       <CustomScrollbar :horizontal="true" :max-height="160">
         <div class="preview-inner">
-          <MarkdownRenderer v-if="previewIsMarkdown" :content="preview!" />
+          <MarkdownRenderer v-if="previewIsMarkdown" :content="preview!" render-profile="artifactSafe" />
           <pre v-else class="preview-text">{{ preview }}</pre>
         </div>
       </CustomScrollbar>

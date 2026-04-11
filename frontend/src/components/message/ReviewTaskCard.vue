@@ -666,13 +666,13 @@ onBeforeUnmount(() => {
                 <div v-if="item.description" class="review-finding-rich">
                   <div class="review-inline-label">{{ t('components.message.tool.reviewCard.changeDescription') }}</div>
                   <div class="review-rich-content compact">
-                    <MarkdownRenderer :content="item.description" />
+                    <MarkdownRenderer :content="item.description" render-profile="artifactSafe" />
                   </div>
                 </div>
                 <div v-if="item.recommendation" class="review-finding-rich">
                   <div class="review-inline-label">{{ t('components.message.tool.reviewCard.changeRecommendation') }}</div>
                   <div class="review-rich-content compact">
-                    <MarkdownRenderer :content="item.recommendation" />
+                    <MarkdownRenderer :content="item.recommendation" render-profile="artifactSafe" />
                   </div>
                 </div>
                 <div v-if="item.relatedMilestoneIds && item.relatedMilestoneIds.length > 0" class="review-detail-row">
@@ -709,13 +709,13 @@ onBeforeUnmount(() => {
                 <div v-if="item.description" class="review-finding-rich">
                   <div class="review-inline-label">{{ t('components.message.tool.reviewCard.changeDescription') }}</div>
                   <div class="review-rich-content compact">
-                    <MarkdownRenderer :content="item.description" />
+                    <MarkdownRenderer :content="item.description" render-profile="artifactSafe" />
                   </div>
                 </div>
                 <div v-if="item.recommendation" class="review-finding-rich">
                   <div class="review-inline-label">{{ t('components.message.tool.reviewCard.changeRecommendation') }}</div>
                   <div class="review-rich-content compact">
-                    <MarkdownRenderer :content="item.recommendation" />
+                    <MarkdownRenderer :content="item.recommendation" render-profile="artifactSafe" />
                   </div>
                 </div>
                 <div v-if="item.relatedMilestoneIds && item.relatedMilestoneIds.length > 0" class="review-detail-row">
@@ -752,13 +752,13 @@ onBeforeUnmount(() => {
                 <div v-if="item.description" class="review-finding-rich">
                   <div class="review-inline-label">{{ t('components.message.tool.reviewCard.changeDescription') }}</div>
                   <div class="review-rich-content compact">
-                    <MarkdownRenderer :content="item.description" />
+                    <MarkdownRenderer :content="item.description" render-profile="artifactSafe" />
                   </div>
                 </div>
                 <div v-if="item.recommendation" class="review-finding-rich">
                   <div class="review-inline-label">{{ t('components.message.tool.reviewCard.changeRecommendation') }}</div>
                   <div class="review-rich-content compact">
-                    <MarkdownRenderer :content="item.recommendation" />
+                    <MarkdownRenderer :content="item.recommendation" render-profile="artifactSafe" />
                   </div>
                 </div>
                 <div v-if="item.relatedMilestoneIds && item.relatedMilestoneIds.length > 0" class="review-detail-row">
@@ -779,14 +779,14 @@ onBeforeUnmount(() => {
         <div v-if="card.latestConclusion" class="review-block">
           <div class="review-label">{{ t('components.message.tool.reviewCard.latestConclusion') }}</div>
           <div class="review-rich-content">
-            <MarkdownRenderer :content="card.latestConclusion" />
+            <MarkdownRenderer :content="card.latestConclusion" render-profile="artifactSafe" />
           </div>
         </div>
 
         <div v-if="card.recommendedNextAction" class="review-block">
           <div class="review-label">{{ t('components.message.tool.reviewCard.recommendedNextAction') }}</div>
           <div class="review-rich-content">
-            <MarkdownRenderer :content="card.recommendedNextAction" />
+            <MarkdownRenderer :content="card.recommendedNextAction" render-profile="artifactSafe" />
           </div>
         </div>
 
@@ -818,7 +818,7 @@ onBeforeUnmount(() => {
           <div class="review-raw-result">
             <CustomScrollbar :max-height="400">
               <div class="review-raw-result-inner">
-                <MarkdownRenderer v-if="rawContentIsMarkdown" :content="rawContent" />
+                <MarkdownRenderer v-if="rawContentIsMarkdown" :content="rawContent" render-profile="artifactSafe" />
                 <pre v-else class="review-raw-text">{{ rawContent }}</pre>
               </div>
             </CustomScrollbar>

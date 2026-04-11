@@ -85,7 +85,7 @@ export function getExtensionFromMime(mimeType: string): string {
  * 检查 Content 是否只包含 functionResponse（工具执行结果）
  */
 export function isOnlyFunctionResponse(content: Content): boolean {
-  return content.parts.every(p => p.functionResponse !== undefined)
+  return content.parts.length > 0 && content.parts.every(p => p.functionResponse !== undefined)
 }
 
 /**

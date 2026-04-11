@@ -1081,7 +1081,7 @@ const hasAny = computed(() => taskCards.value.length > 0)
       <div class="task-content">
         <CustomScrollbar :max-height="isCardExpanded(c.key) ? 500 : 200">
           <div class="task-preview">
-            <MarkdownRenderer :content="getCardPreviewContent(c)" />
+            <MarkdownRenderer :content="getCardPreviewContent(c)" render-profile="artifactSafe" />
           </div>
         </CustomScrollbar>
       </div>
