@@ -2023,6 +2023,14 @@ export interface LanguageMessages {
                 saveFailed: string;
             };
             soundSettings: {
+                overview: {
+                    title: string;
+                    description: string;
+                };
+                sections: {
+                    sound: { title: string; description: string; };
+                    windowsNotification: { title: string; description: string; };
+                };
                 enabled: {
                     title: string;
                     description: string;
@@ -2070,6 +2078,7 @@ export interface LanguageMessages {
                     description: string;
                     enabled: string;
                     onlyWhenWindowNotFocused: string;
+                    optionsTitle: string;
                     rawTextHint: string;
                     bestEffortClickHint: string;
                     cases: {
@@ -2077,6 +2086,7 @@ export interface LanguageMessages {
                         awaitingUserAction: string;
                         continueRequired: string;
                     };
+                    casesTitle: string;
                     templates: {
                         title: string;
                         description: string;

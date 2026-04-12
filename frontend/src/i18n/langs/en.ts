@@ -787,7 +787,7 @@ const en: LanguageMessages = {
                 context: 'Context',
                 prompt: 'Prompt',
                 tokenCount: 'Token Count',
-                sound: 'Sound',
+                sound: 'Notification System',
                 appearance: 'Appearance',
                 general: 'General'
             },
@@ -1741,8 +1741,8 @@ const en: LanguageMessages = {
                         description: 'Configure specialized sub-agents that AI can invoke'
                     },
                     sound: {
-                        title: 'Sound',
-                        description: 'Play sound cues for warnings, errors, and task completion'
+                        title: 'Notification System',
+                        description: 'Configure sound cues and Windows Agent stop notifications'
                     },
                     appearance: {
                         title: 'Appearance',
@@ -1981,9 +1981,17 @@ const en: LanguageMessages = {
                 saveFailed: 'Save failed'
             },
             soundSettings: {
+                overview: {
+                    title: 'About This Page',
+                    description: 'This page manages Webview sound cues and Windows Agent stop notifications together. The settings below are grouped by function for easier adjustment.'
+                },
+                sections: {
+                    sound: { title: 'Sound Cues', description: 'Configure Webview sound cues, including enable state, volume, events, imported audio files, and test playback.' },
+                    windowsNotification: { title: 'Windows Agent Stop Notifications', description: 'Configure Windows notifications shown when the Agent stops, including templates and preview.' }
+                },
                 enabled: {
                     title: 'Enable Sound Notifications',
-                    description: 'Play sound cues on certain events (disabled by default)',
+                    description: 'Play sound cues on certain events. This switch affects only sound cues and does not control Windows system notifications.',
                     label: 'Enable'
                 },
                 volume: {
@@ -2022,12 +2030,14 @@ const en: LanguageMessages = {
                     taskError: 'Test: Task Failed'
                 },
                 windowsAgentStopNotification: {
-                    title: 'Windows System Notifications',
+                    title: 'Windows Agent Stop Notifications',
                     description: 'Only available on Windows. These notifications are used only when the Agent stops. This phase shows a recognizable window title and renders the notification text from templates.',
+                    optionsTitle: 'Notification Rules',
                     enabled: 'Enable Windows system notifications',
                     onlyWhenWindowNotFocused: 'Notify only when the current window is not focused',
                     rawTextHint: 'Notification title and body are generated from templates and do not directly display raw Agent text.',
                     bestEffortClickHint: 'Click handling remains best effort and is not a guarantee of precise window recovery in this phase.',
+                    casesTitle: 'Notify For',
                     cases: {
                         error: 'Notify on failures',
                         awaitingUserAction: 'Notify when user action is required',

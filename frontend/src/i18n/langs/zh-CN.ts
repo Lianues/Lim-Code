@@ -787,7 +787,7 @@ const zhCN: LanguageMessages = {
                 context: '上下文',
                 prompt: '提示词',
                 tokenCount: 'Token 计数',
-                sound: '声音提醒',
+                sound: '提示系统',
                 appearance: '外观',
                 general: '通用'
             },
@@ -1741,8 +1741,8 @@ const zhCN: LanguageMessages = {
                         description: '配置可由 AI 调用的专业子代理'
                     },
                     sound: {
-                        title: '声音提醒',
-                        description: '配置警告、错误与任务完成时的提示音'
+                        title: '提示系统',
+                        description: '统一配置声音提示与 Windows Agent 停止系统通知'
                     },
                     appearance: {
                         title: '外观设置',
@@ -1981,9 +1981,17 @@ const zhCN: LanguageMessages = {
                 saveFailed: '保存失败'
             },
             soundSettings: {
+                overview: {
+                    title: '本页说明',
+                    description: '本页同时管理 Webview 声音提示和 Windows Agent 停止系统通知。下方内容按功能分区，便于分别调整。'
+                },
+                sections: {
+                    sound: { title: '声音提示', description: '配置 Webview 内的提示音，包括启用、音量、事件、音效文件与测试播放。' },
+                    windowsNotification: { title: 'Windows Agent 停止系统通知', description: '配置 Agent 停止后的 Windows 系统通知、模板与预览。' }
+                },
                 enabled: {
                     title: '启用声音提醒',
-                    description: '在特定事件发生时播放提示音（默认关闭）',
+                    description: '在特定事件发生时播放提示音。此开关只影响声音提示，不影响 Windows 系统通知。',
                     label: '启用'
                 },
                 volume: {
@@ -2022,12 +2030,14 @@ const zhCN: LanguageMessages = {
                     taskError: '试听：任务失败'
                 },
                 windowsAgentStopNotification: {
-                    title: 'Windows 系统通知',
+                    title: 'Windows Agent 停止系统通知',
                     description: '仅在 Windows 生效。通知只用于 Agent 停止场景。当前阶段会显示当前窗口的可识别标题，并按模板生成通知文案。',
+                    optionsTitle: '通知开关与规则',
                     enabled: '启用 Windows 系统通知',
                     onlyWhenWindowNotFocused: '仅在当前窗口不在前台时通知',
                     rawTextHint: '通知标题和正文由扩展按模板生成，不直接显示 Agent 原始文本。',
                     bestEffortClickHint: '点击通知仍为尽力而为，不作为当前阶段的精确窗口回跳保证。',
+                    casesTitle: '通知场景',
                     cases: {
                         error: '失败时通知',
                         awaitingUserAction: '需要用户动作时通知',
