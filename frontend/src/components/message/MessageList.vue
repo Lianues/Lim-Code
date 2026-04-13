@@ -18,6 +18,7 @@ import {
   type TodoStatus as BuildTodoStatus
 } from '../../utils/todoList'
 import { getPlanExecutionPrompt, getPlanUpdateMode } from '../../utils/toolContinuations'
+import { computeVirtualRows, resolveLoadedVisibleMessages } from './messageListUtils'
 
 const { t } = useI18n()
 
@@ -413,12 +414,12 @@ function toggleTodoExpanded() {
 const VISIBLE_INCREMENT = 40
 const visibleCount = ref(VISIBLE_INCREMENT)
 
-// 是否还有更多“已加载但未展示”的消息
-const hasMoreVisible = computed(() => props.messages.length > visibleCount.value)
-// 是否还有更多“未加载到窗口”的历史消息（真分页）
+// 是否还需要继续向前补拉历史，以满足当前目标可见消息数
+const hasMoreVisible = computed(() => props.messages.length < visibleCount.value && chatStore.windowStartIndex > 0)
+// 是否还有更多“未加载到窗口”的历史消息
 const hasMoreHistory = computed(() => chatStore.windowStartIndex > 0)
-// 顶部加载指示器：任一维度有更多都显示
-const hasMore = computed(() => hasMoreVisible.value || hasMoreHistory.value)
+// 顶部加载指示器：只要仍有更早历史就显示
+const hasMore = computed(() => hasMoreHistory.value)
 
 // 增强的消息对象接口
 interface EnhancedMessage {
@@ -453,15 +454,10 @@ const mergeableCheckpointKeys = computed(() => {
 })
 
 const enhancedVisibleMessages = computed<EnhancedMessage[]>(() => {
-  const count = visibleCount.value
-  const total = props.messages.length
-  const startIndex = Math.max(0, total - count)
-  
-  // 仅对可见的消息进行切片
-  const visibleSlice = props.messages.slice(startIndex)
+  const visibleMessages = resolveLoadedVisibleMessages(props.messages, visibleCount.value)
 
   // 预先按消息索引对检查点进行分组
-  return visibleSlice.map(message => {
+  return visibleMessages.map(message => {
     const backendIndex = typeof message.backendIndex === 'number' ? message.backendIndex : -1
     const cpGroup = backendIndex !== -1 ? checkpointsByMsgIndex.value.get(backendIndex) : null
     
@@ -525,23 +521,33 @@ const ESTIMATED_ROW_HEIGHT = 112
 const VIRTUAL_OVERSCAN = 10
 const viewportHeight = ref(0)
 const scrollTop = ref(0)
+const lastVirtualizationLogKey = ref('')
 
 const virtualRows = computed(() => {
-  const rows = messageRenderRows.value
-  if (rows.length <= VIRTUALIZATION_ROW_THRESHOLD) {
-    return { rows, topPadding: 0, bottomPadding: 0 }
+  const result = computeVirtualRows(messageRenderRows.value, {
+    threshold: VIRTUALIZATION_ROW_THRESHOLD,
+    estimatedRowHeight: ESTIMATED_ROW_HEIGHT,
+    overscan: VIRTUAL_OVERSCAN,
+    viewportHeight: viewportHeight.value,
+    scrollTop: scrollTop.value
+  })
+
+  if (result.fallback && messageRenderRows.value.length > VIRTUALIZATION_ROW_THRESHOLD) {
+    const logKey = `${result.reason}:${messageRenderRows.value.length}:${result.startIndex}:${result.endIndex}`
+    if (lastVirtualizationLogKey.value !== logKey) {
+      lastVirtualizationLogKey.value = logKey
+      console.warn('message_list_virtualization_fallback', {
+        reason: result.reason,
+        totalRows: messageRenderRows.value.length,
+        startIndex: result.startIndex,
+        endIndex: result.endIndex
+      })
+    }
+  } else if (!result.fallback) {
+    lastVirtualizationLogKey.value = ''
   }
 
-  const safeViewportHeight = viewportHeight.value > 0 ? viewportHeight.value : 800
-  const visibleRows = Math.ceil(safeViewportHeight / ESTIMATED_ROW_HEIGHT)
-  const startIndex = Math.max(0, Math.floor(scrollTop.value / ESTIMATED_ROW_HEIGHT) - VIRTUAL_OVERSCAN)
-  const endIndex = Math.min(rows.length, startIndex + visibleRows + VIRTUAL_OVERSCAN * 2)
-
-  return {
-    rows: rows.slice(startIndex, endIndex),
-    topPadding: startIndex * ESTIMATED_ROW_HEIGHT,
-    bottomPadding: Math.max(0, (rows.length - endIndex) * ESTIMATED_ROW_HEIGHT)
-  }
+  return result
 })
 
 const isLoadingMore = ref(false)
@@ -558,21 +564,21 @@ async function loadMore() {
   const oldScrollTop = container.scrollTop
   
   try {
-    if (hasMoreVisible.value) {
-      // 仅展示更多“已加载到窗口”的消息
-      visibleCount.value += VISIBLE_INCREMENT
-      await nextTick()
-    } else if (hasMoreHistory.value) {
-      // 窗口已经展示到头了：向后端拉取更早一页
+    if (!hasMoreHistory.value) return
+
+    visibleCount.value += VISIBLE_INCREMENT
+    await nextTick()
+
+    while (hasMoreVisible.value && hasMoreHistory.value) {
       const prevLen = props.messages.length
       await chatStore.loadOlderMessagesPage()
       await nextTick()
-      const added = props.messages.length - prevLen
-      if (added > 0) {
-        // 让新拉取到的更早消息立刻可见
-        visibleCount.value += added
-        await nextTick()
+
+      if (props.messages.length <= prevLen) {
+        break
       }
+
+      await nextTick()
     }
   } finally {
     // 保持滚动位置：顶部插入内容会导致滚动跳动，这里手动修正

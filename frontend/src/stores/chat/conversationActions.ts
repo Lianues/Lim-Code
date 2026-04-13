@@ -7,7 +7,7 @@
 import type { ChatStoreState, Conversation, CheckpointRecord, BuildSession } from './types'
 import { sendToExtension } from '../../utils/vscode'
 import { contentToMessageEnhanced } from './parsers'
-import type { Content } from '../../types'
+import type { Content, Message } from '../../types'
 import { perfLog, perfMeasureAsync } from '../../utils/perf'
 import { trimWindowFromTop, syncTotalMessagesFromWindow } from './windowUtils'
 import {
@@ -16,6 +16,7 @@ import {
   type ConversationModelConfig,
   type ConversationPromptModeConfig
 } from './configActions'
+import { countVisibleChatMessages } from './visibilityUtils'
 
 // ============ 对话列表分页加载配置 ============
 
@@ -24,6 +25,9 @@ export const CONVERSATIONS_PAGE_SIZE = 30
 
 /** 当前对话消息分页大小（窗口初始加载 / 上拉加载） */
 export const MESSAGES_PAGE_SIZE = 120
+
+/** 首屏至少应保证的可见消息数 */
+export const MIN_INITIAL_VISIBLE_MESSAGES = 40
 
 /** 拉取元数据时的并发数（避免一次性打爆 IPC / IO） */
 const METADATA_FETCH_CONCURRENCY = 30
@@ -108,6 +112,74 @@ export function parsePersistedBuildSession(raw: any, conversationId: string): Bu
     startedAt,
     anchorBackendIndex,
     status
+  }
+}
+
+interface InitialVisibleMessageWindowResult {
+  messages: Message[]
+  totalMessages: number
+  windowStartIndex: number
+}
+
+export async function buildInitialVisibleMessageWindow(
+  initialPage: Content[],
+  initialTotalMessages: number,
+  fetchOlderPage: (beforeIndex: number) => Promise<{ total: number; messages: Content[] } | null | undefined>
+): Promise<InitialVisibleMessageWindowResult> {
+  let totalMessages = initialTotalMessages ?? initialPage.length
+  let messages = initialPage.map(content => contentToMessageEnhanced(content))
+  let windowStartIndex = initialPage[0]?.index ?? Math.max(0, totalMessages - initialPage.length)
+  let visibleCount = countVisibleChatMessages(messages)
+
+  perfLog('conversation_initial_visible_backfill', {
+    phase: 'initial',
+    rawCount: initialPage.length,
+    visibleCount,
+    totalMessages,
+    windowStartIndex,
+    satisfied: visibleCount >= MIN_INITIAL_VISIBLE_MESSAGES
+  })
+
+  while (visibleCount < MIN_INITIAL_VISIBLE_MESSAGES && windowStartIndex > 0) {
+    const previousStartIndex = windowStartIndex
+    const result = await fetchOlderPage(previousStartIndex)
+    const olderPage = result?.messages || []
+    totalMessages = result?.total ?? totalMessages
+
+    if (olderPage.length === 0) {
+      windowStartIndex = 0
+      break
+    }
+
+    const olderMessages = olderPage.map(content => contentToMessageEnhanced(content))
+    messages = [...olderMessages, ...messages]
+
+    const nextStartIndex = olderPage[0]?.index
+    windowStartIndex = typeof nextStartIndex === 'number'
+      ? nextStartIndex
+      : Math.max(0, previousStartIndex - olderPage.length)
+    visibleCount = countVisibleChatMessages(messages)
+
+    perfLog('conversation_initial_visible_backfill', {
+      phase: 'backfill',
+      beforeIndex: previousStartIndex,
+      rawCount: messages.length,
+      olderRawCount: olderPage.length,
+      visibleCount,
+      totalMessages,
+      windowStartIndex,
+      satisfied: visibleCount >= MIN_INITIAL_VISIBLE_MESSAGES
+    })
+
+    if (windowStartIndex >= previousStartIndex) {
+      break
+    }
+  }
+
+  return {
+    messages,
+    totalMessages,
+    windowStartIndex
   }
 }
 
@@ -362,23 +434,37 @@ export async function loadHistory(state: ChatStoreState): Promise<void> {
   if (!state.currentConversationId.value) return
   
   try {
+    const conversationId = state.currentConversationId.value
+
     // 重置折叠提示（重新加载最后一页）
     state.historyFolded.value = false
     state.foldedMessageCount.value = 0
 
     const result = await perfMeasureAsync('conversation.loadHistoryPaged', () =>
       sendToExtension<{ total: number; messages: Content[] }>('conversation.getMessagesPaged', {
-        conversationId: state.currentConversationId.value,
+        conversationId,
         limit: MESSAGES_PAGE_SIZE
       })
     )
 
     const page = result?.messages || []
-    state.totalMessages.value = result?.total ?? page.length
+    const initialWindow = await buildInitialVisibleMessageWindow(
+      page,
+      result?.total ?? page.length,
+      async (beforeIndex) => perfMeasureAsync('conversation.loadHistoryPaged.backfill', () =>
+        sendToExtension<{ total: number; messages: Content[] }>('conversation.getMessagesPaged', {
+          conversationId,
+          beforeIndex,
+          limit: MESSAGES_PAGE_SIZE
+        })
+      )
+    )
+
+    state.totalMessages.value = initialWindow.totalMessages
 
     // 转换所有消息，包括 functionResponse 消息
-    state.allMessages.value = page.map(content => contentToMessageEnhanced(content))
-    state.windowStartIndex.value = page[0]?.index ?? 0
+    state.allMessages.value = initialWindow.messages
+    state.windowStartIndex.value = initialWindow.windowStartIndex
     syncTotalMessagesFromWindow(state)
 
     perfLog('conversation.window', {
@@ -534,9 +620,21 @@ export async function switchConversation(
       ])
 
       const page = view?.messages || []
-      state.totalMessages.value = view?.totalMessages ?? page.length
-      state.allMessages.value = page.map(content => contentToMessageEnhanced(content))
-      state.windowStartIndex.value = page[0]?.index ?? 0
+      const initialWindow = await buildInitialVisibleMessageWindow(
+        page,
+        view?.totalMessages ?? page.length,
+        async (beforeIndex) => perfMeasureAsync('conversation.loadConversationForView.backfill', () =>
+          sendToExtension<{ total: number; messages: Content[] }>('conversation.getMessagesPaged', {
+            conversationId: id,
+            beforeIndex,
+            limit: MESSAGES_PAGE_SIZE
+          })
+        )
+      )
+
+      state.totalMessages.value = initialWindow.totalMessages
+      state.allMessages.value = initialWindow.messages
+      state.windowStartIndex.value = initialWindow.windowStartIndex
       syncTotalMessagesFromWindow(state)
 
       state.checkpoints.value = Array.isArray(view?.checkpoints) ? view.checkpoints : []
