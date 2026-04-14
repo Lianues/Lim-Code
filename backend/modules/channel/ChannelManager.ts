@@ -23,6 +23,8 @@ import type {
 } from './types';
 import { ChannelError, ErrorType } from './types';
 import { createProxyFetch, proxyStreamFetch } from './proxyFetch';
+import { Logger } from '../../core/logger';
+import { validateHistoryIntegrity } from './HistoryIntegrityValidator';
 
 /**
  * 重试状态回调类型
@@ -52,6 +54,7 @@ export type RetryStatusCallback = (status: {
 export class ChannelManager {
     private mcpManager?: McpManager;
     private retryStatusCallback?: RetryStatusCallback;
+    private readonly log = Logger.get('ChannelManager');
     
     constructor(
         private configManager: ConfigManager,
@@ -167,6 +170,37 @@ export class ChannelManager {
         // 网络错误可重试
         return true;
     }
+
+    /**
+     * 在请求发送前验证工具调用与工具结果的配对完整性
+     */
+    private validateHistoryBeforeRequest(request: GenerateRequest, channelType: string): void {
+        const validation = validateHistoryIntegrity(request.history);
+        if (validation.valid) {
+            return;
+        }
+
+        const issue = validation.issues[0];
+        const firstMessage = request.history[0];
+        const details = {
+            conversationId: request.conversationId,
+            channelType,
+            callId: issue.callId,
+            issueKind: issue.kind,
+            firstMessageRole: firstMessage?.role ?? null,
+            firstMessageIsFunctionResponse: firstMessage?.isFunctionResponse === true,
+            issueCount: validation.issues.length,
+            issues: validation.issues
+        };
+
+        this.log.warn('tool_pair_validation_failed', details);
+
+        throw new ChannelError(
+            ErrorType.VALIDATION_ERROR,
+            `Invalid tool history: ${issue.kind} (call_id: ${issue.callId})`,
+            details
+        );
+    }
     
     /**
      * 生成内容（非流式）- 内部实现
@@ -207,6 +241,9 @@ export class ChannelManager {
                 t('modules.channel.errors.configValidationFailed', { configId: request.configId })
             );
         }
+
+        // 5. 请求发送前校验工具调用历史完整性
+        this.validateHistoryBeforeRequest(request, config.type);
         
         // 5. 获取过滤后的工具声明（除非请求指定跳过工具）
         // 传递配置信息以便动态生成工具描述
@@ -382,6 +419,9 @@ export class ChannelManager {
                 t('modules.channel.errors.unsupportedChannelType', { type: config.type })
             );
         }
+
+        // 4. 请求发送前校验工具调用历史完整性
+        this.validateHistoryBeforeRequest(request, config.type);
         
         // 4. 获取过滤后的工具声明（除非请求指定跳过工具）
         // 传递配置信息以便动态生成工具描述
@@ -541,10 +581,14 @@ export class ChannelManager {
             
             // 解析响应体
             const responseBody = await response.json();
+            const responseHeaders: Record<string, string> = {};
+            response.headers.forEach((value, key) => {
+                responseHeaders[key] = value;
+            });
             
             return {
                 status: response.status,
-                headers: Object.fromEntries(response.headers.entries()),
+                headers: responseHeaders,
                 body: responseBody
             };
         } catch (error) {

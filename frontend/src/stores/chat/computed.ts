@@ -8,6 +8,7 @@ import {
   getToolApprovalStopKind,
   isAwaitingToolUserConfirmation
 } from '../../utils/toolContinuations'
+import { filterVisibleChatMessages } from './visibilityUtils'
 
 /**
  * 创建 Chat Store 计算属性
@@ -39,7 +40,7 @@ export function createChatComputed(state: ChatStoreState): ChatStoreComputed {
    * 用于显示的消息列表（过滤掉纯 functionResponse 消息）
    */
   const messages = computed(() =>
-    state.allMessages.value.filter(m => !m.isFunctionResponse)
+    filterVisibleChatMessages(state.allMessages.value)
   )
   
   /** 是否有消息 */

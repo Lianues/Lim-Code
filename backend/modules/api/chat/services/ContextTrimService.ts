@@ -30,6 +30,7 @@ import type { TokenEstimationService } from './TokenEstimationService';
 import type { MessageBuilderService } from './MessageBuilderService';
 
 import { Logger } from '../../../../core/logger';
+import { validateHistoryIntegrity } from '../../../channel/HistoryIntegrityValidator';
 const CONVERSATION_PINNED_FILES_KEY = 'inputPinnedFiles';
 const CONVERSATION_SKILLS_KEY = 'inputSkills';
 const DEFAULT_MAX_CONTEXT_TOKENS = 128000;
@@ -79,6 +80,14 @@ interface MaxContextResolution {
     configMaxContextTokens?: unknown;
     modelId?: string;
     modelContextWindow?: unknown;
+}
+
+interface NormalizedTrimStartResult {
+    startIndex: number;
+    valid: boolean;
+    reason: 'unchanged' | 'clamped_minimum' | 'moved_to_next_round' | 'moved_to_current_round' | 'advanced_to_valid_round' | 'no_legal_round_boundary';
+    issueKind?: string;
+    issueCallId?: string;
 }
 
 export class ContextTrimService {
@@ -137,6 +146,119 @@ export class ContextTrimService {
             return undefined;
         }
         return Math.floor(numericValue);
+    }
+
+    /**
+     * trim 起点只允许落在非 functionResponse 的 user 消息上。
+     */
+    private isLegalTrimStart(history: Content[], index: number): boolean {
+        const message = history[index];
+        return !!message && message.role === 'user' && !message.isFunctionResponse;
+    }
+
+    private collectLegalTrimStartIndices(history: Content[], minimumStartIndex: number): number[] {
+        const starts: number[] = [];
+        for (let i = Math.max(0, minimumStartIndex); i < history.length; i++) {
+            if (this.isLegalTrimStart(history, i)) {
+                starts.push(i);
+            }
+        }
+        return starts;
+    }
+
+    private normalizeTrimStartIndex(
+        fullHistory: Content[],
+        minimumStartIndex: number,
+        candidateStartIndex: number
+    ): NormalizedTrimStartResult {
+        if (fullHistory.length === 0) {
+            return {
+                startIndex: 0,
+                valid: true,
+                reason: 'unchanged'
+            };
+        }
+
+        const maxIndex = Math.max(0, fullHistory.length - 1);
+        const safeMinimumStartIndex = Math.max(0, Math.min(Math.floor(minimumStartIndex), maxIndex));
+        const rawCandidate = Number.isFinite(candidateStartIndex) ? Math.floor(candidateStartIndex) : safeMinimumStartIndex;
+        const clampedCandidate = Math.max(safeMinimumStartIndex, Math.min(rawCandidate, maxIndex));
+        const legalStartIndices = this.collectLegalTrimStartIndices(fullHistory, safeMinimumStartIndex);
+
+        if (legalStartIndices.length === 0) {
+            return {
+                startIndex: clampedCandidate,
+                valid: false,
+                reason: 'no_legal_round_boundary'
+            };
+        }
+
+        let normalizedStartIndex = clampedCandidate;
+        let reason: NormalizedTrimStartResult['reason'] = rawCandidate === clampedCandidate ? 'unchanged' : 'clamped_minimum';
+
+        if (!this.isLegalTrimStart(fullHistory, clampedCandidate)) {
+            const nextLegalStartIndex = legalStartIndices.find(index => index > clampedCandidate);
+            if (nextLegalStartIndex !== undefined) {
+                normalizedStartIndex = nextLegalStartIndex;
+                reason = 'moved_to_next_round';
+            } else {
+                let currentRoundStartIndex = legalStartIndices[legalStartIndices.length - 1];
+                for (let i = legalStartIndices.length - 1; i >= 0; i--) {
+                    if (legalStartIndices[i] <= clampedCandidate) {
+                        currentRoundStartIndex = legalStartIndices[i];
+                        break;
+                    }
+                }
+                normalizedStartIndex = currentRoundStartIndex;
+                reason = 'moved_to_current_round';
+            }
+        }
+
+        const candidateStarts = [normalizedStartIndex, ...legalStartIndices.filter(index => index > normalizedStartIndex)];
+        let firstIssue: ReturnType<typeof validateHistoryIntegrity>['issues'][number] | undefined;
+
+        for (let i = 0; i < candidateStarts.length; i++) {
+            const startIndex = candidateStarts[i];
+            const validation = validateHistoryIntegrity(fullHistory.slice(startIndex));
+            if (validation.valid) {
+                return {
+                    startIndex,
+                    valid: true,
+                    reason: i === 0 ? reason : 'advanced_to_valid_round'
+                };
+            }
+            if (!firstIssue && validation.issues.length > 0) {
+                firstIssue = validation.issues[0];
+            }
+        }
+
+        return {
+            startIndex: normalizedStartIndex,
+            valid: false,
+            reason,
+            issueKind: firstIssue?.kind,
+            issueCallId: firstIssue?.callId
+        };
+    }
+
+    private async getNormalizedHistoryForStartIndex(
+        conversationId: string,
+        fullHistory: Content[],
+        historyOptions: GetHistoryOptions,
+        minimumStartIndex: number,
+        candidateStartIndex: number
+    ): Promise<ContextTrimInfo & { normalization: NormalizedTrimStartResult }> {
+        const normalization = this.normalizeTrimStartIndex(fullHistory, minimumStartIndex, candidateStartIndex);
+        const history = await this.conversationManager.getHistoryForAPI(conversationId, {
+            ...historyOptions,
+            startIndex: normalization.startIndex
+        });
+
+        return {
+            history,
+            trimStartIndex: normalization.startIndex,
+            normalization
+        };
     }
 
     /**
@@ -435,10 +557,46 @@ export class ContextTrimService {
         // 从持久化存储获取裁剪状态
         let savedState = await this.getTrimState(conversationId);
         
-        // 检测回退：如果保存的 trimStartIndex 超出了当前历史长度，清除状态
-        if (savedState && savedState.trimStartIndex >= fullHistory.length) {
-            await this.clearTrimState(conversationId);
-            savedState = null;
+        if (savedState) {
+            // 检测回退：如果保存的 trimStartIndex 超出了当前历史长度，清除状态
+            if (savedState.trimStartIndex >= fullHistory.length) {
+                this.log.warn('trim_state_cleared_invalid', {
+                    conversationId,
+                    savedTrimStartIndex: savedState.trimStartIndex,
+                    reason: 'out_of_bounds',
+                    fullHistoryLength: fullHistory.length
+                });
+                await this.clearTrimState(conversationId);
+                savedState = null;
+            } else {
+                const normalizedSavedState = this.normalizeTrimStartIndex(fullHistory, summaryStartIndex, savedState.trimStartIndex);
+                if (!normalizedSavedState.valid) {
+                    this.log.warn('trim_state_cleared_invalid', {
+                        conversationId,
+                        savedTrimStartIndex: savedState.trimStartIndex,
+                        reason: normalizedSavedState.reason,
+                        issueKind: normalizedSavedState.issueKind,
+                        callId: normalizedSavedState.issueCallId
+                    });
+                    await this.clearTrimState(conversationId);
+                    savedState = null;
+                } else if (normalizedSavedState.startIndex !== savedState.trimStartIndex) {
+                    this.log.info('trim_state_normalized', {
+                        conversationId,
+                        savedTrimStartIndex: savedState.trimStartIndex,
+                        normalizedStartIndex: normalizedSavedState.startIndex,
+                        cleared: normalizedSavedState.startIndex <= summaryStartIndex,
+                        reason: normalizedSavedState.reason
+                    });
+                    if (normalizedSavedState.startIndex > summaryStartIndex) {
+                        savedState = { trimStartIndex: normalizedSavedState.startIndex };
+                        await this.saveTrimState(conversationId, savedState);
+                    } else {
+                        await this.clearTrimState(conversationId);
+                        savedState = null;
+                    }
+                }
+            }
         }
         
         // 加载 runtime 元数据以便正确生成系统提示词和动态上下文
@@ -537,11 +695,14 @@ export class ContextTrimService {
         // 检查是否启用上下文阈值检测（上下文裁剪和自动总结互斥）
         if (!config.contextThresholdEnabled && !config.autoSummarizeEnabled) {
             // 未启用阈值检测，直接返回从 summary 开始的历史
-            const history = await this.conversationManager.getHistoryForAPI(conversationId, {
-                ...historyOptions,
-                startIndex: summaryStartIndex
-            });
-            return { history, trimStartIndex: summaryStartIndex };
+            const normalizedHistory = await this.getNormalizedHistoryForStartIndex(
+                conversationId,
+                fullHistory,
+                historyOptions,
+                summaryStartIndex,
+                summaryStartIndex
+            );
+            return { history: normalizedHistory.history, trimStartIndex: normalizedHistory.trimStartIndex };
         }
         
         // 获取最大上下文和阈值
@@ -587,10 +748,13 @@ export class ContextTrimService {
         // 自动总结模式下不做裁剪，而是返回完整历史 + needsAutoSummarize 标记
         // 由 ToolIterationLoopService 在发送请求前触发总结
         if (config.autoSummarizeEnabled) {
-            const history = await this.conversationManager.getHistoryForAPI(conversationId, {
-                ...historyOptions,
-                startIndex: summaryStartIndex
-            });
+            const normalizedHistory = await this.getNormalizedHistoryForStartIndex(
+                conversationId,
+                fullHistory,
+                historyOptions,
+                summaryStartIndex,
+                summaryStartIndex
+            );
             
             // 估算当前 token 总量来判断是否需要总结
             const fullTokenResult = this.accumulateTokens(
@@ -624,7 +788,7 @@ export class ContextTrimService {
                 this.log.info('auto_summarize_needed', { conversationId, estimatedTotalTokens: fullTokenResult.estimatedTotalTokens, threshold });
             }
             
-            return { history, trimStartIndex: summaryStartIndex, needsAutoSummarize };
+            return { history: normalizedHistory.history, trimStartIndex: normalizedHistory.trimStartIndex, needsAutoSummarize };
         }
         
         // ========== 上下文裁剪模式（原有逻辑） ==========
@@ -657,16 +821,19 @@ export class ContextTrimService {
         // 如果完整历史不超过阈值，清除裁剪状态，返回完整历史
         if (fullTokenResult.estimatedTotalTokens <= threshold) {
             await this.clearTrimState(conversationId);
-            const history = await this.conversationManager.getHistoryForAPI(conversationId, {
-                ...historyOptions,
-                startIndex: summaryStartIndex
-            });
+            const normalizedHistory = await this.getNormalizedHistoryForStartIndex(
+                conversationId,
+                fullHistory,
+                historyOptions,
+                summaryStartIndex,
+                summaryStartIndex
+            );
             this.logDebug('trim.not_needed', {
                 conversationId,
                 estimatedTotalTokens: fullTokenResult.estimatedTotalTokens,
                 threshold
             });
-            return { history, trimStartIndex: summaryStartIndex };
+            return { history: normalizedHistory.history, trimStartIndex: normalizedHistory.trimStartIndex };
         }
         
         // 完整历史超过阈值，需要裁剪
@@ -697,33 +864,27 @@ export class ContextTrimService {
             
             // 如果使用保存的状态后不超过阈值，直接使用
             if (trimmedTokenResult.estimatedTotalTokens <= threshold) {
-                let trimmedHistory = await this.conversationManager.getHistoryForAPI(conversationId, {
-                    ...historyOptions,
-                    startIndex: savedState.trimStartIndex
-                });
-                
-                // 确保历史以 user 消息开始
-                let finalTrimStartIndex = savedState.trimStartIndex;
-                if (trimmedHistory.length > 0 && trimmedHistory[0].role !== 'user') {
-                    const firstUserIndex = trimmedHistory.findIndex(m => m.role === 'user');
-                    if (firstUserIndex > 0) {
-                        trimmedHistory = trimmedHistory.slice(firstUserIndex);
-                        finalTrimStartIndex = savedState.trimStartIndex + firstUserIndex;
-                    }
-                }
+                const normalizedHistory = await this.getNormalizedHistoryForStartIndex(
+                    conversationId,
+                    fullHistory,
+                    historyOptions,
+                    summaryStartIndex,
+                    savedState.trimStartIndex
+                );
                 
                 this.logDebug('trim.saved_state_reused', {
                     conversationId,
-                    finalTrimStartIndex
+                    finalTrimStartIndex: normalizedHistory.trimStartIndex
                 });
 
-                return { history: trimmedHistory, trimStartIndex: finalTrimStartIndex };
+                return { history: normalizedHistory.history, trimStartIndex: normalizedHistory.trimStartIndex };
             }
             
             // 使用保存的状态后仍然超过阈值，需要进一步裁剪
             // 使用 trimmedTokenResult 的回合信息进行裁剪
             return await this.performContextTrim(
                 conversationId,
+                fullHistory,
                 config,
                 historyOptions,
                 savedState.trimStartIndex,
@@ -738,6 +899,7 @@ export class ContextTrimService {
         // 没有保存的状态，或者状态无效，从 summaryStartIndex 开始裁剪
         return await this.performContextTrim(
             conversationId,
+            fullHistory,
             config,
             historyOptions,
             summaryStartIndex,
@@ -911,6 +1073,7 @@ export class ContextTrimService {
      */
     private async performContextTrim(
         conversationId: string,
+        fullHistory: Content[],
         config: BaseChannelConfig,
         historyOptions: GetHistoryOptions,
         effectiveStartIndex: number,
@@ -922,17 +1085,20 @@ export class ContextTrimService {
     ): Promise<ContextTrimInfo> {
         // 至少需要保留当前回合（最后一个回合）
         if (roundsAfterStart.length <= 1) {
-            const history = await this.conversationManager.getHistoryForAPI(conversationId, {
-                ...historyOptions,
-                startIndex: effectiveStartIndex
-            });
+            const normalizedHistory = await this.getNormalizedHistoryForStartIndex(
+                conversationId,
+                fullHistory,
+                historyOptions,
+                effectiveStartIndex,
+                effectiveStartIndex
+            );
             this.logDebug('trim.perform.no_additional_cut', {
                 conversationId,
-                effectiveStartIndex,
+                effectiveStartIndex: normalizedHistory.trimStartIndex,
                 estimatedTotalTokens,
                 reason: 'only_one_round'
             });
-            return { history, trimStartIndex: effectiveStartIndex };
+            return { history: normalizedHistory.history, trimStartIndex: normalizedHistory.trimStartIndex };
         }
         
         // 计算额外裁剪的 token 数
@@ -987,45 +1153,53 @@ export class ContextTrimService {
         
         if (roundsToSkip === 0) {
             // 不需要额外裁剪，返回从起始索引开始的历史
-            const history = await this.conversationManager.getHistoryForAPI(conversationId, {
-                ...historyOptions,
-                startIndex: effectiveStartIndex
-            });
+            const normalizedHistory = await this.getNormalizedHistoryForStartIndex(
+                conversationId,
+                fullHistory,
+                historyOptions,
+                effectiveStartIndex,
+                effectiveStartIndex
+            );
             this.logDebug('trim.perform.no_additional_cut', {
                 conversationId,
-                effectiveStartIndex,
+                effectiveStartIndex: normalizedHistory.trimStartIndex,
                 estimatedTotalTokens,
                 threshold,
                 targetTokens,
                 remainingEstimatedTokensAfterTrim,
                 roundEvaluation
             });
-            return { history, trimStartIndex: effectiveStartIndex };
+            return { history: normalizedHistory.history, trimStartIndex: normalizedHistory.trimStartIndex };
         }
         
         // 计算在原始历史中的起始索引
         const trimStartIndex = roundsAfterStart[roundsToSkip].startIndex;
         
-        // 使用 startIndex 选项获取裁剪后的历史
-        let trimmedHistory = await this.conversationManager.getHistoryForAPI(conversationId, {
-            ...historyOptions,
-            startIndex: trimStartIndex
-        });
-        let finalTrimStartIndex = trimStartIndex;
-        
-        // 确保历史以 user 消息开始（Gemini API 要求）
-        if (trimmedHistory.length > 0 && trimmedHistory[0].role !== 'user') {
-            const firstUserIndex = trimmedHistory.findIndex(m => m.role === 'user');
-            if (firstUserIndex > 0) {
-                trimmedHistory = trimmedHistory.slice(firstUserIndex);
-                finalTrimStartIndex = trimStartIndex + firstUserIndex;
-            }
-        }
+        const normalizedTrimmedHistory = await this.getNormalizedHistoryForStartIndex(
+            conversationId,
+            fullHistory,
+            historyOptions,
+            effectiveStartIndex,
+            trimStartIndex
+        );
+        const trimmedHistory = normalizedTrimmedHistory.history;
+        const finalTrimStartIndex = normalizedTrimmedHistory.trimStartIndex;
         
         // 保存裁剪状态到持久化存储
-        await this.saveTrimState(conversationId, {
-            trimStartIndex: finalTrimStartIndex
-        });
+        if (normalizedTrimmedHistory.normalization.valid) {
+            await this.saveTrimState(conversationId, {
+                trimStartIndex: finalTrimStartIndex
+            });
+        } else {
+            this.log.warn('trim_state_cleared_invalid', {
+                conversationId,
+                savedTrimStartIndex: trimStartIndex,
+                reason: normalizedTrimmedHistory.normalization.reason,
+                issueKind: normalizedTrimmedHistory.normalization.issueKind,
+                callId: normalizedTrimmedHistory.normalization.issueCallId
+            });
+            await this.clearTrimState(conversationId);
+        }
 
         this.logDebug('trim.perform.applied', {
             conversationId,
