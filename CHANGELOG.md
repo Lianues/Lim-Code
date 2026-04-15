@@ -3,6 +3,13 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.1.25] - 2026-04-15
+
+### Fixed
+  - 修复聊天历史完整性与消息可见性问题
+  - 修复 diff 生命周期、plan 可见性、NoAct 审批门闸与提示系统设置
+  - 其他
+
 ## [1.1.24] - 2026-04-04
 
 ### Fixed
