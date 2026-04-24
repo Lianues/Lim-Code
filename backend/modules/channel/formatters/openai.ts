@@ -293,13 +293,10 @@ export class OpenAIFormatter extends BaseFormatter {
                     tool_calls: toolCalls
                 };
                 
-                // 如果有思考内容，添加 reasoning_content（DeepSeek R1 必需）
-                if (thoughtParts.length > 0) {
-                    const reasoningContent = thoughtParts.map(p => p.text).join('\n');
-                    if (reasoningContent) {
-                        message.reasoning_content = reasoningContent;
-                    }
-                }
+                // 永远添加 reasoning_content（DeepSeek R1 等需要），没有内容时用空字符串
+                message.reasoning_content = thoughtParts.length > 0
+                    ? thoughtParts.map(p => p.text).join('\n')
+                    : '';
                 
                 messages.push(message);
             } else if (functionResponseParts.length > 0) {
@@ -323,12 +320,11 @@ export class OpenAIFormatter extends BaseFormatter {
                     content: messageContent
                 };
                 
-                // 如果有思考内容，添加 reasoning_content（仅 assistant 消息）
-                if (role === 'assistant' && thoughtParts.length > 0) {
-                    const reasoningContent = thoughtParts.map(p => p.text).join('\n');
-                    if (reasoningContent) {
-                        message.reasoning_content = reasoningContent;
-                    }
+                // 永远添加 reasoning_content（仅 assistant 消息），没有内容时用空字符串
+                if (role === 'assistant') {
+                    message.reasoning_content = thoughtParts.length > 0
+                        ? thoughtParts.map(p => p.text).join('\n')
+                        : '';
                 }
                 
                 messages.push(message);
@@ -459,12 +455,11 @@ export class OpenAIFormatter extends BaseFormatter {
                         content: messageContent
                     };
                     
-                    // 如果有思考内容，添加 reasoning_content（仅 assistant 消息）
-                    if (role === 'assistant' && thoughtParts.length > 0) {
-                        const reasoningContent = thoughtParts.map(p => p.text).join('\n');
-                        if (reasoningContent) {
-                            message.reasoning_content = reasoningContent;
-                        }
+                    // 永远添加 reasoning_content（仅 assistant 消息），没有内容时用空字符串
+                    if (role === 'assistant') {
+                        message.reasoning_content = thoughtParts.length > 0
+                            ? thoughtParts.map(p => p.text).join('\n')
+                            : '';
                     }
                     
                     messages.push(message);

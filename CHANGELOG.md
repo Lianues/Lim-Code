@@ -3,6 +3,11 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.1.26] - 2026-04-24
+
+### Fixed
+  - 修复没有思考内容时不发送reasoning_content的问题
+
 ## [1.1.25] - 2026-04-15
 
 ### Fixed
