@@ -10,6 +10,7 @@ import type { StreamChunk, StreamUsageMetadata } from './types';
 import type { ToolMode } from '../config/configs/base';
 import { parseXMLToolCalls } from '../../tools/xmlFormatter';
 import { IncrementalPromptToolParser } from '../../tools/promptToolParser';
+import { ThinkTagParser } from './thinkTagParser';
 
 // JSON 工具调用边界标记
 const TOOL_CALL_START = '<<<TOOL_CALL>>>';
@@ -92,6 +93,9 @@ export class StreamAccumulator {
 
     /** Prompt 模式下的增量工具解析器 */
     private promptToolParser?: IncrementalPromptToolParser;
+
+    /** 将内容中的 <think>...</think> 标签流式转换为 thought parts */
+    private readonly thinkTagParser = new ThinkTagParser();
     
     constructor(
         toolMode: ToolMode = 'function_call',
@@ -195,10 +199,24 @@ export class StreamAccumulator {
             }
         }
 
+        if (chunk.done) {
+            const trailingThinkParts = this.thinkTagParser.finalize();
+            for (const part of trailingThinkParts) {
+                this.addPart(part, {
+                    skipThinkTagParser: true,
+                    visibleDelta
+                });
+            }
+        }
+
         if (chunk.done && this.promptToolParser) {
             const trailingParts = this.promptToolParser.flushIncompleteAsText();
             for (const part of trailingParts) {
-                this.addPart(part, { skipPromptParser: true, visibleDelta });
+                this.addPart(part, {
+                    skipPromptParser: true,
+                    skipThinkTagParser: true,
+                    visibleDelta
+                });
             }
         }
         
@@ -252,14 +270,27 @@ export class StreamAccumulator {
         part: ContentPart,
         options?: {
             skipPromptParser?: boolean;
+            skipThinkTagParser?: boolean;
             visibleDelta?: ContentPart[];
         }
     ): void {
+        if (!options?.skipThinkTagParser && part.text && !part.thought) {
+            const parsedThinkParts = this.thinkTagParser.process(part.text);
+            for (const parsedPart of parsedThinkParts) {
+                this.addPart(parsedPart, {
+                    ...options,
+                    skipThinkTagParser: true
+                });
+            }
+            return;
+        }
+
         if (!options?.skipPromptParser && this.promptToolParser && part.text && !part.thought) {
             const parsedParts = this.promptToolParser.appendText(part.text);
             for (const parsedPart of parsedParts) {
                 this.addPart(parsedPart, {
                     skipPromptParser: true,
+                    skipThinkTagParser: true,
                     visibleDelta: options?.visibleDelta
                 });
             }
