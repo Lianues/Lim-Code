@@ -44,6 +44,7 @@ import type { ContextTrimService } from './ContextTrimService';
 import type { ToolExecutionService, ToolExecutionFullResult, ToolExecutionProgressEvent } from './ToolExecutionService';
 import type { SummarizeService } from './SummarizeService';
 import { resolveAndPersistPostToolStopState } from './postToolStopState';
+import { createChatToolStatusUpdate, EarlyStreamingToolProgressQueue } from './streamingToolProgress';
 
 const CONVERSATION_PINNED_FILES_KEY = 'inputPinnedFiles';
 const CONVERSATION_SKILLS_KEY = 'inputSkills';
@@ -544,6 +545,17 @@ export class ToolIterationLoopService {
             // 也包含 toolResults（通知前端，result 字段是工具本身的业务返回值）。
             const streamingToolPromises = new Map<string, Promise<ToolExecutionFullResult>>();
             const streamingToolResults = new Map<string, ToolExecutionFullResult>();
+            // 修改原因：提前执行工具是并发启动的，等待 Promise.all 会让已完成工具的 UI 状态被同批慢工具拖住。
+            // 修改方式：为本轮提前执行工具建立单独完成队列，任何工具完成后都可以立即 drain 并发送 toolStatus。
+            // 修改目的：让每张工具卡按自身生命周期从 executing 进入 success/error/awaiting_apply，而不是整批一起结算。
+            const earlyToolProgressQueue = new EarlyStreamingToolProgressQueue();
+            const drainSettledEarlyToolStatuses = (): ChatStreamToolStatusData[] => earlyToolProgressQueue
+                .drainSettled()
+                .flatMap(settlement => settlement.fullResult.toolResults.map(toolResult => ({
+                    conversationId,
+                    toolStatus: true as const,
+                    tool: createChatToolStatusUpdate(toolResult)
+                })));
 
             if (isAsyncGenerator(response)) {
                 // 流式响应处理
@@ -578,7 +590,21 @@ export class ToolIterationLoopService {
                                 // multimodalToolsEnabled，从而把已开启的多模态工具误判为关闭。
                                 // 修复方式：与常规工具执行路径保持一致，显式传入 config、abortSignal 和 promptModeSnapshot。
                                 // 修复目的：让提前执行和非提前执行两条路径使用同一套多模态能力计算，避免 UI 已开启但后台误判为 false。
-                                const promise = this.toolExecutionService.executeFunctionCallsWithResults(
+                                yield {
+                                    conversationId,
+                                    toolStatus: true as const,
+                                    tool: {
+                                        id: fc.id,
+                                        name: fc.name,
+                                        status: 'executing' as const,
+                                        // 修改原因：提前执行开始事件会把前端卡片从 streaming 推进到 executing；如果不携带完整 args，UI 只能继续显示半截 partialArgs。
+                                        // 修改方式：把后端 StreamAccumulator 已确认完成的 fc.args 随 executing 状态一起发送。
+                                        // 修改目的：执行中卡片立即显示完整工具名称、描述和参数，而不是等待最终 content/toolIteration。
+                                        args: fc.args
+                                    }
+                                } satisfies ChatStreamToolStatusData;
+
+                                const rawPromise = this.toolExecutionService.executeFunctionCallsWithResults(
                                     [{ id: fc.id, name: fc.name, args: fc.args }],
                                     conversationId,
                                     undefined,
@@ -594,16 +620,33 @@ export class ToolIterationLoopService {
                                     };
                                     return {
                                         responseParts: [{ functionResponse: { id: fc.id, name: fc.name, response: errorResponse } }],
-                                        toolResults: [{ id: fc.id, name: fc.name, result: errorResponse }],
+                                        toolResults: [{
+                                            id: fc.id,
+                                            name: fc.name,
+                                            // 修改原因：异常兜底结果也会走 toolStatus，必须保留参数快照用于前端完整渲染。
+                                            // 修改方式：把启动提前执行时的 fc.args 写入兜底 ToolExecutionResult。
+                                            // 修改目的：异常状态不再丢失工具输入描述。
+                                            args: fc.args,
+                                            result: errorResponse
+                                        }],
                                         checkpoints: []
                                     } as ToolExecutionFullResult;
                                 }).then(fullResult => {
                                     streamingToolResults.set(fc.id, fullResult);
                                     return fullResult;
                                 });
+
+                                // 修改原因：rawPromise 仍用于最终历史顺序收集，但 UI 进度不应被 Promise.all 批量等待。
+                                // 修改方式：把同一个 promise 注册到 EarlyStreamingToolProgressQueue，完成后进入可 drain 队列。
+                                // 修改目的：当多个 SubAgent 或普通工具并发提前执行时，已成功的工具可以立即变绿。
+                                const promise = earlyToolProgressQueue.track(fc, rawPromise);
                                 streamingToolPromises.set(fc.id, promise);
                             }
                         }
+                    }
+
+                    for (const statusChunk of drainSettledEarlyToolStatuses()) {
+                        yield statusChunk;
                     }
                 }
 
@@ -688,8 +731,22 @@ export class ToolIterationLoopService {
             let earlyResponseParts: ContentPart[] = [];
 
             if (streamingToolPromises.size > 0) {
-                // 等待所有流式期间启动的工具完成
-                await Promise.all(streamingToolPromises.values());
+                // 修改原因：Promise.all 会把所有提前执行工具的状态通知绑成整批结算，慢工具会让快工具一直停在 queued/pending。
+                // 修改方式：循环等待 EarlyStreamingToolProgressQueue 的下一项完成，并在每次完成后立即发送对应 toolStatus。
+                // 修改目的：保留最终历史写入的有序合并，同时让前端工具卡按单工具粒度实时完成。
+                while (earlyToolProgressQueue.hasPending()) {
+                    const readyStatuses = drainSettledEarlyToolStatuses();
+                    if (readyStatuses.length > 0) {
+                        for (const statusChunk of readyStatuses) {
+                            yield statusChunk;
+                        }
+                        continue;
+                    }
+                    await earlyToolProgressQueue.waitForNextSettlement();
+                }
+                for (const statusChunk of drainSettledEarlyToolStatuses()) {
+                    yield statusChunk;
+                }
 
                 // 从 autoPrefix 中移除已在流式期间执行完的工具（避免重复执行），
                 // 同时收集它们的 functionResponse parts（后续统一写入历史）。
@@ -760,23 +817,9 @@ export class ToolIterationLoopService {
                     return;
                 }
 
-                // 流式提前执行的工具绕过了 executeFunctionCallsWithProgress 的
-                // start/end 进度事件，需要在这里补发 toolIteration 让前端更新 UI。
-                for (const tr of earlyToolResults) {
-                    const r = tr.result as any;
-                    let status: ChatStreamToolStatusData['tool']['status'] = 'success';
-                    if (r?.success === false || r?.error || r?.cancelled || r?.rejected) {
-                        status = 'error';
-                    } else if (r?.data && r.data.appliedCount > 0 && r.data.failedCount > 0) {
-                        status = 'warning';
-                    }
-                    yield {
-                        conversationId,
-                        toolStatus: true as const,
-                        tool: { id: tr.id, name: tr.name, status, result: tr.result },
-                    } satisfies ChatStreamToolStatusData;
-                }
-
+                // 修改原因：提前执行工具的 start/end 状态已经由 EarlyStreamingToolProgressQueue 实时发送。
+                // 修改方式：这里仅发送 toolIteration 汇总，避免重复 toolStatus 让前端在同一工具上二次闪烁。
+                // 修改目的：把“单工具 UI 完成时机”和“整批历史进入下一轮模型”两个职责拆开。
                 yield {
                     conversationId,
                     content: finalContent,
@@ -848,23 +891,10 @@ export class ToolIterationLoopService {
                     }
 
                     if (event.type === 'end') {
-                        const r = event.toolResult.result as any;
-                        let status: ChatStreamToolStatusData['tool']['status'] = 'success';
-                        if (r?.success === false || r?.error || r?.cancelled || r?.rejected) {
-                            status = 'error';
-                        } else if (r?.data && r.data.appliedCount > 0 && r.data.failedCount > 0) {
-                            status = 'warning';
-                        }
-
                         yield {
                             conversationId,
                             toolStatus: true as const,
-                            tool: {
-                                id: event.call.id,
-                                name: event.call.name,
-                                status,
-                                result: event.toolResult.result
-                            }
+                            tool: createChatToolStatusUpdate(event.toolResult)
                         } satisfies ChatStreamToolStatusData;
                     }
                 }

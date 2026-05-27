@@ -17,7 +17,8 @@ export class SubAgentMonitorPanel {
 
     constructor(
         private readonly context: vscode.ExtensionContext,
-        private readonly devServerUrl?: string
+        private readonly devServerUrl?: string,
+        private readonly routeMessage?: (message: any, webview: vscode.Webview) => Promise<boolean>
     ) {
         this.unsubscribe = subAgentRunEventBus.subscribe((event, snapshot) => {
             this.postEvent(event, snapshot);
@@ -50,7 +51,9 @@ export class SubAgentMonitorPanel {
 
         this.panel.webview.html = this.getHtmlForWebview(this.panel.webview);
         this.panel.webview.onDidReceiveMessage(message => {
-            this.handleMessage(message);
+            this.handleMessage(message).catch(error => {
+                console.error('[SubAgentMonitorPanel] Failed to handle webview message:', error);
+            });
         }, undefined, this.context.subscriptions);
 
         this.panel.onDidDispose(() => {
@@ -64,7 +67,7 @@ export class SubAgentMonitorPanel {
         this.panel = undefined;
     }
 
-    private handleMessage(message: any): void {
+    private async handleMessage(message: any): Promise<void> {
         if (!message || typeof message !== 'object') return;
 
         if (message.type === 'subagents.monitorReady') {
@@ -82,15 +85,38 @@ export class SubAgentMonitorPanel {
                     activeRunIds: subAgentRunController.getActiveRunIds()
                 }
             });
+            return;
+        }
+
+        if (this.routeMessage && this.panel) {
+            // 修改原因：Monitor 复用 MessageItem/ToolMessage 后会发送 subagents、diff、tools 和 notification 请求，不能只处理 monitorReady。
+            // 修改方式：把非 lifecycle 消息委托给 ChatViewProvider 的统一 MessageRouter，并让响应发回当前 WebviewPanel。
+            // 修改目的：避免 Monitor 按钮 promise pending、diff 操作无响应，以及与主聊天 handler 形成两套孤岛实现。
+            const handled = await this.routeMessage(message, this.panel.webview);
+            if (!handled && message.requestId) {
+                this.panel.webview.postMessage({
+                    type: 'error',
+                    requestId: message.requestId,
+                    success: false,
+                    error: {
+                        code: 'UNKNOWN_TYPE',
+                        message: `Unknown message type: ${message.type}`
+                    }
+                });
+            }
         }
     }
 
     private postEvent(event: SubAgentRunEvent, snapshot: SubAgentRunSnapshot): void {
+        const isLiveDelta = event.type === 'llm_delta';
         this.panel?.webview.postMessage({
             type: 'subagentMonitor.event',
             data: {
                 event,
-                snapshot,
+                // 修改原因：llm_delta 是高频热路径，附带完整 snapshot 会随 contents/events 增长造成 O(n²) postMessage。
+                // 修改方式：实时 delta 只发送 event；状态、最终内容和控制事件仍带 snapshot 作为低频校准。
+                // 修改目的：SubAgent Monitor 实时流式显示，同时避免大输出或大工具参数把 webview 卡死。
+                snapshot: isLiveDelta ? undefined : snapshot,
                 focusRunId: this.focusRunId,
                 focusConversationId: this.focusConversationId,
                 // 修改原因：pause/resume/exit 会改变 run 是否仍活跃，前端需要实时刷新控制按钮可见性。

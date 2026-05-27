@@ -47,6 +47,13 @@ export interface SubAgentRunConversationStore {
 
 type SubAgentRunListener = (event: SubAgentRunEvent, snapshot: SubAgentRunSnapshot) => void;
 
+function isLiveOnlyEvent(event: SubAgentRunEvent): boolean {
+    // 修改原因：llm_delta 是高频流式热路径，写入 snapshot.events 会让内存事件列表和 Monitor postMessage 随输出长度 O(n²) 膨胀。
+    // 修改方式：把 llm_delta 标记为仅实时广播事件，不进入持久事件 journal，也不触发 metadata 落盘。
+    // 修改目的：SubAgent Monitor 能实时消费 delta，但历史恢复仍只依赖最终 contents 快照。
+    return event.type === 'llm_delta';
+}
+
 function normalizePersistedMap(raw: unknown): Record<string, SubAgentRunPersistedRecord> {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
         return {};
@@ -119,7 +126,9 @@ class SubAgentRunEventBus {
 
         snapshot.agentName = normalized.agentName || snapshot.agentName;
         snapshot.updatedAt = timestamp;
-        snapshot.events.push(normalized);
+        if (!isLiveOnlyEvent(normalized)) {
+            snapshot.events.push(normalized);
+        }
 
         if (normalized.type === 'run_completed') {
             snapshot.status = 'completed';

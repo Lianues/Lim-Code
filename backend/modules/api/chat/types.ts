@@ -398,6 +398,14 @@ export interface ChatStreamToolStatusData {
         name: string;
         /** 工具状态 */
         status: 'queued' | 'executing' | 'awaiting_apply' | 'success' | 'error' | 'warning';
+        /**
+         * 可选：工具调用的完整参数快照。
+         *
+         * 修改原因：流式提前执行状态可能早于前端完成 partialArgs 解析到达，单独的 status 无法让卡片显示完整描述。
+         * 修改方式：允许 toolStatus payload 携带 args，前端收到后覆盖对应工具的 args 并清理过期 partialArgs。
+         * 修改目的：把“执行态 + 输入快照”作为同一个状态事件，统一修复所有提前执行工具的 pending/executing 展示。
+         */
+        args?: Record<string, unknown>;
         /** 可选：本次工具的执行结果（用于前端即时展示，不建议用于持久化） */
         result?: Record<string, unknown>;
     };

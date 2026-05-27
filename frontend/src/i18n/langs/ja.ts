@@ -1792,9 +1792,9 @@ const ja: LanguageMessages = {
                     title: 'アプリケーション情報',
                     name: 'Lim Code - Vibe Coding アシスタント',
                     // なぜ同期するか：設定画面の表示バージョンが package.json より古く、インストール済みビルドを誤認しやすかったため。
-                    // どう変えるか：1.1.28 リリースに合わせて表示文字列も更新する。
+                    // どう変えるか：1.1.29 の最終リリースに合わせて表示文字列も更新する。
                     // 目的：package メタデータ、リリースノート、設定 UI のバージョンを一致させる。
-                    version: 'バージョン：1.1.28',
+                    version: 'バージョン：1.1.29',
                     repository: 'リポジトリ',
                     developer: '開発者'
                 }
@@ -1808,6 +1808,7 @@ const ja: LanguageMessages = {
                         autoSaveDelay: '自動保存遅延',
                         delayTime: '遅延時間',
                         delayTimeDesc: '変更が表示されてから自動保存するまでの待機時間',
+                        delay005s: '0.05 秒',
                         delay1s: '1 秒',
                         delay2s: '2 秒',
                         delay3s: '3 秒',
@@ -2431,6 +2432,7 @@ const ja: LanguageMessages = {
                     copyAll: 'すべてのリストをコピー',
                     copyList: 'リストをコピー',
                     dirStat: '{folderCount} フォルダー、{fileCount} ファイル',
+                    lines: '{count} 行',
                     collapse: '折りたたむ',
                     expandRemaining: '残り {count} 個を展開',
                     emptyDirectory: 'ディレクトリは空です'
@@ -2477,6 +2479,7 @@ const ja: LanguageMessages = {
                     title: 'ファイルを検索',
                     totalFiles: '合計 {count} ファイル',
                     fileCount: '{count} ファイル',
+                    lines: '{count} 行',
                     truncated: '切り捨て',
                     collapse: '折りたたむ',
                     expandRemaining: '残り {count} ファイルを展開',

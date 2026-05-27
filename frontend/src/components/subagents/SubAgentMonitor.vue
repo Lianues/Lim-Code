@@ -3,7 +3,10 @@ import { computed, onMounted, onBeforeUnmount, ref } from 'vue'
 import { CustomScrollbar } from '../common'
 import MessageItem from '../message/MessageItem.vue'
 import { contentToMessageEnhanced } from '@/stores/chat/parsers'
+import { applyStreamChunkToContents } from '@/stores/agentRun/contentDelta'
 import { onMessageFromExtension, sendToExtension } from '@/utils/vscode'
+import { shouldApplyEventFocus } from './monitorFocusPolicy'
+import { compareMonitorRunsByStableCreationOrder } from './monitorRunOrdering'
 import type { Content, ContentPart, Message, ToolUsage } from '@/types'
 
 // 修改原因：Monitor 需要区分暂停、等待用户处理和扩展重载中断，不能把它们都展示成失败。
@@ -38,10 +41,17 @@ const focusedRunId = ref<string | undefined>((window as any).__LIMCODE_INITIAL_R
 // 修改方式：由 SubAgentMonitorPanel 随 ready/snapshot/event 消息下发 activeRunIds，前端只按该集合决定按钮可见性。
 // 修改目的：历史 run 不会错误显示“中止/退出”等会影响主工具的操作。
 const activeRunIds = ref<Set<string>>(new Set())
+// 修改原因：实时事件会反复携带打开面板时的 focusRunId，并发 run 更新时会覆盖用户在 tab 上的手动选择。
+// 修改方式：记录用户是否已经在 Monitor 内主动选中过 run，实时 event 只在用户未选择前应用后端焦点。
+// 修改目的：从主窗口打开详情仍能自动定位，但 Monitor 内部切换不会被后续事件拉回旧 run。
+const hasUserSelectedRun = ref(false)
 let disposeMessageListener: (() => void) | undefined
 
 const orderedRuns = computed(() => {
-  return [...snapshots.value].sort((a, b) => b.updatedAt - a.updatedAt)
+  // 修改原因：updatedAt 会被每个 llm_delta 和工具事件刷新，并发 run 按 updatedAt 排序会导致 tab 顺序不停跳动。
+  // 修改方式：Run tab 改用创建时间的稳定顺序；updatedAt 仍只用于展示最近更新时间。
+  // 修改目的：Monitor 在流式提前执行和多 SubAgent 并发时不再出现“跑马灯”式重排。
+  return [...snapshots.value].sort(compareMonitorRunsByStableCreationOrder)
 })
 
 const focusedRun = computed(() => {
@@ -61,6 +71,36 @@ function upsertSnapshot(snapshot: SubAgentRunSnapshot) {
   } else {
     snapshots.value = [snapshot, ...snapshots.value]
   }
+}
+
+function applyLiveDeltaEvent(event: SubAgentRunEvent) {
+  if (event.type !== 'llm_delta' || !event.runId) return
+
+  const timestamp = event.timestamp || Date.now()
+  const index = snapshots.value.findIndex(item => item.runId === event.runId)
+  const baseRun = index >= 0
+    ? snapshots.value[index]
+    : {
+        runId: event.runId,
+        agentName: event.agentName,
+        status: 'running' as RunStatus,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        contents: [],
+        events: []
+      }
+
+  // 修改原因：后端不再为每个 SubAgent llm_delta 附带完整 snapshot，否则大输出会造成 postMessage 与事件数组 O(n²) 膨胀。
+  // 修改方式：Monitor 前端用共享 Content[] delta reducer 本地更新当前 run 的 model 消息，非 llm_delta 仍由后端 snapshot 校准。
+  // 目的：SubAgent AI 输出实时可见，同时保持 transcript 持久化仍以后端最终 content_snapshot/run_completed 为准。
+  const nextRun: SubAgentRunSnapshot = {
+    ...baseRun,
+    agentName: event.agentName || baseRun.agentName,
+    updatedAt: timestamp,
+    contents: applyStreamChunkToContents(baseRun.contents || [], event.payload, timestamp)
+  }
+
+  upsertSnapshot(nextRun)
 }
 
 function getFunctionResponseMap(contents: Content[]): Map<string, NonNullable<ContentPart['functionResponse']>> {
@@ -131,6 +171,10 @@ function formatTime(ms?: number): string {
 }
 
 function selectRun(runId: string) {
+  // 修改原因：用户在 Monitor 内点击 run tab 是显式选择，后续 run 事件不应再用旧 focusRunId 覆盖它。
+  // 修改方式：除更新 focusedRunId 外，同步标记 hasUserSelectedRun。
+  // 修改目的：并发多个 SubAgent 时，用户可以稳定查看任意一个 run。
+  hasUserSelectedRun.value = true
   focusedRunId.value = runId
 }
 
@@ -222,19 +266,38 @@ onMounted(async () => {
   disposeMessageListener = onMessageFromExtension((message: any) => {
     if (message.type === 'subagentMonitor.event') {
       if (message.data?.snapshot) upsertSnapshot(message.data.snapshot)
-      if (message.data?.focusRunId) focusedRunId.value = message.data.focusRunId
+      if (message.data?.event) applyLiveDeltaEvent(message.data.event)
+      if (shouldApplyEventFocus({
+        currentFocusRunId: focusedRunId.value,
+        incomingFocusRunId: message.data?.focusRunId,
+        hasUserSelectedRun: hasUserSelectedRun.value
+      })) {
+        focusedRunId.value = message.data.focusRunId
+      }
       updateActiveRunIds(message.data?.activeRunIds)
     }
     if (message.type === 'subagentMonitor.snapshot') {
       snapshots.value = Array.isArray(message.data?.snapshots) ? message.data.snapshots : []
-      if (message.data?.focusRunId) focusedRunId.value = message.data.focusRunId
+      if (message.data?.focusRunId) {
+        // 修改原因：snapshot/monitorReady 代表打开详情或重新同步，是显式导航事件，应该能覆盖旧选择。
+        // 修改方式：应用后端 focusRunId，同时清除“用户已手动选择”标记，让新的显式入口成为默认焦点。
+        // 修改目的：用户从主聊天再次打开另一个 run 时，Monitor 能正确跳转到新 run。
+        focusedRunId.value = message.data.focusRunId
+        hasUserSelectedRun.value = false
+      }
       updateActiveRunIds(message.data?.activeRunIds)
     }
   })
 
   const initial = await sendToExtension<{ snapshots: SubAgentRunSnapshot[]; focusRunId?: string; activeRunIds?: string[] }>('subagents.monitorReady', {})
   snapshots.value = Array.isArray(initial?.snapshots) ? initial.snapshots : []
-  if (initial?.focusRunId) focusedRunId.value = initial.focusRunId
+  if (initial?.focusRunId) {
+    // 修改原因：初次 monitorReady 是面板启动时的默认焦点来源，不属于用户手动选择。
+    // 修改方式：应用初始 focusRunId，并保持 hasUserSelectedRun=false。
+    // 修改目的：后续用户没有手动切换前，实时事件仍可补齐初始聚焦。
+    focusedRunId.value = initial.focusRunId
+    hasUserSelectedRun.value = false
+  }
   updateActiveRunIds(initial?.activeRunIds)
 })
 

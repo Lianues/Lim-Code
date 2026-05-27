@@ -1,5 +1,6 @@
 import { OpenAIResponsesFormatter } from '../../modules/channel/formatters/openai-responses';
 import { StreamAccumulator } from '../../modules/channel/StreamAccumulator';
+import { StreamResponseProcessor } from '../../modules/api/chat/handlers/StreamResponseProcessor';
 
 function accumulateResponsesEvents(events: any[]) {
     const formatter = new OpenAIResponsesFormatter();
@@ -11,6 +12,16 @@ function accumulateResponsesEvents(events: any[]) {
     }
 
     return accumulator.getContent();
+}
+
+async function* streamResponsesEvents(events: any[]) {
+    // 修改原因：StreamResponseProcessor 的回归测试需要走 formatter → processor 的真实流式路径，而不是手写 StreamChunk。
+    // 修改方式：把 Responses 原始事件按 AsyncGenerator 产出，并在每步调用 formatter.parseStreamChunk。
+    // 修改目的：同时覆盖 provider 事件别名归一化、累加器和 processor 的 snapshot 策略。
+    const formatter = new OpenAIResponsesFormatter();
+    for (const event of events) {
+        yield formatter.parseStreamChunk(event);
+    }
 }
 
 describe('OpenAI Responses function-call streaming', () => {
@@ -177,5 +188,99 @@ describe('OpenAI Responses function-call streaming', () => {
         expect(calls).toHaveLength(1);
         expect(calls[0].id).toBe('call_without_done_index');
         expect(calls[0].args).toEqual(JSON.parse(finalArguments));
+    });
+
+    it('normalizes dotted function_call argument event aliases before dispatch', () => {
+        // 修改原因：项目中不能在 switch 分支里散落 response.function_call_arguments.* 和 response.function_call.arguments.* 两套重复 case。
+        // 修改方式：测试兼容网关常见的 dotted spelling 会被 formatter 归一化到同一条内部处理路径。
+        // 修改目的：以后新增 Responses 事件时只扩展别名表，不复制整段工具参数处理逻辑。
+        const finalArguments = JSON.stringify({ path: 'alias.md', content: 'ok' });
+        const content = accumulateResponsesEvents([
+            {
+                type: 'response.output_item.added',
+                output_index: 0,
+                item: {
+                    type: 'function_call',
+                    id: 'fc_alias_item',
+                    call_id: 'call_alias_id',
+                    name: 'write_file',
+                    arguments: '',
+                    status: 'in_progress'
+                }
+            },
+            {
+                type: 'response.function_call.arguments.delta',
+                item_id: 'fc_alias_item',
+                output_index: 0,
+                delta: finalArguments.slice(0, 10)
+            },
+            {
+                type: 'response.function_call.arguments.done',
+                item_id: 'fc_alias_item',
+                output_index: 0,
+                name: 'write_file',
+                arguments: finalArguments
+            }
+        ]);
+
+        const calls = content.parts.filter(part => part.functionCall).map(part => part.functionCall! as any);
+        expect(calls).toHaveLength(1);
+        expect(calls[0].id).toBe('call_alias_id');
+        expect(calls[0].args).toEqual(JSON.parse(finalArguments));
+    });
+
+    it('does not attach contentSnapshot or parse partial JSON during Responses argument deltas', async () => {
+        // 修改原因：OpenAI Responses 大工具参数卡顿的根因是 arguments.delta 热路径触发 contentSnapshot 和半截 JSON parse。
+        // 修改方式：走 StreamResponseProcessor 流式路径，确认 delta 期间没有 contentSnapshot，也没有 console.warn。
+        // 修改目的：防止后续改动把高频 tool args delta 重新带回完整 Content 重建路径。
+        const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const processor = new StreamResponseProcessor({
+            requestStartTime: Date.now(),
+            providerType: 'openai-responses',
+            toolMode: 'function_call',
+            conversationId: 'test-responses-hot-path'
+        });
+
+        const received: any[] = [];
+        try {
+            for await (const chunkData of processor.processStream(streamResponsesEvents([
+                {
+                    type: 'response.output_item.added',
+                    output_index: 0,
+                    item: {
+                        type: 'function_call',
+                        id: 'fc_hot_path_item',
+                        call_id: 'call_hot_path_id',
+                        name: 'write_file',
+                        arguments: '',
+                        status: 'in_progress'
+                    }
+                },
+                {
+                    type: 'response.function_call_arguments.delta',
+                    item_id: 'fc_hot_path_item',
+                    output_index: 0,
+                    delta: '{"path":"big.ts",'
+                },
+                {
+                    type: 'response.function_call_arguments.delta',
+                    item_id: 'fc_hot_path_item',
+                    output_index: 0,
+                    delta: '"content":"still incomplete"'
+                }
+            ]))) {
+                received.push(chunkData.chunk);
+            }
+
+            expect(received.some(chunk => chunk.contentSnapshot)).toBe(false);
+            expect(warnSpy).not.toHaveBeenCalled();
+
+            const streamingContent = processor.getAccumulator().getStreamingContent();
+            const call = streamingContent.parts.find(part => part.functionCall)?.functionCall as any;
+            expect(call.partialArgs).toBe('{"path":"big.ts","content":"still incomplete"');
+            expect(call.args).toEqual({});
+        } finally {
+            warnSpy.mockRestore();
+        }
     });
 });

@@ -1792,9 +1792,9 @@ const zhCN: LanguageMessages = {
                     title: '应用信息',
                     name: 'Lim Code - Vibe Coding助手',
                     // 为什么同步展示版本号：设置页版本曾落后于 package.json，用户会误判当前安装包。
-                    // 怎么改：随 1.1.28 发布把展示字符串同步到扩展版本。
+                    // 怎么改：随 1.1.29 最终发布把展示字符串同步到扩展版本。
                     // 目的：让设置页、package 元数据和发布说明保持一致。
-                    version: '版本：1.1.28',
+                    version: '版本：1.1.29',
                     repository: '项目仓库',
                     developer: '开发者'
                 }
@@ -1808,6 +1808,7 @@ const zhCN: LanguageMessages = {
                         autoSaveDelay: '自动保存延迟',
                         delayTime: '延迟时间',
                         delayTimeDesc: '修改显示后等待此时间再自动保存',
+                        delay005s: '0.05 秒',
                         delay1s: '1 秒',
                         delay2s: '2 秒',
                         delay3s: '3 秒',
@@ -2431,6 +2432,7 @@ const zhCN: LanguageMessages = {
                     copyAll: '复制全部列表',
                     copyList: '复制列表',
                     dirStat: '{folderCount} 文件夹, {fileCount} 文件',
+                    lines: '{count} 行',
                     collapse: '收起',
                     expandRemaining: '展开剩余 {count} 个',
                     emptyDirectory: '目录为空'
@@ -2710,6 +2712,7 @@ const zhCN: LanguageMessages = {
                     title: '查找文件',
                     totalFiles: '共 {count} 个文件',
                     fileCount: '{count} 个文件',
+                    lines: '{count} 行',
                     truncated: '已截断',
                     collapse: '收起',
                     expandRemaining: '展开剩余 {count} 个文件',

@@ -586,6 +586,12 @@ export class SettingsManager {
             ...oldConfig,
             ...config
         };
+        if (typeof newConfig.autoSaveDelay === 'number' && Number.isFinite(newConfig.autoSaveDelay)) {
+            // 修改原因：前端设置界面现在允许最小 0.05s 自动应用延迟，后端应直接使用该毫秒值，同时保护非法外部写入。
+            // 修改方式：保存配置前只做 50ms 下限归一化，不再强行提升到 1s。
+            // 修改目的：保证 DiffManager 读取 SettingsManager 配置时使用用户在前端选择的 50ms 延迟。
+            newConfig.autoSaveDelay = Math.max(50, newConfig.autoSaveDelay);
+        }
         
         if (!this.settings.toolsConfig) {
             this.settings.toolsConfig = {};

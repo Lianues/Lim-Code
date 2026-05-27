@@ -367,7 +367,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         // 修改原因：SubAgent 内部过程需要显示在独立编辑器 WebviewPanel，而不是污染主聊天时间线。
         // 修改方式：在 ChatViewProvider 中持有 Monitor 管理器，并通过 HandlerContext 暴露 openSubAgentMonitor。
         // 修改目的：主卡片点击“打开详情”时能 reveal 或创建统一的 Monitor 窗口。
-        this.subAgentMonitorPanel = new SubAgentMonitorPanel(this.context, this.webviewDevServerUrl);
+        this.subAgentMonitorPanel = new SubAgentMonitorPanel(
+            this.context,
+            this.webviewDevServerUrl,
+            this.routeSubAgentMonitorMessage.bind(this)
+        );
         
 
         console.log('LimCode backend initialized with global context');
@@ -431,11 +435,58 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
      */
     private openSubAgentMonitor(runId?: string, conversationId?: string): void {
         if (!this.subAgentMonitorPanel) {
-            this.subAgentMonitorPanel = new SubAgentMonitorPanel(this.context, this.webviewDevServerUrl);
+            this.subAgentMonitorPanel = new SubAgentMonitorPanel(
+                this.context,
+                this.webviewDevServerUrl,
+                this.routeSubAgentMonitorMessage.bind(this)
+            );
         }
         this.subAgentMonitorPanel.open(runId, conversationId);
     }
 
+
+    /**
+     * 从 SubAgent Monitor WebviewPanel 路由业务请求。
+     *
+     * 修改原因：WebviewPanel 里的 MessageItem/ToolMessage 会发起与主聊天相同的 subagents/diff/tools 请求，不能在 Panel 中复制一套 handler。
+     * 修改方式：复用同一个 MessageRouter 和 HandlerContext，只把 sendResponse/sendError/postMessage 绑定到发起请求的 panel webview。
+     * 修改目的：让 Monitor 控制按钮、消息操作和 diff 工具操作共享主聊天运行时，并确保 promise 响应回到正确 client。
+     */
+    private async routeSubAgentMonitorMessage(message: any, webview: vscode.Webview): Promise<boolean> {
+        await this.initPromise;
+        const { type, data, requestId } = message;
+        const sendResponse = (id: string, responseData: any) => {
+            webview.postMessage({
+                type: 'response',
+                requestId: id,
+                success: true,
+                data: responseData
+            });
+        };
+        const sendError = (id: string, code: string, errorMessage: string) => {
+            webview.postMessage({
+                type: 'error',
+                requestId: id,
+                success: false,
+                error: { code, message: errorMessage }
+            });
+        };
+
+        const ctx: HandlerContext = {
+            ...this.createHandlerContext(requestId),
+            view: undefined,
+            sendResponse,
+            sendError,
+            postMessage: (outgoing: any) => webview.postMessage(outgoing)
+        };
+
+        try {
+            return await this.messageRouter.route(type, data, requestId, ctx);
+        } catch (error: any) {
+            sendError(requestId, error.code || 'HANDLER_ERROR', error.message || String(error));
+            return true;
+        }
+    }
 
     /**
      * 初始化子代理（从持久化存储加载到内存 registry）

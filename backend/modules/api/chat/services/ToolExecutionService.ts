@@ -202,6 +202,10 @@ export class ToolExecutionService {
             toolResults.push({
                 id: call.id,
                 name: call.name,
+                // 修改原因：即使工具因并发限制被拒绝，前端状态事件仍需要完整输入快照来渲染工具卡片。
+                // 修改方式：把原始 call.args 一并写入 ToolExecutionResult，供 toolStatus 透传。
+                // 修改目的：所有工具终态都保留同一套“状态 + 参数 + 结果”显示契约。
+                args: call.args,
                 result: response
             });
 
@@ -231,6 +235,10 @@ export class ToolExecutionService {
                 toolResults.push({
                     id: preparedCall.call.id,
                     name: preparedCall.call.name,
+                    // 修改原因：参数预处理失败也会立刻产生 toolStatus；缺少 args 会导致前端错误卡片只显示不完整占位描述。
+                    // 修改方式：保存预处理阶段拿到的 call.args，和错误结果一起进入 ToolExecutionResult。
+                    // 修改目的：失败路径与成功路径使用同一显示数据结构。
+                    args: preparedCall.call.args,
                     result: JSON.parse(JSON.stringify(response))
                 });
 
@@ -258,6 +266,10 @@ export class ToolExecutionService {
                 toolResults.push({
                     id: executionCall.id,
                     name: executionCall.name,
+                    // 修改原因：策略拒绝发生在真正执行前，但 UI 仍应显示这次被拒绝调用的完整参数。
+                    // 修改方式：把 executionCall.args 写入 ToolExecutionResult，再由 toolStatus 传到前端。
+                    // 修改目的：让拒绝态工具卡片不依赖前端 partialArgs 是否已经解析完成。
+                    args: executionCall.args,
                     result: JSON.parse(JSON.stringify(response))
                 });
 
@@ -293,6 +305,10 @@ export class ToolExecutionService {
             toolResults.push({
                 id: executionCall.id,
                 name: executionCall.name,
+                // 修改原因：流式提前执行的完成事件可能早于最终 content/toolIteration，前端需要从 toolStatus 直接拿到完整参数。
+                // 修改方式：在工具结果里保留 executionCall.args，createChatToolStatusUpdate 会统一透传。
+                // 修改目的：修复所有提前执行工具在 pending/executing/success 过渡期间显示不完整的问题。
+                args: executionCall.args,
                 result: JSON.parse(JSON.stringify(response))
             });
 
@@ -406,6 +422,10 @@ export class ToolExecutionService {
             const tr: ToolExecutionResult = {
                 id: call.id,
                 name: call.name,
+                // 修改原因：progress 路径的 end 事件会直接变成 toolStatus，必须携带输入快照才能让前端补齐执行中卡片。
+                // 修改方式：被并发限制拒绝的工具也保存原始 call.args。
+                // 修改目的：普通队列、确认后续执行和流式提前执行共享同一状态显示契约。
+                args: call.args,
                 result: response
             };
 
@@ -438,6 +458,10 @@ export class ToolExecutionService {
                 const toolResult: ToolExecutionResult = {
                     id: preparedCall.call.id,
                     name: preparedCall.call.name,
+                    // 修改原因：预处理失败仍然会发送工具终态，前端需要 args 才能显示是哪次调用失败。
+                    // 修改方式：保存 preparedCall.call.args 到 ToolExecutionResult。
+                    // 修改目的：避免失败卡片退化成“参数数量/空描述”的不完整状态。
+                    args: preparedCall.call.args,
                     result: JSON.parse(JSON.stringify(response))
                 };
                 toolResults.push(toolResult);
@@ -467,6 +491,10 @@ export class ToolExecutionService {
                 const toolResult: ToolExecutionResult = {
                     id: executionCall.id,
                     name: executionCall.name,
+                    // 修改原因：策略拒绝路径同样通过 toolStatus 更新 UI，不能丢失这次调用的完整参数。
+                    // 修改方式：随 ToolExecutionResult 保存 executionCall.args。
+                    // 修改目的：保持所有 end 事件都能独立渲染完整工具卡片。
+                    args: executionCall.args,
                     result: JSON.parse(JSON.stringify(response))
                 };
                 toolResults.push(toolResult);
@@ -504,6 +532,10 @@ export class ToolExecutionService {
             const toolResult: ToolExecutionResult = {
                 id: executionCall.id,
                 name: executionCall.name,
+                // 修改原因：工具完成时的 toolStatus 可能是前端在最终 content 前收到的唯一权威快照。
+                // 修改方式：在结果对象中保存完整 executionCall.args，再和深拷贝结果一起发送。
+                // 修改目的：修复流式提前执行期间工具描述、SubAgent 名称和参数预览显示不完整。
+                args: executionCall.args,
                 // 深拷贝：保留完整数据供前端显示
                 result: JSON.parse(JSON.stringify(response))
             };

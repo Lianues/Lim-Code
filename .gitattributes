@@ -1,0 +1,19 @@
+# 为什么添加本文件：项目目标是在 Windows 工作区统一使用 CRLF，避免每台机器依赖不同的全局 Git 换行配置。
+# 怎么改：对仓库内自动识别为文本的文件强制检出为 CRLF。
+# 目的：让工作区、编辑器显示和后续提交前的换行行为稳定一致。
+* text=auto eol=crlf
+
+# 为什么显式标记二进制资源：虽然 text=auto 通常能识别二进制，但字体、音频和图片不应参与换行规范化。
+# 怎么改：对常见二进制扩展关闭文本属性，避免 Git 尝试做换行转换。
+# 目的：保护资源文件内容不被换行处理破坏。
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.svg text eol=crlf
+*.mp3 binary
+*.ttf binary
+*.woff binary
+*.woff2 binary
+*.vsix binary

@@ -358,6 +358,23 @@ export function isBinaryFile(filePath: string): boolean {
     return BINARY_EXTENSIONS.has(ext);
 }
 
+export async function countTextFileLines(uri: vscode.Uri, filePath: string): Promise<number | undefined> {
+    // 修改原因：find_files 和 list_files 都需要为文件结果补充行数，如果各自读取文件会产生重复实现和不一致的二进制判断。
+    // 修改方式：在共享工具层按扩展名排除二进制文件，成功读取文本后复用 normalizeLineEndingsToLF 统计 LF 行数。
+    // 修改目的：让文件发现类工具能在不破坏原返回结构的前提下提供 read_file 决策所需的行数元数据。
+    if (isBinaryFile(filePath)) {
+        return undefined;
+    }
+
+    try {
+        const content = await vscode.workspace.fs.readFile(uri);
+        const text = normalizeLineEndingsToLF(new TextDecoder().decode(content));
+        return text.split('\n').length;
+    } catch {
+        return undefined;
+    }
+}
+
 /**
  * 格式化文件大小
  */

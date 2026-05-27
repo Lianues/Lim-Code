@@ -19,6 +19,16 @@ const TOOL_CALL_END = '<<<END_TOOL_CALL>>>';
 const XML_TOOL_START = '<tool_use>';
 const XML_TOOL_END = '</tool_use>';
 
+interface BuildContentOptions {
+    parsePartialArgs: boolean;
+    includeInternalFunctionCallFields: boolean;
+    warnOnParseFailure: boolean;
+}
+
+export interface StreamingContentOptions {
+    includeInternalFields?: boolean;
+}
+
 /**
  * 流式累加器
  *
@@ -405,8 +415,11 @@ export class StreamAccumulator {
                                 ? fc.partialArgs
                                 : (lastFc.partialArgs || '') + fc.partialArgs;
                             
-                            // 尝试解析完整的 JSON 参数
-                            if (lastFc.partialArgs.trim()) {
+                            // 修改原因：OpenAI Responses 的 arguments.delta 是高频半截 JSON，逐片段 JSON.parse 会造成 O(n²) CPU 消耗。
+                            // 修改方式：Responses 仅在 finalArgs=true 的 arguments.done/output_item.done 阶段解析；其它 provider 保持旧的早解析能力。
+                            // 修改目的：保留流式提前执行语义，同时让 Responses 大工具参数不再刷解析失败和卡住 extension host。
+                            const shouldParseNow = this.providerType !== 'openai-responses' || fc.finalArgs === true;
+                            if (shouldParseNow && lastFc.partialArgs.trim()) {
                                 try {
                                     const parsed = JSON.parse(lastFc.partialArgs);
                                     lastFc.args = parsed;
@@ -421,8 +434,10 @@ export class StreamAccumulator {
                 }
                 
                 // 找不到可合并的块，作为新块添加
-                // 添加前尝试解析初始参数
-                if (fc.partialArgs) {
+                // 修改原因：Responses 参数增量新建 part 时同样可能只是半截 JSON，不能在热路径立即解析。
+                // 修改方式：仅非 Responses 或 finalArgs=true 的结构完成事件执行 JSON.parse。
+                // 目的：把解析成本限制在可控边界，避免大参数流式输出时每个 delta 都重复解析不断增长的字符串。
+                if (fc.partialArgs && (this.providerType !== 'openai-responses' || fc.finalArgs === true)) {
                     try {
                         fc.args = JSON.parse(fc.partialArgs);
                     } catch (e) {}
@@ -648,37 +663,39 @@ export class StreamAccumulator {
     }
     
     /**
-     * 获取当前累加的完整 Content
+     * 构造 Content 的唯一内部入口。
      *
-     * @returns 完整的 Content 对象
+     * 修改原因：旧 getContent 同时服务流式 snapshot 和最终历史，导致流式热路径会反复解析半截 partialArgs 并清理内部字段。
+     * 修改方式：把“是否解析参数”和“是否保留内部合并字段”做成显式选项，由 streaming/final 两个公开方法分别调用。
+     * 修改目的：高频 delta 期间只做轻量投影，最终写历史或工具执行前才做完整 JSON 校准。
      */
-    getContent(): Content {
-        // 直接使用存储的 parts，只过滤掉空文本
-        // 同时清理掉仅用于流式过程的中间字段（如 index, partialArgs）
+    private buildContent(options: BuildContentOptions): Content {
         let parts = this.parts
             .map(p => {
                 const part = { ...p };
                 if (part.functionCall) {
                     const fc = { ...part.functionCall } as any;
-                    // 为什么要先解析再清理 partialArgs：旧代码先删除 partialArgs，导致最终兜底解析永远无法触发。
-                    // 怎么改：在复制出的 fc 上先用 partialArgs 补齐 args，再删除流式内部字段。
-                    // 目的：即使最后一个参数 delta 没来得及在合并阶段解析，最终写入历史和工具执行也能拿到完整参数。
-                    if (fc.partialArgs && (!fc.args || Object.keys(fc.args).length === 0)) {
+                    if (options.parsePartialArgs && fc.partialArgs && (!fc.args || Object.keys(fc.args).length === 0)) {
                         try {
                             fc.args = JSON.parse(fc.partialArgs);
                         } catch (e) {
-                            const fnName = fc.name || 'unknown';
-                            const preview = String(fc.partialArgs || '').slice(0, 200);
-                            console.warn(`[StreamAccumulator] Failed to parse tool "${fnName}" partialArgs: ${preview}`);
+                            if (options.warnOnParseFailure) {
+                                const fnName = fc.name || 'unknown';
+                                const preview = String(fc.partialArgs || '').slice(0, 200);
+                                console.warn(`[StreamAccumulator] Failed to parse tool "${fnName}" partialArgs: ${preview}`);
+                            }
                         }
                     }
-                    delete fc.index;
-                    delete fc.partialArgs;
-                    // 为什么删除 itemId/finalArgs：它们只是 OpenAI Responses 流式合并用的内部字段，不属于统一历史协议。
-                    // 怎么改：最终 Content 只保留 name、args、id 等跨 provider 通用字段。
-                    // 目的：避免内部流式定位信息污染历史，并确保 functionCall.id 始终表达工具回传用的 call_id。
-                    delete fc.itemId;
-                    delete fc.finalArgs;
+
+                    if (!options.includeInternalFunctionCallFields) {
+                        delete fc.index;
+                        delete fc.partialArgs;
+                        // 为什么删除 itemId/finalArgs：它们只是 OpenAI Responses 流式合并用的内部字段，不属于统一历史协议。
+                        // 怎么改：最终 Content 只保留 name、args、id 等跨 provider 通用字段。
+                        // 目的：避免内部流式定位信息污染历史，并确保 functionCall.id 始终表达工具回传用的 call_id。
+                        delete fc.itemId;
+                        delete fc.finalArgs;
+                    }
                     part.functionCall = fc;
                 }
                 return part;
@@ -757,6 +774,43 @@ export class StreamAccumulator {
         }
         
         return content;
+    }
+
+    /**
+     * 获取流式校准快照。
+     *
+     * 修改原因：流式阶段需要保留 itemId/index/partialArgs 等合并字段，但不能反复解析尚未完成的 JSON。
+     * 修改方式：默认保留内部字段且关闭 partialArgs 解析，仅供 initial/resync/structural snapshot 使用。
+     * 修改目的：让 snapshot 仍可校准 UI，同时不会把高频工具参数流拖进重解析路径。
+     */
+    getStreamingContent(options?: StreamingContentOptions): Content {
+        return this.buildContent({
+            parsePartialArgs: false,
+            includeInternalFunctionCallFields: options?.includeInternalFields ?? true,
+            warnOnParseFailure: false
+        });
+    }
+
+    /**
+     * 获取最终内容。
+     *
+     * 修改原因：最终写历史、工具执行和 complete/cancelled 需要干净的跨 provider Content。
+     * 修改方式：在最终出口解析 partialArgs，清理 itemId/index/finalArgs 等内部字段，解析失败时才告警。
+     * 修改目的：把高频 streaming projection 与最终持久化协议分离，避免互相污染。
+     */
+    getFinalContent(): Content {
+        return this.buildContent({
+            parsePartialArgs: true,
+            includeInternalFunctionCallFields: false,
+            warnOnParseFailure: true
+        });
+    }
+
+    /**
+     * 兼容旧调用方的最终 Content 入口。
+     */
+    getContent(): Content {
+        return this.getFinalContent();
     }
     
     /**
@@ -924,6 +978,17 @@ export class StreamAccumulator {
             .map(part => part.redactedThinking!);
     }
     
+    /**
+     * 获取思考开始时间。
+     *
+     * 修改原因：StreamResponseProcessor 只为发送 thinkingStartTime 不应该构造完整 Content。
+     * 修改方式：暴露只读轻量 getter，直接返回累加器内部时间戳。
+     * 修改目的：让文本/reasoning 高频 delta 不再触发整条消息 clone、partialArgs 解析和 snapshot 判断。
+     */
+    getThinkingStartTime(): number | undefined {
+        return this.thinkingStartTime;
+    }
+
     /**
      * 获取思考持续时间
      */

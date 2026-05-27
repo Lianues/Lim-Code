@@ -570,6 +570,14 @@ export function createDefaultExecutor(
                                 payload: chunkData.chunk
                             });
                         }
+                        if (operationSignal?.aborted && isControlInterruption()) {
+                            // 修改原因：暂停/退出会中止当前 LLM 流，旧逻辑会继续把 partial content 当作成功响应并可能发 run_completed。
+                            // 修改方式：流循环结束后立即检查 run control state，交给 waitForControlIfNeeded 处理 pause/resume/exit 语义。
+                            // 修改目的：SubAgent pause 不让主工具失败，exit 才按用户意图让主工具失败，避免 partial stream 被误判完成。
+                            const controlResult = await waitForControlIfNeeded();
+                            if (controlResult) return controlResult;
+                            continue;
+                        }
                         response = {
                             content: streamProcessor.getContent()
                         };

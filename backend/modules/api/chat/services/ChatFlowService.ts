@@ -19,6 +19,7 @@ import { ChannelError, ErrorType } from '../../../channel/types';
 import type { ResolvedPromptModeSnapshot } from '../../../settings/types';
 import type { Content, ContentPart } from '../../../conversation/types';
 import type { CheckpointRecord } from '../../../checkpoint';
+import type { ToolExecutionResult } from '../utils';
 
 import type {
   ChatRequestData,
@@ -58,6 +59,7 @@ import {
 } from '../../../conversation/pendingApprovalGate';
 import { getHiddenContinuationApprovalRequirement } from './approvalGateRules';
 import { resolveAndPersistPostToolStopState } from './postToolStopState';
+import { createChatToolStatusUpdate } from './streamingToolProgress';
 
 export type ChatStreamOutput =
   | ChatStreamChunkData
@@ -1324,7 +1326,10 @@ export class ChatFlowService {
       return;
     }
 
-    const toolResultsThisTurn: Array<{ id: string; name: string; result: Record<string, unknown> }> = [];
+    // 修改原因：确认续跑会把本轮工具结果直接传给前端 toolIteration/toolStatus，结果项现在需要保留 args 快照。
+    // 修改方式：使用统一的 ToolExecutionResult 类型，而不是局部的旧三字段结构。
+    // 修改目的：避免局部类型遗漏 args，保证所有工具状态路径都能完整渲染卡片。
+    const toolResultsThisTurn: ToolExecutionResult[] = [];
     const checkpointsThisTurn: CheckpointRecord[] = [];
 
     let responseParts: ContentPart[] = [];
@@ -1376,23 +1381,13 @@ export class ChatFlowService {
         }
 
         if (event.type === 'end') {
-          const r = event.toolResult.result as any;
-          let status: ChatStreamToolStatusData['tool']['status'] = 'success';
-          if (r?.success === false || r?.error || r?.cancelled || r?.rejected) {
-            status = 'error';
-          } else if (r?.data && r.data.appliedCount > 0 && r.data.failedCount > 0) {
-            status = 'warning';
-          }
-
+          // 修改原因：确认后的工具续跑也可能遇到 diff pending 或部分成功，不能继续维护一份独立状态推导。
+          // 修改方式：复用 streamingToolProgress 的统一 toolStatus payload 构造函数。
+          // 修改目的：让确认续跑路径和普通流式工具路径的成功、失败、等待应用语义一致。
           yield {
             conversationId,
             toolStatus: true as const,
-            tool: {
-              id: event.call.id,
-              name: event.call.name,
-              status,
-              result: event.toolResult.result,
-            },
+            tool: createChatToolStatusUpdate(event.toolResult),
           } satisfies ChatStreamToolStatusData;
         }
       }
@@ -1410,6 +1405,10 @@ export class ChatFlowService {
       toolResultsThisTurn.push({
         id: nextCall.id,
         name: nextCall.name,
+        // 修改原因：用户拒绝工具后也会发送 toolStatus；如果没有 args，前端只能显示退化描述。
+        // 修改方式：把被拒绝调用的 nextCall.args 保存到 ToolExecutionResult。
+        // 修改目的：确认、拒绝、提前执行三条路径都遵守同一个工具状态显示契约。
+        args: nextCall.args,
         result: rejectedResult,
       });
 
@@ -1420,6 +1419,10 @@ export class ChatFlowService {
           id: nextCall.id,
           name: nextCall.name,
           status: 'error',
+          // 修改原因：拒绝状态事件同样需要携带完整参数，避免前端在最终历史刷新前显示不完整卡片。
+          // 修改方式：直接在 toolStatus payload 中透传 nextCall.args。
+          // 修改目的：让错误态工具卡片也能立即显示准确工具描述。
+          args: nextCall.args,
           result: rejectedResult,
         },
       } satisfies ChatStreamToolStatusData;
@@ -1478,23 +1481,13 @@ export class ChatFlowService {
         }
 
         if (event.type === 'end') {
-          const r = event.toolResult.result as any;
-          let status: ChatStreamToolStatusData['tool']['status'] = 'success';
-          if (r?.success === false || r?.error || r?.cancelled || r?.rejected) {
-            status = 'error';
-          } else if (r?.data && r.data.appliedCount > 0 && r.data.failedCount > 0) {
-            status = 'warning';
-          }
-
+          // 修改原因：自动后缀工具和队首确认工具应共享同一状态机，否则同一批里不同位置的工具会显示不同语义。
+          // 修改方式：通过 createChatToolStatusUpdate 统一从 ToolExecutionResult 派生前端状态。
+          // 修改目的：已经 success 的工具不再因为后续工具仍在执行而保持 pending/queued。
           yield {
             conversationId,
             toolStatus: true as const,
-            tool: {
-              id: event.call.id,
-              name: event.call.name,
-              status,
-              result: event.toolResult.result,
-            },
+            tool: createChatToolStatusUpdate(event.toolResult),
           } satisfies ChatStreamToolStatusData;
         }
       }

@@ -40,6 +40,14 @@ const pathList = computed(() => {
 interface Entry {
   name: string
   type: 'file' | 'directory'
+  /**
+   * 文本文件行数；目录、二进制文件或旧结果中可能不存在。
+   *
+   * 修改原因：后端 list_files 已开始返回 lineCount，前端卡片需要直接展示文件规模，帮助用户和模型决定是否范围读取。
+   * 修改方式：在 Entry 类型中加入可选 lineCount，并在模板中以轻量 badge 展示。
+   * 修改目的：主聊天和 SubAgent Monitor 复用同一工具组件后，都能同步看到文件行数。
+   */
+  lineCount?: number
 }
 
 // 单个目录的结果
@@ -213,10 +221,27 @@ function getEntryIcon(entry: Entry): string {
   return iconMap[ext] || 'codicon-file'
 }
 
+function formatEntryLineCount(entry: Entry): string {
+  // 修改原因：lineCount 是后端新增的可选元数据，模板和复制逻辑都需要同一种展示文案。
+  // 修改方式：集中通过 i18n 格式化，缺失时返回空字符串。
+  // 修改目的：避免主界面和 Monitor 的工具卡片在行数字段上出现不同格式。
+  return typeof entry.lineCount === 'number'
+    ? t('components.tools.file.listFilesPanel.lines', { count: entry.lineCount })
+    : ''
+}
+
+function formatEntryForCopy(entry: Entry): string {
+  // 修改原因：用户复制 list_files 结果时也应该保留行数信息，否则复制内容与卡片可见信息不一致。
+  // 修改方式：目录仍只复制路径；文件有 lineCount 时追加括号说明。
+  // 修改目的：让工具卡片展示和复制结果共享同一文件规模信息。
+  const lineCount = formatEntryLineCount(entry)
+  return lineCount ? `${entry.name} (${lineCount})` : entry.name
+}
+
 // 复制单个目录的条目列表
 async function copyDirEntries(result: ListResult) {
   try {
-    await navigator.clipboard.writeText(result.entries.map(e => e.name).join('\n'))
+    await navigator.clipboard.writeText(result.entries.map(formatEntryForCopy).join('\n'))
   } catch (err) {
     console.error('复制失败:', err)
   }
@@ -225,7 +250,7 @@ async function copyDirEntries(result: ListResult) {
 // 复制所有条目列表
 async function copyAllEntries() {
   try {
-    const allEntries = listResults.value.flatMap(r => r.entries.map(e => e.name))
+    const allEntries = listResults.value.flatMap(r => r.entries.map(formatEntryForCopy))
     await navigator.clipboard.writeText(allEntries.join('\n'))
   } catch (err) {
     console.error('复制失败:', err)
@@ -295,6 +320,10 @@ async function copyAllEntries() {
           >
             <span :class="['file-icon', 'codicon', getEntryIcon(entry)]"></span>
             <span class="file-path">{{ entry.name }}</span>
+            <!-- 修改原因：后端 list_files 为文本文件返回 lineCount；工具卡片需要把该信息露出给主界面和 SubAgent Monitor。
+                 修改方式：仅当 lineCount 为数字时显示右侧 badge，目录和二进制文件保持旧样式。
+                 修改目的：用户看到目录列表即可判断是否需要 read_file 范围读取，避免直接读取大文件。 -->
+            <span v-if="formatEntryLineCount(entry)" class="line-count-badge">{{ formatEntryLineCount(entry) }}</span>
           </div>
           
           <!-- 展开/收起按钮 -->
@@ -500,6 +529,7 @@ async function copyAllEntries() {
   padding: 2px var(--spacing-sm, 8px);
   background: var(--vscode-editor-background);
   transition: background-color var(--transition-fast, 0.1s);
+  min-width: 0;
 }
 
 .file-item:hover {
@@ -527,6 +557,21 @@ async function copyAllEntries() {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.line-count-badge {
+  /* 修改原因：行数是辅助元数据，不能和文件名抢主视觉，也不能导致长路径换行。
+     修改方式：使用右侧胶囊 badge，固定不收缩，沿用 VS Code badge 颜色变量。
+     修改目的：在主聊天和 Monitor 中保持紧凑一致的工具卡片布局。 */
+  flex-shrink: 0;
+  font-size: 9px;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 999px;
+  background: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
 }
 
 /* 展开区域 */

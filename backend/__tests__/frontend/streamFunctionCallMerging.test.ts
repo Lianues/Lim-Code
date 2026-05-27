@@ -1,7 +1,8 @@
 import { handleFunctionCallPart } from '../../../frontend/src/stores/chat/streamHelpers';
+import { handleToolStatus, handleToolStatusBatch } from '../../../frontend/src/stores/chat/streamChunkHandlers';
 import { contentToMessageEnhanced } from '../../../frontend/src/stores/chat/parsers';
 import { buildFunctionCallToolRenderEntry, upsertToolRenderEntry } from '../../../frontend/src/utils/toolRenderEntries';
-import type { Content, Message, ToolUsage } from '../../../frontend/src/types';
+import type { Content, Message, StreamChunk, ToolUsage } from '../../../frontend/src/types';
 
 function createAssistantMessage(): Message {
   return {
@@ -15,6 +16,19 @@ function createAssistantMessage(): Message {
 
 function functionCallPart(functionCall: Record<string, unknown>) {
   return { functionCall };
+}
+
+function createStateForToolStatus(message: Message) {
+  // 修改原因：toolStatus 的回归点在前端状态合并函数，不需要启动完整 Pinia store 或 VS Code Webview。
+  // 修改方式：只构造 handleToolStatus/handleToolStatusBatch 实际读取的响应式字段。
+  // 修改目的：用最小真实状态形状锁住“状态事件携带 args 后必须补齐工具卡片”的行为。
+  return {
+    // 修改原因：Jest 根工程没有把 frontend/node_modules 暴露给测试文件，直接 import vue/ref 会造成模块解析失败。
+    // 修改方式：构造 Vue Ref 实际被这些 handler 使用的最小 `{ value }` 形状。
+    // 修改目的：测试前端状态合并语义，而不把测试稳定性绑定到包解析路径。
+    allMessages: { value: [message] },
+    streamingMessageId: { value: message.id }
+  } as any;
 }
 
 describe('frontend streaming function call merging', () => {
@@ -158,6 +172,72 @@ describe('frontend streaming function call merging', () => {
     expect(renderBlock[0].id).toBe('call_final_search');
     expect(renderBlock[0].args).toEqual(finalArgs);
     expect(renderBlock[0].status).toBe('executing');
+  });
+
+  it('hydrates executing tool args from a single toolStatus update', () => {
+    // 修改原因：流式提前执行会先把工具推到 executing，但前端此时可能只有未解析完的 partialArgs，旧逻辑只更新 status/result 导致卡片显示不完整。
+    // 修改方式：模拟 toolStatus 携带完整 args，断言 handleToolStatus 覆盖 ToolUsage.args 并清理 partialArgs。
+    // 修改目的：确保执行中卡片立即显示完整描述，不必等最终 content/toolIteration。
+    const message = createAssistantMessage();
+    message.tools = [{
+      id: 'call_search_status_single',
+      name: 'search_in_files',
+      args: {},
+      partialArgs: '{"path":"frontend/src',
+      status: 'streaming'
+    }];
+    const state = createStateForToolStatus(message);
+    const args = { path: 'frontend/src/components/message', query: 'ToolMessage', maxResults: 15 };
+
+    handleToolStatus({
+      type: 'toolStatus',
+      conversationId: 'conversation-under-test',
+      toolStatus: true,
+      tool: {
+        id: 'call_search_status_single',
+        name: 'search_in_files',
+        status: 'executing',
+        args
+      }
+    } as StreamChunk, state);
+
+    const updated = state.allMessages.value[0].tools?.[0];
+    expect(updated?.status).toBe('executing');
+    expect(updated?.args).toEqual(args);
+    expect(updated?.partialArgs).toBeUndefined();
+  });
+
+  it('hydrates executing tool args from batched toolStatus updates', () => {
+    // 修改原因：Webview 会把同一 tick 的多个 toolStatus 合并为 streamChunkBatch，单条路径修复不足以覆盖真实 UI。
+    // 修改方式：直接驱动 handleToolStatusBatch，验证批量缓存也保留 args 并覆盖对应工具。
+    // 修改目的：保证高速流式提前执行时，批量事件不会继续显示半截参数。
+    const message = createAssistantMessage();
+    message.tools = [{
+      id: 'call_search_status_batch',
+      name: 'search_in_files',
+      args: {},
+      partialArgs: '{"path":"frontend/src',
+      status: 'streaming'
+    }];
+    const state = createStateForToolStatus(message);
+    const args = { path: 'frontend/src/components/message', query: 'ToolMessage', maxResults: 15 };
+
+    handleToolStatusBatch([{
+      type: 'toolStatus',
+      conversationId: 'conversation-under-test',
+      toolStatus: true,
+      tool: {
+        id: 'call_search_status_batch',
+        name: 'search_in_files',
+        status: 'executing',
+        args
+      }
+    } as StreamChunk], state);
+
+    const updated = state.allMessages.value[0].tools?.[0];
+    expect(updated?.status).toBe('executing');
+    expect(updated?.args).toEqual(args);
+    expect(updated?.partialArgs).toBeUndefined();
   });
 
   it('normalizes duplicate functionCall parts in content snapshots before ToolMessage rendering', () => {

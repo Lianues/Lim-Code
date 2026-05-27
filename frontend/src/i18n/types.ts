@@ -837,6 +837,7 @@ export interface LanguageMessages {
                         autoSaveDelay: string;
                         delayTime: string;
                         delayTimeDesc: string;
+                        delay005s: string;
                         delay1s: string;
                         delay2s: string;
                         delay3s: string;
@@ -2494,6 +2495,7 @@ export interface LanguageMessages {
                     copyAll: string;
                     copyList: string;
                     dirStat: string;
+                    lines: string;
                     collapse: string;
                     expandRemaining: string;
                     emptyDirectory: string;
@@ -2544,6 +2546,7 @@ export interface LanguageMessages {
                     title: string;
                     totalFiles: string;
                     fileCount: string;
+                    lines: string;
                     truncated: string;
                     collapse: string;
                     expandRemaining: string;

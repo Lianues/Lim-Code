@@ -112,6 +112,13 @@ function normalizeStreamingToQueued(status?: ToolUsage['status']): ToolUsage['st
   return status === 'streaming' ? 'queued' : status
 }
 
+function isToolArgsSnapshot(args: unknown): args is Record<string, unknown> {
+  // 修改原因：toolStatus 现在可以携带完整 args，但旧后端或部分事件仍可能不带该字段。
+  // 修改方式：集中判断 args 是否为对象快照，避免单条和批量 toolStatus 更新各自写一份判空逻辑。
+  // 修改目的：只有收到权威参数快照时才覆盖 ToolUsage.args，并清理过期 partialArgs。
+  return !!args && typeof args === 'object' && !Array.isArray(args)
+}
+
 function buildMessageFromContentSnapshot(currentMessage: Message, snapshotContent: NonNullable<StreamChunk['chunk']>['contentSnapshot']): Message {
   const existingModelVersion = currentMessage.metadata?.modelVersion
   const snapshotMessage = contentToMessageEnhanced(snapshotContent!, currentMessage.id)
@@ -364,9 +371,14 @@ export function handleToolStatus(chunk: StreamChunk, state: ChatStoreState): voi
   const updatedTools = message.tools?.map(t => {
     if (t.id !== toolUpdate.id) return t
 
+    const hasArgsSnapshot = isToolArgsSnapshot(toolUpdate.args)
     return {
       ...t,
       status: toolUpdate.status as any,
+      // 修改原因：流式提前执行的 executing/toolStatus 可能早于前端完成 partialArgs 解析，旧逻辑只更新 status/result 会留下不完整卡片。
+      // 修改方式：收到后端 args 快照时覆盖本地 args，并清掉 partialArgs，使描述和自定义工具组件立即使用完整参数。
+      // 修改目的：统一修复所有提前执行工具 pending/executing 阶段显示不完整的问题。
+      ...(hasArgsSnapshot ? { args: toolUpdate.args, partialArgs: undefined } : {}),
       // 允许后端在 end 事件里携带结果，让前端即时展示（不影响历史索引）
       result: (toolUpdate.result as any) ?? t.result
     }
@@ -389,7 +401,16 @@ export function handleToolStatusBatch(chunks: StreamChunk[], state: ChatStoreSta
   if (chunks.length === 0) return
 
   // 收集所有 tool 更新，按目标消息分组
-  interface ToolUpdate { status: any; result: any }
+  interface ToolUpdate {
+    status: any
+    result: any
+    /**
+     * 修改原因：批量 toolStatus 和单条 toolStatus 共享同一数据契约，都可能携带完整参数快照。
+     * 修改方式：把 args 纳入批量更新缓存，稍后统一覆盖对应 ToolUsage.args。
+     * 修改目的：避免 streamChunkBatch 路径仍然丢失提前执行工具的完整参数。
+     */
+    args?: Record<string, unknown>
+  }
   const updatesByMessageIndex = new Map<number, Map<string, ToolUpdate>>()
   const all = state.allMessages.value
 
@@ -424,7 +445,8 @@ export function handleToolStatusBatch(chunks: StreamChunk[], state: ChatStoreSta
     }
     updatesByMessageIndex.get(messageIndex)!.set(toolUpdate.id, {
       status: toolUpdate.status,
-      result: toolUpdate.result
+      result: toolUpdate.result,
+      args: isToolArgsSnapshot(toolUpdate.args) ? toolUpdate.args : undefined
     })
   }
 
@@ -436,9 +458,14 @@ export function handleToolStatusBatch(chunks: StreamChunk[], state: ChatStoreSta
     const updatedTools = message.tools?.map(t => {
       const update = toolUpdates.get(t.id)
       if (!update) return t
+      const hasArgsSnapshot = isToolArgsSnapshot(update.args)
       return {
         ...t,
         status: update.status as any,
+        // 修改原因：streamChunkBatch 会把多个 toolStatus 合并处理；如果这里不合并 args，批量路径仍会显示半截参数。
+        // 修改方式：与单条路径相同，收到 args 快照后覆盖本地 args 并清理 partialArgs。
+        // 修改目的：无论状态事件是单条还是批量到达，工具卡片都能立即完整显示。
+        ...(hasArgsSnapshot ? { args: update.args, partialArgs: undefined } : {}),
         result: (update.result as any) ?? t.result
       }
     })

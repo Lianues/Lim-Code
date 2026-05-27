@@ -19,6 +19,7 @@ import { sendToExtension, onExtensionCommand, showNotification } from '../../uti
 import { useI18n } from '../../i18n'
 import { generateId } from '../../utils/format'
 import { isPerfEnabled } from '../../utils/perf'
+import { shouldShowToolArgumentPreview } from './toolPreviewPolicy'
 
 const { t } = useI18n()
 
@@ -970,7 +971,10 @@ function getStatusClass(status?: string, awaitingConfirmation?: boolean): string
 
 // 判断是否应显示流式参数预览
 function shouldShowStreamingPreview(tool: ToolUsage): boolean {
-  return tool.status === 'streaming' && !!tool.partialArgs && tool.partialArgs.length > 0
+  // 修改原因：流式提前执行会把工具执行态推进到 executing，但参数输入快照可能仍以 partialArgs 形式存在。
+  // 修改方式：委托 toolPreviewPolicy 按“仍处于非终态且存在 partialArgs”判断，而不是只接受 streaming。
+  // 修改目的：工具开始执行后仍能保留参数预览，直到最终 args 快照替换 partialArgs。
+  return shouldShowToolArgumentPreview(tool)
 }
 
 // 流式预览元素引用（用于自动滚动到底部）

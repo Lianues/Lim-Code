@@ -34,11 +34,24 @@ const patternList = computed(() => {
   return []
 })
 
+interface FoundFileDetail {
+  path: string
+  /**
+   * 文本文件行数；二进制文件、读取失败或旧结果中可能不存在。
+   *
+   * 修改原因：后端 find_files 新增 fileDetails.lineCount，前端需要在文件搜索结果中直接展示文件规模。
+   * 修改方式：保留旧 files 字符串数组，同时读取可选 fileDetails 作为增强展示数据。
+   * 修改目的：主界面和 SubAgent Monitor 都能在搜索卡片里看到行数，减少盲目 read_file 整文件。
+   */
+  lineCount?: number
+}
+
 // 单个模式的查找结果
 interface FindResult {
   pattern: string
   success: boolean
   files?: string[]
+  fileDetails?: FoundFileDetail[]
   count?: number
   truncated?: boolean
   error?: string
@@ -114,18 +127,31 @@ function isPatternExpanded(pattern: string): boolean {
   return expandedPatterns.value.has(pattern)
 }
 
-// 获取显示的文件列表
-function getDisplayFiles(result: FindResult): string[] {
-  if (!result.files) return []
-  if (isPatternExpanded(result.pattern) || result.files.length <= previewFileCount) {
-    return result.files
+function getFileDetails(result: FindResult): FoundFileDetail[] {
+  // 修改原因：旧结果只有 files，新结果同时有 fileDetails；模板不应该关心两种协议差异。
+  // 修改方式：优先使用 fileDetails；缺失时从 files 构造只有 path 的详情对象。
+  // 修改目的：让行数显示是渐进增强，不破坏历史记录和旧工具结果。
+  if (Array.isArray(result.fileDetails) && result.fileDetails.length > 0) {
+    return result.fileDetails
   }
-  return result.files.slice(0, previewFileCount)
+  return (result.files || []).map(path => ({ path }))
+}
+
+// 获取显示的文件列表
+function getDisplayFiles(result: FindResult): FoundFileDetail[] {
+  const files = getFileDetails(result)
+  if (isPatternExpanded(result.pattern) || files.length <= previewFileCount) {
+    return files
+  }
+  return files.slice(0, previewFileCount)
 }
 
 // 检查是否需要展开按钮
 function needsExpand(result: FindResult): boolean {
-  return (result.files?.length || 0) > previewFileCount
+  // 修改原因：新协议可能通过 fileDetails 提供增强文件列表；只看旧 files 数组会让展开按钮数量判断不完整。
+  // 修改方式：统一通过 getFileDetails 计算真实可展示条目数量。
+  // 修改目的：旧结果和带 lineCount 的新结果使用同一展开逻辑。
+  return getFileDetails(result).length > previewFileCount
 }
 
 // 获取文件名
@@ -139,6 +165,15 @@ function getDirPath(filePath: string): string {
   const parts = filePath.split(/[/\\]/)
   parts.pop()
   return parts.join('/')
+}
+
+function formatLineCount(file: FoundFileDetail): string {
+  // 修改原因：lineCount 是可选增强字段，不能在缺失时显示 undefined 或破坏旧历史卡片。
+  // 修改方式：仅数字行数通过 find_files 专属 i18n 文案格式化。
+  // 修改目的：主窗口与 Monitor 复用同一工具组件时拥有完全一致的行数展示。
+  return typeof file.lineCount === 'number'
+    ? t('components.tools.search.findFilesPanel.lines', { count: file.lineCount })
+    : ''
 }
 </script>
 
@@ -196,17 +231,21 @@ function getDirPath(filePath: string): string {
         </div>
         
         <!-- 文件列表 -->
-        <div v-else-if="result.files && result.files.length > 0" class="file-list">
+        <div v-else-if="getFileDetails(result).length > 0" class="file-list">
           <CustomScrollbar :max-height="200">
             <div class="file-items">
               <div
                 v-for="file in getDisplayFiles(result)"
-                :key="file"
+                :key="file.path"
                 class="file-item"
               >
                 <span class="codicon codicon-file file-icon"></span>
-                <span class="file-name">{{ getFileName(file) }}</span>
-                <span class="file-dir">{{ getDirPath(file) }}</span>
+                <span class="file-name">{{ getFileName(file.path) }}</span>
+                <span class="file-dir">{{ getDirPath(file.path) }}</span>
+                <!-- 修改原因：find_files 现在能返回 fileDetails.lineCount；搜索结果卡片应和 list_files 一样显示文本文件行数。
+                     修改方式：在文件行右侧显示可选 badge，旧结果没有 lineCount 时不渲染。
+                     修改目的：SubAgent Monitor 和主界面都能直接看到文件规模，决定是否范围读取。 -->
+                <span v-if="formatLineCount(file)" class="line-count-badge">{{ formatLineCount(file) }}</span>
               </div>
             </div>
           </CustomScrollbar>
@@ -215,7 +254,7 @@ function getDirPath(filePath: string): string {
           <div v-if="needsExpand(result)" class="expand-section">
             <button class="expand-btn" @click="togglePattern(result.pattern)">
               <span :class="['codicon', isPatternExpanded(result.pattern) ? 'codicon-chevron-up' : 'codicon-chevron-down']"></span>
-              {{ isPatternExpanded(result.pattern) ? t('components.tools.search.findFilesPanel.collapse') : t('components.tools.search.findFilesPanel.expandRemaining', { count: (result.files?.length || 0) - previewFileCount }) }}
+              {{ isPatternExpanded(result.pattern) ? t('components.tools.search.findFilesPanel.collapse') : t('components.tools.search.findFilesPanel.expandRemaining', { count: getFileDetails(result).length - previewFileCount }) }}
             </button>
           </div>
         </div>
@@ -400,6 +439,7 @@ function getDirPath(filePath: string): string {
   padding: 2px var(--spacing-sm, 8px);
   font-size: 11px;
   border-bottom: 1px solid var(--vscode-panel-border);
+  min-width: 0;
 }
 
 .file-item:last-child {
@@ -425,6 +465,21 @@ function getDirPath(filePath: string): string {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.line-count-badge {
+  /* 修改原因：行数是辅助信息，需要在不挤压文件名的情况下稳定显示。
+     修改方式：使用右侧紧凑 badge，并让目录路径承担可压缩空间。
+     修改目的：和 list_files 卡片保持一致视觉语言。 */
+  flex-shrink: 0;
+  font-size: 9px;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 999px;
+  background: var(--vscode-badge-background);
+  color: var(--vscode-badge-foreground);
 }
 
 /* 展开区域 */

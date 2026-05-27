@@ -49,7 +49,10 @@ const tabs = computed<TabItem[]>(() => [
   { id: 'context', label: t('components.settings.tabs.context'), icon: 'codicon-symbol-namespace' },
   { id: 'prompt', label: t('components.settings.tabs.prompt'), icon: 'codicon-note' },
   { id: 'tokenCount', label: t('components.settings.tabs.tokenCount'), icon: 'codicon-symbol-numeric' },
-  { id: 'sound', label: t('components.settings.tabs.sound'), icon: 'codicon-notifications' },
+  // 修改原因：“提示系统”原来使用 codicon-notifications，但当前打包的 codicon 资源中不存在该类名，导致侧边栏图标空白。
+  // 修改方式：改用资源中存在且语义接近的 codicon-bell，与其他设置页图标一样通过 codicon 字体显示。
+  // 修改目的：修复“提示系统”设置入口图标不显示的问题，同时保持设置侧边栏视觉一致。
+  { id: 'sound', label: t('components.settings.tabs.sound'), icon: 'codicon-bell' },
   { id: 'appearance', label: t('components.settings.tabs.appearance'), icon: 'codicon-paintcan' },
   { id: 'general', label: t('components.settings.tabs.general'), icon: 'codicon-settings-gear' },
 ])

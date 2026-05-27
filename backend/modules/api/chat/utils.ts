@@ -64,6 +64,14 @@ export interface ToolExecutionResult {
     id: string;
     /** 工具名称 */
     name: string;
+    /**
+     * 工具执行时使用的完整参数快照。
+     *
+     * 修改原因：流式提前执行会先发送 toolStatus，再等最终 content/toolIteration 落地；如果状态事件不带 args，前端只能依赖未必已解析完成的 partialArgs。
+     * 修改方式：在通用 ToolExecutionResult 上保留 args，后续 createChatToolStatusUpdate 可把它透传给前端。
+     * 修改目的：让执行中、成功、失败三类状态事件都能补齐工具卡片描述，不再为 SubAgent 或单个工具写特例。
+     */
+    args?: Record<string, unknown>;
     /** 执行结果 */
     result: Record<string, unknown>;
 }

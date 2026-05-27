@@ -1792,9 +1792,9 @@ const en: LanguageMessages = {
                     title: 'Application Info',
                     name: 'Lim Code - Vibe Coding Assistant',
                     // Why keep this in sync: the settings page previously lagged behind package.json, which made installed builds look stale.
-                    // How this changes it: bump the displayed release string together with the 1.1.28 extension version.
+                    // How this changes it: bump the displayed release string together with the 1.1.29 extension version.
                     // Purpose: keep package metadata, release notes, and the settings UI consistent.
-                    version: 'Version: 1.1.28',
+                    version: 'Version: 1.1.29',
                     repository: 'Repository',
                     developer: 'Developer'
                 }
@@ -1808,6 +1808,7 @@ const en: LanguageMessages = {
                         autoSaveDelay: 'Auto Save Delay',
                         delayTime: 'Delay Time',
                         delayTimeDesc: 'Wait this amount of time after showing changes before auto-saving',
+                        delay005s: '0.05 seconds',
                         delay1s: '1 second',
                         delay2s: '2 seconds',
                         delay3s: '3 seconds',
@@ -2431,6 +2432,7 @@ const en: LanguageMessages = {
                     copyAll: 'Copy all list',
                     copyList: 'Copy list',
                     dirStat: '{folderCount} folders, {fileCount} files',
+                    lines: '{count} lines',
                     collapse: 'Collapse',
                     expandRemaining: 'Expand remaining {count}',
                     emptyDirectory: 'Directory is empty'
@@ -2477,6 +2479,7 @@ const en: LanguageMessages = {
                     title: 'Find Files',
                     totalFiles: 'Total {count} files',
                     fileCount: '{count} files',
+                    lines: '{count} lines',
                     truncated: 'Truncated',
                     collapse: 'Collapse',
                     expandRemaining: 'Expand remaining {count} files',

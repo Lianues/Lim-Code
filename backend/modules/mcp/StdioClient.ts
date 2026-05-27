@@ -166,9 +166,9 @@ export class StdioMcpClient extends EventEmitter {
             clientInfo: {
                 name: 'LimCode',
                 // 为什么同步 MCP 客户端版本：MCP server 初始化时会看到 clientInfo，旧版本号会让外部服务误判客户端能力。
-                // 怎么改：随 1.1.28 扩展发布同步 clientInfo.version。
+                // 怎么改：随 1.1.29 最终发布同步 clientInfo.version。
                 // 目的：让 MCP 握手元数据与扩展实际发布版本一致。
-                version: '1.1.28'
+                version: '1.1.29'
             }
         });
         

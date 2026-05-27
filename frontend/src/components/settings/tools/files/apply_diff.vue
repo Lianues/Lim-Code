@@ -21,6 +21,7 @@ const autoSaveDelay = ref(3000)
 const autoApplyWithoutDiffView = ref(false)
 const diffGuardEnabled = ref(true)
 const diffGuardThreshold = ref(50)
+const MIN_AUTO_SAVE_DELAY_MS = 50
 
 // 保存状态
 const isSaving = ref(false)
@@ -30,6 +31,10 @@ const isLoading = ref(false)
 
 // 延迟选项（毫秒）
 const delayOptions = computed(() => [
+  // 修改原因：apply_diff 自动执行的最小延迟需要从 1s 缩短到 0.05s，便于用户配置近乎即时的自动应用。
+  // 修改方式：新增 50ms 选项，并通过 MIN_AUTO_SAVE_DELAY_MS 在加载和更新时统一归一化。
+  // 修改目的：前端设置可以保存 0.05s，后端 DiffManager 继续读取同一个 autoSaveDelay 毫秒值执行。
+  { value: MIN_AUTO_SAVE_DELAY_MS, label: t('components.settings.toolSettings.files.applyDiff.delay005s') },
   { value: 1000, label: t('components.settings.toolSettings.files.applyDiff.delay1s') },
   { value: 2000, label: t('components.settings.toolSettings.files.applyDiff.delay2s') },
   { value: 3000, label: t('components.settings.toolSettings.files.applyDiff.delay3s') },
@@ -63,7 +68,7 @@ async function loadConfig() {
     if (response?.config) {
       format.value = response.config.format ?? 'unified'
       autoSave.value = response.config.autoSave ?? false
-      autoSaveDelay.value = response.config.autoSaveDelay ?? 3000
+      autoSaveDelay.value = normalizeAutoSaveDelay(response.config.autoSaveDelay ?? 3000)
       autoApplyWithoutDiffView.value = response.config.autoApplyWithoutDiffView ?? false
       diffGuardEnabled.value = response.config.diffGuardEnabled ?? true
       diffGuardThreshold.value = response.config.diffGuardThreshold ?? 50
@@ -130,9 +135,16 @@ function updateDiffGuardThreshold(event: Event) {
   saveConfig()
 }
 
+function normalizeAutoSaveDelay(delay: number): number {
+  // 修改原因：设置界面的最小延迟已缩短到 0.05s，历史配置或外部写入可能仍给出 0/负数/非数字。
+  // 修改方式：统一把无效值回退到 3000ms，把小于 50ms 的值提升到 50ms，合法值原样保存。
+  // 修改目的：前端保存给后端的 autoSaveDelay 始终是 DiffManager 可直接使用的毫秒数。
+  return Number.isFinite(delay) ? Math.max(MIN_AUTO_SAVE_DELAY_MS, delay) : 3000
+}
+
 // 更新延迟时间
 function updateDelay(delay: number) {
-  autoSaveDelay.value = delay
+  autoSaveDelay.value = normalizeAutoSaveDelay(delay)
   saveConfig()
 }
 

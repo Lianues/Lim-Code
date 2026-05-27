@@ -556,6 +556,14 @@ export interface StreamChunk {
     id: string
     name: string
     status: 'queued' | 'executing' | 'awaiting_apply' | 'success' | 'error' | 'warning'
+    /**
+     * 工具状态事件携带的完整参数快照。
+     *
+     * 修改原因：流式提前执行会把工具推入 executing，而前端此时可能还只有半截 partialArgs。
+     * 修改方式：允许后端 toolStatus 透传 args，handleToolStatus 收到后覆盖 ToolUsage.args。
+     * 修改目的：让 pending/executing 阶段的工具卡片描述、按钮和自定义组件都能立即拿到完整输入。
+     */
+    args?: Record<string, unknown>
     result?: Record<string, unknown>
   }
 

@@ -8,7 +8,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import type { Tool, ToolResult } from '../types';
-import { getWorkspaceRoot, resolveUri, getAllWorkspaces, parseWorkspacePath, resolveUriWithInfo } from '../utils';
+import { getWorkspaceRoot, resolveUri, getAllWorkspaces, parseWorkspacePath, resolveUriWithInfo, countTextFileLines } from '../utils';
 import { getGlobalSettingsManager } from '../../core/settingsContext';
 
 /**
@@ -69,6 +69,14 @@ function shouldIgnore(name: string, ignorePatterns: string[]): boolean {
 interface Entry {
     name: string;
     type: 'file' | 'directory';
+    /**
+     * 文本文件行数；目录和二进制文件不提供。
+     *
+     * 修改原因：模型在决定是否直接 read_file 时需要知道文件规模，只看文件名会诱发读取超大文件。
+     * 修改方式：list_files 生成文件 entry 时尝试统计文本行数，失败或二进制文件保持 undefined。
+     * 修改目的：让目录浏览结果具备足够的读取决策信息，同时不破坏既有 name/type 字段。
+     */
+    lineCount?: number;
 }
 
 /**
@@ -109,7 +117,15 @@ async function listDirectoryRecursive(
             const subDirUri = vscode.Uri.joinPath(dirUri, name);
             await listDirectoryRecursive(subDirUri, relativePath, entries, ignorePatterns);
         } else if (type === vscode.FileType.File) {
-            entries.push({ name: relativePath, type: 'file' });
+            const fileUri = vscode.Uri.joinPath(dirUri, name);
+            entries.push({
+                name: relativePath,
+                type: 'file',
+                // 修改原因：递归列表里也要给每个文本文件带行数，避免只有顶层列表可用。
+                // 修改方式：用当前目录 URI 与文件名拼出真实 URI，再通过共享工具统计文本行数。
+                // 修改目的：无论 recursive 是否开启，返回结构都一致携带可选 lineCount。
+                lineCount: await countTextFileLines(fileUri, relativePath)
+            });
         }
     }
 }
@@ -122,19 +138,22 @@ export function createListFilesTool(): Tool {
     const isMultiRoot = workspaces.length > 1;
     
     // 数组格式强调说明
-    const arrayFormatNote = ' MUST be an array even for single directory, e.g., ["src"]';
+    // 修改原因：用户要求两个文件发现类工具的新描述统一使用中文，同时保留数组参数约束，降低模型把 path 写成字符串的概率。
+    // 修改方式：将主描述和参数描述改为中文，并明确文件 entry 会携带 lineCount。
+    // 修改目的：让模型在中文对话中更容易理解 list_files 的批量目录语义和行数元数据。
+    const arrayFormatNote = '。即使只列出一个目录，也必须传数组，例如：["src"]。';
     
-    let pathsDescription = 'Array of directory paths to list (relative to workspace root).' + arrayFormatNote;
+    let pathsDescription = '要列出的目录路径数组，相对于当前工作区根目录' + arrayFormatNote;
     if (isMultiRoot) {
-        pathsDescription = `Array of directory paths to list, must use "workspace_name/path" format.${arrayFormatNote} Available workspaces: ${workspaces.map(w => w.name).join(', ')}`;
+        pathsDescription = `要列出的目录路径数组；当前是多根工作区，必须使用 "workspace_name/path" 格式${arrayFormatNote}可用工作区：${workspaces.map(w => w.name).join(', ')}。`;
     }
     
     return {
         declaration: {
             name: 'list_files',
             description: isMultiRoot
-                ? `List files and subdirectories in one or more directories. Multi-root workspace: Must use "workspace_name/path" format. Available workspaces: ${workspaces.map(w => w.name).join(', ')}`
-                : 'List files and subdirectories in one or more directories. Supports batch listing.',
+                ? `列出一个或多个目录中的文件和子目录。文件条目在可统计时会包含 lineCount（文本文件行数），便于决定是否用 read_file 范围读取。当前是多根工作区，path 必须使用 "workspace_name/path" 格式。可用工作区：${workspaces.map(w => w.name).join(', ')}。`
+                : '列出一个或多个目录中的文件和子目录，支持批量列出。文件条目在可统计时会包含 lineCount（文本文件行数），便于决定是否用 read_file 范围读取。',
             category: 'file',
             parameters: {
                 type: 'object',
@@ -148,7 +167,7 @@ export function createListFilesTool(): Tool {
                     },
                     recursive: {
                         type: 'boolean',
-                        description: 'Whether to list subdirectories recursively',
+                        description: '是否递归列出子目录。false 时只列出指定目录直属的一层；true 时递归列出所有子目录内容。',
                         default: false
                     }
                 },
@@ -219,7 +238,15 @@ export function createListFilesTool(): Tool {
                             if (type === vscode.FileType.Directory) {
                                 entries.push({ name: name + '/', type: 'directory' });
                             } else if (type === vscode.FileType.File) {
-                                entries.push({ name, type: 'file' });
+                                const fileUri = vscode.Uri.joinPath(dirUri, name);
+                                entries.push({
+                                    name,
+                                    type: 'file',
+                                    // 修改原因：非递归 list_files 是最常用的目录探查入口，需要直接告诉模型每个文本文件有多少行。
+                                    // 修改方式：对文件 entry 统计 lineCount；二进制或读取失败时保持 undefined。
+                                    // 修改目的：减少模型盲目 read_file 整个大文件的概率。
+                                    lineCount: await countTextFileLines(fileUri, name)
+                                });
                             }
                         }
                     }

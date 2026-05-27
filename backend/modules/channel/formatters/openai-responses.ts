@@ -19,6 +19,27 @@ import type {
 } from '../types';
 
 /**
+ * Responses 流式事件归一化表。
+ *
+ * 修改原因：不同 SDK 或兼容网关会使用 response.function_call_arguments.* 与 response.function_call.arguments.* 两套命名，直接在 switch 里堆叠 case 会把兼容逻辑散落成重复分支。
+ * 修改方式：在 formatter 入口先把别名归一化为 LimCode 内部识别的规范事件名，后续 switch 只处理一种 canonical spelling。
+ * 修改目的：项目里只保留一处 provider 兼容映射，避免未来新增 Responses 事件时复制多组重复 case。
+ */
+const RESPONSE_STREAM_EVENT_ALIASES: Record<string, string> = {
+    'response.text.delta': 'response.output_text.delta',
+    'response.reasoning_summary_text.delta': 'response.reasoning_text.delta',
+    'response.reasoning.delta': 'response.reasoning_text.delta',
+    'response.function_call.arguments.delta': 'response.function_call_arguments.delta',
+    'response.function_call.arguments.done': 'response.function_call_arguments.done',
+    'response.done': 'response.completed'
+};
+
+function normalizeResponsesStreamEventType(type: unknown): string {
+    const rawType = typeof type === 'string' ? type : '';
+    return RESPONSE_STREAM_EVENT_ALIASES[rawType] || rawType;
+}
+
+/**
  * OpenAI Responses 格式转换器
  * 
  * 使用全新的 Responses API，支持更丰富的内容类型和流式处理方式。
@@ -430,9 +451,21 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
         let done = false;
         let usage: any;
         let finishReason: string | undefined;
+        // 修改原因：Responses streaming 是语义化事件流，后续处理器需要知道当前 chunk 是文本、工具参数 delta 还是结构完成。
+        // 修改方式：先归一化 provider 事件别名，再把规范事件压缩为轻量 providerEvent；保留兼容 delta 输出，同时避免前端直接理解 OpenAI 私有格式。
+        // 修改目的：让 snapshot 只在结构校准点发送，高频 arguments.delta 保持轻量增量路径，并消除 switch 中的重复 case。
+        const eventType = normalizeResponsesStreamEventType(chunk.type);
+        const providerEvent = {
+            type: eventType,
+            outputIndex: typeof chunk.output_index === 'number' ? chunk.output_index : undefined,
+            contentIndex: typeof chunk.content_index === 'number' ? chunk.content_index : undefined,
+            itemId: typeof chunk.item_id === 'string' ? chunk.item_id : (typeof chunk.item?.id === 'string' ? chunk.item.id : undefined),
+            callId: typeof chunk.call_id === 'string' ? chunk.call_id : (typeof chunk.item?.call_id === 'string' ? chunk.item.call_id : undefined),
+            isFinalArgs: false
+        };
 
-        // 根据事件类型处理
-        switch (chunk.type) {
+        // 根据归一化后的事件类型处理
+        switch (eventType) {
             case 'response.output_item.added':
                 // 当函数调用被添加时
                 if (chunk.item?.type === 'function_call') {
@@ -462,6 +495,7 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                         }
                     });
                 } else if (chunk.item?.type === 'function_call') {
+                    providerEvent.isFinalArgs = true;
                     // 为什么还要处理 output_item.done：Responses 的 arguments.done 事件没有 call_id，只有 item_id；最终 output item 才同时带有 id 与 call_id。
                     // 怎么改：输出一个“最终参数”functionCall 片段，用 itemId/index 合并回占位调用，并用 call_id 校正统一工具 ID。
                     // 目的：即使 arguments.done 已经被处理，也能用官方最终 item 修正 call_id 和完整参数，避免幽灵工具调用。
@@ -480,7 +514,6 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                 break;
             
             case 'response.output_text.delta':
-            case 'response.text.delta': // 兼容旧版本
                 // 文本增量
                 parts.push({
                     text: chunk.delta
@@ -488,8 +521,6 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                 break;
             
             case 'response.reasoning_text.delta':
-            case 'response.reasoning_summary_text.delta':
-            case 'response.reasoning.delta': // 兼容旧版本
                 // 思考内容增量
                 parts.push({
                     text: chunk.delta,
@@ -512,6 +543,7 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                 break;
 
             case 'response.function_call_arguments.done':
+                providerEvent.isFinalArgs = true;
                 // 函数调用完成
                 parts.push({
                     functionCall: {
@@ -530,7 +562,6 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                 break;
             
             case 'response.completed':
-            case 'response.done': // 兼容旧版本
                 // 响应完成
                 done = true;
                 if (chunk.response?.usage) {
@@ -571,7 +602,8 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
             done,
             usage,
             finishReason,
-            modelVersion: chunk.response?.model
+            modelVersion: chunk.response?.model,
+            providerEvent
         };
     }
 

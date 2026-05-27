@@ -59,6 +59,11 @@ interface FileReadRequest {
     endLine?: number;
 }
 
+interface ResolvedLineRangeArgs {
+    startLine?: number;
+    endLine?: number;
+}
+
 /**
  * read_file 多模态调试信息。
  *
@@ -219,6 +224,33 @@ function normalizeLineNumber(value: unknown): number | undefined {
     return typeof value === 'number' && Number.isInteger(value) && value >= 1
         ? value
         : undefined;
+}
+
+function resolveLineRangeArgs(args: Record<string, unknown>): ResolvedLineRangeArgs {
+    // 修改原因：模型经常按其他文件读取工具的习惯传 line/maxLines/limit，而 read_file 原本只接受 startLine/endLine，会被 strict schema 直接拒绝。
+    // 修改方式：保留 startLine/endLine 作为规范字段，同时把 line/maxLine/maxLines/limit 收敛为同一个 LineRange 语义。
+    // 修改目的：提高工具调用容错率，并让“读取第 N 行”或“读取最多 N 行”的自然表达无需失败后重试。
+    const explicitStartLine = normalizeLineNumber(args.startLine);
+    const explicitEndLine = normalizeLineNumber(args.endLine);
+    const aliasLine = normalizeLineNumber(args.line);
+    const aliasMaxLine = normalizeLineNumber(args.maxLine);
+    const maxLines = normalizeLineNumber(args.maxLines) ?? normalizeLineNumber(args.limit);
+
+    let startLine = explicitStartLine ?? aliasLine;
+    let endLine = explicitEndLine ?? aliasMaxLine;
+
+    if (endLine === undefined && maxLines !== undefined) {
+        const baseLine = startLine ?? 1;
+        startLine = baseLine;
+        endLine = baseLine + maxLines - 1;
+    } else if (explicitStartLine === undefined && explicitEndLine === undefined && aliasLine !== undefined && aliasMaxLine === undefined) {
+        // 修改原因：单独的 line 更接近“读取这一行”，而不是 startLine 的“从这一行读到文件末尾”。
+        // 修改方式：只有在没有 maxLines/maxLine/endLine 时，把 line=N 解释为 N..N。
+        // 修改目的：让模型或用户表达“line: 42”时得到最符合直觉的单行结果。
+        endLine = aliasLine;
+    }
+
+    return { startLine, endLine };
 }
 
 function getPathKind(filePath: string): ReadFileDebugInfo['pathKind'] {
@@ -470,7 +502,7 @@ export function createReadFileTool(
     const lineNumberNote = '\n\n说明：读取文本文件时，返回内容会带行号前缀（例如 "   1 | code here"）。这些数字和 "|" 只是定位标记，不属于文件正文；编辑文件时不要把它们写回去。';
     
     // 行范围说明
-    const lineRangeNote = '\n\n行范围：只有已经知道准确行号时才填写 startLine/endLine（例如来自 get_symbols、goto_definition、find_references 或之前 read_file 的结果）。不要猜行号；不确定时不要填写行范围，先读取完整文件或使用搜索工具定位。';
+    const lineRangeNote = '\n\n行范围：只有已经知道准确行号时才填写 startLine/endLine（例如来自 get_symbols、goto_definition、find_references、list_files、find_files 或之前 read_file 的结果）。不要猜行号；不确定时不要填写行范围，先读取完整文件或使用搜索工具定位。如果没有提供任何行数参数，read_file 会读取整个文本文件。兼容别名：line=N 表示只读取第 N 行；maxLine=N 等同于 endLine=N；maxLines=N 或 limit=N 表示最多读取 N 行，并从 startLine/line 或第 1 行开始计算。推荐优先使用 startLine/endLine。';
 
     // 多模态/二进制行范围限制说明（多模态开启时强调）
     const lineRangeBinaryRestrictionNote =
@@ -526,6 +558,26 @@ export function createReadFileTool(
                         type: 'integer',
                         minimum: 1,
                         description: '结束行号，1-based，包含该行。仅文本文件可用。读取图片/PDF 等非文本文件时会被忽略。未指定 startLine 时，从文件开头读取到该行。'
+                    },
+                    line: {
+                        type: 'integer',
+                        minimum: 1,
+                        description: '兼容别名：读取单独某一行，1-based。若同时提供 maxLines，则从该行开始读取最多 maxLines 行。推荐新调用优先使用 startLine/endLine。'
+                    },
+                    maxLine: {
+                        type: 'integer',
+                        minimum: 1,
+                        description: '兼容别名：最大行号，等同于 endLine。用于容错模型把 endLine 写成 maxLine 的情况。'
+                    },
+                    maxLines: {
+                        type: 'integer',
+                        minimum: 1,
+                        description: '兼容别名：最多读取多少行。从 startLine/line 开始；如果未提供起始行，则从第 1 行开始。'
+                    },
+                    limit: {
+                        type: 'integer',
+                        minimum: 1,
+                        description: '兼容别名：等同于 maxLines。用于容错模型常见的 limit 参数；推荐新调用使用 endLine 或 maxLines。'
                     }
                 },
                 required: ['path']
@@ -544,10 +596,14 @@ export function createReadFileTool(
             const workspaces = getAllWorkspaces();
             const isMultiRoot = workspaces.length > 1;
             
+            const resolvedLineRange = resolveLineRangeArgs(args);
             const fileReq: FileReadRequest = {
                 path: args.path as string,
-                startLine: normalizeLineNumber(args.startLine),
-                endLine: normalizeLineNumber(args.endLine)
+                // 修改原因：read_file 对外继续以 startLine/endLine 作为内部规范，避免后续读取逻辑理解多个别名。
+                // 修改方式：handler 入口先把 line/maxLine/maxLines/limit 全部归一化为 startLine/endLine。
+                // 修改目的：兼容模型常见参数写法，同时保持 readSingleFile 的行范围模型简单稳定。
+                startLine: resolvedLineRange.startLine,
+                endLine: resolvedLineRange.endLine
             };
 
             if (typeof fileReq.path !== 'string' || fileReq.path.trim() === '') {

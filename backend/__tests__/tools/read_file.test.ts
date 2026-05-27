@@ -24,6 +24,77 @@ function setupWorkspace(): void {
     });
 }
 
+describe('read_file line range aliases', () => {
+    beforeEach(() => {
+        jest.clearAllMocks();
+        setupWorkspace();
+        (vscode.workspace.fs.readFile as jest.Mock).mockResolvedValue(Buffer.from('alpha\nbeta\ngamma\ndelta', 'utf8'));
+    });
+
+    it('支持 line=N 读取单独一行', async () => {
+        const tool = registerReadFile();
+
+        const result = await tool.handler({ path: 'notes.txt', line: 2 });
+
+        expect(result.success).toBe(true);
+        expect(result.data.results[0]).toMatchObject({
+            path: 'notes.txt',
+            success: true,
+            type: 'text',
+            lineCount: 1,
+            totalLines: 4,
+            startLine: 2,
+            endLine: 2
+        });
+        expect(result.data.results[0].content).toBe('   2 | beta');
+    });
+
+    it('支持 line + maxLines 按数量读取', async () => {
+        const tool = registerReadFile();
+
+        const result = await tool.handler({ path: 'notes.txt', line: 2, maxLines: 2 });
+
+        expect(result.success).toBe(true);
+        expect(result.data.results[0]).toMatchObject({
+            lineCount: 2,
+            totalLines: 4,
+            startLine: 2,
+            endLine: 3
+        });
+        expect(result.data.results[0].content).toBe('   2 | beta\n   3 | gamma');
+    });
+
+    it('支持 limit 作为 maxLines 兼容别名，避免模型常见参数失败', async () => {
+        const tool = registerReadFile();
+
+        const result = await tool.handler({ path: 'notes.txt', limit: 2 });
+
+        expect(result.success).toBe(true);
+        expect(result.data.results[0]).toMatchObject({
+            lineCount: 2,
+            totalLines: 4,
+            startLine: 1,
+            endLine: 2
+        });
+        expect(result.data.results[0].content).toBe('   1 | alpha\n   2 | beta');
+    });
+
+    it('支持 maxLine 作为 endLine 兼容别名', async () => {
+        const tool = registerReadFile();
+
+        const result = await tool.handler({ path: 'notes.txt', startLine: 2, maxLine: 4 });
+
+        expect(result.success).toBe(true);
+        expect(result.data.results[0]).toMatchObject({
+            lineCount: 3,
+            totalLines: 4,
+            startLine: 2,
+            endLine: 4
+        });
+        expect(result.data.results[0].content).toBe('   2 | beta\n   3 | gamma\n   4 | delta');
+    });
+});
+
 describe('read_file multimodal line range handling', () => {
     beforeEach(() => {
         jest.clearAllMocks();

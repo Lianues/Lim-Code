@@ -207,6 +207,22 @@ export interface StreamChunk {
     modelVersion?: string;
 
     /**
+     * Provider 原生事件的轻量语义。
+     *
+     * 修改原因：OpenAI Responses 等 provider 会把文本、reasoning、工具参数和结构完成拆成不同事件，旧协议只剩 delta 后无法判断哪些事件属于高频热路径。
+     * 修改方式：在兼容的 StreamChunk 上补充 providerEvent 元数据，只记录路由和合并所需的轻量字段，不让前端依赖 provider 私有 payload。
+     * 修改目的：StreamResponseProcessor 可以按语义决定 delta 还是 snapshot，避免每个 tool args delta 都重建完整 Content。
+     */
+    providerEvent?: {
+        type: string;
+        outputIndex?: number;
+        contentIndex?: number;
+        itemId?: string;
+        callId?: string;
+        isFinalArgs?: boolean;
+    };
+
+    /**
      * 当前已经归一化的内容快照
      *
      * 当流式内容发生结构改写时（如工具调用参数补全），后端会附带该快照。

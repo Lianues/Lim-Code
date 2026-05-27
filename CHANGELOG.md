@@ -3,6 +3,40 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.1.29] - 2026-05-27
+
+### Added
+  - 新增 SubAgent Monitor 独立编辑器面板，可实时查看 SubAgent 内部对话、思维过程、工具调用、运行状态和多 run 标签页。
+  - 新增 SubAgent 运行事件总线与运行控制器，支持暂停、继续、退出、删除消息和从指定消息重试。
+  - 为 `list_files` 与 `find_files` 增加文本文件 `lineCount` 元数据，并在前端结果卡片展示行数徽标，辅助模型按范围读取文件。
+  - 为 `read_file` 增加 `line`、`maxLine`、`maxLines` 和 `limit` 兼容别名，提高行范围读取容错率。
+  - 为 `apply_diff` 自动应用延迟增加 0.05 秒选项，并将后端下限同步调整为 50ms。
+
+### Changed
+  - 将 SubAgent 执行器重构为复用主会话的工具声明解析、工具执行、流式响应处理和工具调用解析链路。
+  - 抽出 `ToolDeclarationResolver`、`TranscriptMutation`、`ToolActionConfig` 和 diff 预览 action 工厂，减少主聊天、SubAgent Monitor 与工具卡片之间的特判。
+  - 流式提前执行工具改为按单工具粒度实时发送状态，不再等待同批工具 `Promise.all` 整批结算。
+  - `StreamAccumulator` 区分高频流式投影与最终持久化内容，OpenAI Responses 工具参数流不再逐片段重复解析半截 JSON。
+  - SubAgent Monitor 的 `llm_delta` 改为只发送增量事件，前端本地合并内容，避免完整 snapshot 高频传输导致 O(n²) 卡顿。
+  - `search_in_files`、`history_search`、`list_files`、`find_files` 等工具说明进一步中文化，并补充批量调用、多关键词兜底和多路径纠错说明。
+
+### Fixed
+  - 修复 `search_in_files` 非正则多关键词、字面量管道符和误传多个 path 时的匹配与提示行为。
+  - 修复 DiffManager 多个 diff 确认并发时可能出现的文档保存和标签页切换竞态。
+  - 修复 diff-review 类工具在模型流式输出期间被提前并发执行的问题，避免需要用户确认的文件修改绕过串行队列。
+  - 修复 OpenAI Responses / MCP 流式工具调用重复卡片、`output_index=0` 被误判、最终参数覆盖和批量 toolStatus 参数缺失问题。
+  - 修复流式提前执行后工具参数预览在 `executing` 等非终态消失的问题。
+  - 修复 SubAgent Monitor 手动切换 run 后被实时事件拉回、run 标签页顺序跳动、暂停后误报完成和 Monitor 内工具按钮无响应的问题。
+  - 修复历史页“在文件管理器中显示”无法定位 segmented 对话存储的问题。
+  - 修复设置页“提示系统”图标不显示的问题。
+
+### Tests and Docs
+  - 新增和更新 SubAgent Monitor、工具流式合并、OpenAI Responses 事件别名、文件行数元数据、`read_file` 别名、搜索工具、对话转录变更和 DiffManager 队列相关测试。
+  - 纳入 `2026年5月27日-修复资料/` 中的工具系统、SubAgent Monitor、SSE 流式与自动确认架构研究文档。
+
+### Versioning
+  - 将扩展、前端包、设置页展示版本、内部模块元数据和 MCP clientInfo 统一更新到 `1.1.29`。
+
 ## [1.1.28] - 2026-05-27
 
 ### Changed
