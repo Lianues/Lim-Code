@@ -228,7 +228,10 @@ export class DependencyManager {
             // 创建临时 package.json
             const tempPackageJson = {
                 name: 'limcode-deps',
-                version: '1.0.5',
+                // 为什么同步临时依赖包版本：依赖安装目录里的 package.json 也属于 LimCode 运行时元数据。
+                // 怎么改：随 1.1.28 发布同步临时 package 版本，不改第三方依赖版本。
+                // 目的：清理“LimCode 自身版本仍停在 1.0.5”的诊断噪音。
+                version: '1.1.28',
                 dependencies: {
                     [name]: config.version
                 }

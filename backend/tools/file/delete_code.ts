@@ -300,43 +300,10 @@ function waitForDiffResolution(
     diffId: string,
     abortSignal?: AbortSignal
 ): Promise<'none' | 'abort' | 'user'> {
-    return new Promise<'none' | 'abort' | 'user'>((resolve) => {
-        let resolved = false;
-
-        const finish = (reason: 'none' | 'abort' | 'user') => {
-            if (resolved) return;
-     resolved = true;
-            if (abortHandler && abortSignal) {
-                try { abortSignal.removeEventListener('abort', abortHandler); } catch { /* ignore */ }
-            }
-            resolve(reason);
-        };
-
-        const abortHandler = () => {
-            diffManager.rejectDiff(diffId).catch(() => {});
-            finish('abort');
-        };
-
-        if (abortSignal) {
-            if (abortSignal.aborted) { abortHandler(); return; }
-            abortSignal.addEventListener('abort', abortHandler, { once: true } as any);
-        }
-
-        const checkStatus = () => {
-            if (diffManager.isUserInterrupted()) {
-                diffManager.rejectDiff(diffId).catch(() => {});
-                finish('user');
-                return;
-            }
-            const diff = diffManager.getDiff(diffId);
-            if (!diff || diff.status !== 'pending') {
-                finish('none');
-            } else {
-                setTimeout(checkStatus, 100);
-            }
-        };
-        checkStatus();
-    });
+    // 为什么保留这个薄包装：调用点语义仍然是“等待 delete_code 的 diff 结算”，但具体生命周期规则应由 DiffManager 统一拥有。
+    // 怎么改：直接委托 waitForDiffResolution，不再在工具文件内复制轮询、abort 和用户中断逻辑。
+    // 目的：避免 delete_code 与 apply_diff/write_file 在边界场景下出现不同的 pending 收敛行为。
+    return diffManager.waitForDiffResolution(diffId, abortSignal);
 }
 
 /**

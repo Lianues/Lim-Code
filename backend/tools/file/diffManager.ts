@@ -92,6 +92,16 @@ type StatusChangeListener = (pending: PendingDiff[], allProcessed: boolean) => v
 type DiffSaveListener = (diff: PendingDiff) => void;
 
 /**
+ * Diff 结算等待结果。
+ *
+ * 为什么要新增：多个文件编辑工具都在等待 pending diff 结束，但 apply_diff 只靠状态监听，
+ * 在用户中断清掉自动保存定时器且没有后续状态事件时可能一直等待。
+ * 怎么改：把“正常结束、abort 取消、用户新请求中断”抽象成 DiffManager 级别的通用结果。
+ * 目的：所有 diff-review 工具共享同一套生命周期等待语义，避免某个工具独自遗漏中断路径。
+ */
+export type DiffResolutionReason = 'none' | 'abort' | 'user';
+
+/**
  * 用户中断标记
  */
 let userInterruptFlag = false;
@@ -1489,6 +1499,103 @@ export class DiffManager {
             };
             
             this.addStatusListener(listener);
+        });
+    }
+
+    /**
+     * 等待指定 pending diff 结算。
+     *
+     * 为什么要集中到 DiffManager：状态监听、轮询、用户中断、AbortSignal 原本分散在各工具里，
+     * apply_diff 遗漏轮询用户中断后，会在自动保存定时器被 markUserInterrupt 清掉时永久等待。
+     * 怎么改：监听状态变化负责快速响应；100ms 轮询负责兜底捕获用户中断和漏掉的状态事件；
+     * abort/user 中断都会主动 reject 当前 diff，并清理 listener、timer 和 abort handler。
+     * 目的：让所有 diff-review 工具拥有同一个收敛协议，避免“文件已处理但工具 Promise 仍悬挂”。
+     */
+    public waitForDiffResolution(id: string, abortSignal?: AbortSignal): Promise<DiffResolutionReason> {
+        return new Promise<DiffResolutionReason>((resolve) => {
+            let resolved = false;
+            let pollTimer: ReturnType<typeof setTimeout> | undefined;
+            let abortHandler: (() => void) | undefined;
+            let statusListener: StatusChangeListener | undefined;
+
+            const clearPollTimer = () => {
+                if (pollTimer) {
+                    clearTimeout(pollTimer);
+                    pollTimer = undefined;
+                }
+            };
+
+            const finish = (reason: DiffResolutionReason) => {
+                if (resolved) return;
+                resolved = true;
+                clearPollTimer();
+
+                if (statusListener) {
+                    this.removeStatusListener(statusListener);
+                    statusListener = undefined;
+                }
+
+                if (abortHandler && abortSignal) {
+                    try {
+                        abortSignal.removeEventListener('abort', abortHandler);
+                    } catch {
+                        // ignore
+                    }
+                }
+
+                resolve(reason);
+            };
+
+            const rejectAndFinish = (reason: Exclude<DiffResolutionReason, 'none'>) => {
+                this.rejectDiff(id).catch(() => {});
+                finish(reason);
+            };
+
+            const scheduleNextCheck = () => {
+                if (resolved || pollTimer) return;
+                pollTimer = setTimeout(() => {
+                    pollTimer = undefined;
+                    checkStatus();
+                }, 100);
+            };
+
+            const checkStatus = () => {
+                if (resolved) return;
+
+                if (this.isUserInterrupted()) {
+                    rejectAndFinish('user');
+                    return;
+                }
+
+                const diff = this.getDiff(id);
+                if (!diff || diff.status !== 'pending') {
+                    finish('none');
+                    return;
+                }
+
+                scheduleNextCheck();
+            };
+
+            abortHandler = () => {
+                rejectAndFinish('abort');
+            };
+
+            if (abortSignal) {
+                if (abortSignal.aborted) {
+                    abortHandler();
+                    return;
+                }
+                abortSignal.addEventListener('abort', abortHandler, { once: true } as any);
+            }
+
+            statusListener = () => {
+                checkStatus();
+            };
+            this.addStatusListener(statusListener);
+
+            // createPendingDiff 可能在 autoApplyWithoutDiffView 或外部取消路径中已完成，
+            // 所以注册监听后立刻检查一次，避免错过返回前发生的状态变化。
+            checkStatus();
         });
     }
     

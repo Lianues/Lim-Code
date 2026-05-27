@@ -1008,57 +1008,12 @@ ${descriptionSuffix}`,
                         context?.toolId
                     );
 
-                    // 等待 diff 被处理（保存或拒绝）或用户中断
-                    const wasInterrupted = await new Promise<boolean>((resolve) => {
-                        let resolved = false;
-                        let abortHandler: (() => void) | undefined;
-                        let statusListener: ((pending: any[], allProcessed: boolean) => void) | undefined;
-
-                        const finish = (interrupted: boolean) => {
-                            if (resolved) return;
-                            resolved = true;
-
-                            if (statusListener) {
-                                diffManager.removeStatusListener(statusListener);
-                            }
-                            if (abortHandler && context?.abortSignal) {
-                                try {
-                                    context.abortSignal.removeEventListener('abort', abortHandler);
-                                } catch {
-                                    // ignore
-                                }
-                            }
-                            resolve(interrupted);
-                        };
-
-                        abortHandler = () => {
-                            diffManager.rejectDiff(pendingDiff.id).catch(() => {});
-                            finish(true);
-                        };
-
-                        // 监听信号取消
-                        if (context?.abortSignal) {
-                            if (context.abortSignal.aborted) {
-                                abortHandler();
-                                return;
-                            }
-                            context.abortSignal.addEventListener('abort', abortHandler, { once: true } as any);
-                        }
-
-                        // 监听 diffManager 的状态变化
-                        statusListener = (_pending: any[], _allProcessed: boolean) => {
-                            const d = diffManager.getDiff(pendingDiff.id);
-                            if (!d || d.status !== 'pending') {
-                                finish(false);
-                            }
-                        };
-                        diffManager.addStatusListener(statusListener);
-
-                        // createPendingDiff 在 autoApplyWithoutDiffView 模式下可能会在返回前就完成。
-                        // 这里立刻检查一次，避免错过状态变化事件导致 Promise 一直不 resolve。
-                        const current = diffManager.getDiff(pendingDiff.id);
-                        if (!current || current.status !== 'pending') finish(false);
-                    });
+                    // 等待 diff 被处理（保存、拒绝、abort 或用户新请求中断）。
+                    // 为什么改用 DiffManager 统一等待：apply_diff 之前只监听状态变化，用户中断会清掉自动保存定时器但不一定产生新状态事件，导致偶发卡住。
+                    // 怎么改：统一等待方法同时监听状态事件、轮询中断标记，并处理 AbortSignal。
+                    // 目的：让结构化 hunks 与旧 patch 路径共享可靠的 diff 生命周期收敛逻辑。
+                    const interruptReason = await diffManager.waitForDiffResolution(pendingDiff.id, context?.abortSignal);
+                    const wasInterrupted = interruptReason !== 'none';
 
                     // 获取最终状态
                     const finalDiff = diffManager.getDiff(pendingDiff.id);
@@ -1227,54 +1182,12 @@ ${descriptionSuffix}`,
                     context?.toolId
                 );
 
-                const wasInterrupted = await new Promise<boolean>((resolve) => {
-                    let resolved = false;
-                    let abortHandler: (() => void) | undefined;
-                    let statusListener: ((pending: any[], allProcessed: boolean) => void) | undefined;
-
-                    const finish = (interrupted: boolean) => {
-                        if (resolved) return;
-                        resolved = true;
-
-                        if (statusListener) {
-                            diffManager.removeStatusListener(statusListener);
-                        }
-                        if (abortHandler && context?.abortSignal) {
-                            try {
-                                context.abortSignal.removeEventListener('abort', abortHandler);
-                            } catch {
-                                // ignore
-                            }
-                        }
-                        resolve(interrupted);
-                    };
-
-                    abortHandler = () => {
-                        diffManager.rejectDiff(pendingDiff.id).catch(() => {});
-                        finish(true);
-                    };
-
-                    if (context?.abortSignal) {
-                        if (context.abortSignal.aborted) {
-                            abortHandler();
-                            return;
-                        }
-                        context.abortSignal.addEventListener('abort', abortHandler, { once: true } as any);
-                    }
-
-                    statusListener = (_pending: any[], _allProcessed: boolean) => {
-                        const d = diffManager.getDiff(pendingDiff.id);
-                        if (!d || d.status !== 'pending') {
-                            finish(false);
-                        }
-                    };
-                    diffManager.addStatusListener(statusListener);
-
-                    // createPendingDiff 在 autoApplyWithoutDiffView 模式下可能会在返回前就完成。
-                    // 这里立刻检查一次，避免错过状态变化事件导致 Promise 一直不 resolve。
-                    const current = diffManager.getDiff(pendingDiff.id);
-                    if (!current || current.status !== 'pending') finish(false);
-                });
+                // 等待 diff 被处理（保存、拒绝、abort 或用户新请求中断）。
+                // 为什么旧 search/replace 路径也要改：它和结构化 hunks 一样会创建 pending diff，不能保留另一套可能遗漏中断的等待逻辑。
+                // 怎么改：复用 DiffManager.waitForDiffResolution，统一事件监听、轮询兜底和 abort 清理。
+                // 目的：让 apply_diff 的所有输入格式在自动保存和取消场景下表现一致。
+                const interruptReason = await diffManager.waitForDiffResolution(pendingDiff.id, context?.abortSignal);
+                const wasInterrupted = interruptReason !== 'none';
 
                 const finalDiff = diffManager.getDiff(pendingDiff.id);
                 const wasAccepted = !wasInterrupted && (!finalDiff || finalDiff.status === 'accepted');

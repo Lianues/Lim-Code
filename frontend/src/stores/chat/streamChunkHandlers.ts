@@ -48,18 +48,30 @@ function mergeToolsPreferExisting(
   if (b.length === 0) return a.length > 0 ? a : undefined
 
   const byId = new Map<string, ToolUsage>()
+  const byItemId = new Map<string, ToolUsage>()
+  const byIndex = new Map<number, ToolUsage>()
   for (const t of a) {
-    if (t && typeof t.id === 'string') byId.set(t.id, t)
+    if (!t) continue
+    if (typeof t.id === 'string') byId.set(t.id, t)
+    // 为什么 existing/incoming 不能只按 id 合并：Responses 流式早期可能只有 itemId/output_index，最终才稳定到 call_id。
+    // 怎么改：把 itemId 和数字 index 都作为前端投影的内部合并键，且允许 index=0。
+    // 目的：contentSnapshot 到达时替换“参数 0”的占位工具，而不是把它追加回工具列表末尾。
+    if (typeof t.itemId === 'string' && t.itemId.trim()) byItemId.set(t.itemId, t)
+    if (typeof t.index === 'number') byIndex.set(t.index, t)
   }
 
+  const consumedExisting = new Set<ToolUsage>()
   const merged: ToolUsage[] = []
   for (const t of b) {
     const e = byId.get(t.id)
+      || (typeof t.itemId === 'string' && t.itemId.trim() ? byItemId.get(t.itemId) : undefined)
+      || (typeof t.index === 'number' ? byIndex.get(t.index) : undefined)
     if (!e) {
       merged.push(t)
       continue
     }
 
+    consumedExisting.add(e)
     const incomingHasArgs = !!(t.args && Object.keys(t.args).length > 0)
     const partialArgs = typeof t.partialArgs === 'string'
       ? (typeof e.partialArgs === 'string' && e.partialArgs.length > t.partialArgs.length ? e.partialArgs : t.partialArgs)
@@ -79,14 +91,18 @@ function mergeToolsPreferExisting(
       error: e.error ?? t.error,
       duration: e.duration ?? t.duration,
       awaitingConfirmation: e.awaitingConfirmation ?? t.awaitingConfirmation,
+      itemId: t.itemId ?? e.itemId,
+      index: typeof t.index === 'number' ? t.index : e.index,
       partialArgs
     })
-    byId.delete(t.id)
   }
 
-  // 兜底：append 可能存在但不在 incoming 中的 existing 工具（极端竞态）
-  for (const t of byId.values()) {
-    merged.push(t)
+  // 兜底：append 可能存在但不在 incoming 中的 existing 工具（极端竞态）。
+  // 为什么要用 consumedExisting 而不是 byId.delete：同一逻辑工具可能通过 itemId/index 匹配成功，id 却不同。
+  // 怎么改：只追加完全没有被任何合并键消费过的旧工具。
+  // 目的：避免 id 修正后，旧的 0 参数占位工具被当成“未出现在 incoming 中的工具”重新追加。
+  for (const t of a) {
+    if (!consumedExisting.has(t)) merged.push(t)
   }
 
   return merged.length > 0 ? merged : undefined

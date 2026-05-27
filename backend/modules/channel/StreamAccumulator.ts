@@ -330,9 +330,11 @@ export class StreamAccumulator {
                         (!lastFc.args || Object.keys(lastFc.args).length === 0) &&
                         (lastFc.partialArgs === undefined || lastFc.partialArgs === '');
 
+                    const sameIndex = typeof fc.index === 'number' && typeof lastFc.index === 'number' && fc.index === lastFc.index;
+
                     // OpenAI 模式：优先使用 index 匹配（数字类型，包括 0）
-                    if (typeof fc.index === 'number' && typeof lastFc.index === 'number') {
-                        canMerge = fc.index === lastFc.index;
+                    if (sameIndex) {
+                        canMerge = true;
                     }
                     // OpenAI Responses 模式：item_id 只用于流式事件定位，必须合并到占位 function_call，不能作为最终工具 ID。
                     // 为什么新增 itemId 合并：arguments.done 没有 call_id，只能通过 item_id/output_index 找回先前的占位调用。
@@ -363,7 +365,11 @@ export class StreamAccumulator {
                             lastFc.name = fc.name;
                         }
                         // 合并 ID（如果有）
-                        if (fc.id && !lastFc.id) {
+                        // 为什么 OpenAI Responses 要允许覆盖已有 id：部分兼容网关在 output_item.added 阶段没有 call_id，
+                        // 旧逻辑会给占位 part 生成本地临时 id；最终 output_item.done 才带官方 call_id。
+                        // 怎么改：当 itemId/index 已证明是同一个 Responses output item 时，用后到的官方 call_id 覆盖临时 id。
+                        // 目的：避免终结事件 content 与前端本地工具状态 id 不一致，导致 pending/executing 阶段最后一个工具显示两张卡。
+                        if (fc.id && (!lastFc.id || (this.providerType === 'openai-responses' && (sameItemId || sameIndex)))) {
                             lastFc.id = fc.id;
                         }
                         // 合并 Responses itemId（如果有）
@@ -428,7 +434,11 @@ export class StreamAccumulator {
                 // 确保 functionCall 是深拷贝的，且处理了 args
                 newPart.functionCall = { ...fc };
                 // 只在作为新 Part 推入时才生成 id（避免在合并路径中过早赋值破坏合并逻辑）
-                if (!newPart.functionCall.id) {
+                // 为什么 OpenAI Responses 占位不能生成本地 id：官方 function_call_output 必须使用 call_id，
+                // 若 added 阶段还没有 call_id，本地生成 id 会在 pending 终结快照中和前端已修正的 call_id 分裂成两张工具卡。
+                // 怎么改：带 itemId 的 Responses 占位先保持无 id，等待 output_item.done 或兼容网关的 call_id 到达。
+                // 目的：让 Responses 的工具调用 id 始终以官方 call_id 为权威，而不是混入本地临时 id。
+                if (!newPart.functionCall.id && !(this.providerType === 'openai-responses' && (newPart.functionCall as any).itemId)) {
                     (newPart.functionCall as any).id = this.createToolCallId();
                 }
                 if (fc.args) newPart.functionCall.args = { ...fc.args };
@@ -999,7 +1009,12 @@ export class StreamAccumulator {
             // 检查 Object.keys(args).length > 0 可同时兼容所有 provider：
             // 只有 partialArgs 被成功 JSON.parse 后，args 才会含有实际的键。
             const hasRealArgs = fc.args && typeof fc.args === 'object' && Object.keys(fc.args).length > 0;
-            if (hasRealArgs && fc.name) {
+            const hasStableToolCallId = typeof fc.id === 'string' && fc.id.trim().length > 0;
+            // 为什么 Responses 必须等稳定 id：没有 call_id 时提前执行工具会生成 functionResponse.id=本地临时 id，
+            // 但 OpenAI Responses 后续上下文要求回传官方 call_id，二者不一致会造成 UI 重复和协议错误。
+            // 怎么改：仅对 openai-responses 要求 id 已稳定；其它 provider 保持既有行为。
+            // 目的：让流式提前执行不会抢在 output_item.done 修正 call_id 之前启动。
+            if (hasRealArgs && fc.name && (this.providerType !== 'openai-responses' || hasStableToolCallId)) {
                 this.reportedFunctionCallIndices.add(i);
                 result.push({
                     index: i,

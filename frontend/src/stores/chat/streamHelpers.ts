@@ -33,7 +33,8 @@ export function addFunctionCallToMessage(
     name: string; 
     args: Record<string, unknown>; 
     partialArgs?: string; 
-    index?: number 
+    index?: number;
+    itemId?: string
   }
 ): void {
   // 更新 tools 数组
@@ -44,6 +45,11 @@ export function addFunctionCallToMessage(
     id: call.id,
     name: call.name,
     args: call.args,
+    // 为什么同步 itemId/index：message.tools 是 ToolMessage 的主要数据源，必须和 parts 使用同一套流式合并键。
+    // 怎么改：把 provider 的内部定位字段只保留在前端投影里，不参与工具结果回传。
+    // 目的：contentSnapshot 覆盖时可以识别并替换 0 参数占位工具，而不是把它追加成第二张卡。
+    itemId: call.itemId,
+    index: call.index,
     // 传递 partialArgs 以便 ToolMessage 组件显示流式预览
     partialArgs: call.partialArgs,
     // 刚从流式内容里解析/拼接出来的工具调用，视为“AI 还在输出/完善工具内容”
@@ -61,7 +67,11 @@ export function addFunctionCallToMessage(
       name: call.name,
       args: call.args,
       partialArgs: call.partialArgs,
-      index: call.index
+      index: call.index,
+      // 为什么同步 itemId：parts 与 tools 都可能参与渲染和快照重建，两个投影必须共享同一内部合并键。
+      // 怎么改：只在前端流式 part 上保存 itemId，后端最终历史会清理该字段。
+      // 目的：让最后到达的完整参数事件能覆盖初始占位 part，而不是生成“参数 0”的假工具。
+      itemId: call.itemId
     }
   })
 }
@@ -143,143 +153,238 @@ function shouldAttemptParse(fcRef: object, currentLen: number): boolean {
   return true
 }
 
-export function handleFunctionCallPart(part: any, message: Message): void {
-  const fc = part.functionCall
-  const lastPart = message.parts![message.parts!.length - 1]
+type StreamFunctionCall = {
+  id?: string
+  name?: string
+  args?: Record<string, unknown>
+  partialArgs?: string
+  index?: number
+  itemId?: string
+  finalArgs?: boolean
+}
 
-  const incomingId = typeof fc.id === 'string' && fc.id.trim() ? fc.id.trim() : ''
-  const incomingHasPartial = typeof fc.partialArgs === 'string'
-  const incomingHasArgs = !!(fc.args && Object.keys(fc.args).length > 0)
-  
-  // 尝试合并到最后一个工具调用块
-  let merged = false
-  if (lastPart && lastPart.functionCall) {
-    const lastFc = lastPart.functionCall
-    const lastId = typeof lastFc.id === 'string' && lastFc.id.trim() ? lastFc.id.trim() : ''
-    const lastHasPartial = typeof lastFc.partialArgs === 'string'
-    
-    // 只在“明显仍是同一次工具调用增量”时合并，避免把后续独立工具调用误并到上一条。
-    const sameId = incomingId && lastId && incomingId === lastId
-    const sameIndex = fc.index !== undefined && lastFc.index === fc.index
+function normalizeNonEmptyString(value: unknown): string {
+  return typeof value === 'string' && value.trim() ? value.trim() : ''
+}
 
-    const canMergeByIndex =
-      !sameId &&
-      sameIndex &&
-      lastHasPartial &&
-      (incomingHasPartial || incomingHasArgs)
+function hasNonEmptyArgs(args: unknown): args is Record<string, unknown> {
+  return !!(args && typeof args === 'object' && Object.keys(args as Record<string, unknown>).length > 0)
+}
 
-    const canMergeLegacyPartial =
-      !sameId &&
-      !incomingId &&
-      fc.index === undefined &&
-      incomingHasPartial
-
-    // OpenAI Responses API 模式：初始 chunk { name, id, index: null } 后跟
-    // 数据 chunk { index: N, partialArgs }。初始 chunk 无 partialArgs 也无 args，
-    // 需要特殊处理把首个数据 chunk 合并到刚创建的工具上。
-    const lastIsFreshTool = !lastHasPartial && (!lastFc.args || Object.keys(lastFc.args).length === 0)
-    const canMergeAsFreshToolData =
-      !sameId &&
-      !incomingId &&
-      incomingHasPartial &&
-      lastIsFreshTool
-
-    const canMerge = !!(sameId || canMergeByIndex || canMergeLegacyPartial || canMergeAsFreshToolData)
-    
-    if (canMerge) {
-      if (isTodoToolName(fc.name) || isTodoToolName(lastFc.name)) {
-        debugTodoOnce(`merge-${message.id}-${lastFc.id || 'no-last-id'}-${fc.id || 'no-id'}-${String(fc.name || lastFc.name)}`, {
-          messageId: message.id,
-          action: 'merge_function_call_part',
-          incomingName: fc.name || null,
-          incomingId: incomingId || null,
-          incomingIndex: fc.index ?? null,
-          incomingHasPartial,
-          incomingHasArgs,
-          lastName: lastFc.name || null,
-          lastId: lastId || null,
-          lastIndex: lastFc.index ?? null,
-          canMerge,
-          canMergeReason: sameId ? 'sameId' : (canMergeByIndex ? 'sameIndexWithPartial' : (canMergeLegacyPartial ? 'legacyPartial' : 'none'))
-        })
-      }
-
-      // 合并名称、ID 和 index
-      if (fc.name && !lastFc.name) lastFc.name = fc.name
-      if (fc.id && !lastFc.id) lastFc.id = fc.id
-      if (typeof fc.index === 'number' && (lastFc.index === undefined || lastFc.index === null)) {
-        lastFc.index = fc.index
-      }
-      
-      // 合并参数
-      if (incomingHasPartial) {
-        lastFc.partialArgs = (lastFc.partialArgs || '') + fc.partialArgs
-        // 节流式 JSON.parse：只在累积足够数据时才尝试解析，避免 O(N²) 卡顿
-        if (lastFc.partialArgs.trim() && shouldAttemptParse(lastFc, lastFc.partialArgs.length)) {
-          try {
-            lastFc.args = JSON.parse(lastFc.partialArgs)
-          } catch (e) { /* 继续累积 */ }
-          // 无论成功与否，lastParseLen 已在 shouldAttemptParse 中更新
-        }
-
-        // ★ 同步更新 message.tools 中对应工具的流式状态和 partialArgs
-        const toolId = lastFc.id
-        if (toolId) {
-          const toolEntry = message.tools?.find(t => t.id === toolId)
-          if (toolEntry) {
-            toolEntry.status = 'streaming'
-            toolEntry.partialArgs = lastFc.partialArgs
-            // 同步已解析的 args（用于描述格式化器预览）
-            if (lastFc.args && Object.keys(lastFc.args).length > 0) {
-              toolEntry.args = lastFc.args
-            }
-          }
-        }
-      } else if (fc.args && Object.keys(fc.args).length > 0) {
-        lastFc.args = { ...lastFc.args, ...fc.args }
-
-        // 收到完整 args 后，认为该次增量拼接已收束，
-        // 清理残留 partialArgs，避免后续相同 index 的新工具调用被误合并。
-        if (lastFc.partialArgs) {
-          delete lastFc.partialArgs
-        }
-      }
-
-      // 工具参数接收完毕：同步 message.tools 状态和 args
-      const resolvedId = lastFc.id
-      if (resolvedId && !lastFc.partialArgs && lastFc.args && Object.keys(lastFc.args).length > 0) {
-        const toolEntry = message.tools?.find(t => t.id === resolvedId)
-        if (toolEntry && toolEntry.status === 'streaming') {
-          toolEntry.status = 'queued'
-          toolEntry.args = lastFc.args
-          delete toolEntry.partialArgs
-        }
-      }
-      
-      merged = true
-    }
+function tryParseArgs(argsText: string | undefined): Record<string, unknown> | null {
+  if (typeof argsText !== 'string' || !argsText.trim()) return null
+  try {
+    const parsed = JSON.parse(argsText)
+    return parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : null
+  } catch {
+    return null
   }
-  
-  if (!merged) {
-    if (isTodoToolName(fc.name)) {
-      debugTodoOnce(`append-${message.id}-${fc.id || 'no-id'}-${String(fc.name)}`, {
+}
+
+function getFunctionCallMergeReason(
+  incoming: StreamFunctionCall,
+  existing: StreamFunctionCall,
+  isLastFunctionCall: boolean
+): 'sameItemId' | 'sameIndex' | 'sameId' | 'freshPlaceholder' | 'legacyPartial' | null {
+  const incomingItemId = normalizeNonEmptyString(incoming.itemId)
+  const existingItemId = normalizeNonEmptyString(existing.itemId)
+  if (incomingItemId && existingItemId && incomingItemId === existingItemId) return 'sameItemId'
+
+  // 为什么 index 要用 typeof number 判断：Responses 的 output_index 可以是 0，不能用 truthy 判断把 0 当成缺失。
+  // 怎么改：只有双方都提供数字 index 时才按 index 合并，避免把无 index 的独立工具误并到一起。
+  // 目的：修复用户看到的“最后一个工具参数 0”占位卡无法和后续真实参数合并的问题。
+  if (typeof incoming.index === 'number' && typeof existing.index === 'number' && incoming.index === existing.index) {
+    return 'sameIndex'
+  }
+
+  const incomingId = normalizeNonEmptyString(incoming.id)
+  const existingId = normalizeNonEmptyString(existing.id)
+  if (incomingId && existingId && incomingId === existingId) return 'sameId'
+
+  const incomingHasPartial = typeof incoming.partialArgs === 'string'
+  const incomingHasIdOrIndexOrItem = !!incomingId || typeof incoming.index === 'number' || !!incomingItemId
+  const existingIsFreshPlaceholder =
+    isLastFunctionCall &&
+    !hasNonEmptyArgs(existing.args) &&
+    (existing.partialArgs === undefined || existing.partialArgs === '')
+
+  // 为什么保留 fresh placeholder 兜底：部分兼容网关会先给一个空 function_call，再给无 id/index 的参数增量。
+  // 怎么改：只允许合并到最后一个仍为空的 functionCall，且只在 incoming 是参数片段时触发。
+  // 目的：兼容旧流式格式，同时避免跨工具误合并。
+  if (!incomingHasIdOrIndexOrItem && incomingHasPartial && existingIsFreshPlaceholder) return 'freshPlaceholder'
+
+  // 为什么保留 legacyPartial：历史兼容渠道可能没有任何定位字段，只能把连续参数片段拼到最后一个工具上。
+  // 怎么改：限制为最后一个 functionCall，并且 incoming 必须只有 partialArgs。
+  // 目的：不破坏旧渠道，同时把特判收敛为“同一流式工具片段”的通用兜底。
+  if (!incomingHasIdOrIndexOrItem && incomingHasPartial && isLastFunctionCall) return 'legacyPartial'
+
+  return null
+}
+
+function findToolEntry(message: Message, fc: StreamFunctionCall, previousId?: string) {
+  const tools = message.tools || []
+  const ids = [previousId, fc.id].map(normalizeNonEmptyString).filter(Boolean)
+
+  for (const id of ids) {
+    const byId = tools.find(t => t.id === id)
+    if (byId) return byId
+  }
+
+  const itemId = normalizeNonEmptyString(fc.itemId)
+  if (itemId) {
+    const byItemId = tools.find(t => normalizeNonEmptyString((t as any).itemId) === itemId)
+    if (byItemId) return byItemId
+  }
+
+  if (typeof fc.index === 'number') {
+    const byIndex = tools.find(t => typeof (t as any).index === 'number' && (t as any).index === fc.index)
+    if (byIndex) return byIndex
+  }
+
+  return undefined
+}
+
+function syncToolEntryFromFunctionCall(message: Message, fc: StreamFunctionCall, previousId?: string): void {
+  const toolEntry = findToolEntry(message, fc, previousId)
+  if (!toolEntry) return
+
+  const nextId = normalizeNonEmptyString(fc.id)
+  if (nextId && toolEntry.id !== nextId) {
+    toolEntry.id = nextId
+  }
+  if (fc.name) toolEntry.name = fc.name
+  if (fc.itemId) toolEntry.itemId = fc.itemId
+  if (typeof fc.index === 'number') toolEntry.index = fc.index
+
+  if (hasNonEmptyArgs(fc.args)) {
+    toolEntry.args = fc.args
+  }
+
+  if (typeof fc.partialArgs === 'string') {
+    toolEntry.status = 'streaming'
+    toolEntry.partialArgs = fc.partialArgs
+  } else if (toolEntry.status === 'streaming' && hasNonEmptyArgs(fc.args)) {
+    toolEntry.status = 'queued'
+    delete toolEntry.partialArgs
+  }
+}
+
+function mergeFunctionCall(target: StreamFunctionCall, incoming: StreamFunctionCall): string | undefined {
+  const previousId = target.id
+
+  if (incoming.name && !target.name) target.name = incoming.name
+  if (incoming.id) target.id = incoming.id
+  if (incoming.itemId && !target.itemId) target.itemId = incoming.itemId
+  if (typeof incoming.index === 'number' && typeof target.index !== 'number') target.index = incoming.index
+
+  if (typeof incoming.partialArgs === 'string') {
+    // 为什么 finalArgs 要覆盖而不是追加：arguments.done/output_item.done 传的是完整 JSON，不是增量 delta。
+    // 怎么改：finalArgs=true 时用完整 arguments 替换已累积片段，并绕过节流立即解析。
+    // 目的：避免 {..}{..} 拼接导致解析失败，最终显示成“参数 0”的假工具。
+    target.partialArgs = incoming.finalArgs === true
+      ? incoming.partialArgs
+      : (target.partialArgs || '') + incoming.partialArgs
+
+    const parsed = incoming.finalArgs === true || shouldAttemptParse(target, target.partialArgs.length)
+      ? tryParseArgs(target.partialArgs)
+      : null
+
+    if (parsed) {
+      target.args = parsed
+      if (incoming.finalArgs === true) {
+        delete target.partialArgs
+      }
+    }
+  } else if (hasNonEmptyArgs(incoming.args)) {
+    target.args = { ...(target.args || {}), ...incoming.args }
+    delete target.partialArgs
+  }
+
+  return previousId
+}
+
+function normalizeNewFunctionCall(incoming: StreamFunctionCall): { args: Record<string, unknown>; partialArgs?: string } {
+  if (hasNonEmptyArgs(incoming.args)) {
+    return { args: incoming.args }
+  }
+
+  const parsed = incoming.finalArgs === true ? tryParseArgs(incoming.partialArgs) : null
+  if (parsed) {
+    return { args: parsed }
+  }
+
+  return { args: {}, partialArgs: incoming.partialArgs }
+}
+
+export function handleFunctionCallPart(part: any, message: Message): void {
+  const fc = part.functionCall as StreamFunctionCall
+  const incomingHasPartial = typeof fc.partialArgs === 'string'
+  const incomingHasArgs = hasNonEmptyArgs(fc.args)
+
+  let matched: { fc: StreamFunctionCall; reason: string } | null = null
+  let isLastFunctionCall = true
+
+  // 为什么从后往前找，而不是只看最后一个 part：流式响应里可能穿插思考签名、文本或状态快照。
+  // 怎么改：按 itemId、index、id、fresh placeholder 的统一优先级寻找同一逻辑工具调用。
+  // 目的：让前端和后端 StreamAccumulator 使用同一套合并模型，避免 MCP 工具临时重复显示。
+  for (let i = (message.parts?.length || 0) - 1; i >= 0; i--) {
+    const existing = message.parts?.[i]?.functionCall as StreamFunctionCall | undefined
+    if (!existing) continue
+
+    const reason = getFunctionCallMergeReason(fc, existing, isLastFunctionCall)
+    if (reason) {
+      matched = { fc: existing, reason }
+      break
+    }
+
+    isLastFunctionCall = false
+  }
+
+  if (matched) {
+    if (isTodoToolName(fc.name) || isTodoToolName(matched.fc.name)) {
+      debugTodoOnce(`merge-${message.id}-${matched.fc.id || 'no-last-id'}-${fc.id || 'no-id'}-${String(fc.name || matched.fc.name)}`, {
         messageId: message.id,
-        action: 'append_new_function_call_part',
-        incomingName: fc.name,
-        incomingId: typeof fc.id === 'string' ? fc.id : null,
+        action: 'merge_function_call_part',
+        incomingName: fc.name || null,
+        incomingId: normalizeNonEmptyString(fc.id) || null,
+        incomingItemId: normalizeNonEmptyString(fc.itemId) || null,
         incomingIndex: fc.index ?? null,
-        hasPartial: typeof fc.partialArgs === 'string',
-        hasArgs: !!(fc.args && Object.keys(fc.args).length > 0)
+        incomingHasPartial,
+        incomingHasArgs,
+        lastName: matched.fc.name || null,
+        lastId: normalizeNonEmptyString(matched.fc.id) || null,
+        lastItemId: normalizeNonEmptyString(matched.fc.itemId) || null,
+        lastIndex: matched.fc.index ?? null,
+        canMerge: true,
+        canMergeReason: matched.reason
       })
     }
 
-    // 找不到可合并的，添加新块
-    addFunctionCallToMessage(message, {
-      id: fc.id || generateId(),
-      name: fc.name || '',
-      args: fc.args || {},
-      partialArgs: fc.partialArgs,
-      index: fc.index
+    const previousId = mergeFunctionCall(matched.fc, fc)
+    syncToolEntryFromFunctionCall(message, matched.fc, previousId)
+    return
+  }
+
+  if (isTodoToolName(fc.name)) {
+    debugTodoOnce(`append-${message.id}-${fc.id || 'no-id'}-${String(fc.name)}`, {
+      messageId: message.id,
+      action: 'append_new_function_call_part',
+      incomingName: fc.name,
+      incomingId: typeof fc.id === 'string' ? fc.id : null,
+      incomingItemId: typeof fc.itemId === 'string' ? fc.itemId : null,
+      incomingIndex: fc.index ?? null,
+      hasPartial: incomingHasPartial,
+      hasArgs: incomingHasArgs
     })
   }
+
+  const normalized = normalizeNewFunctionCall(fc)
+  addFunctionCallToMessage(message, {
+    id: fc.id || generateId(),
+    name: fc.name || '',
+    args: normalized.args,
+    partialArgs: normalized.partialArgs,
+    index: fc.index,
+    itemId: fc.itemId
+  })
 }

@@ -27,7 +27,10 @@ export function registerMcpModule(
     const module: ModuleDefinition = {
         id: 'mcp',
         name: 'MCP Manager',
-        version: '1.0.5',
+        // 为什么同步模块版本：模块注册元数据长期停留在 1.0.5，不利于诊断当前运行的扩展能力。
+        // 怎么改：随 1.1.28 发布统一内部模块版本展示。
+        // 目的：让模块注册表、MCP 客户端握手和扩展版本保持一致。
+        version: '1.1.28',
         description: 'Manage Model Context Protocol (MCP) server configuration and connections',
 
         initialize: async () => {

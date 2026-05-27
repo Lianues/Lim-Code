@@ -1,6 +1,6 @@
 {
   "name": "limcode-frontend",
-  "version": "1.0.7",
+  "version": "1.1.28",
   "private": true,
   "type": "module",
   "scripts": {

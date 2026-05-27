@@ -31,7 +31,10 @@ export function registerConfigModule(
     return {
         id: 'config',
         name: 'Configuration Manager',
-        version: '1.0.5',
+        // 为什么同步模块版本：配置模块注册元数据仍显示旧版本，会干扰运行时诊断。
+        // 怎么改：随 1.1.28 发布统一内部模块版本展示。
+        // 目的：让模块清单中的版本号反映当前扩展发布批次。
+        version: '1.1.28',
         description: 'Manage LLM channel configurations, supporting Gemini, OpenAI, Anthropic and other formats',
         
         apis: [

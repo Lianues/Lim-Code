@@ -18,6 +18,7 @@ import type { Message, ToolUsage, CheckpointRecord, Attachment } from '../../typ
 import { hasContextBlocks } from '../../types/contextParser'
 import { formatTime } from '../../utils/format'
 import { isPerfEnabled } from '../../utils/perf'
+import { buildFunctionCallToolRenderEntry, upsertToolRenderEntry } from '../../utils/toolRenderEntries'
 import { useChatStore } from '../../stores/chatStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { useI18n } from '../../i18n'
@@ -189,6 +190,28 @@ const renderBlocks = computed<RenderBlock[]>(() => {
       currentThoughtBlock = []
     }
   }
+
+  const upsertToolAcrossRenderedBlocks = (entry: ToolUsage) => {
+    const currentIndex = currentToolBlock.findIndex(tool => tool.id === entry.id)
+    if (currentIndex !== -1) {
+      upsertToolRenderEntry(currentToolBlock, entry)
+      return
+    }
+
+    for (const block of blocks) {
+      if (block.type !== 'tool' || !block.tools) continue
+      if (block.tools.some(tool => tool.id === entry.id)) {
+        // 为什么要跨 block 去重：流式快照/终结事件可能让同一逻辑工具的占位 part 和最终 part 中间夹着文本或思考片段，
+        // 只在当前连续工具块里 upsert 仍会渲染成两张工具卡。
+        // 怎么改：如果之前任意工具块里已经有同一 stable tool id，就更新那一项，不再创建新的工具块。
+        // 目的：等待执行、MCP 请求中、diff 自动确认倒计时等 pending 阶段都只显示一张最后工具卡。
+        upsertToolRenderEntry(block.tools, entry)
+        return
+      }
+    }
+
+    upsertToolRenderEntry(currentToolBlock, entry)
+  }
   
   for (const part of parts) {
     // 处理思考内容
@@ -214,40 +237,29 @@ const renderBlocks = computed<RenderBlock[]>(() => {
       flushText()
       flushThought()
       
-      // 从 message.tools 中查找对应的工具状态。
-      // 优先按 functionCall.id 匹配；若 part 里没有 id（某些模型/模式下会缺失），
-      // 回退到同序位工具，确保每条工具消息都能拿到稳定 toolId（用于 TODO 快照锚定）。
+      // 为什么工具渲染不再只按 functionCall.id 解析：pending 阶段可能同时存在临时占位 part 和最终 call_id part，
+      // 旧逻辑看到临时 id 后不会回退到 message.tools 的同序位真实工具，导致最后一个工具显示两次。
+      // 怎么改：统一通过 toolRenderEntries 按 id -> itemId -> index -> 序位解析，并对同一 stable id 做 upsert。
+      // 目的：让渲染层与流式合并层共享同一逻辑工具识别方式，pending/awaiting/complete 都只显示一张工具卡。
+      const renderTool = buildFunctionCallToolRenderEntry({
+        messageId: props.message.id,
+        functionCall: part.functionCall,
+        messageTools,
+        functionCallOrdinal
+      })
       const toolIdFromPart = typeof part.functionCall.id === 'string' ? part.functionCall.id : ''
-      let existingTool: ToolUsage | undefined
-      if (toolIdFromPart) {
-        existingTool = messageTools.find(t => t.id === toolIdFromPart)
-      } else if (functionCallOrdinal < messageTools.length) {
-        existingTool = messageTools[functionCallOrdinal]
-      }
-
-      const stableToolId =
-        toolIdFromPart ||
-        existingTool?.id ||
-        `${props.message.id}:tool:${functionCallOrdinal}`
       
-      debugTodoOnce(`function-call-${props.message.id}-${functionCallOrdinal}-${stableToolId}`, {
+      debugTodoOnce(`function-call-${props.message.id}-${functionCallOrdinal}-${renderTool.id}`, {
         messageId: props.message.id,
         messageBackendIndex: props.message.backendIndex,
         functionCallOrdinal,
         functionCallName: part.functionCall.name,
         functionCallIdFromPart: toolIdFromPart || null,
-        resolvedToolId: stableToolId,
-        existingToolId: existingTool?.id || null
+        resolvedToolId: renderTool.id,
+        existingToolId: renderTool.id || null
       })
 
-      currentToolBlock.push({
-        id: stableToolId,
-        name: part.functionCall.name,
-        args: part.functionCall.args,
-        partialArgs: part.functionCall.partialArgs,
-        status: existingTool?.status,
-        result: existingTool?.result
-      })
+      upsertToolAcrossRenderedBlocks(renderTool)
 
       functionCallOrdinal += 1
     }

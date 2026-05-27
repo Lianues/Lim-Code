@@ -34,6 +34,22 @@ export interface ContentPart {
      */
     index?: number
     /**
+     * Responses API 的 output item 内部 ID。
+     *
+     * 为什么要加：OpenAI Responses 和兼容网关会用 item_id/output_index 发送参数增量，而最终工具响应必须使用 call_id。
+     * 怎么改：前端仅把 itemId 当作同一轮流式工具调用的内部合并键，不把它当作最终工具调用 ID。
+     * 目的：避免 MCP 等原生 function_call 工具在参数流式输出时出现“0 参数占位工具 + 真实参数工具”的幽灵重复卡片。
+     */
+    itemId?: string
+    /**
+     * 标记 partialArgs 是完整 arguments，而不是 delta。
+     *
+     * 为什么要加：arguments.done/output_item.done 给的是完整 JSON，继续追加会变成两个 JSON 串拼接。
+     * 怎么改：合并时看到 finalArgs 就覆盖已有 partialArgs，并立即尝试解析为最终 args。
+     * 目的：让工具卡从 streaming 正确收束到 queued，不残留参数预览或占位状态。
+     */
+    finalArgs?: boolean
+    /**
      * 流式响应中的原始参数片段
      */
     partialArgs?: string
@@ -299,6 +315,22 @@ export interface ToolUsage {
   id: string
   name: string
   args: Record<string, unknown>
+  /**
+   * 流式工具调用的内部 output item ID。
+   *
+   * 为什么要加：工具展示层需要在最终 call_id 出现前就能把参数增量和占位工具合并到同一张卡片。
+   * 怎么改：只在前端流式状态和快照合并中使用 itemId；历史回放和工具结果仍以 id/call_id 为准。
+   * 目的：让 UI 投影与后端 StreamAccumulator 的 itemId 合并模型一致，消除临时重复工具。
+   */
+  itemId?: string
+  /**
+   * Provider 给出的流式工具序号，允许 0。
+   *
+   * 为什么要加：部分 Responses 事件只有 output_index，没有 call_id，需要用 index 作为次级合并键。
+   * 怎么改：保留到 ToolUsage 中，供 message.tools 与 contentSnapshot 的 incoming tools 对齐。
+   * 目的：避免 index=0 被当作“无参数工具”或无法匹配的独立工具。
+   */
+  index?: number
   result?: Record<string, unknown>
   error?: string
   duration?: number

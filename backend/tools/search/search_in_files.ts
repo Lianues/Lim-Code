@@ -578,54 +578,11 @@ async function searchAndReplaceInDirectory(
                     toolId
                 );
 
-                // 等待 diff 被处理（保存或拒绝）或用户中断/取消
-                const interruptReason = await new Promise<'none' | 'abort' | 'user'>((resolve) => {
-                    let resolved = false;
-                    let abortHandler: (() => void) | undefined;
-
-                    const finish = (reason: 'none' | 'abort' | 'user') => {
-                        if (resolved) return;
-                        resolved = true;
-                        if (abortHandler && abortSignal) {
-                            try {
-                                abortSignal.removeEventListener('abort', abortHandler);
-                            } catch {
-                                // ignore
-                            }
-                        }
-                        resolve(reason);
-                    };
-
-                    abortHandler = () => {
-                        diffManager.rejectDiff(pendingDiff.id).catch(() => {});
-                        finish('abort');
-                    };
-
-                    if (abortSignal) {
-                        if (abortSignal.aborted) {
-                            abortHandler();
-                            return;
-                        }
-                        abortSignal.addEventListener('abort', abortHandler, { once: true } as any);
-                    }
-
-                    const checkStatus = () => {
-                        // 检查用户中断
-                        if (diffManager.isUserInterrupted()) {
-                            diffManager.rejectDiff(pendingDiff.id).catch(() => {});
-                            finish('user');
-                            return;
-                        }
-
-                        const diff = diffManager.getDiff(pendingDiff.id);
-                        if (!diff || diff.status !== 'pending') {
-                            finish('none');
-                        } else {
-                            setTimeout(checkStatus, 100);
-                        }
-                    };
-                    checkStatus();
-                });
+                // 等待 diff 被处理（保存、拒绝、abort 或用户新请求中断）。
+                // 为什么 search/replace 也要统一：replace 模式同样创建 pending diff，历史上和文件工具各自复制等待逻辑，容易修一处漏一处。
+                // 怎么改：调用 DiffManager.waitForDiffResolution，把状态事件、轮询兜底和 abort 清理集中到一个生命周期入口。
+                // 目的：让 search_in_files replace 模式与 apply_diff/write_file/insert/delete 的 pending 收敛规则完全一致。
+                const interruptReason = await diffManager.waitForDiffResolution(pendingDiff.id, abortSignal);
 
                 const wasInterrupted = interruptReason !== 'none';
                 if (wasInterrupted) {

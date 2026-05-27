@@ -28,3 +28,6 @@ tmp-*.err.log
 
 # packaged extension bundles
 *.vsix
+
+# 本地修复资料目录只用于交接和排查；忽略整个目录，避免后续误把临时资料提交进仓库。
+2026年5月27日-修复资料/

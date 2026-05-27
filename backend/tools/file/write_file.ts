@@ -129,53 +129,11 @@ async function writeSingleFile(
             toolId  // 传递 toolId 以便前端跟踪
         );
 
-        // 等待 diff 被处理（保存或拒绝）或用户中断/取消
-        const interruptReason = await new Promise<'none' | 'abort' | 'user'>((resolve) => {
-            let resolved = false;
-
-            const finish = (reason: 'none' | 'abort' | 'user') => {
-                if (resolved) return;
-                resolved = true;
-                if (abortHandler && abortSignal) {
-                    try {
-                        abortSignal.removeEventListener('abort', abortHandler);
-                    } catch {
-                        // ignore
-                    }
-                }
-                resolve(reason);
-            };
-
-            const abortHandler = () => {
-                diffManager.rejectDiff(pendingDiff.id).catch(() => {});
-                finish('abort');
-            };
-
-            if (abortSignal) {
-                if (abortSignal.aborted) {
-                    abortHandler();
-                    return;
-                }
-                abortSignal.addEventListener('abort', abortHandler, { once: true } as any);
-            }
-
-            const checkStatus = () => {
-                // 检查用户中断
-                if (diffManager.isUserInterrupted()) {
-                    diffManager.rejectDiff(pendingDiff.id).catch(() => {});
-                    finish('user');
-                    return;
-                }
-
-                const diff = diffManager.getDiff(pendingDiff.id);
-                if (!diff || diff.status !== 'pending') {
-                    finish('none');
-                } else {
-                    setTimeout(checkStatus, 100);
-                }
-            };
-            checkStatus();
-        });
+        // 等待 diff 被处理（保存、拒绝、abort 或用户新请求中断）。
+        // 为什么改用 DiffManager 统一等待：write_file 与 apply_diff 都依赖 pending diff 生命周期，不能各自维护略有差异的轮询/监听逻辑。
+        // 怎么改：复用 waitForDiffResolution，让状态监听、轮询兜底和 abort 清理集中在 DiffManager。
+        // 目的：让所有文件写入类 diff-review 工具在自动保存和用户中断场景下表现一致。
+        const interruptReason = await diffManager.waitForDiffResolution(pendingDiff.id, abortSignal);
 
         const wasInterrupted = interruptReason !== 'none';
         

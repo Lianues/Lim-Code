@@ -1773,7 +1773,10 @@ const en: LanguageMessages = {
                 appInfo: {
                     title: 'Application Info',
                     name: 'Lim Code - Vibe Coding Assistant',
-                    version: 'Version: 1.1.26',
+                    // Why keep this in sync: the settings page previously lagged behind package.json, which made installed builds look stale.
+                    // How this changes it: bump the displayed release string together with the 1.1.28 extension version.
+                    // Purpose: keep package metadata, release notes, and the settings UI consistent.
+                    version: 'Version: 1.1.28',
                     repository: 'Repository',
                     developer: 'Developer'
                 }

@@ -1773,7 +1773,10 @@ const ja: LanguageMessages = {
                 appInfo: {
                     title: 'アプリケーション情報',
                     name: 'Lim Code - Vibe Coding アシスタント',
-                    version: 'バージョン：1.1.26',
+                    // なぜ同期するか：設定画面の表示バージョンが package.json より古く、インストール済みビルドを誤認しやすかったため。
+                    // どう変えるか：1.1.28 リリースに合わせて表示文字列も更新する。
+                    // 目的：package メタデータ、リリースノート、設定 UI のバージョンを一致させる。
+                    version: 'バージョン：1.1.28',
                     repository: 'リポジトリ',
                     developer: '開発者'
                 }

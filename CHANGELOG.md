@@ -3,6 +3,23 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.1.28] - 2026-05-27
+
+### Changed
+  - 简化 `read_file` / `write_file` 的输入格式，单文件读写改为直接传 `{ path, ... }`，同时保留前端历史展示兼容。
+  - 将 `apply_diff` 推荐输入升级为结构化 `hunks`，保留旧 `patch` 作为兼容入口，并改进重复内容和行号偏移定位。
+  - 重写 `execute_command` 的动态 Shell 说明，明确当前可用 Shell、PowerShell/CMD/sh/Git Bash/WSL/Zsh 解析规则和 SSH 多层解析边界。
+  - 优化 `history_search` 工具说明与前端展示，区分对话历史搜索和仓库文件搜索，并支持非正则多关键词兜底。
+
+### Fixed
+  - 修复 `read_file` 图片、PDF 等多模态结果在 Anthropic 和 OpenAI Responses 工具结果中的官方结构回传问题。
+  - 修复 DiffManager 自动保存失败后 pending diff 可能不结算的问题，让自动确认以后端为唯一权威，并向工具结果暴露 `autoSaveError`。
+  - 修复 OpenAI Responses / MCP 流式工具调用中“0 参数占位工具 + 真实参数工具”被前端显示为重复工具卡的问题。
+  - 修复 Jest setup 和测试命令参数转发问题，恢复稳定的本地编译、前端构建和 targeted Jest 验证流程。
+
+### Versioning
+  - 将扩展、前端包、设置页展示版本、内部模块元数据和 MCP clientInfo 统一更新到 `1.1.28`。
+
 ## [1.1.27] - 2026-05-01
 
 ### Added

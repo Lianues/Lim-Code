@@ -347,6 +347,32 @@ describe('DiffManager lifecycle closure', () => {
         expect((vscode.window as any).showErrorMessage).toHaveBeenCalled();
     });
 
+    it('waitForDiffResolution resolves on user interrupt even when no status event is emitted', async () => {
+        jest.useFakeTimers();
+
+        const manager = getManager();
+        createDocument({ initialContent: 'accepted', saveReturns: true });
+        const diff = createPendingDiff(manager, {
+            originalContent: 'original',
+            newContent: 'accepted'
+        });
+
+        try {
+            const waitPromise = manager.waitForDiffResolution(diff.id);
+
+            // 为什么这个测试不主动调用 notifyStatusChange：真实卡住路径里 markUserInterrupt 只清理自动保存定时器，
+            // 不保证立刻产生 diff 状态事件；旧 apply_diff 只靠 listener 就会一直等待。
+            // 怎么验证：只设置用户中断标记，然后推进轮询时间，确认统一等待方法自行收敛。
+            // 目的：锁住“用户新请求中断 pending diff 时工具 Promise 必须释放”的回归场景。
+            manager.markUserInterrupt();
+            await jest.advanceTimersByTimeAsync(100);
+
+            await expect(waitPromise).resolves.toBe('user');
+        } finally {
+            manager.resetUserInterrupt();
+        }
+    });
+
     it('non-manual save keeps the diff pending and restores the draft in manual mode', async () => {
         const manager = getManager();
         const doc = createDocument({ initialContent: 'original', saveReturns: true });

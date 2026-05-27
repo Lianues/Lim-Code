@@ -86,6 +86,65 @@ describe('OpenAI Responses function-call streaming', () => {
         expect(calls[0]).not.toHaveProperty('index');
     });
 
+    it('waits for output_item.done call_id when output_item.added omits call_id', () => {
+        // 为什么要覆盖这个兼容网关形态：OpenAI Responses 官方/兼容流有时 added 事件只有 item.id，最终 done 才给 call_id。
+        // 怎么改：added 阶段不生成本地临时工具 id；arguments.done 只补参数；output_item.done 到达后用官方 call_id 覆盖同一个 item。
+        // 目的：避免后端终结 content 使用本地临时 id，而前端本地流式状态使用 call_id，导致 pending/executing 阶段最后一个工具重复显示。
+        const finalArguments = JSON.stringify({ query: 'responses missing call id until done', numResults: 5 });
+
+        const formatter = new OpenAIResponsesFormatter();
+        const accumulator = new StreamAccumulator('function_call', () => 'generated_tool_id');
+        accumulator.setProviderType('openai-responses');
+
+        accumulator.add(formatter.parseStreamChunk({
+            type: 'response.output_item.added',
+            output_index: 1,
+            item: {
+                type: 'function_call',
+                id: 'fc_item_late_call_id',
+                name: 'mcp__exa__web_search_exa',
+                arguments: '',
+                status: 'in_progress'
+            }
+        }));
+
+        accumulator.add(formatter.parseStreamChunk({
+            type: 'response.function_call_arguments.done',
+            item_id: 'fc_item_late_call_id',
+            output_index: 1,
+            name: 'mcp__exa__web_search_exa',
+            arguments: finalArguments
+        }));
+
+        expect(accumulator.getNewCompletedFunctionCalls()).toHaveLength(0);
+
+        accumulator.add(formatter.parseStreamChunk({
+            type: 'response.output_item.done',
+            output_index: 1,
+            item: {
+                type: 'function_call',
+                id: 'fc_item_late_call_id',
+                call_id: 'call_late_actual_id',
+                name: 'mcp__exa__web_search_exa',
+                arguments: finalArguments,
+                status: 'completed'
+            }
+        }));
+
+        const readyCalls = accumulator.getNewCompletedFunctionCalls();
+        const content = accumulator.getContent();
+        const calls = content.parts.filter(part => part.functionCall).map(part => part.functionCall! as any);
+
+        expect(readyCalls).toHaveLength(1);
+        expect(readyCalls[0].id).toBe('call_late_actual_id');
+        expect(calls).toHaveLength(1);
+        expect(calls[0].id).toBe('call_late_actual_id');
+        expect(calls[0].args).toEqual(JSON.parse(finalArguments));
+        expect(calls[0]).not.toHaveProperty('itemId');
+        expect(calls[0]).not.toHaveProperty('index');
+        expect(calls[0]).not.toHaveProperty('partialArgs');
+    });
+
     it('uses item_id as an internal merge key when compatible gateways omit output_index on arguments.done', () => {
         // 为什么要覆盖无 output_index 场景：部分兼容网关可能保留 item_id 但省略 output_index，旧逻辑会把 done 拆成第二个工具。
         // 怎么改：确认 itemId 合并键能把最终 arguments 覆盖回同一个占位 functionCall，同时最终历史仍只保留 call_id。

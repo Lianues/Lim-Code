@@ -128,7 +128,10 @@ export class HttpMcpClient extends EventEmitter {
             },
             clientInfo: {
                 name: 'LimCode',
-                version: '1.0.5'
+                // 为什么同步 MCP HTTP 客户端版本：HTTP/Streamable HTTP server 会读取初始化元数据用于兼容性判断。
+                // 怎么改：随 1.1.28 扩展发布同步 clientInfo.version。
+                // 目的：避免远端 MCP server 看到过期 LimCode 客户端版本。
+                version: '1.1.28'
             }
         });
         
