@@ -3,7 +3,7 @@
  */
 
 import { t } from '../../backend/i18n';
-import { subAgentRegistry, refreshSubAgentsTool } from '../../backend/tools/subagents';
+import { subAgentRegistry, refreshSubAgentsTool, subAgentRunEventBus } from '../../backend/tools/subagents';
 import type { SubAgentConfigItem } from '../../backend/modules/settings/types';
 import type { HandlerContext, MessageHandler } from '../types';
 
@@ -198,6 +198,32 @@ export const setSubAgentEnabled: MessageHandler = async (data, requestId, ctx) =
 /**
  * 更新全局配置（maxConcurrentAgents 等）
  */
+export const openSubAgentMonitor: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const runId = typeof data?.runId === 'string' ? data.runId : undefined;
+    const conversationId = typeof data?.conversationId === 'string' ? data.conversationId : undefined;
+    if (!ctx.openSubAgentMonitor) {
+      ctx.sendError(requestId, 'SUBAGENT_MONITOR_UNAVAILABLE', 'SubAgent Monitor is not available in this context');
+      return;
+    }
+
+    // 修改原因：历史消息里的 SubAgent 卡片可能在扩展重载后才打开 Monitor，此时内存事件总线没有对应 run。
+    // 修改方式：若前端提供 conversationId，先从 conversation metadata 加载 subAgentRuns 子记录到内存。
+    // 修改目的：Monitor 可以恢复已保存的内部子对话，同时仍不把内部记录插入主 messages 时间线。
+    if (conversationId) {
+      await subAgentRunEventBus.loadConversationSnapshots(conversationId, ctx.conversationManager);
+    }
+
+    // 修改原因：主聊天工具卡片只保存摘要和 runId，完整内部过程由独立 Monitor 展示。
+    // 修改方式：通过 HandlerContext 调用 ChatViewProvider 提供的 openSubAgentMonitor。
+    // 修改目的：避免主聊天时间线承载内部事件，同时让用户可从卡片定位到具体 run。
+    await ctx.openSubAgentMonitor(runId, conversationId);
+    ctx.sendResponse(requestId, { success: true });
+  } catch (error: any) {
+    ctx.sendError(requestId, 'OPEN_SUBAGENT_MONITOR_ERROR', error.message || 'Failed to open SubAgent Monitor');
+  }
+};
+
 export const updateGlobalConfig: MessageHandler = async (data, requestId, ctx) => {
   try {
     const updates: Record<string, unknown> = {};
@@ -251,4 +277,5 @@ export function registerSubAgentsHandlers(registry: Map<string, MessageHandler>)
   registry.set('subagents.delete', deleteSubAgent);
   registry.set('subagents.setEnabled', setSubAgentEnabled);
   registry.set('subagents.updateGlobalConfig', updateGlobalConfig);
+  registry.set('subagents.openMonitor', openSubAgentMonitor);
 }

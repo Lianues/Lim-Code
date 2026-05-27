@@ -238,6 +238,17 @@ export class ChatHandler {
         this.mcpManager = mcpManager;
         this.toolExecutionService.setMcpManager(mcpManager);
     }
+
+    /**
+     * 获取共享工具执行服务。
+     *
+     * 修改原因：SubAgent 过去自己复制了一套工具执行逻辑，导致多模态、MCP、工具配置等主流程修复无法同步继承。
+     * 修改方式：暴露只读 getter，让 SubAgent 执行器复用同一个 ToolExecutionService 实例；实际多模态能力仍由调用时传入的 SubAgent provider 配置决定。
+     * 修改目的：共享工具执行内核，但不把 SubAgent 绑定到主模型的能力配置。
+     */
+    getToolExecutionService(): ToolExecutionService {
+        return this.toolExecutionService;
+    }
     
     /**
      * 设置 Diff 存储管理器（可选）

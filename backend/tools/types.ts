@@ -6,6 +6,40 @@
  */
 
 /**
+ * 通用工具进度事件。
+ *
+ * 修改原因：SubAgent Monitor、长耗时工具和未来 MCP 工具都需要实时进度，不能为 SubAgent 单独发明一套事件协议。
+ * 修改方式：在工具系统类型层新增通用 envelope，payload 继续允许复用现有工具、流式内容和业务结果结构。
+ * 修改目的：主聊天、SubAgent Monitor 和后续长任务工具可以共享同一条进度语义，避免再次出现“主流程升级但 SubAgent 漏升级”。
+ */
+export interface ToolProgressEvent {
+    /** 事件所属运行实例；SubAgent 使用 runId，普通工具可不填 */
+    runId?: string;
+    /** 事件类型，覆盖结构级、内容级和工具级进度 */
+    type: 'run_created' | 'run_updated' | 'run_completed' | 'run_failed' | 'run_cancelled'
+        | 'llm_delta' | 'content_snapshot'
+        | 'tool_started' | 'tool_progress' | 'tool_completed' | 'tool_failed';
+    /** 工具调用 ID；工具级事件使用 */
+    toolId?: string;
+    /** 工具名；工具级事件使用 */
+    toolName?: string;
+    /** 事件时间戳；发送方不填时由桥接层补齐 */
+    timestamp?: number;
+    /** 复用现有结构的事件主体，例如 ToolUsage、ToolExecutionResult、ContentPart 或 StreamChunk */
+    payload?: unknown;
+}
+
+/**
+ * 通用工具进度发射函数。
+ *
+ * 修改原因：工具 handler 只能拿到 ToolContext；把进度能力放在这里，所有工具都能复用。
+ * 修改方式：定义统一函数类型，由调用方按场景桥接到主聊天 toolStatus 或 SubAgent Monitor。
+ * 修改目的：避免为每个长任务工具或 SubAgent 单独加回调字段。
+ */
+export type ToolProgressEmitter = (event: ToolProgressEvent) => void | Promise<void>;
+
+
+/**
  * 工具声明（Gemini Function Calling 格式）
  */
 export interface ToolDeclaration {
@@ -189,6 +223,15 @@ export interface ToolContext {
         getCustomMetadata: (conversationId: string, key: string) => Promise<unknown>;
         setCustomMetadata: (conversationId: string, key: string, value: unknown) => Promise<void>;
     };
+
+    /**
+     * 通用工具进度发射器。
+     *
+     * 修改原因：SubAgent Monitor 需要观察内部工具进度，但这个能力本质上属于所有长耗时工具。
+     * 修改方式：由 ToolExecutionService 在构造 ToolContext 时注入，工具内部按需调用。
+     * 修改目的：让主聊天和 SubAgent Monitor 能通过同一套进度协议显示工具运行状态。
+     */
+    emitProgress?: ToolProgressEmitter;
     
     /** 其他上下文信息 */
     [key: string]: unknown;

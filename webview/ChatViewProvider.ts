@@ -42,6 +42,7 @@ import { MessageRouter } from './MessageRouter';
 import { initializeSubAgentsFromSettings } from './handlers/SubAgentsHandlers';
 import type { HandlerContext, DiffPreviewContentProvider as IDiffPreviewContentProvider } from './types';
 import { WindowsAgentStopNotificationService } from '../backend/modules/notifications/WindowsAgentStopNotificationService';
+import { SubAgentMonitorPanel } from './SubAgentMonitorPanel';
 
 /**
  * Diff 预览内容提供者
@@ -99,6 +100,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private diffStorageManager!: DiffStorageManager;
     private conversationStorageAdapter?: FileSystemStorageAdapter;
     private windowsAgentStopNotificationService?: WindowsAgentStopNotificationService;
+    private subAgentMonitorPanel?: SubAgentMonitorPanel;
     
     // 消息路由器
     private messageRouter!: MessageRouter;
@@ -320,7 +322,15 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             channelManager: this.channelManager,
             toolRegistry: toolRegistry,
             mcpManager: this.mcpManager,
-            settingsManager: this.settingsManager
+            settingsManager: this.settingsManager,
+            // 修改原因：SubAgent 需要使用自己的 provider 配置计算工具声明和多模态能力，而不是继承主会话 provider。
+            // 修改方式：把 ConfigManager 注入 SubAgent 运行时上下文，执行时按 agent.channel.channelId 读取配置。
+            // 修改目的：确保 SubAgent 独立 provider 与统一工具执行语义可以同时成立。
+            configManager: this.configManager,
+            // 修改原因：SubAgent 过去复制工具执行逻辑，导致主流程修复无法同步继承。
+            // 修改方式：注入 ChatHandler 内部同一个 ToolExecutionService 实例。
+            // 修改目的：让 SubAgent 内部工具调用复用主流程的参数校验、多模态回传、MCP 和工具配置注入。
+            toolExecutionService: this.chatHandler.getToolExecutionService()
         });
         
         // 26. 初始化依赖管理器（使用自定义路径）
@@ -353,6 +363,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         // 30. 初始化子代理（从持久化存储加载）
         this.initializeSubAgents();
         
+        // 30.5. 初始化 SubAgent Monitor 编辑器页管理器
+        // 修改原因：SubAgent 内部过程需要显示在独立编辑器 WebviewPanel，而不是污染主聊天时间线。
+        // 修改方式：在 ChatViewProvider 中持有 Monitor 管理器，并通过 HandlerContext 暴露 openSubAgentMonitor。
+        // 修改目的：主卡片点击“打开详情”时能 reveal 或创建统一的 Monitor 窗口。
+        this.subAgentMonitorPanel = new SubAgentMonitorPanel(this.context, this.webviewDevServerUrl);
+        
+
         console.log('LimCode backend initialized with global context');
         console.log('Effective data path:', this.storagePathManager.getEffectiveDataPath());
     }
@@ -406,6 +423,21 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     }
     
     /**
+     * 打开或聚焦 SubAgent Monitor。
+     *
+     * 修改原因：主聊天 SubAgent 卡片只应该展示摘要，完整内部过程需要放在编辑器区域。
+     * 修改方式：委托 SubAgentMonitorPanel.create/reveal，并传入 runId 用于前端定位。
+     * 修改目的：保持主时间线干净，同时让用户能按需查看实时内部执行详情。
+     */
+    private openSubAgentMonitor(runId?: string, conversationId?: string): void {
+        if (!this.subAgentMonitorPanel) {
+            this.subAgentMonitorPanel = new SubAgentMonitorPanel(this.context, this.webviewDevServerUrl);
+        }
+        this.subAgentMonitorPanel.open(runId, conversationId);
+    }
+
+
+    /**
      * 初始化子代理（从持久化存储加载到内存 registry）
      */
     private initializeSubAgents(): void {
@@ -426,7 +458,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             sendError: this.sendError.bind(this),
             postMessage: (message: any) => {
                 this._view?.webview.postMessage(message);
-            }
+            },
+            openSubAgentMonitor: this.openSubAgentMonitor.bind(this)
         };
         
         initializeSubAgentsFromSettings(ctx);
@@ -612,7 +645,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             sendResponse: this.sendResponse.bind(this),
             sendError: this.sendError.bind(this),
             getCurrentWorkspaceUri: this.getCurrentWorkspaceUri.bind(this),
-            syncLanguageToBackend: this.syncLanguageToBackend.bind(this)
+            syncLanguageToBackend: this.syncLanguageToBackend.bind(this),
+            openSubAgentMonitor: this.openSubAgentMonitor.bind(this)
         };
     }
 
@@ -731,6 +765,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         // 释放 Skills 管理器资源
         getSkillsManager()?.dispose();
         this.windowsAgentStopNotificationService?.dispose();
+        this.subAgentMonitorPanel?.dispose();
+        this.subAgentMonitorPanel = undefined;
 
         console.log('ChatViewProvider disposed');
     }

@@ -11,9 +11,7 @@ import type { SettingsManager } from '../settings/SettingsManager';
 import type { ResolvedPromptModeSnapshot } from '../settings/types';
 import type { McpManager } from '../mcp/McpManager';
 import { formatterRegistry } from './formatters';
-import { createReadFileTool } from '../../tools/file/read_file';
-import { createGenerateImageTool, createRemoveBackgroundTool, createCropImageTool, createResizeImageTool, createRotateImageTool } from '../../tools/media';
-import { subAgentRegistry } from '../../tools/subagents';
+import { ToolDeclarationResolver } from './ToolDeclarationResolver';
 import type {
     GenerateRequest,
     GenerateResponse,
@@ -1013,240 +1011,19 @@ export class ChannelManager {
         toolMode?: 'function_call' | 'xml' | 'json',
         promptModeSnapshot?: ResolvedPromptModeSnapshot
     ) {
-        // 获取本次请求模式的工具策略（allowlist）
-        const allowlist = Array.isArray(promptModeSnapshot?.toolPolicy) && promptModeSnapshot.toolPolicy.length > 0
-            ? promptModeSnapshot.toolPolicy
-            : undefined;
-        
-        const tools: any[] = [];
-        
-        // 1. 获取内置工具
-        if (this.toolRegistry) {
-            let builtinTools: any[] | undefined;
-            
-            if (this.settingsManager) {
-                // 使用设置管理器过滤工具
-                builtinTools = this.toolRegistry.getDeclarationsBy(
-                    toolName => this.settingsManager!.isToolEnabled(toolName)
-                );
-            } else {
-                // 没有设置管理器，返回所有工具
-                builtinTools = this.toolRegistry.getAllDeclarations();
-            }
-            
-            // 清理内置工具的 schema，并动态更新特定工具的描述
-            if (builtinTools) {
-                for (const tool of builtinTools) {
-                    let declaration = { ...tool };
-                    
-                    // 对 read_file 工具动态生成描述
-                    if (tool.name === 'read_file') {
-                        const dynamicTool = createReadFileTool(multimodalEnabled, channelType, toolMode);
-                        declaration = {
-                            ...declaration,
-                            description: dynamicTool.declaration.description,
-                            parameters: dynamicTool.declaration.parameters
-                        };
-                    }
-                    
-                    // 对 generate_image 工具：
-                    // 1. 未启用多模态时不包含此工具
-                    // 2. OpenAI Function Call 模式不包含此工具（不支持多模态返回）
-                    if (tool.name === 'generate_image') {
-                        // 检查是否应该排除此工具
-                        const shouldExclude = !multimodalEnabled ||
-                            (channelType === 'openai' && toolMode === 'function_call');
-                        
-                        if (shouldExclude) {
-                            continue;  // 跳过此工具
-                        }
-                        
-                        // 从设置获取配置
-                        const imageConfig = this.settingsManager?.getGenerateImageConfig();
-                        const maxBatchTasks = imageConfig?.maxBatchTasks || 5;
-                        const maxImagesPerTask = imageConfig?.maxImagesPerTask || 1;
-                        
-                        // 构建参数配置
-                        const paramsConfig = {
-                            enableAspectRatio: imageConfig?.enableAspectRatio ?? false,
-                            forcedAspectRatio: imageConfig?.defaultAspectRatio || undefined,
-                            enableImageSize: imageConfig?.enableImageSize ?? false,
-                            forcedImageSize: imageConfig?.defaultImageSize || undefined
-                        };
-                        
-                        // 根据配置动态创建工具（影响工具参数定义）
-                        const dynamicTool = createGenerateImageTool(maxBatchTasks, maxImagesPerTask, paramsConfig);
-                        declaration = {
-                            ...declaration,
-                            description: dynamicTool.declaration.description,
-                            parameters: dynamicTool.declaration.parameters  // 使用动态生成的参数定义
-                        };
-                    }
-                    
-                    // 对 remove_background 工具：
-                    // 1. 未启用多模态时不包含此工具
-                    // 2. OpenAI Function Call 模式不包含此工具（不支持多模态返回）
-                    if (tool.name === 'remove_background') {
-                        // 检查是否应该排除此工具
-                        const shouldExclude = !multimodalEnabled ||
-                            (channelType === 'openai' && toolMode === 'function_call');
-                        
-                        if (shouldExclude) {
-                            continue;  // 跳过此工具
-                        }
-                        
-                        // 从设置获取配置（复用 generate_image 配置的批量限制）
-                        const imageConfig = this.settingsManager?.getGenerateImageConfig();
-                        const maxBatchTasks = imageConfig?.maxBatchTasks || 5;
-                        const dynamicTool = createRemoveBackgroundTool(maxBatchTasks);
-                        declaration = { ...declaration, description: dynamicTool.declaration.description };
-                    }
-                    
-                    // 对 crop_image 工具：
-                    // 1. 未启用多模态时不包含此工具（需要读取和返回图片）
-                    // 2. OpenAI Function Call 模式不包含此工具（不支持多模态返回）
-                    if (tool.name === 'crop_image') {
-                        // 检查是否应该排除此工具
-                        const shouldExclude = !multimodalEnabled ||
-                            (channelType === 'openai' && toolMode === 'function_call');
-                        
-                        if (shouldExclude) {
-                            continue;  // 跳过此工具
-                        }
-                        
-                        // 从设置获取配置（复用 generate_image 配置的批量限制）
-                        const imageConfig = this.settingsManager?.getGenerateImageConfig();
-                        const maxBatchTasks = imageConfig?.maxBatchTasks || 10;
-                        const dynamicTool = createCropImageTool(maxBatchTasks);
-                        declaration = { ...declaration, description: dynamicTool.declaration.description };
-                    }
-                    
-                    // 对 resize_image 工具：
-                    // 1. 未启用多模态时不包含此工具（需要读取和返回图片）
-                    // 2. OpenAI Function Call 模式不包含此工具（不支持多模态返回）
-                    if (tool.name === 'resize_image') {
-                        // 检查是否应该排除此工具
-                        const shouldExclude = !multimodalEnabled ||
-                            (channelType === 'openai' && toolMode === 'function_call');
-                        
-                        if (shouldExclude) {
-                            continue;  // 跳过此工具
-                        }
-                        
-                        // 从设置获取配置（复用 generate_image 配置的批量限制）
-                        const imageConfig = this.settingsManager?.getGenerateImageConfig();
-                        const maxBatchTasks = imageConfig?.maxBatchTasks || 10;
-                        const dynamicTool = createResizeImageTool(maxBatchTasks);
-                        declaration = { ...declaration, description: dynamicTool.declaration.description };
-                    }
-                    
-                    // 对 rotate_image 工具：
-                    // 1. 未启用多模态时不包含此工具（需要读取和返回图片）
-                    // 2. OpenAI Function Call 模式不包含此工具（不支持多模态返回）
-                    if (tool.name === 'rotate_image') {
-                        // 检查是否应该排除此工具
-                        const shouldExclude = !multimodalEnabled ||
-                            (channelType === 'openai' && toolMode === 'function_call');
-                        
-                        if (shouldExclude) {
-                            continue;  // 跳过此工具
-                        }
-                        
-                        // 从设置获取配置（复用 generate_image 配置的批量限制）
-                        const imageConfig = this.settingsManager?.getGenerateImageConfig();
-                        const maxBatchTasks = imageConfig?.maxBatchTasks || 10;
-                        const dynamicTool = createRotateImageTool(maxBatchTasks);
-                        declaration = { ...declaration, description: dynamicTool.declaration.description };
-                    }
-                    
-                    // 对 subagents 工具：
-                    // 只有当有启用的子代理时才包含此工具
-                    if (tool.name === 'subagents') {
-                        if (subAgentRegistry.countEnabled() === 0) {
-                            continue;  // 跳过此工具
-                        }
-                    }
-                    
-                    tools.push({
-                        ...declaration,
-                        parameters: this.cleanJsonSchema(declaration.parameters)
-                    });
-                }
-            }
-        }
-        
-        // 2. 获取 MCP 工具
-        if (this.mcpManager) {
-            const mcpTools = this.mcpManager.getAllTools();
-            for (const serverTools of mcpTools) {
-                for (const tool of serverTools.tools || []) {
-                    // 将 MCP 工具转换为函数声明格式
-                    // 工具名称格式：mcp__{serverId}__{toolName}
-                    // 使用双下划线分隔，因为 Gemini API 不允许函数名中包含多个冒号
-                    const toolName = `mcp__${serverTools.serverId}__${tool.name}`;
-                    
-                    // 根据服务器配置决定是否清理 schema
-                    const rawSchema = tool.inputSchema || { type: 'object', properties: {} };
-                    const schema = serverTools.cleanSchema
-                        ? this.cleanJsonSchema(rawSchema)
-                        : rawSchema;
-                    
-                    tools.push({
-                        name: toolName,
-                        description: tool.description || `MCP tool: ${tool.name}`,
-                        parameters: schema
-                    });
-                }
-            }
-        }
-        
-        // 3. 如果设置了 allowlist，根据 allowlist 过滤工具（硬过滤）
-        // 只保留 allowlist 里出现的工具名
-        if (allowlist && allowlist.length > 0) {
-            const allowlistSet = new Set(allowlist);
-            const filteredTools = tools.filter(tool => allowlistSet.has(tool.name));
-            return filteredTools.length > 0 ? filteredTools : undefined;
-        }
-        
-        // 4. 如果没有设置 allowlist，保持现状（继承 code 工具集，即只按 toolsEnabled + 运行时排除规则过滤）
-        return tools.length > 0 ? tools : undefined;
-    }
-    
-    /**
-     * 清理 JSON Schema，移除不支持的字段
-     *
-     * Gemini 不支持以下字段：
-     * - $schema
-     * - additionalProperties
-     */
-    private cleanJsonSchema(schema: any): any {
-        if (!schema || typeof schema !== 'object') {
-            return schema;
-        }
-        
-        const cleaned: any = {};
-        
-        for (const key of Object.keys(schema)) {
-            // 跳过不支持的字段
-            if (key === '$schema' || key === 'additionalProperties') {
-                continue;
-            }
-            
-            const value = schema[key];
-            
-            // 递归处理嵌套对象
-            if (value && typeof value === 'object') {
-                if (Array.isArray(value)) {
-                    cleaned[key] = value.map(item => this.cleanJsonSchema(item));
-                } else {
-                    cleaned[key] = this.cleanJsonSchema(value);
-                }
-            } else {
-                cleaned[key] = value;
-            }
-        }
-        
-        return cleaned;
+        // 修改原因：工具声明动态生成逻辑必须和 SubAgent 共用，不能在 ChannelManager 私有方法里形成单点升级。
+        // 修改方式：委托 ToolDeclarationResolver，ChannelManager 只负责把当前渠道配置传入。
+        // 修改目的：read_file 多模态描述、图片工具过滤、MCP schema 清理等升级一次即可同时作用于主会话和 SubAgent。
+        return new ToolDeclarationResolver(
+            this.toolRegistry,
+            this.settingsManager,
+            this.mcpManager
+        ).resolve({
+            multimodalEnabled,
+            channelType,
+            toolMode,
+            promptModeSnapshot
+        });
     }
     
     /**

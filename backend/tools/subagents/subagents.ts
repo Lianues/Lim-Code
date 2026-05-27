@@ -221,6 +221,11 @@ async function subAgentsHandler(args: Record<string, any>, context?: ToolContext
     const runtimeExecutor = baseExecutorContext
         ? createDefaultExecutor(agentEntry.config, {
             ...baseExecutorContext,
+            // 修改原因：SubAgent 内部记录要保存为 conversation 子记录，但不能进入主消息时间线。
+            // 修改方式：把 ToolExecutionService 注入的 conversationId/conversationStore 继续传入 SubAgent 默认执行器。
+            // 修改目的：Monitor 可恢复完整内部子对话，同时主模型上下文仍只看到 subagents 最终摘要。
+            conversationId: context?.conversationId as string | undefined,
+            conversationStore: context?.conversationStore as any,
             promptModeSnapshot: promptModeSnapshot || baseExecutorContext.promptModeSnapshot
         })
         : agentEntry.executor;
@@ -258,6 +263,10 @@ async function subAgentsHandler(args: Record<string, any>, context?: ToolContext
         
         const data: Record<string, unknown> = {
             agentName,
+            // 修改原因：主聊天 SubAgent 卡片需要通过 runId 打开或定位 Monitor 里的同一次运行。
+            // 修改方式：默认执行器返回 runId 时，把它透传到工具结果 data 中。
+            // 修改目的：内部事件不持久化，但主卡片仍能关联当前内存中的运行详情。
+            runId: result.runId,
             [result.success ? 'response' : 'partialResponse']: result.response,
             channelName,
             modelId: agentEntry.config.channel.modelId,

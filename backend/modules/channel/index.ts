@@ -27,6 +27,12 @@ export {
 
 // 核心管理器
 export { ChannelManager } from './ChannelManager';
+export {
+    ToolDeclarationResolver,
+    type ToolDeclarationResolveOptions,
+    type DeclarationChannelType,
+    type DeclarationToolMode
+} from './ToolDeclarationResolver';
 
 // 流式处理工具
 export { StreamAccumulator } from './StreamAccumulator';

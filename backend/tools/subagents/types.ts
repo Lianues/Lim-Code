@@ -141,6 +141,15 @@ export interface SubAgentResult {
     
     /** 执行步骤数 */
     steps?: number;
+
+    /**
+     * SubAgent 运行实例 ID。
+     *
+     * 修改原因：主聊天工具块和 SubAgent Monitor 需要用同一个稳定 ID 定位运行过程。
+     * 修改方式：由默认执行器创建 runId，并随最终结果返回。
+     * 修改目的：不把内部事件写入主历史，也能从主卡片打开对应的运行详情。
+     */
+    runId?: string;
     
     /** 使用的工具调用记录 */
     toolCalls?: SubAgentToolCall[];
@@ -169,6 +178,33 @@ export interface SubAgentExecutorContext {
     
     /** 设置管理器 */
     settingsManager?: any; // SettingsManager 类型
+
+    /**
+     * 配置管理器。
+     *
+     * 修改原因：SubAgent 的 provider 配置独立于主会话，但工具执行仍需要读取该 provider 的多模态和 toolMode 能力。
+     * 修改方式：把 ConfigManager 注入执行上下文，由 SubAgent 在每次 run 中解析自己的 channel 配置。
+     * 修改目的：避免 SubAgent 工具执行时因拿不到渠道配置而退化为 multimodalEnabled=false。
+     */
+    configManager?: any; // ConfigManager 类型
+
+    /**
+     * 共享工具执行服务。
+     *
+     * 修改原因：SubAgent 不能再复制 ToolExecutionService 的工具参数校验、MCP、多模态打包和工具配置注入逻辑。
+     * 修改方式：通过上下文注入 ChatHandler 持有的 ToolExecutionService 实例；执行时仍传入 SubAgent 自己的 provider 配置。
+     * 修改目的：共享工具执行内核，但保持 SubAgent 模型能力、toolMode 和多模态开关独立于主会话。
+     */
+    toolExecutionService?: any; // ToolExecutionService 类型
+
+    /** 对话 ID，用于把 SubAgent 内部记录保存到 conversation 子记录 */
+    conversationId?: string;
+
+    /** 对话元数据存储，用于保存 subAgentRuns 子记录 */
+    conversationStore?: {
+        getCustomMetadata(conversationId: string, key: string): Promise<unknown>;
+        setCustomMetadata(conversationId: string, key: string, value: unknown): Promise<void>;
+    };
 
     /** 父请求继承下来的提示词模式快照（可选） */
     promptModeSnapshot?: ResolvedPromptModeSnapshot;

@@ -6,7 +6,7 @@
 
 import { t } from '../../../../i18n';
 import type { ToolRegistry } from '../../../../tools/ToolRegistry';
-import type { ConversationStore } from '../../../../tools/types';
+import type { ConversationStore, ToolProgressEmitter } from '../../../../tools/types';
 import { coerceToolArgs, getToolArgsArrayValidationError, type ToolParameterSchema } from '../../../../tools/coerceToolArgs';
 
 import { validateToolArgs } from '../../../../tools/validateToolArgs';
@@ -117,7 +117,8 @@ export class ToolExecutionService {
         messageIndex?: number,
         config?: BaseChannelConfig,
         abortSignal?: AbortSignal,
-        promptModeSnapshot?: ResolvedPromptModeSnapshot
+        promptModeSnapshot?: ResolvedPromptModeSnapshot,
+        progressEmitter?: ToolProgressEmitter
     ): Promise<ContentPart[]> {
         const { responseParts } = await this.executeFunctionCallsWithResults(
             calls,
@@ -125,7 +126,8 @@ export class ToolExecutionService {
             messageIndex,
             config,
             abortSignal,
-            promptModeSnapshot
+            promptModeSnapshot,
+            progressEmitter
         );
         return responseParts;
     }
@@ -155,7 +157,8 @@ export class ToolExecutionService {
         messageIndex?: number,
         config?: BaseChannelConfig,
         abortSignal?: AbortSignal,
-        promptModeSnapshot?: ResolvedPromptModeSnapshot
+        promptModeSnapshot?: ResolvedPromptModeSnapshot,
+        progressEmitter?: ToolProgressEmitter
     ): Promise<ToolExecutionFullResult> {
         const responseParts: ContentPart[] = [];
         const toolResults: ToolExecutionResult[] = [];
@@ -275,7 +278,7 @@ export class ToolExecutionService {
                 if (executionCall.name.startsWith('mcp__') && this.mcpManager) {
                     response = await this.executeMcpTool(executionCall);
                 } else {
-                    response = await this.executeBuiltinTool(executionCall, conversationId, config, abortSignal, promptModeSnapshot);
+                    response = await this.executeBuiltinTool(executionCall, conversationId, config, abortSignal, promptModeSnapshot, progressEmitter);
                 }
             } catch (error) {
                 const err = error as Error;
@@ -361,7 +364,8 @@ export class ToolExecutionService {
         messageIndex?: number,
         config?: BaseChannelConfig,
         abortSignal?: AbortSignal,
-        promptModeSnapshot?: ResolvedPromptModeSnapshot
+        promptModeSnapshot?: ResolvedPromptModeSnapshot,
+        progressEmitter?: ToolProgressEmitter
     ): AsyncGenerator<ToolExecutionProgressEvent, ToolExecutionFullResult, void> {
         const responseParts: ContentPart[] = [];
         const toolResults: ToolExecutionResult[] = [];
@@ -487,7 +491,7 @@ export class ToolExecutionService {
                 if (executionCall.name.startsWith('mcp__') && this.mcpManager) {
                     response = await this.executeMcpTool(executionCall);
                 } else {
-                    response = await this.executeBuiltinTool(executionCall, conversationId, config, abortSignal, promptModeSnapshot);
+                    response = await this.executeBuiltinTool(executionCall, conversationId, config, abortSignal, promptModeSnapshot, progressEmitter);
                 }
             } catch (error) {
                 const err = error as Error;
@@ -697,7 +701,8 @@ export class ToolExecutionService {
         conversationId?: string,
         config?: BaseChannelConfig,
         abortSignal?: AbortSignal,
-        promptModeSnapshot?: ResolvedPromptModeSnapshot
+        promptModeSnapshot?: ResolvedPromptModeSnapshot,
+        progressEmitter?: ToolProgressEmitter
     ): Promise<Record<string, unknown>> {
         const tool = this.toolRegistry?.getTool(call.name);
 
@@ -748,7 +753,18 @@ export class ToolExecutionService {
             toolOptions: config?.toolOptions,  // 传递工具配置
             // 注入对话上下文（供 todo_write 等工具使用）
             conversationId,
-            conversationStore: this.conversationStore
+            conversationStore: this.conversationStore,
+            // 修改原因：SubAgent Monitor 和长耗时工具需要实时进度，但不能各自复制工具执行链路。
+            // 修改方式：由 ToolExecutionService 在统一工具上下文中注入 emitProgress，并补齐当前工具的 id/name/timestamp。
+            // 修改目的：所有执行入口（主聊天、SubAgent、未来 MCP/长任务）都能共享同一套进度协议。
+            emitProgress: progressEmitter
+                ? (event: Parameters<ToolProgressEmitter>[0]) => progressEmitter({
+                    ...event,
+                    toolId: event.toolId || call.id,
+                    toolName: event.toolName || call.name,
+                    timestamp: event.timestamp || Date.now()
+                })
+                : undefined
         };
 
         toolContext.promptModeSnapshot = promptModeSnapshot;

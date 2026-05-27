@@ -32,6 +32,13 @@ export {
     defaultExecutorFactory
 } from './executor';
 
+// 导出运行时事件总线
+export {
+    subAgentRunEventBus,
+    type SubAgentRunEvent,
+    type SubAgentRunSnapshot
+} from './runEventBus';
+
 // 导出工具
 export { 
     createSubAgentsTool, 

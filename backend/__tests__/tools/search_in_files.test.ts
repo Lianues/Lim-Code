@@ -36,6 +36,7 @@ describe('search_in_files tool description', () => {
         const tool = createSearchInFilesTool();
         const description = tool.declaration.description;
         const queryDescription = tool.declaration.parameters.properties.query.description;
+        const pathDescription = tool.declaration.parameters.properties.path.description;
 
         // 这个测试锁定 search_in_files 的提示词契约。
         // 为什么要测 description：模型是否把 file search 当成 history_search 使用，主要取决于工具声明，而不是 handler 内部实现。
@@ -46,7 +47,11 @@ describe('search_in_files tool description', () => {
         expect(description).toContain('in non-regex mode "|" is a literal character');
         expect(description).toContain('This tool has no read mode or start_line/end_line parameters');
         expect(description).toContain('use read_file to read matched files');
+        expect(description).toContain('The path parameter accepts exactly one file or directory');
+        expect(description).toContain('call search_in_files separately for each path in parallel');
         expect(queryDescription).toContain('automatically fall back to keyword OR search');
+        expect(pathDescription).toContain('accepts exactly one file or directory');
+        expect(pathDescription).toContain('make separate parallel search_in_files calls');
     });
 });
 
@@ -84,6 +89,35 @@ describe('search_in_files whitespace keyword fallback', () => {
             originalQuery: 'alphaValue betaValue',
             keywords: ['alphaValue', 'betaValue']
         });
+    });
+
+    it('returns a path warning when a zero-result search path looks like multiple whitespace-separated paths', async () => {
+        setupWorkspace({
+            'backend/modules/settings/index.ts': 'export const configValue = true;\n',
+            'webview/handlers/SubAgentsHandlers.ts': 'export const handlerValue = true;\n'
+        });
+
+        const tool = registerSearchInFiles();
+        const result = await tool.handler({
+            mode: 'search',
+            query: 'missingNeedle',
+            path: 'backend/modules/settings webview/handlers frontend/src/components/settings',
+            pattern: '*.ts',
+            isRegex: false,
+            maxResults: 10
+        });
+
+        // 这个测试锁定 path 参数的安全兜底。
+        // 为什么不自动拆 path：真实目录名可能包含空格，自动拆分会把一个合法路径误拆成多个搜索范围。
+        // 怎么测：当零命中且 path 明显像多个路径时，结果携带纠错信息，但仍不替用户扩展搜索范围。
+        // 目的：引导模型把多个目录拆成多次并行 search_in_files 调用，避免静默搜索一个不存在的合成路径。
+        expect(result.success).toBe(true);
+        expect((result.data as any).count).toBe(0);
+        expect((result.data as any).pathWarning).toMatchObject({
+            type: 'possible_multiple_paths',
+            candidates: ['backend/modules/settings', 'webview/handlers', 'frontend/src/components/settings']
+        });
+        expect((result.data as any).pathWarning.message).toContain('Run separate parallel search_in_files calls for each path');
     });
 
     it('does not split pipe characters in non-regex search', async () => {

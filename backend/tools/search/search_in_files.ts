@@ -149,6 +149,44 @@ interface SearchQueryFallbackInfo {
     keywords: string[];
 }
 
+interface SearchPathWarningInfo {
+    type: 'possible_multiple_paths';
+    path: string;
+    candidates: string[];
+    message: string;
+}
+
+/**
+ * 判断 path 参数是否像是把多个路径用空格塞进了一个字符串。
+ *
+ * 为什么要改：模型会把“路径：a b c”直接放进 search_in_files.path；工具实际只支持一个文件或目录，旧行为会静默搜索一个不存在的路径。
+ * 怎么改：只做保守检测，不自动拆分；要求至少两个空白片段都像路径，避免误伤带空格的真实文件夹名。
+ * 目的：在零命中时给模型可读的纠错信号，引导它并行发起多次 search_in_files，而不是继续沿用错误 path。
+ */
+function createPossibleMultiplePathsWarning(searchPath: string): SearchPathWarningInfo | undefined {
+    const normalized = (searchPath || '').trim();
+    if (!normalized || normalized === '.') {
+        return undefined;
+    }
+
+    const parts = normalized.split(/\s+/).filter(Boolean);
+    if (parts.length < 2) {
+        return undefined;
+    }
+
+    const pathLikeParts = parts.filter(part => part.includes('/') || part.includes('\\') || part.startsWith('@'));
+    if (pathLikeParts.length < 2) {
+        return undefined;
+    }
+
+    return {
+        type: 'possible_multiple_paths',
+        path: searchPath,
+        candidates: parts,
+        message: `The path parameter accepts exactly one file or directory. The supplied path looks like multiple whitespace-separated paths (${parts.join(', ')}). Run separate parallel search_in_files calls for each path instead of putting them in one path string.`
+    };
+}
+
 function clampNonNegativeNumber(value: unknown, fallback: number): number {
     if (typeof value !== 'number' || !Number.isFinite(value)) {
         return fallback;
@@ -739,9 +777,9 @@ export function createSearchInFilesTool(): Tool {
     const workspaces = getAllWorkspaces();
     const isMultiRoot = workspaces.length > 1;
     
-    let pathDescription = 'Search path relative to workspace root. Use "dir/" (trailing slash) for directories, or "dir/file.ext" for a single file. Default "." searches the entire workspace.';
+    let pathDescription = 'Search path relative to workspace root. This parameter accepts exactly one file or directory, not a whitespace-separated list. Use "dir/" (trailing slash) for one directory, or "dir/file.ext" for one file. For multiple directories/files, make separate parallel search_in_files calls. Default "." searches the entire workspace.';
     if (isMultiRoot) {
-        pathDescription = `Search path, use "workspace_name/path" format. Use "workspace_name/dir/" (trailing slash) for directories, or "workspace_name/file.ext" for a single file. Use "." to search all workspaces. Available workspaces: ${workspaces.map(w => w.name).join(', ')}`;
+        pathDescription = `Search path, use "workspace_name/path" format. This parameter accepts exactly one file or directory, not a whitespace-separated list. Use "workspace_name/dir/" (trailing slash) for one directory, or "workspace_name/file.ext" for one file. For multiple directories/files, make separate parallel search_in_files calls. Use "." to search all workspaces. Available workspaces: ${workspaces.map(w => w.name).join(', ')}`;
     }
     
     return {
@@ -750,11 +788,11 @@ export function createSearchInFilesTool(): Tool {
             strict: true,  // API 端强制 schema 校验
             // 这段 description 是模型实际看到的工具提示词。
             // 为什么要改：旧文案只说“搜索关键词或正则”，没有说明多关键词兜底，也没有区分文件搜索与 history_search 的 read 流程。
-            // 怎么改：把非正则空格关键词兜底、`|` 仅属于正则模式、以及后续读取必须用 read_file 写进主描述。
-            // 目的：降低模型把 history_search 的 start_line/end_line 语法幻觉迁移到 search_in_files 的概率。
+            // 怎么改：把非正则空格关键词兜底、`|` 仅属于正则模式、path 只能填一个路径、以及后续读取必须用 read_file 写进主描述。
+            // 目的：降低模型把 history_search 的 start_line/end_line 语法或“多个路径塞进一个 path 字符串”的错误用法迁移到 search_in_files 的概率。
             description: isMultiRoot
-                ? `Search or search-and-replace content in multiple workspace files. Supports regular expressions. In search mode with isRegex=false, whitespace-separated multi-keyword queries first try the exact phrase and, if no matches are found, automatically fall back to keyword OR search. Use isRegex=true for regex OR such as "foo|bar"; in non-regex mode "|" is a literal character. This tool has no read mode or start_line/end_line parameters; use read_file to read matched files. Use "workspace_name/dir/" (trailing slash) for directories, or "workspace_name/file.ext" for a single file. Use "." to search all workspaces. Available workspaces: ${workspaces.map(w => w.name).join(', ')}.`
-                : 'Search or search-and-replace content in workspace files. Supports regular expressions. In search mode with isRegex=false, whitespace-separated multi-keyword queries first try the exact phrase and, if no matches are found, automatically fall back to keyword OR search. Use isRegex=true for regex OR such as "foo|bar"; in non-regex mode "|" is a literal character. This tool has no read mode or start_line/end_line parameters; use read_file to read matched files. Use "dir/" (trailing slash) for directories, or "dir/file.ext" for a single file. Returns matching files and context.',
+                ? `Search or search-and-replace content in multiple workspace files. Supports regular expressions. In search mode with isRegex=false, whitespace-separated multi-keyword queries first try the exact phrase and, if no matches are found, automatically fall back to keyword OR search. Use isRegex=true for regex OR such as "foo|bar"; in non-regex mode "|" is a literal character. This tool has no read mode or start_line/end_line parameters; use read_file to read matched files. The path parameter accepts exactly one file or directory, not multiple whitespace-separated paths; for multiple paths, call search_in_files separately for each path in parallel. Use "workspace_name/dir/" (trailing slash) for one directory, or "workspace_name/file.ext" for one file. Use "." to search all workspaces. Available workspaces: ${workspaces.map(w => w.name).join(', ')}.`
+                : 'Search or search-and-replace content in workspace files. Supports regular expressions. In search mode with isRegex=false, whitespace-separated multi-keyword queries first try the exact phrase and, if no matches are found, automatically fall back to keyword OR search. Use isRegex=true for regex OR such as "foo|bar"; in non-regex mode "|" is a literal character. This tool has no read mode or start_line/end_line parameters; use read_file to read matched files. The path parameter accepts exactly one file or directory, not multiple whitespace-separated paths; for multiple paths, call search_in_files separately for each path in parallel. Use "dir/" (trailing slash) for one directory, or "dir/file.ext" for one file. Returns matching files and context.',
             category: 'search',
             parameters: {
                 type: 'object',
@@ -847,6 +885,7 @@ export function createSearchInFilesTool(): Tool {
                 
                 // 解析路径，确定搜索范围
                 const { workspace: targetWorkspace, relativePath, isExplicit } = parseWorkspacePath(searchPath);
+                const pathWarning = createPossibleMultiplePathsWarning(searchPath);
                 
                 if (isReplaceMode) {
                     // 替换模式
@@ -948,7 +987,8 @@ export function createSearchInFilesTool(): Tool {
                             results: allReplacements,
                             filesModified: allReplacements.length,
                             totalReplacements,
-                            multiRoot: workspaces.length > 1
+                            multiRoot: workspaces.length > 1,
+                            pathWarning: allMatches.length === 0 && allReplacements.length === 0 ? pathWarning : undefined
                         },
                         error: anyCancelled ? 'Search/replace was cancelled by user' : undefined
                     };
@@ -1053,7 +1093,8 @@ export function createSearchInFilesTool(): Tool {
                             count: allResults.length,
                             truncated: allResults.length >= maxResults || searchPass.budgetTruncated,
                             multiRoot: workspaces.length > 1,
-                            queryFallback: fallbackInfo
+                            queryFallback: fallbackInfo,
+                            pathWarning: allResults.length === 0 ? pathWarning : undefined
                         }
                     };
                 }

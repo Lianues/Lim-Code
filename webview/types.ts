@@ -52,6 +52,14 @@ export interface HandlerContext {
   sendResponse: (requestId: string, data: any) => void;
   sendError: (requestId: string, code: string, message: string) => void;
   postMessage?: (message: any) => void;
+  /**
+   * 打开 SubAgent Monitor 编辑器页。
+   *
+   * 修改原因：主聊天工具卡片只显示摘要，完整内部过程需要在编辑器区域展示。
+   * 修改方式：通过 HandlerContext 暴露打开 Monitor 的能力，消息处理器不直接依赖 ChatViewProvider 实现。
+   * 修改目的：保持 handler 解耦，同时让前端按钮能定位到指定 runId。
+   */
+  openSubAgentMonitor?: (runId?: string, conversationId?: string) => Promise<void> | void;
   
   // 工具函数
   getCurrentWorkspaceUri?: () => string | null;
