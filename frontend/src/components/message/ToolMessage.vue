@@ -245,8 +245,11 @@ function startDiffTimer(sessionId: string, delay: number) {
     applyDiffProgress.value.set(sessionId, (remaining / delay) * 100)
     
     if (remaining <= 0) {
+      // autoSave=true 时，后端 DiffManager 是自动确认的唯一权威。
+      // 为什么不再从前端调用 confirmDiff：前后端同时 accept 同一个 pending diff 会触发 isDiffActionInProgress 竞态，导致一方失败并可能让工具等待链路卡住。
+      // 怎么改：前端倒计时只负责视觉展示，时间到后停止本地计时，等待后端 diff.statusChanged 同步最终状态。
+      // 目的：消除双重自动确认来源，让自动保存流程由后端串行收敛。
       stopDiffTimer(sessionId)
-      confirmDiff(sessionId)
     }
   }, 50)
   

@@ -1,0 +1,9 @@
+marker=WRITE_FILE_ESCAPE_SEQUENCE_TEST
+actual_double_quote="
+actual_single_quote='
+literal_backslash_double_quote=\"
+literal_backslash_single_quote=\'
+literal_one_backslash=\
+literal_two_backslashes=\\
+literal_two_backslashes_double_quote=\\"
+literal_two_backslashes_single_quote=\\'

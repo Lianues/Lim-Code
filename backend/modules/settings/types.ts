@@ -159,7 +159,7 @@ export interface HistorySearchToolConfig {
 export interface ApplyDiffToolConfig {
     /**
      * apply_diff 参数格式：
-     * - unified: unified diff patch（---/+++/@ @/+/-）
+     * - unified: 默认通道，优先使用结构化 hunks，兼容 unified diff patch
      * - search_replace: 旧版 search/replace/start_line diffs
      */
     format: ApplyDiffFormat;
@@ -1518,7 +1518,6 @@ export const COMMON_IGNORE_PATTERNS = [
     '.nyc_output',
     // 锁文件
     'package-lock.json',
-    'pnpm-lock.yaml',
     'yarn.lock',
     // 编译产物
     '*.pyc',
@@ -1609,7 +1608,9 @@ export const DEFAULT_SEARCH_IN_FILES_CONFIG: SearchInFilesToolConfig = {
  * 默认 apply_diff 配置
  */
 export const DEFAULT_APPLY_DIFF_CONFIG: ApplyDiffToolConfig = {
-    // 默认使用新格式（unified diff patch）
+    // 为什么 format 仍沿用 unified：历史配置和前端开关已经使用该枚举值，直接改名会破坏已有用户设置。
+    // 怎么改：保持枚举值不变，但在工具声明和 handler 中把该通道升级为“结构化 hunks 优先，patch 兼容”。
+    // 目的：做到协议平滑迁移，不让旧配置失效。
     format: 'unified',
     autoSave: false,
     autoSaveDelay: 3000,

@@ -459,6 +459,8 @@ description: "このスキルの機能と使用場面の簡単な説明"
             noSummarizedHistory: '要約された履歴が見つかりません。この会話ではまだコンテキスト要約がトリガーされていません。',
             noHistory: '会話履歴が見つかりません。',
             searchResultHeader: '履歴で "{query}" の一致が {count} 件見つかりました（全 {totalLines} 行）',
+            // 完全一致フレーズではなく空白区切りキーワードで兜底したことをモデルに明示する。
+            keywordFallbackNotice: '[完全一致フレーズは見つからなかったため、空白区切りキーワードで検索しました: {terms}]',
             noMatchesFound: '履歴で "{query}" の一致は見つかりませんでした（全 {totalLines} 行）。別のキーワードをお試しください。',
             resultsLimited: '[結果は {max} 件に制限されています。より具体的なクエリをお試しください。]',
             readResultHeader: '履歴の {start}-{end} 行目（全 {totalLines} 行）',

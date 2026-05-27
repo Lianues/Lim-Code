@@ -1,0 +1,9 @@
+marker=WRITE_FILE_ESCAPE_TEST
+double_quote="
+single_quote='
+one_backslash=\
+two_backslashes=\\
+double_quoted_text="hello"
+single_quoted_text='hello'
+windows_path=C:\Users\Moeblack
+literal_backslash_n=\n

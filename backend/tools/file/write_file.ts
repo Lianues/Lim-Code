@@ -35,6 +35,13 @@ interface WriteResult {
     cancelled?: boolean;
     /** 前端按需加载 diff 内容用 */
     diffContentId?: string;
+    /**
+     * 自动保存失败原因。
+     * 为什么新增：DiffManager 现在会在 autoSave 失败时终结 pending diff，并把失败原因传回工具结果。
+     * 怎么改：在写文件结果类型中允许该字段，避免运行时代码和 TypeScript 契约不一致。
+     * 目的：让自动确认失败能明确显示原因，同时不再卡住等待链路。
+     */
+    autoSaveError?: string;
     /** Pending diff ID，用于确认/拒绝（历史字段，尽量避免再依赖） */
     pendingDiffId?: string;
 }
@@ -174,6 +181,7 @@ async function writeSingleFile(
         
         const finalDiff = diffManager.getDiff(pendingDiff.id);
         const wasAccepted = !wasInterrupted && (!finalDiff || finalDiff.status === 'accepted');
+        const autoSaveError = finalDiff?.autoSaveError;
 
         // 尝试将内容保存到 DiffStorageManager，供前端按需加载
         const diffStorageManager = getDiffStorageManager();
@@ -213,7 +221,8 @@ async function writeSingleFile(
             success: wasAccepted,
             action: fileExists ? 'modified' : 'created',
             status: wasAccepted ? 'accepted' : 'rejected',
-            error: wasAccepted ? undefined : 'Diff was rejected',
+            error: wasAccepted ? undefined : (autoSaveError || 'Diff was rejected'),
+            autoSaveError,
             diffContentId
         };
     } catch (error) {

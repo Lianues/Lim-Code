@@ -1796,8 +1796,8 @@ const zhCN: LanguageMessages = {
                         infoDisabled: '当前设置：AI 修改文件后，需要您手动在编辑器中按 Ctrl+S 保存确认修改。',
 
                         format: '差异格式',
-                        formatDesc: '选择 AI 调用 apply_diff 时使用的参数格式（默认推荐统一 diff）',
-                        formatUnified: '统一 diff（unified diff patch）',
+                        formatDesc: '选择 AI 调用 apply_diff 时使用的参数格式（默认推荐结构化 hunks，兼容旧 unified diff patch）',
+                        formatUnified: '结构化 hunks（推荐，兼容 unified diff patch）',
                         formatSearchReplace: '旧格式（search/replace）',
 
                         skipDiffView: '跳过差异视图',
@@ -2590,7 +2590,7 @@ const zhCN: LanguageMessages = {
                     needSharp: {
                         title: '需要安装 sharp 库',
                         message: '已生成遮罩图，但需要安装 sharp 库才能完成完整抠图。',
-                        installCmd: 'pnpm add sharp'
+                        installCmd: 'npm install sharp'
                     },
                     cancelledMessage: '用户已取消抠图操作',
                     tasksFailed: '{count} 个任务失败',
@@ -2732,7 +2732,13 @@ const zhCN: LanguageMessages = {
                     collapse: '收起',
                     expandRemaining: '展开剩余 {count} 行',
                     copyContent: '复制内容',
-                    copied: '已复制'
+                    copied: '已复制',
+                    // history_search 现在把后端纯文本结果解析成结构化片段；这些文案用于统计和片段标题，避免 UI 回退为整段原始输出。
+                    lineCount: '{count} 行',
+                    matchLineCount: '{count} 个匹配行',
+                    blockCount: '{count} 个片段',
+                    contextBlock: '片段 {index}',
+                    match: '匹配'
                 }
             },
             terminal: {

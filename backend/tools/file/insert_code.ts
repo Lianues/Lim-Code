@@ -33,6 +33,13 @@ interface InsertResult {
     error?: string;
     cancelled?: boolean;
     diffContentId?: string;
+    /**
+     * 自动保存失败原因。
+     * 为什么新增：DiffManager 在 autoSave 失败时会以 rejected 收敛，并把失败原因传回调用方。
+     * 怎么改：结果类型显式包含 autoSaveError，保持 handler 返回值和类型声明一致。
+     * 目的：让自动确认失败成为可见错误，而不是悬挂的 pending 状态。
+     */
+    autoSaveError?: string;
     pendingDiffId?: string;
 }
 
@@ -131,6 +138,7 @@ async function insertSingleFile(
         const wasInterrupted = interruptReason !== 'none';
         const finalDiff = diffManager.getDiff(pendingDiff.id);
         const wasAccepted = !wasInterrupted && (!finalDiff || finalDiff.status === 'accepted');
+        const autoSaveError = finalDiff?.autoSaveError;
 
         // 保存 diff 内容供前端按需加载
         const diffStorageManager = getDiffStorageManager();
@@ -169,7 +177,8 @@ async function insertSingleFile(
             line,
             insertedLines: insertedLineCount,
             status: wasAccepted ? 'accepted' : 'rejected',
-            error: wasAccepted ? undefined : 'Diff was rejected',
+            error: wasAccepted ? undefined : (autoSaveError || 'Diff was rejected'),
+            autoSaveError,
             diffContentId,
             pendingDiffId: pendingDiff.id
         };

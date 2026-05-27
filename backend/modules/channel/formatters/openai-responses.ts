@@ -441,7 +441,11 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                             name: chunk.item.name,
                             args: {},
                             partialArgs: '',
+                            // 为什么要用 call_id 作为 functionCall.id：Responses API 的工具结果必须用 call_id 回传，item.id 只是流式 output item 的内部定位 ID。
+                            // 怎么改：把 call_id 放入统一的 functionCall.id，同时额外保存 itemId 只供 StreamAccumulator 合并参数增量。
+                            // 目的：避免 item_id/call_id 混用导致 0 参数占位工具残留，或工具结果回传时与模型期望的 call_id 对不上。
                             id: chunk.item.call_id,
+                            itemId: chunk.item.id,
                             index: chunk.output_index
                         } as any
                     });
@@ -456,6 +460,21 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                         thoughtSignatures: {
                             'openai-responses': chunk.item.encrypted_content
                         }
+                    });
+                } else if (chunk.item?.type === 'function_call') {
+                    // 为什么还要处理 output_item.done：Responses 的 arguments.done 事件没有 call_id，只有 item_id；最终 output item 才同时带有 id 与 call_id。
+                    // 怎么改：输出一个“最终参数”functionCall 片段，用 itemId/index 合并回占位调用，并用 call_id 校正统一工具 ID。
+                    // 目的：即使 arguments.done 已经被处理，也能用官方最终 item 修正 call_id 和完整参数，避免幽灵工具调用。
+                    parts.push({
+                        functionCall: {
+                            name: chunk.item.name,
+                            args: {},
+                            partialArgs: chunk.item.arguments || '',
+                            id: chunk.item.call_id,
+                            itemId: chunk.item.id,
+                            index: chunk.output_index,
+                            finalArgs: true
+                        } as any
                     });
                 }
                 break;
@@ -483,6 +502,10 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                 parts.push({
                     functionCall: {
                         partialArgs: chunk.delta,
+                        // 为什么保存 itemId：Responses 参数事件用 item_id 指向 output item，不是工具结果回传需要的 call_id。
+                        // 怎么改：itemId 只作为流式合并键，functionCall.id 保持缺省，避免把 item_id 误写成工具调用 ID。
+                        // 目的：确保 delta 能合并到占位 function_call，同时不污染后续 function_call_output 的 call_id。
+                        itemId: chunk.item_id,
                         index: chunk.output_index
                     } as any
                 });
@@ -493,10 +516,15 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                 parts.push({
                     functionCall: {
                         name: chunk.name,
-                        args: {}, // arguments 将在 done 之后由 StreamAccumulator 解析
+                        args: {}, // arguments 将由 StreamAccumulator 解析并覆盖为最终参数
                         partialArgs: chunk.arguments,
-                        id: chunk.item_id,
-                        index: chunk.output_index
+                        // 为什么不使用 chunk.item_id 作为 id：item_id 是 output item ID，官方 function_call_output 要求匹配的是 call_id。
+                        // 怎么改：仅保留 itemId/index 供合并；如果兼容渠道额外提供 call_id，才写入 functionCall.id。
+                        // 目的：避免 done 事件把同一工具调用拆成“0 参数占位 + item_id 工具”两条记录。
+                        id: chunk.call_id || chunk.item?.call_id,
+                        itemId: chunk.item_id,
+                        index: chunk.output_index,
+                        finalArgs: true
                     } as any
                 });
                 break;

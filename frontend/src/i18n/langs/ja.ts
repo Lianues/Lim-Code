@@ -2499,7 +2499,13 @@ const ja: LanguageMessages = {
                     collapse: '折りたたむ',
                     expandRemaining: '残り {count} 行を展開',
                     copyContent: 'コンテンツをコピー',
-                    copied: 'コピーしました'
+                    copied: 'コピーしました',
+                    // history_search はバックエンドのテキスト結果を構造化ブロックとして解析するため、巨大な生出力ではなく統一された面板表示にする。
+                    lineCount: '{count} 行',
+                    matchLineCount: '{count} 件の一致行',
+                    blockCount: '{count} 個のブロック',
+                    contextBlock: 'ブロック {index}',
+                    match: '一致'
                 }
             },
             terminal: {
@@ -2685,7 +2691,7 @@ const ja: LanguageMessages = {
                     needSharp: {
                         title: 'sharp ライブラリが必要です',
                         message: 'マスクが生成されましたが、完全な背景除去には sharp ライブラリのインストールが必要です。',
-                        installCmd: 'pnpm add sharp'
+                        installCmd: 'npm install sharp'
                     },
                     cancelledMessage: 'ユーザーが背景除去をキャンセルしました',
                     tasksFailed: '{count} タスクが失敗しました',

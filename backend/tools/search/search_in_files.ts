@@ -78,6 +78,8 @@ interface ReplaceResult {
     replacements: number;
     status?: 'accepted' | 'rejected' | 'pending';
     diffContentId?: string;
+    /** 自动保存失败原因；用于让 search/replace 的文件级结果解释 rejected 的真实原因 */
+    autoSaveError?: string;
     /** Pending diff ID，用于确认/拒绝 */
     pendingDiffId?: string;
 }
@@ -632,6 +634,7 @@ async function searchAndReplaceInDirectory(
 
                 const finalDiff = diffManager.getDiff(pendingDiff.id);
                 const wasAccepted = !wasInterrupted && (!finalDiff || finalDiff.status === 'accepted');
+                const autoSaveError = finalDiff?.autoSaveError;
 
                 // 取消/中断视为 rejected，避免前端继续显示 waiting
                 status = wasAccepted ? 'accepted' : 'rejected';
@@ -658,6 +661,7 @@ async function searchAndReplaceInDirectory(
                     replacements: fileReplacementCount,
                     status,
                     diffContentId,
+                    autoSaveError,
                     pendingDiffId
                 });
             }

@@ -60,6 +60,24 @@ interface DiffBlock {
   error?: string
 }
 
+// 结构化 hunk。为什么要新增：apply_diff 新推荐协议不再让前端解析 patch 文本，而是直接展示 oldContent/newContent。
+interface StructuredHunk {
+  oldContent: string
+  newContent: string
+  startLine?: number
+}
+
+function parseStructuredHunksToDiffBlocks(hunks: StructuredHunk[]): DiffBlock[] {
+  // 为什么要单独转换：面板现有渲染逻辑已经围绕 search/replace DiffBlock 工作，复用它可以避免 UI 分叉。
+  // 怎么改：oldContent 映射为 search，newContent 映射为 replace，startLine 映射为展示用 start_line。
+  // 目的：让新结构化协议和旧 diff 面板拥有一致的展示、复制和失败预览行为。
+  return hunks.map(h => ({
+    search: h.oldContent,
+    replace: h.newContent,
+    start_line: h.startLine
+  }))
+}
+
 function parseUnifiedPatchToDiffBlocks(patch: string): DiffBlock[] {
   const normalized = patch.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
   const lines = normalized.split('\n')
@@ -141,9 +159,31 @@ const filePath = computed(() => {
 })
 
 // 获取 diff 列表
-// - 新格式：优先读取 args.patch（unified diff）并按 hunk 转换为可展示的 DiffBlock
+// - 推荐格式：优先读取 args.hunks（结构化 oldContent/newContent）
+// - 兼容格式：读取 args.patch（unified diff）并按 hunk 转换为可展示的 DiffBlock
 // - 旧格式：兼容 args.diffs
 const diffList = computed((): DiffBlock[] => {
+  const hunks = props.args.hunks as StructuredHunk[] | undefined
+  if (Array.isArray(hunks) && hunks.length > 0) {
+    const blocks = parseStructuredHunksToDiffBlocks(hunks)
+    const data = props.result?.data as Record<string, any> | undefined
+    const results = (data?.results as Array<{ index: number; success?: boolean; error?: string; startLine?: number }> | undefined) || []
+
+    // 为什么要叠加后端结果：startLine 只有在重复 oldContent 时才参与定位，最终展示应以真实匹配行号为准。
+    // 怎么改：用 result.index 对齐 hunk，并用后端 startLine 覆盖参数中的 startLine。
+    // 目的：避免陈旧行号被展示成实际修改位置。
+    return blocks.map((b, i) => {
+      const r = results.find(x => x.index === i)
+      if (!r) return { ...b }
+      return {
+        ...b,
+        success: r.success,
+        error: r.error,
+        start_line: (r.startLine as any) ?? b.start_line
+      }
+    })
+  }
+
   const patch = props.args.patch as string | undefined
   if (patch && typeof patch === 'string' && patch.trim()) {
     const blocks = parseUnifiedPatchToDiffBlocks(patch)

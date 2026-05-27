@@ -87,11 +87,12 @@ async function handleApplyDiffPreview(
   toolId?: string
 ): Promise<void> {
   const filePath = args.path as string;
+  const hunks = args.hunks as Array<{ oldContent: string; newContent: string; startLine?: number }> | undefined;
   const patch = args.patch as string | undefined;
   // legacy fallback
   const diffs = args.diffs as Array<{ search: string; replace: string; start_line?: number }> | undefined;
   
-  if (!filePath || (!patch && (!diffs || diffs.length === 0))) {
+  if (!filePath || ((!hunks || hunks.length === 0) && !patch && (!diffs || diffs.length === 0))) {
     throw new Error(t('webview.errors.invalidDiffData'));
   }
   
@@ -116,10 +117,18 @@ async function handleApplyDiffPreview(
   let newContent: string;
   let diffTitle: string;
   
-  if (fullOriginalContent && fullNewContent) {
+  // 为什么要用类型判断而不是 truthy 判断：新建空文件或清空文件时，完整 diff 的任一侧可能是合法空字符串。
+  // 怎么改：只要后端已提供 string 类型的 original/new 内容，就按完整文件 diff 打开。
+  // 目的：避免 apply_diff 历史预览在空内容场景下错误回退到 hunk/patch 预览。
+  if (typeof fullOriginalContent === 'string' && typeof fullNewContent === 'string') {
     originalContent = fullOriginalContent;
     newContent = fullNewContent;
     diffTitle = t('webview.messages.fullFileDiffPreview', { filePath });
+  } else if (hunks && hunks.length > 0) {
+    const built = buildPreviewContentsFromStructuredHunks(hunks);
+    originalContent = built.originalContent;
+    newContent = built.newContent;
+    diffTitle = t('webview.messages.historyDiffPreview', { filePath });
   } else if (patch) {
     const built = buildPreviewContentsFromUnifiedPatch(patch);
     originalContent = built.originalContent;
@@ -135,6 +144,24 @@ async function handleApplyDiffPreview(
   
   const previewId = diffContentId || toolId || `${filePath}:${Date.now()}`;
   await openDiffView(filePath, originalContent, newContent, diffTitle, ctx, previewId);
+}
+
+function buildPreviewContentsFromStructuredHunks(
+  hunks: Array<{ oldContent: string; newContent: string; startLine?: number }>
+): { originalContent: string; newContent: string } {
+  // 为什么要新增结构化预览：历史记录里可能只有工具参数，没有后端保存的完整 diffContentId，此时不能再只解析 patch。
+  // 怎么改：把每个 oldContent/newContent hunk 拼成可读的左右两侧预览块，并保留 startLine 提示。
+  // 目的：让新 apply_diff 协议在“查看差异”按钮和历史回放里都有可用预览。
+  const originalBlocks = hunks.map((h, i) => {
+    const header = `// === Hunk #${i + 1}${h.startLine ? ` (Line ${h.startLine})` : ''} ===`;
+    return `${header}\n${h.oldContent}`;
+  });
+  const newBlocks = hunks.map((h, i) => {
+    const header = `// === Hunk #${i + 1}${h.startLine ? ` (Line ${h.startLine})` : ''} ===`;
+    return `${header}\n${h.newContent}`;
+  });
+
+  return { originalContent: originalBlocks.join('\n\n'), newContent: newBlocks.join('\n\n') };
 }
 
 function buildPreviewContentsFromUnifiedPatch(patch: string): { originalContent: string; newContent: string } {
@@ -269,9 +296,16 @@ async function handleWriteFilePreview(
   ctx: HandlerContext,
   toolId?: string
 ): Promise<void> {
-  const files = args.files as Array<{ path: string; content: string }>;
+  // 为什么这里不再读取 args.files：write_file 输入协议已迁移为单目标 { path, content }，继续读旧数组会导致“查看差异”按钮无法打开新建文件预览。
+  // 怎么改：从当前工具参数直接构造一个单元素列表，保留后续循环逻辑，便于复用 diffContentId 映射和打开多个预览的通用流程。
+  // 目的：让前端工具卡、历史记录和 webview 预览处理器共享同一套 write_file 输入语义。
+  const filePath = args.path as string | undefined;
+  const fileContent = args.content as string | undefined;
+  const files = typeof filePath === 'string' && typeof fileContent === 'string'
+    ? [{ path: filePath, content: fileContent }]
+    : [];
   
-  if (!files || files.length === 0) {
+  if (files.length === 0) {
     throw new Error(t('webview.errors.noFileContent'));
   }
   

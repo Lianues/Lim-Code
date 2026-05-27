@@ -406,6 +406,12 @@ export interface BackendLanguageMessages {
             noSummarizedHistory: string;
             noHistory: string;
             searchResultHeader: string;
+            /**
+             * history_search 多关键词兜底提示。
+             * 为什么新增：模型常用空格分隔关键词，后端会在完整短语无结果时自动改用关键词兜底，需要把策略写回结果里。
+             * 怎么新增：只声明一条结果提示，目的让模型理解当前命中来自关键词兜底而不是完整短语。
+             */
+            keywordFallbackNotice: string;
             noMatchesFound: string;
             resultsLimited: string;
             readResultHeader: string;

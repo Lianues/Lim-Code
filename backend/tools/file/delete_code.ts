@@ -34,6 +34,13 @@ interface DeleteResult {
     error?: string;
     cancelled?: boolean;
     diffContentId?: string;
+    /**
+     * 自动保存失败原因。
+     * 为什么新增：自动保存失败现在会主动结束 diff，而不是保留 pending 让工具等待。
+     * 怎么改：删除行工具结果也允许携带 autoSaveError，与其它 diff-review 工具保持同一返回契约。
+     * 目的：让前端和模型都能看到自动确认失败的真实原因。
+     */
+    autoSaveError?: string;
     pendingDiffId?: string;
 }
 
@@ -139,6 +146,7 @@ async function deleteSingleFile(
         const wasInterrupted = interruptReason !== 'none';
         const finalDiff = diffManager.getDiff(pendingDiff.id);
         const wasAccepted = !wasInterrupted && (!finalDiff || finalDiff.status === 'accepted');
+        const autoSaveError = finalDiff?.autoSaveError;
 
         // 保存 diff 内容供前端按需加载
         const diffStorageManager = getDiffStorageManager();
@@ -179,7 +187,8 @@ async function deleteSingleFile(
             end_line: endLine,
             deletedLines: deletedCount,
             status: wasAccepted ? 'accepted' : 'rejected',
-            error: wasAccepted ? undefined : 'Diff was rejected',
+            error: wasAccepted ? undefined : (autoSaveError || 'Diff was rejected'),
+            autoSaveError,
             diffContentId,
             pendingDiffId: pendingDiff.id
         };

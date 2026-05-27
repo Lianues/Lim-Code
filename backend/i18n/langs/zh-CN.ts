@@ -459,6 +459,8 @@ description: "简要描述该技能的功能及使用场景"
             noSummarizedHistory: '没有找到已总结的历史记录。当前对话尚未触发上下文总结。',
             noHistory: '未找到对话历史记录。',
             searchResultHeader: '在历史记录中找到 {count} 个匹配项，关键词："{query}"（共 {totalLines} 行）',
+            // 当完整短语无结果时说明已启用空格分隔关键词兜底，避免模型误以为命中了原始完整短语。
+            keywordFallbackNotice: '[未找到完整短语，已改用空格分隔关键词搜索：{terms}]',
             noMatchesFound: '在历史记录中未找到 "{query}" 的匹配项（共 {totalLines} 行）。请尝试其他关键词。',
             resultsLimited: '[结果限制为 {max} 个匹配项。请使用更具体的关键词。]',
             readResultHeader: '历史记录的第 {start}-{end} 行（共 {totalLines} 行）',

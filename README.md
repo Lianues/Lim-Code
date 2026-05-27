@@ -110,10 +110,10 @@ npx @vscode/vsce package
 
 ```bash
 # 终端 A：后端 watch
-pnpm run watch
+npm run watch
 
 # 终端 B：前端 vite dev server
-pnpm run dev:frontend
+npm run dev:frontend
 ```
 
 然后使用常规 `Run Extension` 或自定义带环境变量的调试配置启动扩展。

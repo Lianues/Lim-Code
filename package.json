@@ -249,13 +249,13 @@
     }
   },
   "scripts": {
-    "vscode:prepublish": "pnpm run compile",
+    "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
-    "build:backend": "pnpm run compile",
+    "build:backend": "npm run compile",
     "watch": "tsc -watch -p ./",
-    "build:frontend": "cd frontend && pnpm run build",
-    "dev:frontend": "cd frontend && pnpm run dev:local",
-    "build": "pnpm run compile && pnpm run build:frontend",
+    "build:frontend": "cd frontend && npm run build",
+    "dev:frontend": "cd frontend && npm run dev:local",
+    "build": "npm run compile && npm run build:frontend",
     "test": "node scripts/run-jest.cjs",
     "test:watch": "node scripts/run-jest.cjs --watch",
     "test:coverage": "node scripts/run-jest.cjs --coverage",

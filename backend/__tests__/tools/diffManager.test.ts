@@ -110,7 +110,8 @@ function createPendingDiff(manager: DiffManager, overrides?: Partial<PendingDiff
         toolId: overrides?.toolId,
         userEditedContent: overrides?.userEditedContent,
         diffGuardWarning: overrides?.diffGuardWarning,
-        diffGuardDeletePercent: overrides?.diffGuardDeletePercent
+        diffGuardDeletePercent: overrides?.diffGuardDeletePercent,
+        autoSaveError: overrides?.autoSaveError
     };
 
     ((manager as any).pendingDiffs as Map<string, PendingDiff>).set(diff.id, diff);
@@ -304,7 +305,7 @@ describe('DiffManager lifecycle closure', () => {
         expect(console.warn).toHaveBeenCalled();
     });
 
-    it('auto-save failure leaves the diff pending for manual retry', async () => {
+    it('auto-save failure rejects the diff to unblock waiting tool execution', async () => {
         jest.useFakeTimers();
 
         const manager = getManager();
@@ -319,17 +320,30 @@ describe('DiffManager lifecycle closure', () => {
             throw new Error('auto-save disk write failed');
         });
 
+        let statusChanges = 0;
+        manager.addStatusListener(() => {
+            statusChanges += 1;
+        });
+
         manager.updateSettings({ autoSave: true, autoSaveDelay: 5 });
         (manager as any).scheduleAutoSave(diff.id);
 
         await jest.advanceTimersByTimeAsync(10);
         await Promise.resolve();
 
-        expect(diff.status).toBe('pending');
+        // autoSave=true 是自动确认承诺，失败也必须收敛。
+        // 为什么不允许保持 pending：apply_diff/write_file 等 handler 正在等待 diff 状态结束，pending 会让流式提前执行一直卡住。
+        // 怎么验证：自动保存失败后应标记 rejected、释放监听器、清掉计时器并触发状态变更。
+        // 目的：防止“自动确认失败但工具 Promise 永不结束”的回归。
+        expect(diff.status).toBe('rejected');
+        expect(diff.autoSaveError).toContain('auto-save disk write failed');
         expect((manager as any).autoSaveTimers.has(diff.id)).toBe(false);
-        expect((manager as any).saveListeners.get(diff.id)).toBe(listeners.saveDisposable);
-        expect((manager as any).closeListeners.get(diff.id)).toBe(listeners.closeDisposable);
+        expect(listeners.saveDisposable.dispose).toHaveBeenCalled();
+        expect(listeners.closeDisposable.dispose).toHaveBeenCalled();
+        expect((manager as any).saveListeners.has(diff.id)).toBe(false);
+        expect((manager as any).closeListeners.has(diff.id)).toBe(false);
         expect(manager.isDiffActionInProgress(diff.id)).toBe(false);
+        expect(statusChanges).toBeGreaterThan(0);
         expect((vscode.window as any).showErrorMessage).toHaveBeenCalled();
     });
 

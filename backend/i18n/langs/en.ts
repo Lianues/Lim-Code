@@ -459,6 +459,8 @@ Project-level takes priority. Duplicate skill names only load the highest-priori
             noSummarizedHistory: 'No summarized history found. Context summarization has not been triggered yet in this conversation.',
             noHistory: 'No conversation history found.',
             searchResultHeader: 'Found {count} match(es) for "{query}" in history ({totalLines} total lines)',
+            // Explain the whitespace-keyword fallback so the model does not mistake the result for an exact phrase match.
+            keywordFallbackNotice: '[No exact phrase match; searched individual whitespace-separated keywords instead: {terms}]',
             noMatchesFound: 'No matches found for "{query}" in history ({totalLines} total lines). Try different keywords.',
             resultsLimited: '[Results limited to {max} matches. Try a more specific query to narrow results.]',
             readResultHeader: 'Lines {start}-{end} of {totalLines} total lines in history',

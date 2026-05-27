@@ -292,26 +292,30 @@ describe('getToolArgsArrayValidationError', () => {
             }
         }
     });
+    // 为什么测试使用 insert_code：write_file/read_file 已迁移为单目标参数，继续拿 write_file 举例会误导后续维护者以为它仍有 files 数组。
+    // 怎么改：改用仍然合法使用 files 数组的 insert_code，同时保持对通用数组校验函数的覆盖范围不变。
+    // 目的：让测试语义和当前工具协议一致，避免回归测试本身成为旧协议残留。
+    const arrayToolName = 'insert_code';
 
     it('数组参数有效时不返回错误', () => {
         const args = { files: [{ path: 'a.txt' }] };
 
-        expect(getToolArgsArrayValidationError('write_file', args, s)).toBeNull();
+        expect(getToolArgsArrayValidationError(arrayToolName, args, s)).toBeNull();
     });
 
     it('字符串未能转成纯数组时返回明确错误', () => {
         const args = { files: '{"path":"a.txt"}' };
 
-        expect(getToolArgsArrayValidationError('write_file', args, s)).toBe(
-            'Tool "write_file" expects parameter "files" to be an array. The model returned a string, but it could not be parsed into a JSON array.'
+        expect(getToolArgsArrayValidationError(arrayToolName, args, s)).toBe(
+            'Tool "insert_code" expects parameter "files" to be an array. The model returned a string, but it could not be parsed into a JSON array.'
         );
     });
 
     it('非字符串且非数组时返回通用错误', () => {
         const args = { files: { path: 'a.txt' } };
 
-        expect(getToolArgsArrayValidationError('write_file', args, s)).toBe(
-            'Tool "write_file" expects parameter "files" to be an array.'
+        expect(getToolArgsArrayValidationError(arrayToolName, args, s)).toBe(
+            'Tool "insert_code" expects parameter "files" to be an array.'
         );
     });
 });

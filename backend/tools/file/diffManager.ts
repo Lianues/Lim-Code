@@ -14,7 +14,11 @@ import { getGlobalSettingsManager } from '../../core/settingsContext';
 import { t } from '../../i18n';
 
 import { getDiffCodeLensProvider } from './DiffCodeLensProvider';
-import { applyDiffToContent } from './apply_diff';
+import {
+    applyDiffToContent,
+    applyStructuredDiffHunksBestEffort,
+    type StructuredDiffHunk
+} from './apply_diff';
 import { applyUnifiedDiffHunks, type UnifiedDiffHunk } from './unifiedDiff';
 
 /**
@@ -58,6 +62,13 @@ export interface PendingDiff {
     diffGuardWarning?: string;
     /** 删除行占比（0-100，用于前端显示） */
     diffGuardDeletePercent?: number;
+    /**
+     * 自动保存失败原因。
+     * 为什么新增：autoSave=true 表示工具应自动收敛；如果保存失败仍保持 pending，流式提前执行会一直等待。
+     * 怎么改：在后端自动保存失败后记录错误并终结 diff，工具结果可据此返回明确失败状态。
+     * 目的：避免自动确认模式下出现必须用户中止的悬挂状态。
+     */
+    autoSaveError?: string;
 }
 
 /**
@@ -104,6 +115,18 @@ function isUnifiedDiffHunk(d: any): d is UnifiedDiffHunk {
         typeof d.oldStart === 'number' &&
         typeof d.newStart === 'number' &&
         Array.isArray(d.lines)
+    );
+}
+
+function isStructuredDiffHunk(d: any): d is StructuredDiffHunk {
+    // 为什么要识别结构化 hunk：apply_diff 新格式存入 rawDiffs 后，块级接受/拒绝需要按同一套 oldContent/newContent 规则重放。
+    // 怎么改：用字段形态区分，不新增工具类型或配置分支，避免前后端出现第三套并行协议。
+    // 目的：让 DiffManager 在用户拒绝某个块后仍能准确重算最终文件内容。
+    return (
+        !!d &&
+        typeof d === 'object' &&
+        typeof d.oldContent === 'string' &&
+        typeof d.newContent === 'string'
     );
 }
 
@@ -736,7 +759,26 @@ export class DiffManager {
 
                 const first = diff.rawDiffs[0];
 
-                if (isUnifiedDiffHunk(first)) {
+                if (isStructuredDiffHunk(first)) {
+                    // 为什么结构化 hunk 要优先处理：它和 legacy search/replace 字段名不同，但同样需要支持块级拒绝后的内容重算。
+                    // 怎么改：复用 apply_diff 导出的结构化应用函数，并传入未拒绝块索引集合。
+                    // 目的：避免拒绝某个 hunk 后用旧 start_line 逻辑误算后续重复内容。
+                    try {
+                        const hunks = diff.rawDiffs as StructuredDiffHunk[];
+                        const r = applyStructuredDiffHunksBestEffort(tempContent, hunks, { applyIndices });
+                        tempContent = r.newContent;
+
+                        for (const h of r.blocks) {
+                            const blockInfo = session.blocks.find(b => b.index === h.index);
+                            if (blockInfo) {
+                                blockInfo.startLine = h.startLine;
+                                blockInfo.endLine = h.endLine;
+                            }
+                        }
+                    } catch (e) {
+                        console.warn('[DiffManager] Failed to recompute structured diff content after rejecting a block:', e);
+                    }
+                } else if (isUnifiedDiffHunk(first)) {
                     // unified diff hunks：重新从 originalContent 计算“仅包含未拒绝块”的最终内容
                     try {
                         const hunks = diff.rawDiffs as UnifiedDiffHunk[];
@@ -839,7 +881,18 @@ export class DiffManager {
 
         const first = diff.rawDiffs[0];
 
-        if (isUnifiedDiffHunk(first)) {
+        if (isStructuredDiffHunk(first)) {
+            // 为什么 finalContent 也要支持结构化 hunk：保存前会根据用户拒绝的块重新计算最终建议内容。
+            // 怎么改：复用同一个结构化应用函数，只应用未拒绝的 hunk 索引。
+            // 目的：确保编辑器实时内容和最终落盘内容使用完全一致的重放规则。
+            try {
+                const hunks = diff.rawDiffs as StructuredDiffHunk[];
+                const r = applyStructuredDiffHunksBestEffort(finalContent, hunks, { applyIndices });
+                finalContent = r.newContent;
+            } catch (e) {
+                console.warn('[DiffManager] Failed to recompute final suggested content for structured diff:', e);
+            }
+        } else if (isUnifiedDiffHunk(first)) {
             // unified diff hunks
             try {
                 const hunks = diff.rawDiffs as UnifiedDiffHunk[];
@@ -1101,12 +1154,43 @@ export class DiffManager {
             // 自动保存：强制使用 AI 建议的内容（避免覆盖用户可能正在进行的手动修改）
             const accepted = await this.acceptDiff(id, true, true);
             if (!accepted) {
-                console.warn(`[DiffManager] Auto-save failed for diff ${id}; keeping it pending for manual retry.`);
+                // 自动保存模式必须收敛。
+                // 为什么不能继续 pending：工具 handler 正在等待该 diff 结束；pending 会让流式提前执行的 Promise 永远不 resolve。
+                // 怎么改：保存失败后走拒绝路径恢复原始内容并触发状态变更；若拒绝也失败，则强制标记 rejected。
+                // 目的：让自动确认失败以明确错误结束，而不是卡住到用户中止。
+                await this.finalizeAutoSaveFailure(id, 'Auto-save failed while accepting diff. The diff was rejected to unblock tool execution.');
             }
             this.autoSaveTimers.delete(id);
         }, currentSettings.autoSaveDelay);
         
         this.autoSaveTimers.set(id, timer);
+    }
+
+    private async finalizeAutoSaveFailure(id: string, message: string): Promise<void> {
+        const diff = this.pendingDiffs.get(id);
+        if (!diff || diff.status !== 'pending') {
+            return;
+        }
+
+        // 保留 acceptDiff 捕获到的底层保存错误。
+        // 为什么不能直接覆盖：自动保存失败后用户和日志需要看到真实异常，例如磁盘写入失败、VS Code 保存失败等。
+        // 怎么改：如果 acceptDiff 已经写入 autoSaveError，就只补充兜底语义；否则使用传入的通用错误。
+        // 目的：既保证自动确认失败会收敛，也保留可诊断的根因信息。
+        diff.autoSaveError = diff.autoSaveError
+            ? `${message} ${diff.autoSaveError}`
+            : message;
+
+        const rejected = await this.rejectDiff(id);
+        if (rejected) {
+            return;
+        }
+
+        // 如果 rejectDiff 也失败，仍然必须释放等待中的工具 Promise。
+        // 此兜底只改变状态并清理监听器；不再尝试保存或恢复，避免在错误路径中重复触发 VS Code 编辑器竞态。
+        diff.status = 'rejected';
+        this.disposeDiffListeners(id);
+        this.cleanup(id);
+        this.notifyStatusChange();
     }
     
     /**
@@ -1232,7 +1316,11 @@ export class DiffManager {
             
             return true;
         } catch (error) {
-            vscode.window.showErrorMessage(t('tools.file.diffManager.saveFailed', { error: error instanceof Error ? error.message : String(error) }));
+            const message = t('tools.file.diffManager.saveFailed', { error: error instanceof Error ? error.message : String(error) });
+            if (diff) {
+                diff.autoSaveError = message;
+            }
+            vscode.window.showErrorMessage(message);
             return false;
         } finally {
             this.acceptingDiffIds.delete(id);

@@ -27,6 +27,22 @@ export interface LegacyDiffBlock {
 }
 
 /**
+ * 结构化 hunk：apply_diff 的推荐新输入格式。
+ *
+ * 为什么要新增：旧 patch 字符串要求模型同时处理 JSON 字符串转义和 unified diff 前缀，容易把 `"` 当成文件内容写入。
+ * 怎么改：把每个连续修改片段拆成 oldContent/newContent 字段，字段值按 JSON 字符串规则进入工具后直接作为最终文本使用。
+ * 目的：保留多 hunk 能力来处理行号偏移，同时让内容字段和 write_file.content 的语义保持一致。
+ */
+export interface StructuredDiffHunk {
+    /** 要被替换的原始内容，必须和当前文件内容精确匹配 */
+    oldContent: string;
+    /** 替换后的目标内容，按最终文件内容填写 */
+    newContent: string;
+    /** 可选。仅当 oldContent 在文件中重复出现时用于定位，1-based，基于原文件行号。 */
+    startLine?: number;
+}
+
+/**
  * 规范化换行符为 LF
  */
 function normalizeLineEndings(text: string): string {
@@ -70,6 +86,220 @@ function findAllExactMatchLineNumbers(
     }
 
     return result;
+}
+
+function findAllExactMatchIndexes(normalizedContent: string, normalizedSearch: string): number[] {
+    // 为什么要单独返回索引：结构化 hunks 需要先判断 oldContent 是否唯一，唯一时必须忽略 startLine，避免 stale line number 让本来正确的内容替换失败。
+    // 怎么改：使用非重叠 indexOf 扫描，和 legacy search/replace 的匹配语义保持一致。
+    // 目的：让“内容唯一优先，重复时才看 startLine”的规则有稳定、可测试的实现边界。
+    if (!normalizedSearch) return [];
+
+    const result: number[] = [];
+    let fromIndex = 0;
+
+    while (fromIndex <= normalizedContent.length) {
+        const pos = normalizedContent.indexOf(normalizedSearch, fromIndex);
+        if (pos === -1) break;
+
+        result.push(pos);
+        fromIndex = pos + Math.max(1, normalizedSearch.length);
+    }
+
+    return result;
+}
+
+function getCharOffsetForLine(normalizedContent: string, line: number): number | undefined {
+    // 为什么要从行号转换为字符偏移：重复 oldContent 时 startLine 只是定位提示，最终替换仍然是字符串精确替换。
+    // 怎么改：按 LF 扫描到指定 1-based 行的开头，超出文件范围时返回 undefined。
+    // 目的：兼容现有 legacy start_line“从某行开始搜索”的用户心智，同时避免在内容唯一时依赖行号。
+    if (!Number.isFinite(line) || line < 1) return undefined;
+    if (line === 1) return 0;
+
+    let currentLine = 1;
+    for (let i = 0; i < normalizedContent.length; i++) {
+        if (normalizedContent.charCodeAt(i) === 10) {
+            currentLine++;
+            if (currentLine === line) {
+                return i + 1;
+            }
+        }
+    }
+
+    return undefined;
+}
+
+function getLineNumberAtIndex(normalizedContent: string, index: number): number {
+    // 为什么要反算行号：前端 diff 面板和块级接受/拒绝需要知道每个 hunk 实际应用在哪一行。
+    // 怎么改：只统计 index 之前的 LF 数量，得到 1-based 行号。
+    // 目的：返回真实匹配位置，而不是盲信模型给出的 startLine。
+    let line = 1;
+    for (let i = 0; i < index; i++) {
+        if (normalizedContent.charCodeAt(i) === 10) {
+            line++;
+        }
+    }
+    return line;
+}
+
+function countTextLines(normalizedText: string): number {
+    // 为什么要统一计算行数：应用 hunk 后要维护 startLine 的行号偏移，供后续重复 oldContent 定位使用。
+    // 怎么改：按 normalize 后的 LF 数量计算展示/定位意义上的行数，空字符串按 0 行处理。
+    // 目的：让多个 hunk 在同一次调用中按原文件行号稳定应用。
+    if (!normalizedText) return 0;
+    return normalizedText.split('\n').length;
+}
+
+export function applyStructuredDiffHunksBestEffort(
+    originalContent: string,
+    hunks: StructuredDiffHunk[],
+    options?: {
+        /** 只应用这些 hunk index（0-based，按原 hunks 顺序） */
+        applyIndices?: Set<number>;
+    }
+): {
+    newContent: string;
+    results: Array<{
+        index: number;
+        success: boolean;
+        error?: string;
+        startLine?: number;
+        endLine?: number;
+        matchCount?: number;
+        candidateLines?: number[];
+    }>;
+    blocks: Array<{ index: number; startLine: number; endLine: number }>;
+    appliedCount: number;
+    failedCount: number;
+} {
+    // 为什么要把结构化 hunk 应用逻辑做成导出函数：工具入口和 DiffManager 块级接受/拒绝都需要同一套重放语义，不能各写一份。
+    // 怎么改：逐 hunk 处理；oldContent 唯一时直接替换，重复时才使用 startLine，并根据已应用 hunk 的行数变化维护偏移。
+    // 目的：同时解决 JSON 转义误写、多个修改点行号漂移、以及块级拒绝后重新计算内容的一致性问题。
+    let currentContent = normalizeLineEndings(originalContent);
+    let lineDelta = 0;
+
+    const results: Array<{
+        index: number;
+        success: boolean;
+        error?: string;
+        startLine?: number;
+        endLine?: number;
+        matchCount?: number;
+        candidateLines?: number[];
+    }> = [];
+    const blocks: Array<{ index: number; startLine: number; endLine: number }> = [];
+
+    for (let i = 0; i < hunks.length; i++) {
+        if (options?.applyIndices && !options.applyIndices.has(i)) {
+            continue;
+        }
+
+        const hunk = hunks[i];
+        if (!hunk || typeof hunk.oldContent !== 'string' || typeof hunk.newContent !== 'string') {
+            results.push({
+                index: i,
+                success: false,
+                error: `Structured hunk at index ${i} must contain string oldContent and newContent.`
+            });
+            continue;
+        }
+
+        const oldContent = normalizeLineEndings(hunk.oldContent);
+        const newContent = normalizeLineEndings(hunk.newContent);
+
+        if (!oldContent) {
+            results.push({
+                index: i,
+                success: false,
+                error: `Structured hunk at index ${i} has empty oldContent. Provide enough existing content to locate the change.`
+            });
+            continue;
+        }
+
+        const matches = findAllExactMatchIndexes(currentContent, oldContent);
+        let matchIndex: number | undefined;
+
+        if (matches.length === 0) {
+            results.push({
+                index: i,
+                success: false,
+                error: 'No exact match found for oldContent. Please verify the content matches exactly.',
+                matchCount: 0
+            });
+            continue;
+        }
+
+        if (matches.length === 1) {
+            matchIndex = matches[0];
+        } else {
+            const candidateLines = matches.map(index => getLineNumberAtIndex(currentContent, index));
+            if (hunk.startLine === undefined) {
+                results.push({
+                    index: i,
+                    success: false,
+                    error: `Multiple matches found (${matches.length}). Provide startLine to choose which oldContent occurrence to replace. Candidate match lines: ${candidateLines.join(', ')}.`,
+                    matchCount: matches.length,
+                    candidateLines
+                });
+                continue;
+            }
+
+            const adjustedStartLine = hunk.startLine + lineDelta;
+            const startOffset = getCharOffsetForLine(currentContent, adjustedStartLine);
+            if (startOffset === undefined) {
+                results.push({
+                    index: i,
+                    success: false,
+                    error: `startLine ${hunk.startLine} adjusted to ${adjustedStartLine}, which is outside the current file after previous hunks.`,
+                    matchCount: matches.length,
+                    candidateLines
+                });
+                continue;
+            }
+
+            matchIndex = matches.find(index => index >= startOffset);
+            if (matchIndex === undefined) {
+                results.push({
+                    index: i,
+                    success: false,
+                    error: `Multiple matches found (${matches.length}), but none occur at or after startLine ${hunk.startLine} after line-offset adjustment. Candidate match lines: ${candidateLines.join(', ')}.`,
+                    matchCount: matches.length,
+                    candidateLines
+                });
+                continue;
+            }
+        }
+
+        const startLine = getLineNumberAtIndex(currentContent, matchIndex);
+        const oldLineCount = countTextLines(oldContent);
+        const newLineCount = countTextLines(newContent);
+        const endLine = startLine + Math.max(newLineCount, 1) - 1;
+
+        currentContent =
+            currentContent.substring(0, matchIndex) +
+            newContent +
+            currentContent.substring(matchIndex + oldContent.length);
+
+        lineDelta += newLineCount - oldLineCount;
+        results.push({
+            index: i,
+            success: true,
+            startLine,
+            endLine,
+            matchCount: matches.length
+        });
+        blocks.push({ index: i, startLine, endLine });
+    }
+
+    const appliedCount = results.filter(x => x.success).length;
+    const failedCount = results.length - appliedCount;
+
+    return {
+        newContent: currentContent,
+        results,
+        blocks,
+        appliedCount,
+        failedCount
+    };
 }
 
 /**
@@ -463,12 +693,12 @@ export function createApplyDiffTool(): Tool {
         const isMultiRoot = workspaces.length > 1;
 
         // 根据工作区数量生成描述
-        let pathDescription = 'Path to the file (relative to workspace root)';
+        let pathDescription = '文件路径，相对于当前工作区根目录。例如：src/example.ts。';
         let descriptionSuffix = '';
 
         if (isMultiRoot) {
-            pathDescription = `Path to the file, must use "workspace_name/path" format. Available workspaces: ${workspaces.map(w => w.name).join(', ')}`;
-            descriptionSuffix = `\n\nMulti-root workspace: Must use "workspace_name/path" format. Available workspaces: ${workspaces.map(w => w.name).join(', ')}`;
+            pathDescription = `文件路径，必须使用 "workspace_name/path" 格式。可用工作区：${workspaces.map(w => w.name).join(', ')}`;
+            descriptionSuffix = `\n\n多根工作区：必须使用 "workspace_name/path" 格式。可用工作区：${workspaces.map(w => w.name).join(', ')}`;
         }
 
         const format = getApplyDiffFormat();
@@ -478,21 +708,21 @@ export function createApplyDiffTool(): Tool {
                 name: 'apply_diff',
                 category: 'file',
                 strict: true,  // API 端强制 schema 校验
-                description: `Apply legacy search/replace diffs to a file and open a pending diff for user confirmation.
+                description: `对单个文件应用旧版 search/replace 差异，并打开待确认 diff 预览。
 
-Parameters:
-- path: Path to the file (relative to workspace root)
-- diffs: Array of diff objects to apply
+参数：
+- path：目标文件路径。
+- diffs：要应用的旧版差异数组。
 
-Each diff object contains:
-- search: The exact content to search for (must match 100%)
-- replace: The content to replace with
-- start_line: (optional, 1-based) Where to start searching
+每个 diff 对象包含：
+- search：要查找的原始内容，必须和文件内容完全一致。
+- replace：替换后的目标内容。
+- start_line：可选，1-based 起始行号，用于重复内容定位。
 
-Important:
-- Search content must match EXACTLY (including whitespace and indentation)
-- Diffs are applied strictly in order
-- If a diff fails, it will not be applied
+规则：
+- search 必须精确匹配，包括空格、缩进和换行。
+- diffs 会按数组顺序应用。
+- 某个 diff 失败时，该 diff 不会生效。
 
 ${descriptionSuffix}`,
 
@@ -505,21 +735,21 @@ ${descriptionSuffix}`,
                         },
                         diffs: {
                             type: 'array',
-                            description: 'Array of legacy diff objects to apply. MUST be an array even for a single diff.',
+                            description: '旧版 diff 对象数组。即使只有一个 diff，也必须使用数组。',
                             items: {
                                 type: 'object',
                                 properties: {
                                     search: {
                                         type: 'string',
-                                        description: 'The exact content to search for'
+                                        description: '要查找的原始内容，必须精确匹配。'
                                     },
                                     replace: {
                                         type: 'string',
-                                        description: 'The content to replace with'
+                                        description: '替换后的目标内容。'
                                     },
                                     start_line: {
                                         type: 'number',
-                                        description: 'Line number (1-based) to start searching (optional).'
+                                        description: '可选，1-based 起始行号，用于重复内容定位。'
                                     }
                                 },
                                 required: ['search', 'replace']
@@ -531,38 +761,40 @@ ${descriptionSuffix}`,
             };
         }
 
-        // 默认：unified diff patch
-        // 由于 apply_diff 已通过 path 指定单文件，这里将 patch 定义简化为“只提供 hunks”
+        // 为什么要把默认声明改为结构化 hunks：旧 patch 字符串让模型混淆 JSON 转义和 unified diff 文本，双引号、反斜杠等内容容易写错。
+        // 怎么改：主推 hunks[{oldContent,newContent,startLine?}]，同时保留 patch 字符串作为历史兼容字段。
+        // 目的：让 newContent 像 write_file.content 一样表示最终内容，并保留一次调用处理多个连续片段的能力。
         return {
             name: 'apply_diff',
             category: 'file',
             strict: true,  // API 端强制 schema 校验
-            description: `Apply a unified diff patch (single-file) to a file and open a pending diff for user confirmation.
+            description: `对单个文件应用一个或多个结构化内容替换，并打开待确认 diff 预览。
 
-Input format (simplified):
-- Provide ONLY unified diff hunks.
-- Each hunk MUST start with a full header line:
-  @@ -oldStart,oldCount +newStart,newCount @@
-  (oldCount/newCount are optional, but oldStart/newStart are required)
-- Do NOT include file headers (---/+++), diff --git, index, etc.
-- Fallback compatibility: Bare "@@" lines (without line numbers) are allowed and will be applied using a global exact search/replace based on the hunk content.
-  This may fail if the search block is not unique; prefer full headers when possible.
+推荐输入格式：
+- path：目标文件路径。
+- hunks：结构化修改数组。每个 hunk 表示一个连续片段替换。
+- hunks[].oldContent：文件中要被替换的原始内容，必须和文件内容完全一致。
+- hunks[].newContent：替换后的目标内容。按 JSON 字符串规则填写；工具收到后会作为最终文件内容使用，不要加 + 前缀，也不要为了 diff 再额外转义双引号。
+- hunks[].startLine：可选，1-based，基于修改前原文件的行号。只有 oldContent 在当前文件中重复出现时才会用于定位；oldContent 唯一匹配时会忽略 startLine，避免陈旧行号导致失败。
 
-Parameters:
-- path: Path to the file (relative to workspace root)
-- patch: Unified diff hunks text (must include valid @@ headers and lines starting with ' ', '+', '-')
+规则：
+- 一次调用只修改一个文件；多个不连续片段放在 hunks 数组中。
+- hunks 应按原文件中的出现顺序排列，这样前面修改造成的行号偏移可以被工具正确维护。
+- 不能让两个 hunk 修改同一段或互相覆盖的文本；如果要改同一个区块，应该合并成一个 hunk。
+- oldContent 必须能匹配；如果 oldContent 重复出现，请提供 startLine 或增加上下文让它唯一。
+- patch 字段仅作为兼容旧 unified diff hunk 字符串的 fallback；新调用优先使用 hunks。
 
-Requirements:
-- patch must be a single-file patch (this tool call targets exactly one file via path)
-- /dev/null create/delete patches are not supported (use write_file/delete_file instead)
-- patch must contain enough context lines so it can be applied exactly
-
-Example:
-@@ -1,3 +1,3 @@
- const x = 1;
--const y = 2;
-+const y = 3;
- console.log(x, y);
+示例：
+{
+  "path": "src/example.ts",
+  "hunks": [
+    {
+      "oldContent": "content: old;",
+      "newContent": "content: \"\";",
+      "startLine": 12
+    }
+  ]
+}
 ${descriptionSuffix}`,
 
             parameters: {
@@ -572,12 +804,34 @@ ${descriptionSuffix}`,
                         type: 'string',
                         description: pathDescription
                     },
+                    hunks: {
+                        type: 'array',
+                        description: '推荐格式。结构化 hunk 数组；每个 hunk 使用 oldContent/newContent 表示一次连续内容替换。',
+                        items: {
+                            type: 'object',
+                            properties: {
+                                oldContent: {
+                                    type: 'string',
+                                    description: '文件中要被替换的原始内容，必须精确匹配。'
+                                },
+                                newContent: {
+                                    type: 'string',
+                                    description: '替换后的目标内容。按 JSON 字符串规则填写；工具收到后作为最终文件内容使用。'
+                                },
+                                startLine: {
+                                    type: 'number',
+                                    description: '可选，1-based，基于修改前原文件的行号。仅当 oldContent 重复出现时用于定位。'
+                                }
+                            },
+                            required: ['oldContent', 'newContent']
+                        }
+                    },
                     patch: {
                         type: 'string',
-                        description: "Unified diff hunks only. Each hunk header should be like '@@ -oldStart,oldCount +newStart,newCount @@'. Lines should be prefixed by ' ', '+', '-'. Do NOT include ---/+++ headers. Bare '@@' is accepted as a fallback and will be applied using global exact search/replace based on hunk content."
+                        description: "兼容字段。旧 unified diff hunks 文本；新调用请优先使用 hunks。"
                     }
                 },
-                required: ['path', 'patch']
+                required: ['path']
             }
         };
     };
@@ -591,6 +845,7 @@ ${descriptionSuffix}`,
         handler: async (args, context): Promise<ToolResult> => {
             const filePath = args.path as string;
             const patch = args.patch as string | undefined;
+            const structuredHunks = args.hunks as StructuredDiffHunk[] | undefined;
             const diffs = args.diffs as LegacyDiffBlock[] | undefined;
 
             if (!filePath || typeof filePath !== 'string') {
@@ -614,10 +869,10 @@ ${descriptionSuffix}`,
 
                 // ========== 统一 diff 模式 ==========
                 if (format === 'unified') {
-                    if (!patch || typeof patch !== 'string') {
+                    if ((!structuredHunks || !Array.isArray(structuredHunks) || structuredHunks.length === 0) && (!patch || typeof patch !== 'string')) {
                         return {
                             success: false,
-                            error: 'apply_diff is configured to use unified diff patch. Please provide { patch } containing hunks with valid headers like @@ -oldStart,oldCount +newStart,newCount @@ (do not include ---/+++ headers).'
+                            error: 'apply_diff 当前推荐使用结构化 hunks。请提供 { path, hunks: [{ oldContent, newContent, startLine? }] }；旧 patch 字符串仅作为兼容 fallback。'
                         };
                     }
 
@@ -628,9 +883,27 @@ ${descriptionSuffix}`,
                     let blocks: Array<{ index: number; startLine: number; endLine: number }> = [];
                     let newContent = originalContent;
                     let rawDiffs: any[] = [];
-                    let fallbackMode: 'none' | 'loose_hunk_search_replace' | 'unified_hunks_search_replace' = 'none';
+                    let fallbackMode: 'none' | 'structured_hunks' | 'loose_hunk_search_replace' | 'unified_hunks_search_replace' = 'none';
 
-                    try {
+                    // 为什么优先处理 hunks：新格式把 newContent 当最终内容字段，避免旧 patch 字符串里的反斜杠/双引号被模型误写。
+                    // 怎么改：当 hunks 存在时不再解析 patch；按结构化规则应用，并把原始 hunks 存入 DiffManager 以支持块级接受/拒绝重放。
+                    // 目的：兼容历史 patch 的同时，让新的 AI 调用路径默认走更稳定的结构化参数。
+                    if (structuredHunks && Array.isArray(structuredHunks) && structuredHunks.length > 0) {
+                        const applied = applyStructuredDiffHunksBestEffort(originalContent, structuredHunks);
+
+                        diffCount = structuredHunks.length;
+                        appliedCount = applied.appliedCount;
+                        failedCount = applied.failedCount;
+                        results = applied.results;
+                        blocks = applied.blocks;
+                        newContent = applied.newContent;
+                        rawDiffs = structuredHunks as any[];
+                        fallbackMode = 'structured_hunks';
+                    } else {
+                        try {
+                            if (!patch || typeof patch !== 'string') {
+                                throw new Error('Missing patch fallback input.');
+                            }
                         const parsed = parseUnifiedDiff(patch);
                         const applied = applyUnifiedDiffBestEffort(originalContent, parsed);
 
@@ -677,27 +950,28 @@ ${descriptionSuffix}`,
                                 fallbackMode = 'unified_hunks_search_replace';
                             }
                         }
-                    } catch (e) {
-                        const msg = e instanceof Error ? e.message : String(e);
+                        } catch (e) {
+                            const msg = e instanceof Error ? e.message : String(e);
 
-                        // “裸 @@”兜底：将 patch 退化为 legacy search/replace diffs（全局精确匹配）
-                        if (msg.startsWith('Invalid hunk header')) {
-                            const legacyDiffs = parseLooseUnifiedPatchToLegacyDiffs(patch);
-                            const looseApplied = applyLegacyDiffsBestEffort(originalContent, legacyDiffs, {
-                                errorSuffix:
-                                    '(loose @@ fallback: ensure the search block is unique, or use a full @@ -a,b +c,d @@ header)'
-                            });
+                            // “裸 @@”兜底：将 patch 退化为 legacy search/replace diffs（全局精确匹配）
+                            if (msg.startsWith('Invalid hunk header')) {
+                                const legacyDiffs = parseLooseUnifiedPatchToLegacyDiffs(patch || '');
+                                const looseApplied = applyLegacyDiffsBestEffort(originalContent, legacyDiffs, {
+                                    errorSuffix:
+                                        '(loose @@ fallback: ensure the search block is unique, or use a full @@ -a,b +c,d @@ header)'
+                                });
 
-                            diffCount = legacyDiffs.length;
-                            appliedCount = looseApplied.appliedCount;
-                            failedCount = looseApplied.failedCount;
-                            results = looseApplied.results;
-                            blocks = looseApplied.blocks;
-                            newContent = looseApplied.newContent;
-                            rawDiffs = legacyDiffs as any[];
-                            fallbackMode = 'loose_hunk_search_replace';
-                        } else {
-                            throw e;
+                                diffCount = legacyDiffs.length;
+                                appliedCount = looseApplied.appliedCount;
+                                failedCount = looseApplied.failedCount;
+                                results = looseApplied.results;
+                                blocks = looseApplied.blocks;
+                                newContent = looseApplied.newContent;
+                                rawDiffs = legacyDiffs as any[];
+                                fallbackMode = 'loose_hunk_search_replace';
+                            } else {
+                                throw e;
+                            }
                         }
                     }
 
@@ -832,16 +1106,20 @@ ${descriptionSuffix}`,
                         };
                     }
 
+                    const autoSaveError = finalDiff?.autoSaveError;
                     const message = wasAccepted
                         ? failedCount > 0
                             ? `Partially applied hunks to ${filePath}: ${appliedCount} succeeded, ${failedCount} failed. Saved successfully.`
                             : `Diff applied and saved to ${filePath}`
-                        : finalDiff?.status === 'rejected'
+                        : autoSaveError
+                          ? `Auto-save failed for ${filePath}: ${autoSaveError}`
+                          : finalDiff?.status === 'rejected'
                           ? `Diff was explicitly rejected by the user for ${filePath}. No changes were saved.`
                           : `Diff was not accepted for ${filePath}. No changes were saved.`;
 
                     return {
                         success: wasAccepted,
+                        error: wasAccepted ? undefined : autoSaveError,
                         data: {
                             file: filePath,
                             message,
@@ -856,6 +1134,7 @@ ${descriptionSuffix}`,
                             fallbackMode,
                             diffGuardWarning: pendingDiff.diffGuardWarning,
                             diffGuardDeletePercent: pendingDiff.diffGuardDeletePercent,
+                            autoSaveError,
                             pendingDiffId: pendingDiff.id
                         }
                     };
@@ -1037,6 +1316,7 @@ ${descriptionSuffix}`,
                     };
                 }
 
+                const autoSaveError = finalDiff?.autoSaveError;
                 let message: string;
                 if (wasAccepted) {
                     message = `Diff applied and saved to ${filePath}`;
@@ -1044,13 +1324,16 @@ ${descriptionSuffix}`,
                         message = `Partially applied diffs to ${filePath}: ${appliedCount} succeeded, ${failedCount} failed. Saved successfully.`;
                     }
                 } else {
-                    message = finalDiff?.status === 'rejected'
+                    message = autoSaveError
+                        ? `Auto-save failed for ${filePath}: ${autoSaveError}`
+                        : finalDiff?.status === 'rejected'
                         ? `Diff was explicitly rejected by the user for ${filePath}. No changes were saved.`
                         : `Diff was not accepted for ${filePath}. No changes were saved.`;
                 }
 
                 return {
                     success: wasAccepted,
+                    error: wasAccepted ? undefined : autoSaveError,
                     data: {
                         file: filePath,
                         message,
@@ -1063,6 +1346,7 @@ ${descriptionSuffix}`,
                         diffContentId,
                         diffGuardWarning: pendingDiff.diffGuardWarning,
                         diffGuardDeletePercent: pendingDiff.diffGuardDeletePercent,
+                        autoSaveError,
                         pendingDiffId: pendingDiff.id
                     }
                 };

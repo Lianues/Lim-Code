@@ -1796,8 +1796,8 @@ const en: LanguageMessages = {
                         infoDisabled: 'Current setting: After AI modifies files, you need to manually press Ctrl+S in the editor to confirm and save changes.',
 
                         format: 'Diff Format',
-                        formatDesc: 'Choose the parameter format used when AI calls apply_diff (unified diff is recommended by default)',
-                        formatUnified: 'Unified diff (unified diff patch)',
+                        formatDesc: 'Choose the parameter format used when AI calls apply_diff (structured hunks are recommended by default; legacy unified diff patch remains compatible)',
+                        formatUnified: 'Structured hunks (recommended; unified diff patch compatible)',
                         formatSearchReplace: 'Legacy (search/replace)',
 
                         skipDiffView: 'Skip Diff View',
@@ -2499,7 +2499,13 @@ const en: LanguageMessages = {
                     collapse: 'Collapse',
                     expandRemaining: 'Expand remaining {count} lines',
                     copyContent: 'Copy Content',
-                    copied: 'Copied'
+                    copied: 'Copied',
+                    // history_search now parses the backend text result into structured blocks; these labels keep the panel consistent instead of falling back to one large raw output.
+                    lineCount: '{count} lines',
+                    matchLineCount: '{count} matching lines',
+                    blockCount: '{count} blocks',
+                    contextBlock: 'Block {index}',
+                    match: 'Match'
                 }
             },
             terminal: {
@@ -2685,7 +2691,7 @@ const en: LanguageMessages = {
                     needSharp: {
                         title: 'Sharp library required',
                         message: 'Mask generated, but sharp library is required to complete full background removal.',
-                        installCmd: 'pnpm add sharp'
+                        installCmd: 'npm install sharp'
                     },
                     cancelledMessage: 'User cancelled background removal',
                     tasksFailed: '{count} tasks failed',

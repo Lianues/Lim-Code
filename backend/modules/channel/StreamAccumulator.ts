@@ -323,13 +323,34 @@ export class StreamAccumulator {
                     // 优化合并判断逻辑
                     let canMerge = false;
                     
+                    const incomingItemId = typeof fc.itemId === 'string' && fc.itemId.trim() ? fc.itemId.trim() : '';
+                    const lastItemId = typeof lastFc.itemId === 'string' && lastFc.itemId.trim() ? lastFc.itemId.trim() : '';
+                    const sameItemId = incomingItemId && lastItemId && incomingItemId === lastItemId;
+                    const lastIsFreshTool =
+                        (!lastFc.args || Object.keys(lastFc.args).length === 0) &&
+                        (lastFc.partialArgs === undefined || lastFc.partialArgs === '');
+
                     // OpenAI 模式：优先使用 index 匹配（数字类型，包括 0）
                     if (typeof fc.index === 'number' && typeof lastFc.index === 'number') {
                         canMerge = fc.index === lastFc.index;
                     }
+                    // OpenAI Responses 模式：item_id 只用于流式事件定位，必须合并到占位 function_call，不能作为最终工具 ID。
+                    // 为什么新增 itemId 合并：arguments.done 没有 call_id，只能通过 item_id/output_index 找回先前的占位调用。
+                    // 怎么改：把 formatter 写入的 itemId 当作内部合并键，优先合并到同一个 functionCall part。
+                    // 目的：消除“0 参数占位工具 + 真实参数工具”被拆成两条记录的幽灵工具问题。
+                    else if (sameItemId) {
+                        canMerge = true;
+                    }
                     // Anthropic 模式：使用 id 标识
                     else if (fc.id && lastFc.id) {
                         canMerge = fc.id === lastFc.id;
+                    }
+                    // OpenAI Responses/兼容流：初始占位块可能没有 partialArgs 数据，后续参数块也可能没有 index；此时合并到最后一个空壳工具。
+                    // 为什么新增 fresh placeholder 兜底：部分兼容网关会省略 output_index，仅保留一个刚创建的空 function_call。
+                    // 怎么改：当最后一个工具仍是空参数占位，且当前片段提供 partialArgs 时，视为同一工具调用。
+                    // 目的：让后端与前端已有 fresh-tool 合并策略一致，避免最终残留“0 个参数”的占位工具。
+                    else if (!fc.id && typeof fc.index !== 'number' && fc.partialArgs !== undefined && i === this.parts.length - 1 && lastIsFreshTool) {
+                        canMerge = true;
                     }
                     // 纯增量模式：没有 id 也没有 index，但有 partialArgs，且是最后一个 FC
                     else if (!fc.id && typeof fc.index !== 'number' && fc.partialArgs !== undefined && i === this.parts.length - 1) {
@@ -344,6 +365,13 @@ export class StreamAccumulator {
                         // 合并 ID（如果有）
                         if (fc.id && !lastFc.id) {
                             lastFc.id = fc.id;
+                        }
+                        // 合并 Responses itemId（如果有）
+                        // 为什么保留 itemId：它只用于后续流式片段定位，不会写入最终历史。
+                        // 怎么改：在合并阶段补齐内部 itemId，getContent 时统一删除。
+                        // 目的：让 delta、arguments.done、output_item.done 可以稳定指向同一个 functionCall。
+                        if (fc.itemId && !lastFc.itemId) {
+                            lastFc.itemId = fc.itemId;
                         }
                         // 合并 index（如果有）
                         if (typeof fc.index === 'number' && typeof lastFc.index !== 'number') {
@@ -364,7 +392,12 @@ export class StreamAccumulator {
                         }
                         // 合并 partialArgs
                         if (fc.partialArgs !== undefined) {
-                            lastFc.partialArgs = (lastFc.partialArgs || '') + fc.partialArgs;
+                            // 为什么区分最终参数和增量参数：Responses 的 arguments.done / output_item.done 给的是完整 arguments，不是 delta。
+                            // 怎么改：finalArgs=true 时覆盖已有 partialArgs；普通 delta 仍然追加。
+                            // 目的：避免把完整 JSON 再追加一次，造成 {..}{..} 无法解析，最终丢回 args={} 或残留 0 参数占位。
+                            lastFc.partialArgs = fc.finalArgs === true
+                                ? fc.partialArgs
+                                : (lastFc.partialArgs || '') + fc.partialArgs;
                             
                             // 尝试解析完整的 JSON 参数
                             if (lastFc.partialArgs.trim()) {
@@ -617,8 +650,25 @@ export class StreamAccumulator {
                 const part = { ...p };
                 if (part.functionCall) {
                     const fc = { ...part.functionCall } as any;
+                    // 为什么要先解析再清理 partialArgs：旧代码先删除 partialArgs，导致最终兜底解析永远无法触发。
+                    // 怎么改：在复制出的 fc 上先用 partialArgs 补齐 args，再删除流式内部字段。
+                    // 目的：即使最后一个参数 delta 没来得及在合并阶段解析，最终写入历史和工具执行也能拿到完整参数。
+                    if (fc.partialArgs && (!fc.args || Object.keys(fc.args).length === 0)) {
+                        try {
+                            fc.args = JSON.parse(fc.partialArgs);
+                        } catch (e) {
+                            const fnName = fc.name || 'unknown';
+                            const preview = String(fc.partialArgs || '').slice(0, 200);
+                            console.warn(`[StreamAccumulator] Failed to parse tool "${fnName}" partialArgs: ${preview}`);
+                        }
+                    }
                     delete fc.index;
                     delete fc.partialArgs;
+                    // 为什么删除 itemId/finalArgs：它们只是 OpenAI Responses 流式合并用的内部字段，不属于统一历史协议。
+                    // 怎么改：最终 Content 只保留 name、args、id 等跨 provider 通用字段。
+                    // 目的：避免内部流式定位信息污染历史，并确保 functionCall.id 始终表达工具回传用的 call_id。
+                    delete fc.itemId;
+                    delete fc.finalArgs;
                     part.functionCall = fc;
                 }
                 return part;
@@ -640,20 +690,6 @@ export class StreamAccumulator {
             if (!hasSignaturePart) {
                 // 添加一个包含所有格式签名的 part
                 parts.push({ thoughtSignatures: { ...this.thoughtSignatures } });
-            }
-        }
-        
-        // 尝试解析所有未完成的 partialArgs
-        for (const p of parts) {
-            if (p.functionCall?.partialArgs && (!p.functionCall.args || Object.keys(p.functionCall.args).length === 0)) {
-                try {
-                    p.functionCall.args = JSON.parse(p.functionCall.partialArgs);
-                } catch (e) {
-                    // 流式结束后仍无法解析 partialArgs，记录警告便于调试。
-                    const fnName = p.functionCall?.name || 'unknown';
-                    const preview = (p.functionCall?.partialArgs || '').slice(0, 200);
-                    console.warn(`[StreamAccumulator] Failed to parse tool "${fnName}" partialArgs: ${preview}`);
-                }
             }
         }
         

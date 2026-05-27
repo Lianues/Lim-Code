@@ -569,6 +569,194 @@ function getEnabledShellTypesForEnum(): string[] {
 }
 
 /**
+ * 获取默认 Shell 类型
+ */
+function getDefaultShellType(): string {
+    const settingsManager = getGlobalSettingsManager();
+    const config = settingsManager?.getExecuteCommandConfig() || getDefaultExecuteCommandConfig();
+    return config.defaultShell;
+}
+
+/**
+ * 获取已启用但当前不可用的 Shell 描述
+ */
+function getUnavailableShellsDescription(): string {
+    const settingsManager = getGlobalSettingsManager();
+    const config = settingsManager?.getExecuteCommandConfig() || getDefaultExecuteCommandConfig();
+    const availableTypes = new Set(getAvailableShells().map(s => s.type));
+    const unavailableShells = config.shells
+        .filter(s => s.enabled && !availableTypes.has(s.type))
+        .map(s => `- ${s.type}: ${s.displayName}`);
+
+    if (unavailableShells.length === 0) {
+        return '- 无';
+    }
+
+    return unavailableShells.join('\n');
+}
+
+/**
+ * execute_command 的中文 Shell 使用提示词。
+ *
+ * 设计原则：保持 execute_command 作为 pure shell 工具，不新增 argv/script/stdin 模式；
+ * 通过明确每种 shell 的解析规则降低模型误用概率。
+ */
+function getExecuteCommandShellGuidanceDescription(): string {
+    const defaultShellType = getDefaultShellType();
+    const maxOutputLines = getMaxOutputLines() === -1 ? '全部' : `最后 ${getMaxOutputLines()}`;
+
+    return [
+        '## 重要语义',
+        '',
+        '`command` 是一段 Shell 文本，不是 argv 数组。Function Calling 只负责把字符串交给工具；随后该字符串会被 `shell` 参数指定的 Shell 继续解析。你必须按照所选 Shell 的语法书写命令。',
+        '',
+        '## Shell 选择规则',
+        '',
+        `- 如果不传 \`shell\` 或设置为 \`default\`，将使用当前默认 Shell：\`${defaultShellType}\`（${getDefaultShellName()}）。`,
+        '- 当前只能选择 “Enabled Shells” 列表和参数 enum 中出现的 shell；不要选择不可用的 shell。',
+        '- Windows 文件系统、PowerShell cmdlet、对象管道：优先选择 `powershell`。',
+        '- CMD 内置命令、批处理兼容行为：选择 `cmd`。',
+        '- POSIX sh 语法、`grep` / `sed` / `find` / `head`、heredoc：选择 `sh` / `bash` / `gitbash`。',
+        '- macOS 默认通常是 `zsh`；Linux 默认通常是 `bash`。',
+        '- 返回输出默认只保留' + maxOutputLines + '行；长任务请设置 `timeout`，单位毫秒，`0` 表示不超时。',
+        '',
+        '## 当前已配置但不可用的 Shell',
+        '',
+        getUnavailableShellsDescription(),
+        '',
+        getPowerShellGuidanceDescription(),
+        '',
+        getCmdGuidanceDescription(),
+        '',
+        getPosixShellGuidanceDescription('sh'),
+        '',
+        getPosixShellGuidanceDescription('bash'),
+        '',
+        getGitMsysGuidanceDescription(),
+        '',
+        getWslGuidanceDescription(),
+        '',
+        getZshGuidanceDescription(),
+        '',
+        getPipeGuidanceDescription(),
+        '',
+        getComplexCommandGuidanceDescription(),
+        '',
+        getSshGuidanceDescription()
+    ].join('\n');
+}
+
+function getPowerShellGuidanceDescription(): string {
+    return [
+        '## PowerShell 规则（`shell: "powershell"`）',
+        '',
+        '- PowerShell 不是 Bash；不要把 Bash 语法直接写进 PowerShell。',
+        '- 单引号保留字面量：`\'a|b\'`、`\'$HOME\'`、`\'$(hostname)\'`。',
+        '- 双引号会展开 PowerShell 变量和子表达式：`"$env:TEMP"`、`"$(Get-Date)"`。',
+        '- 环境变量写法是 `$env:NAME`，例如 `$env:TEMP`，不是 Bash 的 `$NAME`。',
+        '- 未引用的 `|` 是 PowerShell 管道，示例：`Get-ChildItem | Select-Object -First 10`。',
+        '- 调用路径含空格的可执行文件，用 `&`：`& "C:\\Program Files\\nodejs\\node.exe" --version`。',
+        '- 调 native exe 时，PowerShell 解析后还会进入 Windows/native argv 规则；引号和反斜杠紧贴双引号时要格外小心。',
+        '- 复杂 Node/Python/JSON/正则内容不要硬写成 `node -e "..."`，优先用 single-quoted here-string 写临时脚本。'
+    ].join('\n');
+}
+
+function getCmdGuidanceDescription(): string {
+    return [
+        '## CMD 规则（`shell: "cmd"`）',
+        '',
+        '- CMD 不是 PowerShell，也不是 Bash。',
+        '- 环境变量写法是 `%NAME%`，例如 `%TEMP%`。',
+        '- `|`、`<`、`>`、`&`、`^` 是 CMD 特殊字符。',
+        '- 管道示例：`dir | findstr foo`。',
+        '- 字面管道符可放进双引号：`"a|b"`；必要时使用 `a^|b`。如果已经在双引号内，不要额外写 `^|`。',
+        '- 多命令串联可用 `&&`：`npm install && npm test`。',
+        '- 路径含空格时使用双引号。复杂脚本通常优先改用 PowerShell 或 sh。'
+    ].join('\n');
+}
+
+function getPosixShellGuidanceDescription(shellName: 'sh' | 'bash'): string {
+    return [
+        `## ${shellName} 规则（\`shell: "${shellName}"\`）`,
+        '',
+        `- 使用 POSIX/${shellName} 风格语法，不要使用 PowerShell 的 \`$env:NAME\` 或 CMD 的 \`%NAME%\`。`,
+        '- 单引号保留字面量：`\'a|b\'`、`\'$HOME\'`、`\'$(hostname)\'`。',
+        '- 双引号允许变量展开和命令替换：`"$HOME"`、`"$(hostname)"`。',
+        '- 未引用的 `|` 是管道，示例：`find . -name \'*.ts\' | head`。',
+        '- 复杂多行内容优先使用强字面量 heredoc：`cat > /tmp/probe.sh <<\'EOF\' ... EOF`。',
+        '- 如果这是 Windows 上的 Git sh/Git Bash，还要遵守 Git/MSYS 路径转换规则。'
+    ].join('\n');
+}
+
+function getGitMsysGuidanceDescription(): string {
+    return [
+        '## Git Bash / Git sh / MSYS 额外规则',
+        '',
+        '- Git Bash/Git sh 使用类 sh/bash 语法，但运行在 Windows/MSYS 环境中，不等于真实 Linux。',
+        '- 传给 Windows 原生程序的以 `/` 开头参数可能被自动转换为 Windows 路径，例如 `/a/b/c` 可能变成 `A:/b/c`。',
+        '- 正则 `/xxx/`、Linux 远端路径、Docker volume、`-L/regex/` 等要小心路径转换污染。',
+        '- 必要时可在命令前设置 `MSYS_NO_PATHCONV=1`，或使用 `MSYS2_ARG_CONV_EXCL=*`。'
+    ].join('\n');
+}
+
+function getWslGuidanceDescription(): string {
+    return [
+        '## WSL 规则（`shell: "wsl"`）',
+        '',
+        '- WSL 模式通过 `wsl.exe -- bash -c <command>` 执行，命令进入 WSL 内的 bash 解析。',
+        '- 路径应使用 WSL/Linux 格式，例如 `/mnt/c/Users/...`，不要直接使用 PowerShell 的 `$env:TEMP`。',
+        '- 从 WSL 调 Windows 程序通常需要写 `.exe`，例如 `notepad.exe`。',
+        '- 如果当前环境提示 WSL 未安装或未启用，不要选择 `wsl`。'
+    ].join('\n');
+}
+
+function getZshGuidanceDescription(): string {
+    return [
+        '## Zsh 规则（`shell: "zsh"`）',
+        '',
+        '- Zsh 是类 POSIX shell，常见管道、重定向、单引号、双引号、heredoc 规则接近 sh/bash。',
+        '- 单引号保留字面量；双引号允许参数展开和命令替换。',
+        '- Zsh 有自己的 glob、alias、扩展规则；不要假定所有 Bash 专有行为完全一致。',
+        '- 复杂多行内容仍优先写临时脚本再执行。'
+    ].join('\n');
+}
+
+function getPipeGuidanceDescription(): string {
+    return [
+        '## 管道符 `|` 规则',
+        '',
+        '- `|` 是否是管道，取决于当前 shell 是否在未引用状态下看到它。',
+        '- 作为管道：PowerShell `Get-ChildItem | Select-Object -First 10`；CMD `dir | findstr foo`；sh/bash/zsh `find . -name \'*.ts\' | head`。',
+        '- 作为普通字符：PowerShell `\'a|b\'`；CMD `"a|b"` 或必要时 `a^|b`；sh/bash/zsh `\'a|b\'`。',
+        '- 不要把一个 shell 的转义规则套到另一个 shell：PowerShell 不使用 CMD 的 `^|`；CMD 不依赖 Bash 单引号；sh/bash 不使用 `$env:NAME`。'
+    ].join('\n');
+}
+
+function getComplexCommandGuidanceDescription(): string {
+    return [
+        '## 复杂命令规则',
+        '',
+        '- 简单命令可以直接内联；包含多层引号、JSON、正则、Node/Python 代码、Nginx/systemd 配置、SSH 远端脚本时，不要强行写成一行。',
+        '- PowerShell 推荐：用 `@\' ... \'@` single-quoted here-string 写入临时脚本，再用 `[System.IO.File]::WriteAllText($path, $content, [System.Text.UTF8Encoding]::new($false))` 保存为 UTF-8 无 BOM 后执行。',
+        '- sh/bash/zsh 推荐：用 `cat > /tmp/script.sh <<\'EOF\' ... EOF` 写强字面量 heredoc，再执行脚本。',
+        '- CMD 不适合承载复杂多行脚本；除非用户明确要求 CMD，否则复杂逻辑优先用 PowerShell 或 sh。',
+        '- 诊断引号/管道问题时，先写一个 argv/hex 探针确认目标程序实际收到什么，不要猜。'
+    ].join('\n');
+}
+
+function getSshGuidanceDescription(): string {
+    return [
+        '## SSH 多层解析规则',
+        '',
+        '- SSH 至少有两层解析：本地 shell 先解析整条 `ssh ...` 命令；远端用户 shell 再解析远端命令。远端命令不是 argv 直达目标程序。',
+        '- 在 PowerShell 中调用 SSH，外层单引号只能阻止本地 PowerShell 展开；远端 shell 仍会解释 `$HOME`、`$(hostname)`、`|` 等。',
+        '- 当前实测链路 PowerShell → ssh → 远端 bash 中，如果需要远端 shell 用双引号保护参数，PowerShell 命令里通常要写 `\\"`；如果要远端收到字面 `$HOME`，写 `\\"\\$HOME\\"`；字面 `$(hostname)` 写 `\\"\\$(hostname)\\"`。',
+        '- 复杂远端操作不要硬塞一行：优先本地生成脚本，`scp` 上传到远端 `/tmp/...`，`ssh` 执行远端脚本，完成后清理脚本。',
+        '- Windows 用户目录 SSH key 示例：`ssh -i "$env:USERPROFILE\\.ssh\\id_ed25519" root@host \'hostname\'`。'
+    ].join('\n');
+}
+
+/**
  * 创建执行命令工具
  */
 export function createExecuteCommandTool(): Tool {
@@ -599,26 +787,23 @@ export function createExecuteCommandTool(): Tool {
             name: 'execute_command',
             category: 'terminal',
             strict: true,  // API 端强制 schema 校验
-            description: `Execute a Shell command and return the output.
+            description: `执行 Shell 命令并返回输出。
 
-**User Environment:**
+**当前用户环境：**
 - OS: ${osName} (${osArch})
 - OS Version: ${osRelease}
 - Default Shell: ${getDefaultShellName()}
 
-**Enabled Shells:**
+**Enabled Shells / 当前可用 Shell：**
 ${getAvailableShellsDescription()}${workspaceDescription}
 
-**Usage Notes:**
-- If the shell parameter is empty or set to "default", ${getDefaultShellName()} will be used
-- Returns the last ${getMaxOutputLines() === -1 ? 'all' : getMaxOutputLines()} lines of output (configurable in settings)
-- For long-running commands, you can set the timeout parameter (in milliseconds)`,
+${getExecuteCommandShellGuidanceDescription()}`,
             parameters: {
                 type: 'object',
                 properties: {
                     command: {
                         type: 'string',
-                        description: 'The Shell command to execute'
+                        description: '要执行的 Shell 命令文本。注意：这是给所选 shell 解析的命令字符串，不是 argv 数组。'
                     },
                     cwd: {
                         type: 'string',
@@ -626,13 +811,13 @@ ${getAvailableShellsDescription()}${workspaceDescription}
                     },
                     shell: {
                         type: 'string',
-                        description: `Shell type, optional values: ${getEnabledShellTypesForEnum().join(', ')}`,
+                        description: `Shell 类型。可选值：${getEnabledShellTypesForEnum().join(', ')}。不传或传 default 时使用当前默认 Shell。`,
                         enum: getEnabledShellTypesForEnum(),
                         default: 'default'
                     },
                     timeout: {
                         type: 'number',
-                        description: 'Timeout (milliseconds), 0 means no timeout, default is 60000 (60 seconds)',
+                        description: '超时时间（毫秒）。0 表示不超时，默认 60000（60 秒）。',
                         default: 60000
                     }
                 },

@@ -201,30 +201,71 @@ function addLineNumbers(lines: string[], startLine: number = 1, truncateLong: bo
 
 // ─── 模式实现 ───────────────────────────────────────────
 
+function escapeRegexLiteral(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function splitKeywordQuery(query: string): string[] {
+    // 多关键词搜索是给模型常见的 “keyword keyword keyword” 调用习惯兜底。
+    // 为什么只在非正则模式使用：正则模式下空格本身有明确语义，不能擅自改写用户表达式。
+    // 怎么做：按空白切词、去重、丢弃空词。目的：当完整短语搜不到时，仍能用单个关键词定位历史行号。
+    return Array.from(new Set(query.trim().split(/\s+/).filter(Boolean)));
+}
+
+function collectMatchingLineIndices(
+    docLines: string[],
+    maxMatches: number,
+    testLine: (line: string) => boolean
+): number[] {
+    const matchLineIndices: number[] = [];
+    for (let i = 0; i < docLines.length; i++) {
+        if (testLine(docLines[i])) {
+            matchLineIndices.push(i);
+            if (matchLineIndices.length >= maxMatches) break;
+        }
+    }
+    return matchLineIndices;
+}
+
 /**
  * search 模式：关键词搜索，返回匹配行号和上下文
  */
 function handleSearch(docLines: string[], query: string, isRegex: boolean, cfg: RuntimeConfig): ToolResult {
-    let pattern: RegExp;
+    let keywordFallbackTerms: string[] = [];
+    let matchLineIndices: number[] = [];
     try {
-        pattern = isRegex
-            ? new RegExp(query, 'gi')
-            : new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+        if (isRegex) {
+            const pattern = new RegExp(query, 'gi');
+            matchLineIndices = collectMatchingLineIndices(docLines, cfg.maxSearchMatches, line => {
+                pattern.lastIndex = 0;
+                return pattern.test(line);
+            });
+        } else {
+            const exactPattern = new RegExp(escapeRegexLiteral(query), 'gi');
+            matchLineIndices = collectMatchingLineIndices(docLines, cfg.maxSearchMatches, line => {
+                exactPattern.lastIndex = 0;
+                return exactPattern.test(line);
+            });
+
+            const keywordTerms = splitKeywordQuery(query);
+            if (matchLineIndices.length === 0 && keywordTerms.length > 1) {
+                const keywordPatterns = keywordTerms.map(term => new RegExp(escapeRegexLiteral(term), 'gi'));
+                matchLineIndices = collectMatchingLineIndices(docLines, cfg.maxSearchMatches, line => {
+                    return keywordPatterns.some(pattern => {
+                        pattern.lastIndex = 0;
+                        return pattern.test(line);
+                    });
+                });
+                if (matchLineIndices.length > 0) {
+                    keywordFallbackTerms = keywordTerms;
+                }
+            }
+        }
     } catch (e: any) {
         return {
             success: false,
             error: t('tools.history.invalidRegex', { error: e.message })
         };
-    }
-
-    // 找出所有匹配行
-    const matchLineIndices: number[] = [];
-    for (let i = 0; i < docLines.length; i++) {
-        pattern.lastIndex = 0;
-        if (pattern.test(docLines[i])) {
-            matchLineIndices.push(i);
-            if (matchLineIndices.length >= cfg.maxSearchMatches) break;
-        }
     }
 
     if (matchLineIndices.length === 0) {
@@ -241,6 +282,11 @@ function handleSearch(docLines: string[], query: string, isRegex: boolean, cfg: 
         query,
         totalLines: docLines.length
     }));
+    if (keywordFallbackTerms.length > 0) {
+        resultParts.push(t('tools.history.keywordFallbackNotice', {
+            terms: keywordFallbackTerms.join(', ')
+        }));
+    }
     resultParts.push('');
 
     // 合并相邻的上下文范围，避免重复输出
@@ -372,14 +418,12 @@ export function createHistorySearchToolDeclaration(): ToolDeclaration {
                 mode: {
                     type: 'string',
                     description:
-                        'Operation mode. ' +
-                        '"search": search for keywords/regex, returns line numbers and context. ' +
-                        '"read": read lines by line number range.',
+                        'Operation mode. Use "search" first to locate matching line numbers and context snippets; use "read" afterwards to fetch exact lines by start_line/end_line.',
                     enum: ['search', 'read']
                 },
                 query: {
                     type: 'string',
-                    description: '[search mode] Search keyword or regex pattern'
+                    description: '[search mode, required] Keyword, whitespace-separated keywords, exact phrase, or regex pattern to locate earlier conversation lines. In non-regex mode, multi-word input first tries the exact phrase; if that finds nothing, it falls back to individual whitespace-separated keywords. Search output is only a locator/snippet, not the full historical content.'
                 },
                 is_regex: {
                     type: 'boolean',
@@ -387,11 +431,11 @@ export function createHistorySearchToolDeclaration(): ToolDeclaration {
                 },
                 start_line: {
                     type: 'number',
-                    description: '[read mode] Start line number (1-based, inclusive)'
+                    description: '[read mode] Start line number from a previous search result or round header, 1-based and inclusive. Use snake_case start_line, not read_file startLine.'
                 },
                 end_line: {
                     type: 'number',
-                    description: '[read mode] End line number (1-based, inclusive). Max ' + MAX_READ_LINES + ' lines per read.'
+                    description: '[read mode] End line number from the virtual history document, 1-based and inclusive. Max ' + MAX_READ_LINES + ' lines per read. Use the same value as start_line to fetch one complete long line.'
                 }
             },
             required: ['mode']
@@ -402,14 +446,20 @@ export function createHistorySearchToolDeclaration(): ToolDeclaration {
         get() {
             const scope = getGlobalSettingsManager()?.getHistorySearchConfig()?.searchScope ?? 'all';
             const scopeText = scope === 'summarized' ? 'compressed/summarized history ONLY' : 'ENTIRE conversation history';
-            return `Search and read conversation history. CURRENT SETTINGS ALLOW SEARCHING: [${scopeText}]. ` +
-                `The history is formatted as a virtual document with line numbers. ` +
-                `Each round header shows its line range, e.g. "══ Round 3 (L45-L88) ══". ` +
-                `Two modes:\n` +
-                `"search" — find keywords/regex in history, returns matching line numbers and context (like search_in_files). ` +
-                `"read" — read specific line range from the formatted history (like read_file with startLine/endLine, max ${MAX_READ_LINES} lines per read). ` +
-                `Typical workflow: use search to locate relevant lines, then use read to get the full content around those lines.\n` +
-                `Tip: to get the full content of a single long line (e.g. a tool response), use read with start_line=N end_line=N — single-line reads are never truncated.`;
+            // 这段 description 是模型实际看到的工具提示词。
+            // 为什么要写得更明确：旧文案把 history_search 类比成 read_file，并出现 startLine/endLine，模型容易误用参数名或把 search 结果当完整内容。
+            // 怎么改：把工具边界、两步流程、虚拟文档格式、snake_case 参数名和单行完整读取规则都放在主描述里。
+            // 目的：让模型先用 search 定位行号，再用 read 精确取证，同时避免把它误用于代码库文件搜索。
+            return `Search and read this chat's conversation history, not repository files. ` +
+                `Use this when earlier turns, previous tool calls, previous tool results, or user decisions are needed. ` +
+                `For workspace file search use search_in_files or find_files instead. ` +
+                `CURRENT SETTINGS ALLOW SEARCHING: [${scopeText}].\n` +
+                `The history is formatted as a virtual document with line numbers. Output lines look like "  42 | text"; the number and pipe are locators, not message content. ` +
+                `Round headers show their line range, e.g. "══ Round 3 (L45-L88) ══"; use that L range with read to retrieve the whole round.\n` +
+                `Workflow:\n` +
+                `1. mode="search": provide query, or query plus is_regex=true. Search returns only matching line numbers and a few context lines; it is a locator, not complete historical content. In non-regex mode, query="keyword1 keyword2 keyword3" is supported: the tool first tries the exact phrase, then automatically falls back to individual whitespace-separated keywords if the exact phrase is not found.\n` +
+                `2. mode="read": after search, provide start_line and end_line from the virtual document to fetch exact lines. Use snake_case start_line/end_line, not read_file's startLine/endLine names. Max ${MAX_READ_LINES} lines per read.\n` +
+                `3. If a search result says a long line was truncated, or if you need one complete tool result line, call read with start_line=N and end_line=N for that same single line; single-line reads are never truncated.`;
         },
         enumerable: true
     });

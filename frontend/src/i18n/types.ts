@@ -2572,6 +2572,16 @@ export interface LanguageMessages {
                     expandRemaining: string;
                     copyContent: string;
                     copied: string;
+                    /**
+                     * history_search 面板结构化渲染使用的统计文案。
+                     * 为什么新增在现有 panel 命名空间：这些文本只服务于该工具面板，避免把工具 UI 细节泄漏到通用 common 文案。
+                     * 怎么新增：按行数、匹配行数、片段数和片段标题分别声明，目的是真正替代原始大段 pre 输出。
+                     */
+                    lineCount: string;
+                    matchLineCount: string;
+                    blockCount: string;
+                    contextBlock: string;
+                    match: string;
                 };
             };
             /** 终端工具 */
