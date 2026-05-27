@@ -327,6 +327,15 @@ export class DiffManager {
 
     /** 正在执行拒绝动作的 diff */
     private rejectingDiffIds: Set<string> = new Set();
+
+    /**
+     * Diff 动作全局串行队列。
+     *
+     * 为什么要改：多个 diff 确认入口可能同时触发，例如前端按钮、自动保存、CodeLens 或连续工具调用，单靠 20ms 延迟只能降低概率，不能保证 VS Code 文档保存、标签页切换和状态广播按顺序收敛。
+     * 怎么改：用 Promise 队列把所有会改变 diff 状态或编辑器内容的动作串行执行；每个任务无论成功失败都会释放队列，避免后续确认被永久阻塞。
+     * 目的：从协议层消除并发确认竞态，而不是依赖固定时间等待。
+     */
+    private diffActionQueue: Promise<void> = Promise.resolve();
     
     private constructor() {
         this.contentProvider = new OriginalContentProvider();
@@ -451,6 +460,19 @@ export class DiffManager {
      */
     public isDiffActionInProgress(id: string): boolean {
         return this.acceptingDiffIds.has(id) || this.rejectingDiffIds.has(id);
+    }
+
+    private runDiffActionSerialized<T>(action: () => Promise<T>): Promise<T> {
+        // 为什么不用 setTimeout(20)：固定延迟无法覆盖慢磁盘、慢 VS Code 保存、多个 diff 标签页切换等真实耗时差异。
+        // 怎么改：把下一个动作接到当前队尾之后，并把队尾归一化为 void Promise，确保失败不会打断后续队列。
+        // 目的：让 accept/reject/block/auto-save 的状态变更形成确定顺序，避免并发确认链路互相抢占。
+        const previous = this.diffActionQueue.catch(() => undefined);
+        const current = previous.then(action);
+        this.diffActionQueue = current.then(
+            () => undefined,
+            () => undefined
+        );
+        return current;
     }
 
     /**
@@ -729,6 +751,10 @@ export class DiffManager {
      * 确认单个块
      */
     public async confirmBlock(sessionId: string, blockIndex: number): Promise<void> {
+        await this.runDiffActionSerialized(() => this.confirmBlockUnlocked(sessionId, blockIndex));
+    }
+
+    private async confirmBlockUnlocked(sessionId: string, blockIndex: number): Promise<void> {
         const provider = getDiffCodeLensProvider();
         provider.updateBlockStatus(sessionId, blockIndex, true);
         
@@ -738,9 +764,9 @@ export class DiffManager {
             // 理论上 confirmBlock 一定会有 confirmed，因此不太可能 allRejected，但这里仍做保护
             const allRejected = !!session && session.blocks.length > 0 && session.blocks.every(b => b.rejected);
             if (allRejected) {
-                await this.rejectDiff(sessionId);
+                await this.rejectDiffUnlocked(sessionId);
             } else {
-                await this.acceptDiff(sessionId, true);
+                await this.acceptDiffUnlocked(sessionId, true);
             }
         }
     }
@@ -749,6 +775,10 @@ export class DiffManager {
      * 拒绝单个块
      */
     public async rejectBlock(sessionId: string, blockIndex: number): Promise<void> {
+        await this.runDiffActionSerialized(() => this.rejectBlockUnlocked(sessionId, blockIndex));
+    }
+
+    private async rejectBlockUnlocked(sessionId: string, blockIndex: number): Promise<void> {
         const provider = getDiffCodeLensProvider();
         provider.updateBlockStatus(sessionId, blockIndex, false);
         
@@ -850,10 +880,10 @@ export class DiffManager {
 
             // 全部块都被拒绝：视为用户明确拒绝本次 diff（不保存任何更改）
             if (allRejected) {
-                await this.rejectDiff(sessionId);
+                await this.rejectDiffUnlocked(sessionId);
             } else {
                 // 部分接受/部分拒绝：保存“剩余接受的块”
-                await this.acceptDiff(sessionId, true);
+                await this.acceptDiffUnlocked(sessionId, true);
             }
         }
     }
@@ -1210,6 +1240,10 @@ export class DiffManager {
      * @param isAutoSave 是否为自动保存（自动保存时强制使用 AI 内容；手动接受时尽量保留用户编辑）
      */
     public async acceptDiff(id: string, closeTab: boolean = false, isAutoSave: boolean = false): Promise<boolean> {
+        return this.runDiffActionSerialized(() => this.acceptDiffUnlocked(id, closeTab, isAutoSave));
+    }
+
+    private async acceptDiffUnlocked(id: string, closeTab: boolean = false, isAutoSave: boolean = false): Promise<boolean> {
         const diff = this.pendingDiffs.get(id);
         if (!diff || diff.status !== 'pending' || this.isDiffActionInProgress(id)) {
             return false;
@@ -1358,6 +1392,10 @@ export class DiffManager {
      * 拒绝 diff（放弃修改）
      */
     public async rejectDiff(id: string): Promise<boolean> {
+        return this.runDiffActionSerialized(() => this.rejectDiffUnlocked(id));
+    }
+
+    private async rejectDiffUnlocked(id: string): Promise<boolean> {
         const diff = this.pendingDiffs.get(id);
         if (!diff || diff.status !== 'pending' || this.isDiffActionInProgress(id)) {
             return false;

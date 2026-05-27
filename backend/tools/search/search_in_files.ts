@@ -58,6 +58,43 @@ function escapeRegex(str: string): string {
 }
 
 /**
+ * 将非正则查询拆成空白分隔关键词，用于搜索模式的二阶段兜底。
+ *
+ * 为什么要改：模型经常自然地用空格罗列多个代码关键词；旧实现把整串当成字面短语，容易在文件搜索中零命中，
+ * 还会让模型误以为 search_in_files 支持 history_search 的读取语法。
+ * 怎么改：只在非正则搜索模式中使用该拆分，先完整短语搜索，零命中后再用这些关键词构造 OR 正则。
+ * 目的：让 search_in_files 与 history_search 的多关键词兜底体验一致，同时不改变 replace 模式的精确替换语义。
+ */
+function splitWhitespaceFallbackKeywords(query: string): string[] {
+    const seen = new Set<string>();
+    const keywords: string[] = [];
+
+    for (const rawKeyword of query.trim().split(/\s+/)) {
+        const keyword = rawKeyword.trim();
+        if (!keyword) continue;
+
+        const dedupeKey = keyword.toLocaleLowerCase();
+        if (seen.has(dedupeKey)) continue;
+
+        seen.add(dedupeKey);
+        keywords.push(keyword);
+    }
+
+    return keywords.length > 1 ? keywords : [];
+}
+
+/**
+ * 根据关键词构造非正则 OR 搜索表达式。
+ *
+ * 为什么要单独封装：`|` 在普通查询里可能是 TypeScript 联合类型、Shell 管道或 Markdown 表格内容，不能把它当作分隔符。
+ * 怎么改：只把空白拆出的关键词逐个 escape 后用正则 OR 连接，显式正则 OR 仍然由 isRegex=true 的调用承担。
+ * 目的：避免普通查询误伤 `|` 字面量，同时保留正则模式下 `foo|bar` 的原生 OR 能力。
+ */
+function createFallbackKeywordRegex(keywords: string[], flags: string): RegExp {
+    return new RegExp(keywords.map(escapeRegex).join('|'), flags);
+}
+
+/**
  * 搜索匹配项
  */
 interface SearchMatch {
@@ -99,6 +136,17 @@ interface TextDetectionResult {
 interface SearchBudget {
     remainingChars: number;
     truncated: boolean;
+}
+
+interface SearchPassResult {
+    results: SearchMatch[];
+    budgetTruncated: boolean;
+}
+
+interface SearchQueryFallbackInfo {
+    applied: boolean;
+    originalQuery: string;
+    keywords: string[];
 }
 
 function clampNonNegativeNumber(value: unknown, fallback: number): number {
@@ -700,9 +748,13 @@ export function createSearchInFilesTool(): Tool {
         declaration: {
             name: 'search_in_files',
             strict: true,  // API 端强制 schema 校验
+            // 这段 description 是模型实际看到的工具提示词。
+            // 为什么要改：旧文案只说“搜索关键词或正则”，没有说明多关键词兜底，也没有区分文件搜索与 history_search 的 read 流程。
+            // 怎么改：把非正则空格关键词兜底、`|` 仅属于正则模式、以及后续读取必须用 read_file 写进主描述。
+            // 目的：降低模型把 history_search 的 start_line/end_line 语法幻觉迁移到 search_in_files 的概率。
             description: isMultiRoot
-                ? `Search or search-and-replace content in multiple workspace files. Supports regular expressions. Use "workspace_name/dir/" (trailing slash) for directories, or "workspace_name/file.ext" for a single file. Use "." to search all workspaces. Available workspaces: ${workspaces.map(w => w.name).join(', ')}.`
-                : 'Search or search-and-replace content in workspace files. Supports regular expressions. Use "dir/" (trailing slash) for directories, or "dir/file.ext" for a single file. Returns matching files and context.',
+                ? `Search or search-and-replace content in multiple workspace files. Supports regular expressions. In search mode with isRegex=false, whitespace-separated multi-keyword queries first try the exact phrase and, if no matches are found, automatically fall back to keyword OR search. Use isRegex=true for regex OR such as "foo|bar"; in non-regex mode "|" is a literal character. This tool has no read mode or start_line/end_line parameters; use read_file to read matched files. Use "workspace_name/dir/" (trailing slash) for directories, or "workspace_name/file.ext" for a single file. Use "." to search all workspaces. Available workspaces: ${workspaces.map(w => w.name).join(', ')}.`
+                : 'Search or search-and-replace content in workspace files. Supports regular expressions. In search mode with isRegex=false, whitespace-separated multi-keyword queries first try the exact phrase and, if no matches are found, automatically fall back to keyword OR search. Use isRegex=true for regex OR such as "foo|bar"; in non-regex mode "|" is a literal character. This tool has no read mode or start_line/end_line parameters; use read_file to read matched files. Use "dir/" (trailing slash) for directories, or "dir/file.ext" for a single file. Returns matching files and context.',
             category: 'search',
             parameters: {
                 type: 'object',
@@ -715,7 +767,7 @@ export function createSearchInFilesTool(): Tool {
                     },
                     query: {
                         type: 'string',
-                        description: 'Search keyword or regular expression'
+                        description: 'Search keyword, exact phrase, or regular expression. In search mode with isRegex=false, whitespace-separated multi-keyword queries first try the exact phrase and, if no matches are found, automatically fall back to keyword OR search. Use isRegex=true for explicit regex OR such as "foo|bar"; non-regex "|" is searched literally.'
                     },
                     path: {
                         type: 'string',
@@ -902,69 +954,96 @@ export function createSearchInFilesTool(): Tool {
                     };
                 } else {
                     // 仅搜索模式
-                    let allResults: SearchMatch[] = [];
-                    const configuredMaxTotal = searchConfig.maxTotalResultChars;
-                    const maxTotalChars = (typeof configuredMaxTotal === 'number' && Number.isFinite(configuredMaxTotal))
-                        ? Math.floor(configuredMaxTotal)
-                        : 200000;
-                    const budget: SearchBudget | undefined = maxTotalChars > 0
-                        ? { remainingChars: maxTotalChars, truncated: false }
-                        : undefined;
-                    
-                    if (isExplicit && targetWorkspace) {
-                        // 显式指定了工作区，只搜索该工作区
-                        const { searchRoot, effectivePattern } = await getSearchRootAndPattern(
-                            targetWorkspace.uri,
-                            relativePath,
-                            filePattern
-                        );
-                        allResults = await searchInDirectory(
-                            searchRoot,
-                            effectivePattern,
-                            searchRegex,
-                            maxResults,
-                            workspaces.length > 1 ? targetWorkspace.name : null,
-                            excludePattern,
-                            searchConfig,
-                            budget
-                        );
-                    } else if (searchPath === '.' && workspaces.length > 1) {
-                        // 搜索所有工作区
-                        for (const ws of workspaces) {
-                            if (allResults.length >= maxResults) break;
-                            if (budget && budget.remainingChars <= 0) break;
-                            
-                            const remaining = maxResults - allResults.length;
-                            const wsResults = await searchInDirectory(
-                                ws.uri,
-                                filePattern,
-                                searchRegex,
-                                remaining,
-                                ws.name,
+                    const runSearchPass = async (regex: RegExp): Promise<SearchPassResult> => {
+                        let results: SearchMatch[] = [];
+                        const configuredMaxTotal = searchConfig.maxTotalResultChars;
+                        const maxTotalChars = (typeof configuredMaxTotal === 'number' && Number.isFinite(configuredMaxTotal))
+                            ? Math.floor(configuredMaxTotal)
+                            : 200000;
+                        const budget: SearchBudget | undefined = maxTotalChars > 0
+                            ? { remainingChars: maxTotalChars, truncated: false }
+                            : undefined;
+
+                        if (isExplicit && targetWorkspace) {
+                            // 显式指定了工作区，只搜索该工作区
+                            const { searchRoot, effectivePattern } = await getSearchRootAndPattern(
+                                targetWorkspace.uri,
+                                relativePath,
+                                filePattern
+                            );
+                            results = await searchInDirectory(
+                                searchRoot,
+                                effectivePattern,
+                                regex,
+                                maxResults,
+                                workspaces.length > 1 ? targetWorkspace.name : null,
                                 excludePattern,
                                 searchConfig,
                                 budget
                             );
-                            allResults.push(...wsResults);
+                        } else if (searchPath === '.' && workspaces.length > 1) {
+                            // 搜索所有工作区
+                            for (const ws of workspaces) {
+                                if (results.length >= maxResults) break;
+                                if (budget && budget.remainingChars <= 0) break;
+
+                                const remaining = maxResults - results.length;
+                                const wsResults = await searchInDirectory(
+                                    ws.uri,
+                                    filePattern,
+                                    regex,
+                                    remaining,
+                                    ws.name,
+                                    excludePattern,
+                                    searchConfig,
+                                    budget
+                                );
+                                results.push(...wsResults);
+                            }
+                        } else {
+                            // 单工作区或未指定，使用默认
+                            const root = targetWorkspace?.uri || workspaces[0].uri;
+                            const { searchRoot, effectivePattern } = await getSearchRootAndPattern(
+                                root,
+                                relativePath,
+                                filePattern
+                            );
+                            results = await searchInDirectory(
+                                searchRoot,
+                                effectivePattern,
+                                regex,
+                                maxResults,
+                                workspaces.length > 1 ? (targetWorkspace?.name || workspaces[0].name) : null,
+                                excludePattern,
+                                searchConfig,
+                                budget
+                            );
                         }
-                    } else {
-                        // 单工作区或未指定，使用默认
-                        const root = targetWorkspace?.uri || workspaces[0].uri;
-                        const { searchRoot, effectivePattern } = await getSearchRootAndPattern(
-                            root,
-                            relativePath,
-                            filePattern
-                        );
-                        allResults = await searchInDirectory(
-                            searchRoot,
-                            effectivePattern,
-                            searchRegex,
-                            maxResults,
-                            workspaces.length > 1 ? (targetWorkspace?.name || workspaces[0].name) : null,
-                            excludePattern,
-                            searchConfig,
-                            budget
-                        );
+
+                        return {
+                            results,
+                            budgetTruncated: !!budget?.truncated
+                        };
+                    };
+
+                    // 非正则搜索采用“完整短语优先，零命中后关键词 OR 兜底”。
+                    // 为什么只放在 search 模式：replace 模式如果把“foo bar”降级为 foo 或 bar，会产生用户没有明确授权的批量替换。
+                    // 怎么改：第一次沿用原有完整 query；只有零命中且未因预算截断时，才用空白关键词构造 OR 正则重跑一次。
+                    // 目的：提高文件搜索召回率，同时保持替换模式和正则模式的可预测性。
+                    let searchPass = await runSearchPass(searchRegex);
+                    let allResults = searchPass.results;
+                    let fallbackInfo: SearchQueryFallbackInfo | undefined;
+
+                    const fallbackKeywords = !isRegex ? splitWhitespaceFallbackKeywords(query) : [];
+                    if (allResults.length === 0 && !searchPass.budgetTruncated && fallbackKeywords.length > 0) {
+                        const fallbackRegex = createFallbackKeywordRegex(fallbackKeywords, flags);
+                        searchPass = await runSearchPass(fallbackRegex);
+                        allResults = searchPass.results;
+                        fallbackInfo = {
+                            applied: true,
+                            originalQuery: query,
+                            keywords: fallbackKeywords
+                        };
                     }
 
                     return {
@@ -972,8 +1051,9 @@ export function createSearchInFilesTool(): Tool {
                         data: {
                             results: allResults,
                             count: allResults.length,
-                            truncated: allResults.length >= maxResults || !!budget?.truncated,
-                            multiRoot: workspaces.length > 1
+                            truncated: allResults.length >= maxResults || searchPass.budgetTruncated,
+                            multiRoot: workspaces.length > 1,
+                            queryFallback: fallbackInfo
                         }
                     };
                 }

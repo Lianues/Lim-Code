@@ -219,6 +219,85 @@ describe('DiffManager lifecycle closure', () => {
         expect(manager.isDiffActionInProgress(diff.id)).toBe(false);
     });
 
+    it('serializes concurrent diff accept actions across different sessions', async () => {
+        const manager = getManager();
+        const docA = createDocument({ filePath: 'C:/tmp/a.ts', initialContent: 'original-a', saveReturns: true });
+        const docB = createDocument({ filePath: 'C:/tmp/b.ts', initialContent: 'original-b', saveReturns: true });
+        (vscode.workspace as any).textDocuments = [docA, docB];
+        (vscode.workspace as any).applyEdit = jest.fn(async (edit: MockWorkspaceEdit) => {
+            const replacement = edit.replacements[0];
+            const doc = ((vscode.workspace as any).textDocuments as MockTextDocument[])
+                .find(d => d.uri.fsPath === replacement?.uri.fsPath);
+            if (doc && replacement) {
+                doc.setText(replacement.text);
+            }
+            return true;
+        });
+
+        const diffA = createPendingDiff(manager, {
+            id: 'diff-a',
+            filePath: 'src/a.ts',
+            absolutePath: 'C:/tmp/a.ts',
+            originalContent: 'original-a',
+            newContent: 'accepted-a'
+        });
+        const diffB = createPendingDiff(manager, {
+            id: 'diff-b',
+            filePath: 'src/b.ts',
+            absolutePath: 'C:/tmp/b.ts',
+            originalContent: 'original-b',
+            newContent: 'accepted-b'
+        });
+        attachListenerDisposables(manager, diffA.id);
+        attachListenerDisposables(manager, diffB.id);
+
+        let releaseFirstSave!: (value: boolean) => void;
+        const actionOrder: string[] = [];
+        docA.save = jest.fn(async () => {
+            actionOrder.push('save-a-start');
+            return new Promise<boolean>((resolve) => {
+                releaseFirstSave = (value) => {
+                    actionOrder.push('save-a-end');
+                    resolve(value);
+                };
+            });
+        });
+        docB.save = jest.fn(async () => {
+            actionOrder.push('save-b');
+            return true;
+        });
+
+        (fs.readFileSync as jest.Mock).mockImplementation((filePath: string) => {
+            if (filePath === 'C:/tmp/a.ts') return 'original-a';
+            if (filePath === 'C:/tmp/b.ts') return 'original-b';
+            return 'original';
+        });
+
+        const acceptA = manager.acceptDiff(diffA.id, false, false);
+        const acceptB = manager.acceptDiff(diffB.id, false, false);
+        for (let i = 0; i < 10 && actionOrder.length === 0; i++) {
+            await new Promise(resolve => setTimeout(resolve, 0));
+        }
+
+        // 这个测试锁定 DiffManager 的全局串行队列。
+        // 为什么要测两个不同 session：旧逻辑只按 diff id 防重入，两个文件的 accept 可同时操作 VS Code 文档、标签页和状态监听，固定 20ms 延迟无法保证顺序。
+        // 怎么测：第一个保存被手动挂起；第二个 accept 已经发起但必须保持 pending，直到第一个保存释放后才能进入。
+        // 目的：确保前端按钮、自动保存和 CodeLens 等入口共享确定的 diff 动作顺序。
+        expect(manager.isDiffActionInProgress(diffA.id)).toBe(true);
+        expect(manager.isDiffActionInProgress(diffB.id)).toBe(false);
+        expect(diffB.status).toBe('pending');
+        expect(actionOrder).toEqual(['save-a-start']);
+
+        releaseFirstSave(true);
+        await expect(acceptA).resolves.toBe(true);
+        await expect(acceptB).resolves.toBe(true);
+
+        expect(diffA.status).toBe('accepted');
+        expect(diffB.status).toBe('accepted');
+        expect(actionOrder).toEqual(['save-a-start', 'save-a-end', 'save-b']);
+    });
+
+
     it('acceptDiff keeps the diff pending and preserves listeners when persistence fails', async () => {
         const manager = getManager();
         createDocument({ initialContent: 'original', saveReturns: false });
