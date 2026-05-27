@@ -543,9 +543,17 @@ export class ToolIterationLoopService {
                                 // 这样既能拿到 responseParts（写入历史），
                                 // 又能拿到 toolResults（其中 result 字段是工具本身的业务返回值，
                                 // 用于 toolStatus / toolIteration 事件通知前端正确渲染）。
+                                // 修复原因：流式提前执行分支原先没有传入渠道配置，read_file 会在工具执行器里拿不到
+                                // multimodalToolsEnabled，从而把已开启的多模态工具误判为关闭。
+                                // 修复方式：与常规工具执行路径保持一致，显式传入 config、abortSignal 和 promptModeSnapshot。
+                                // 修复目的：让提前执行和非提前执行两条路径使用同一套多模态能力计算，避免 UI 已开启但后台误判为 false。
                                 const promise = this.toolExecutionService.executeFunctionCallsWithResults(
                                     [{ id: fc.id, name: fc.name, args: fc.args }],
-                                    conversationId
+                                    conversationId,
+                                    undefined,
+                                    config,
+                                    abortSignal,
+                                    promptModeSnapshot
                                 ).catch(err => {
                                     // 执行异常时构造一个包含错误信息的 ToolExecutionFullResult，
                                     // 确保 toolResults.result 仍是工具业务返回值格式，前端能正确渲染。

@@ -1,7 +1,7 @@
 /**
  * 写入文件工具
  *
- * 支持写入单个或多个文件
+ * 支持写入单个文件
  * 支持多工作区（Multi-root Workspaces）
  */
 
@@ -234,16 +234,19 @@ export function createWriteFileTool(): Tool {
     const workspaces = getAllWorkspaces();
     const isMultiRoot = workspaces.length > 1;
     
-    // 数组格式强调说明
-    const arrayFormatNote = '\n\n**IMPORTANT**: The `files` parameter MUST be an array, even for a single file. Example: `{"files": [{"path": "file.txt", "content": "..."}]}`, NOT `{"path": "file.txt", "content": "..."}`.';
-    
     // 根据工作区数量生成描述
-    let description = 'Write content to one or more files. A Diff preview will be shown for user confirmation regardless of whether the file exists. For new files, a full content diff preview will be shown. Supports auto-save or manual review mode (configured in settings).' + arrayFormatNote;
-    let pathDescription = 'File path (relative to workspace root)';
+    let description = `写入内容到一个文件。若文件不存在则创建；若文件已存在则用 content 覆盖其完整内容。执行前会展示 Diff 预览并等待用户确认。
+
+适用场景：
+- 创建新文件
+- 重写一个已有文件的完整内容
+
+注意：path 是相对于工作区根目录的路径；content 必须是文件的完整目标内容。修改大文件时，优先考虑 apply_diff，避免整文件重写带来的误删风险。`;
+    let pathDescription = '文件路径，相对于当前工作区根目录。例如：docs/example.md。';
     
     if (isMultiRoot) {
-        description += `\n\nMulti-root workspace: Must use "workspace_name/path" format. Available workspaces: ${workspaces.map(w => w.name).join(', ')}`;
-        pathDescription = `File path, must use "workspace_name/path" format`;
+        description += `\n\n多根工作区：path 必须使用 "workspace_name/path" 格式。可用工作区：${workspaces.map(w => w.name).join(', ')}。`;
+        pathDescription = `文件路径。当前是多根工作区，必须使用 "workspace_name/path" 格式。可用工作区：${workspaces.map(w => w.name).join(', ')}。`;
     }
     
     return {
@@ -255,32 +258,28 @@ export function createWriteFileTool(): Tool {
             parameters: {
                 type: 'object',
                 properties: {
-                    files: {
-                        type: 'array',
-                        items: {
-                            type: 'object',
-                            properties: {
-                                path: {
-                                    type: 'string',
-                                    description: pathDescription
-                                },
-                                content: {
-                                    type: 'string',
-                                    description: 'The content to write to the file'
-                                }
-                            },
-                            required: ['path', 'content']
-                        },
-                        description: 'Array of files to write, each element containing path and content. MUST be an array even for single file.'
+                    path: {
+                        type: 'string',
+                        description: pathDescription
+                    },
+                    content: {
+                        type: 'string',
+                        description: '要写入文件的完整内容。已有文件会被该内容整体覆盖。'
                     }
                 },
-                required: ['files']
+                required: ['path', 'content']
             }
         },
         handler: async (args, context?: ToolContext): Promise<ToolResult> => {
-            const fileList = args.files as WriteFileEntry[] | undefined;
-            if (!fileList || !Array.isArray(fileList) || fileList.length === 0) {
-                return { success: false, error: 'files is required' };
+            const entry: WriteFileEntry = {
+                path: args.path as string,
+                content: args.content as string
+            };
+            if (typeof entry.path !== 'string' || entry.path.trim() === '') {
+                return { success: false, error: 'path is required' };
+            }
+            if (typeof entry.content !== 'string') {
+                return { success: false, error: 'content is required' };
             }
             
             // 获取工作区信息
@@ -297,18 +296,16 @@ export function createWriteFileTool(): Tool {
             let modifiedCount = 0;
             let unchangedCount = 0;
 
-            for (const entry of fileList) {
-                const result = await writeSingleFile(entry, isMultiRoot, context?.toolId, context?.abortSignal);
-                results.push(result);
-                
-                if (result.success) {
-                    successCount++;
-                    if (result.action === 'created') createdCount++;
-                    else if (result.action === 'modified') modifiedCount++;
-                    else if (result.action === 'unchanged') unchangedCount++;
-                } else {
-                    failCount++;
-                }
+            const result = await writeSingleFile(entry, isMultiRoot, context?.toolId, context?.abortSignal);
+            results.push(result);
+
+            if (result.success) {
+                successCount++;
+                if (result.action === 'created') createdCount++;
+                else if (result.action === 'modified') modifiedCount++;
+                else if (result.action === 'unchanged') unchangedCount++;
+            } else {
+                failCount++;
             }
 
             const anyCancelled = results.some(r => r.cancelled);
@@ -322,11 +319,11 @@ export function createWriteFileTool(): Tool {
                     results,
                     successCount,
                     failCount,
-                    totalCount: fileList.length
+                    totalCount: 1
                 },
                 error: anyCancelled
                     ? 'Write was cancelled by user'
-                    : (allSuccess ? undefined : `${failCount} files failed to write`)
+                    : (allSuccess ? undefined : `${failCount} file failed to write`)
             };
         }
     };

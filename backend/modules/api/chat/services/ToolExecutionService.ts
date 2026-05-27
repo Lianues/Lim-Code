@@ -21,6 +21,7 @@ import type { BaseChannelConfig } from '../../../config/configs/base';
 import { getAllWorkspaces, getMultimodalCapability, type ChannelType as UtilChannelType, type ToolMode as UtilToolMode } from '../../../../tools/utils';
 import type { FunctionCallInfo, ToolExecutionResult } from '../utils';
 import type { CheckpointService } from './CheckpointService';
+import { Logger } from '../../../../core/logger';
 
 /**
  * 工具执行完整结果
@@ -61,6 +62,7 @@ export class ToolExecutionService {
     private mcpManager?: McpManager;
     private toolRegistry?: ToolRegistry;
     private conversationStore?: ConversationStore;
+    private readonly log = Logger.get('ToolExecutionService');
 
     constructor(
         toolRegistry?: ToolRegistry,
@@ -713,10 +715,34 @@ export class ToolExecutionService {
         const multimodalEnabled = config?.multimodalToolsEnabled ?? false;
         const capability = getMultimodalCapability(channelType, currentToolMode, multimodalEnabled);
 
+        // 调试原因：多模态开关涉及“渠道配置 -> 工具执行上下文 -> read_file 能力判断”多段传递，
+        // 一旦某条执行路径漏传 config，前端看到已开启但工具会按 false 运行。
+        // 调试方式：只记录非敏感的渠道、模式、开关和能力快照，并传给工具结果显示。
+        // 调试目的：让下一次 read_file 失败时，界面和 LimCode 输出日志都能直接看到是哪一段变成 false。
+        const multimodalDebug = {
+            source: 'ToolExecutionService.executeBuiltinTool',
+            configPresent: config !== undefined,
+            configId: config?.id ?? null,
+            configName: config?.name ?? null,
+            channelType,
+            toolMode: currentToolMode,
+            configMultimodalToolsEnabled: config?.multimodalToolsEnabled ?? null,
+            resolvedMultimodalEnabled: multimodalEnabled,
+            capability
+        };
+
+        if (call.name === 'read_file') {
+            this.log.info('read_file.multimodal_context', {
+                ...multimodalDebug,
+                path: typeof call.args?.path === 'string' ? call.args.path : null
+            });
+        }
+
         // 构建工具执行上下文，包含多模态配置、能力、取消信号和工具调用 ID
         const toolContext: Record<string, unknown> = {
             multimodalEnabled,
             capability,
+            multimodalDebug,
             abortSignal,
             toolId: call.id,  // 使用函数调用 ID 作为工具 ID，用于追踪和取消
             toolOptions: config?.toolOptions,  // 传递工具配置
@@ -986,25 +1012,16 @@ export class ToolExecutionService {
     private validatePlanModeWriteFileArgs(
         args?: Record<string, unknown>
     ): { ok: true } | { ok: false; error: string } {
-        const files = (args as any)?.files;
-        if (!Array.isArray(files) || files.length === 0) {
-            return { ok: false, error: 'In plan mode, write_file requires a non-empty "files" array.' };
+        const path = (args as any)?.path;
+        if (typeof path !== 'string' || !path.trim()) {
+            return { ok: false, error: 'In plan mode, write_file.path must be a non-empty string.' };
         }
 
-        for (const entry of files) {
-            if (!entry || typeof entry !== 'object') {
-                return { ok: false, error: 'In plan mode, write_file.files entries must be objects.' };
-            }
-            const path = (entry as any).path;
-            if (typeof path !== 'string' || !path.trim()) {
-                return { ok: false, error: 'In plan mode, write_file.files[].path must be a non-empty string.' };
-            }
-            if (!this.isPlanModeWriteFilePathAllowed(path)) {
-                return {
-                    ok: false,
-                    error: `In plan mode, write_file is only allowed to write ".limcode/plans/**.md". Rejected path: ${path}`
-                };
-            }
+        if (!this.isPlanModeWriteFilePathAllowed(path)) {
+            return {
+                ok: false,
+                error: `In plan mode, write_file is only allowed to write ".limcode/plans/**.md". Rejected path: ${path}`
+            };
         }
 
         return { ok: true };

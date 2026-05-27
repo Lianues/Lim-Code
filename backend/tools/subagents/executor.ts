@@ -281,31 +281,21 @@ async function executeToolCall(
             }
 
             if (currentMode?.id === 'plan' && toolName === 'write_file') {
-                const files = (normalizedArgs as any)?.files;
-                if (!Array.isArray(files) || files.length === 0) {
+                const filePath = (normalizedArgs as any)?.path;
+                if (typeof filePath !== 'string') {
                     return {
                         result: null,
                         success: false,
-                        error: 'Invalid write_file args in plan mode: files must be a non-empty array'
+                        error: 'Invalid write_file args in plan mode: path must be a string'
                     };
                 }
 
-                for (const file of files) {
-                    const filePath = (file as any)?.path;
-                    if (typeof filePath !== 'string') {
-                        return {
-                            result: null,
-                            success: false,
-                            error: 'Invalid write_file args in plan mode: files[].path must be a string'
-                        };
-                    }
-                    if (!isPlanModeWriteFilePathAllowed(filePath)) {
-                        return {
-                            result: null,
-                            success: false,
-                            error: `write_file path not allowed in plan mode: ${filePath}`
-                        };
-                    }
+                if (!isPlanModeWriteFilePathAllowed(filePath)) {
+                    return {
+                        result: null,
+                        success: false,
+                        error: `write_file path not allowed in plan mode: ${filePath}`
+                    };
                 }
             }
         }

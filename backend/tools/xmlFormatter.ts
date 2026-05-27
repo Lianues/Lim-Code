@@ -98,10 +98,7 @@ Reading files:
 <tool_use>
   <tool_name>read_file</tool_name>
   <parameters>
-    <paths>
-      <item>file1.txt</item>
-      <item>src/main.ts</item>
-    </paths>
+    <path>file1.txt</path>
   </parameters>
 </tool_use>
 
@@ -109,12 +106,8 @@ Writing files:
 <tool_use>
   <tool_name>write_file</tool_name>
   <parameters>
-    <files>
-      <item>
-        <path>file1.txt</path>
-        <content>Hello, World!</content>
-      </item>
-    </files>
+    <path>file1.txt</path>
+    <content>Hello, World!</content>
   </parameters>
 </tool_use>
 

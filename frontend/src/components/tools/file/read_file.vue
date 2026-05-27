@@ -2,7 +2,7 @@
 /**
  * read_file 工具的内容面板
  *
- * 支持批量读取，每个文件一个小面板显示
+ * 读取单个文件，并以小面板显示
  * 显示：
  * - 文件路径
  * - 文件内容（后端已带行号，格式如 "   1 | content"）
@@ -36,11 +36,22 @@ interface FileRequest {
 
 // 获取文件请求列表
 const fileRequests = computed((): FileRequest[] => {
-  if (props.args.files && Array.isArray(props.args.files)) {
-    return props.args.files as FileRequest[]
-  }
-  return []
+  const path = props.args.path
+  const startLine = toPositiveInteger(props.args.startLine)
+  const endLine = toPositiveInteger(props.args.endLine)
+  if (typeof path !== 'string' || path.length === 0) return []
+  return [{
+    path,
+    startLine,
+    endLine
+  }]
 })
+
+function toPositiveInteger(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1
+    ? value
+    : undefined
+}
 
 // 获取路径列表
 const pathList = computed(() => {
@@ -60,6 +71,7 @@ interface ReadResult {
   mimeType?: string
   size?: number
   error?: string
+  debug?: Record<string, unknown>
 }
 
 // 获取读取结果列表
@@ -211,6 +223,16 @@ async function copyFileContent(result: ReadResult) {
   }
 }
 
+function formatDebugValue(value: unknown): string {
+  // 调试原因：后端会把 read_file 的多模态判定快照放在 result.debug，前端需要稳定展示嵌套对象。
+  // 调试方式：对象用缩进 JSON 展示，普通值转成字符串，避免用户只能在开发者工具里查看。
+  // 调试目的：复现“界面已开启但后台判断关闭”时，可以直接截图看到 config、capability 和 handler 收到的值。
+  if (typeof value === 'object' && value !== null) {
+    return JSON.stringify(value, null, 2)
+  }
+  return String(value)
+}
+
 // 清理定时器
 onBeforeUnmount(() => {
   for (const timeout of copyTimeouts.values()) {
@@ -293,6 +315,19 @@ onBeforeUnmount(() => {
         <div v-if="!result.success && result.error" class="file-error">
           {{ result.error }}
         </div>
+
+        <!-- 调试信息：只在后端提供 result.debug 时显示，用于定位多模态配置传递链路。 -->
+        <details v-if="result.debug" class="file-debug">
+          <summary>调试信息</summary>
+          <div
+            v-for="([key, value]) in Object.entries(result.debug)"
+            :key="key"
+            class="debug-row"
+          >
+            <span class="debug-key">{{ key }}</span>
+            <pre class="debug-value">{{ formatDebugValue(value) }}</pre>
+          </div>
+        </details>
         
         <!-- 二进制文件提示 -->
         <div v-else-if="result.type === 'binary'" class="file-binary">
@@ -552,6 +587,43 @@ onBeforeUnmount(() => {
   font-size: 11px;
   color: var(--vscode-inputValidation-errorForeground);
   background: var(--vscode-inputValidation-errorBackground);
+}
+
+/* 调试信息面板。
+ * 添加原因：多模态读取失败需要显示后端真实收到的开关和能力，单独错误文案不够定位问题。
+ * 添加方式：使用 details/summary 让默认界面保持简洁，展开后逐项显示 result.debug。
+ * 添加目的：用户可以直接从工具面板截图排查配置传递链路，无需打开开发者工具。 */
+.file-debug {
+  padding: var(--spacing-sm, 8px);
+  background: var(--vscode-editor-background);
+  border-top: 1px solid var(--vscode-inputValidation-errorBorder);
+  font-size: 11px;
+}
+
+.file-debug summary {
+  cursor: pointer;
+  color: var(--vscode-descriptionForeground);
+  user-select: none;
+}
+
+.debug-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 180px) 1fr;
+  gap: var(--spacing-sm, 8px);
+  margin-top: var(--spacing-xs, 4px);
+}
+
+.debug-key {
+  color: var(--vscode-symbolIcon-variableForeground, var(--vscode-descriptionForeground));
+  word-break: break-word;
+}
+
+.debug-value {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--vscode-foreground);
+  font-family: var(--vscode-editor-font-family);
 }
 
 /* 二进制文件 */

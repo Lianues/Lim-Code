@@ -1,4 +1,4 @@
-﻿/** @type {import('jest').Config} */
+﻿﻿/** @type {import('jest').Config} */
 module.exports = {
     preset: 'ts-jest',
     testEnvironment: 'node',
@@ -8,7 +8,7 @@ module.exports = {
         '^vscode$': '<rootDir>/backend/__tests__/__mocks__/vscode.ts',
         '^@/(.*)$': '<rootDir>/frontend/src/$1',
     },
-    setupFilesAfterEnv: ['<rootDir>/test/jest.setup.ts'],
+    setupFilesAfterEnv: ['<rootDir>/backend/__tests__/jest.setup.ts'],
     transform: {
         '^.+\\.ts$': ['ts-jest', {
             tsconfig: 'tsconfig.test.json',

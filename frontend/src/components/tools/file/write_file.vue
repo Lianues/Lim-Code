@@ -225,8 +225,10 @@ const viewModes = ref<Map<string, 'content' | 'diff'>>(new Map())
 
 // 获取文件列表（从参数中）
 const fileList = computed((): WriteFileEntry[] => {
-  const files = props.args.files as WriteFileEntry[] | undefined
-  return files && Array.isArray(files) ? files : []
+  const path = props.args.path as string | undefined
+  const content = props.args.content as string | undefined
+  if (typeof path !== 'string' || typeof content !== 'string') return []
+  return [{ path, content }]
 })
 
 // 获取写入结果列表（从结果中）

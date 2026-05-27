@@ -321,10 +321,15 @@ export class AnthropicFormatter extends BaseFormatter {
                 
                 for (const part of functionResponseParts) {
                     const resp = part.functionResponse!;
+                    const resultContent = this.buildToolResultContent(
+                        resp.response,
+                        resp.parts
+                    );
+
                     contentArray.push({
                         type: 'tool_result',
                         tool_use_id: resp.id || `toolu_${Date.now()}`,
-                        content: JSON.stringify(resp.response)
+                        content: resultContent
                     });
                 }
                 
@@ -390,11 +395,69 @@ export class AnthropicFormatter extends BaseFormatter {
     }
     
     /**
+     * 构建 Anthropic tool_result.content。
+     *
+     * Anthropic 官方允许 tool_result.content 是字符串，也可以是内容块数组。
+     * 当工具返回 functionResponse.parts 时，把结构化 JSON 结果作为 text 块，
+     * 再追加 image/document 块，让 Claude 能直接看到 read_file 返回的图片/PDF。
+     */
+    private buildToolResultContent(response: Record<string, unknown>, parts?: ContentPart[]): string | any[] {
+        if (!parts || parts.length === 0) {
+            return JSON.stringify(response);
+        }
+
+        const contentBlocks: any[] = [
+            {
+                type: 'text',
+                text: JSON.stringify(response)
+            }
+        ];
+
+        for (const part of parts) {
+            if (part.inlineData) {
+                const { mimeType, data } = part.inlineData;
+                if (mimeType.startsWith('image/')) {
+                    contentBlocks.push({
+                        type: 'image',
+                        source: {
+                            type: 'base64',
+                            media_type: mimeType,
+                            data
+                        }
+                    });
+                } else {
+                    contentBlocks.push({
+                        type: 'document',
+                        source: {
+                            type: 'base64',
+                            media_type: mimeType,
+                            data
+                        }
+                    });
+                }
+            } else if (part.fileData) {
+                const { mimeType, fileUri } = part.fileData;
+                const blockType = mimeType.startsWith('image/') ? 'image' : 'document';
+                contentBlocks.push({
+                    type: blockType,
+                    source: {
+                        type: 'url',
+                        url: fileUri
+                    }
+                });
+            }
+        }
+
+        return contentBlocks;
+    }
+
+    /**
      * 构建消息内容（支持多模态）
      *
      * Anthropic 格式：
      * - 文本：{type: "text", text: "..."}
      * - 图片：{type: "image", source: {type: "base64", media_type: "...", data: "..."}}
+     * - 文档：{type: "document", source: {type: "base64", media_type: "application/pdf", data: "..."}}
      */
     private buildMessageContent(textParts: ContentPart[], mediaParts: ContentPart[]): any[] {
         const contentArray: any[] = [];
@@ -403,8 +466,9 @@ export class AnthropicFormatter extends BaseFormatter {
         for (const part of mediaParts) {
             if (part.inlineData) {
                 // Base64 内联数据
+                const blockType = part.inlineData.mimeType.startsWith('image/') ? 'image' : 'document';
                 contentArray.push({
-                    type: 'image',
+                    type: blockType,
                     source: {
                         type: 'base64',
                         media_type: part.inlineData.mimeType,
@@ -413,8 +477,9 @@ export class AnthropicFormatter extends BaseFormatter {
                 });
             } else if (part.fileData) {
                 // 文件引用 -> URL 格式
+                const blockType = part.fileData.mimeType.startsWith('image/') ? 'image' : 'document';
                 contentArray.push({
-                    type: 'image',
+                    type: blockType,
                     source: {
                         type: 'url',
                         url: part.fileData.fileUri

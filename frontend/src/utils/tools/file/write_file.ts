@@ -13,10 +13,8 @@ registerTool('write_file', {
   
   // 描述生成器 - 显示文件路径（每行一个）
   descriptionFormatter: (args) => {
-    const files = args.files as Array<{ path: string; content: string }> | undefined
-    if (!files || !Array.isArray(files) || files.length === 0) return '无文件'
-    // 每行一个路径
-    return files.map(f => f.path).join('\n')
+    const path = args.path as string | undefined
+    return path || '无文件'
   },
   
   // 使用自定义组件显示内容
@@ -27,8 +25,8 @@ registerTool('write_file', {
   
   // 获取所有写入的文件路径
   getDiffFilePath: (args) => {
-    const files = args.files as Array<{ path: string; content: string }> | undefined
-    if (!files || !Array.isArray(files) || files.length === 0) return []
-    return files.map(f => f.path)
+    const path = args.path as string | undefined
+    if (!path) return []
+    return [path]
   }
 })

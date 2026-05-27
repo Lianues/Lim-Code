@@ -218,33 +218,11 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                     input.push({
                         type: 'function_call_output',
                         call_id: part.functionResponse.id,
-                        output: typeof part.functionResponse.response === 'string'
-                            ? part.functionResponse.response
-                            : JSON.stringify(part.functionResponse.response)
+                        output: this.buildFunctionCallOutput(
+                            part.functionResponse.response,
+                            part.functionResponse.parts
+                        )
                     });
-                    
-                    // 如果工具返回了多模态内容（如图片），这些需要作为紧随其后的新 message 项
-                    if (part.functionResponse.parts && part.functionResponse.parts.length > 0) {
-                        const toolContentParts = part.functionResponse.parts
-                            .map(p => {
-                                if (p.inlineData) {
-                                    return {
-                                        type: 'input_image',
-                                        image_url: `data:${p.inlineData.mimeType};base64,${p.inlineData.data}`
-                                    };
-                                }
-                                return null;
-                            })
-                            .filter(p => p !== null);
-                        
-                        if (toolContentParts.length > 0) {
-                            input.push({
-                                type: 'message',
-                                role: 'user', // 工具返回的内容被视为用户输入
-                                content: toolContentParts
-                            });
-                        }
-                    }
                     continue;
                 }
 
@@ -255,15 +233,9 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
                         text: part.text
                     });
                 } else if (part.inlineData) {
-                    messageParts.push({
-                        type: 'input_image',
-                        image_url: `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`
-                    });
+                    messageParts.push(this.inlineDataToResponsesContent(part.inlineData));
                 } else if (part.fileData) {
-                    messageParts.push({
-                        type: 'input_file',
-                        file_url: part.fileData.fileUri
-                    });
+                    messageParts.push(this.fileDataToResponsesContent(part.fileData));
                 }
             }
 
@@ -272,6 +244,73 @@ export class OpenAIResponsesFormatter extends BaseFormatter {
         }
         
         return input;
+    }
+
+    /**
+     * 构建 Responses API 的 function_call_output.output。
+     *
+     * OpenAI Responses 官方支持 output 为字符串，也支持 input_text / input_image / input_file 数组。
+     * 当工具返回多模态 parts 时，将结构化 JSON 结果作为 input_text，
+     * 并把图片/PDF 等文件放在同一个 function_call_output.output 数组中，
+     * 保持“这些多模态内容属于该工具输出”的语义绑定。
+     */
+    private buildFunctionCallOutput(response: Record<string, unknown>, parts?: ContentPart[]): string | any[] {
+        const responseText = typeof response === 'string'
+            ? response
+            : JSON.stringify(response);
+
+        if (!parts || parts.length === 0) {
+            return responseText;
+        }
+
+        const output: any[] = [
+            {
+                type: 'input_text',
+                text: responseText
+            }
+        ];
+
+        for (const part of parts) {
+            if (part.inlineData) {
+                output.push(this.inlineDataToResponsesContent(part.inlineData));
+            } else if (part.fileData) {
+                output.push(this.fileDataToResponsesContent(part.fileData));
+            }
+        }
+
+        return output;
+    }
+
+    private inlineDataToResponsesContent(inlineData: NonNullable<ContentPart['inlineData']>): any {
+        const displayName = inlineData.displayName || inlineData.name || 'file';
+
+        if (inlineData.mimeType.startsWith('image/')) {
+            return {
+                type: 'input_image',
+                image_url: `data:${inlineData.mimeType};base64,${inlineData.data}`
+            };
+        }
+
+        return {
+            type: 'input_file',
+            filename: displayName,
+            file_data: inlineData.data
+        };
+    }
+
+    private fileDataToResponsesContent(fileData: NonNullable<ContentPart['fileData']>): any {
+        if (fileData.mimeType.startsWith('image/')) {
+            return {
+                type: 'input_image',
+                image_url: fileData.fileUri
+            };
+        }
+
+        return {
+            type: 'input_file',
+            filename: fileData.displayName,
+            file_url: fileData.fileUri
+        };
     }
 
     /**

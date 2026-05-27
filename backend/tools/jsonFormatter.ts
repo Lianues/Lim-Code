@@ -133,11 +133,11 @@ ${TOOL_CALL_END}
 You can call multiple tools by outputting multiple tool blocks:
 
 ${TOOL_CALL_START}
-{"tool": "read_file", "parameters": {"paths": ["file1.txt", "file2.txt"]}}
+{"tool": "read_file", "parameters": {"path": "file1.txt"}}
 ${TOOL_CALL_END}
 
 ${TOOL_CALL_START}
-{"tool": "write_file", "parameters": {"files": [{"path": "output.txt", "content": "Hello!"}]}}
+{"tool": "write_file", "parameters": {"path": "output.txt", "content": "Hello!"}}
 ${TOOL_CALL_END}
 
 ### Best Practices

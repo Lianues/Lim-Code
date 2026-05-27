@@ -796,7 +796,9 @@ function mapToolStatus(tool: ToolUsage): CardStatus {
 // ============ 文档数据提取 ============
 function getWriteFileTaskEntries(tool: ToolUsage): TaskEntry[] {
   const args = tool.args as any
-  const files = Array.isArray(args?.files) ? args.files : []
+  const files = typeof args?.path === 'string' && typeof args?.content === 'string'
+    ? [{ path: args.path, content: args.content }]
+    : []
 
   const result = getToolResult(tool)
   const resultList = Array.isArray(result?.data?.results) ? result.data.results : []
