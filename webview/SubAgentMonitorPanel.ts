@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { subAgentRunEventBus, type SubAgentRunEvent, type SubAgentRunSnapshot } from '../backend/tools/subagents';
+import { subAgentRunController, subAgentRunEventBus, type SubAgentRunEvent, type SubAgentRunSnapshot } from '../backend/tools/subagents';
 
 /**
  * SubAgent Monitor 编辑器面板。
@@ -75,7 +75,11 @@ export class SubAgentMonitorPanel {
                 data: {
                     snapshots: subAgentRunEventBus.getSnapshots(),
                     focusRunId: this.focusRunId,
-                    focusConversationId: this.focusConversationId
+                    focusConversationId: this.focusConversationId,
+                    // 修改原因：Monitor 顶部控制按钮只能作用于仍有主工具 Promise 等待的活跃 run。
+                    // 修改方式：把活跃 runId 列表随 ready 响应发给前端。
+                    // 修改目的：历史 run 只允许查看，避免用户误以为能复活已结束或扩展重载前的执行。
+                    activeRunIds: subAgentRunController.getActiveRunIds()
                 }
             });
         }
@@ -84,7 +88,16 @@ export class SubAgentMonitorPanel {
     private postEvent(event: SubAgentRunEvent, snapshot: SubAgentRunSnapshot): void {
         this.panel?.webview.postMessage({
             type: 'subagentMonitor.event',
-            data: { event, snapshot, focusRunId: this.focusRunId, focusConversationId: this.focusConversationId }
+            data: {
+                event,
+                snapshot,
+                focusRunId: this.focusRunId,
+                focusConversationId: this.focusConversationId,
+                // 修改原因：pause/resume/exit 会改变 run 是否仍活跃，前端需要实时刷新控制按钮可见性。
+                // 修改方式：每个 Monitor 事件都附带当前 activeRunIds 快照。
+                // 修改目的：不让前端猜测状态，保持控制权以后端活跃运行控制器为准。
+                activeRunIds: subAgentRunController.getActiveRunIds()
+            }
         });
     }
 
@@ -94,7 +107,8 @@ export class SubAgentMonitorPanel {
             data: {
                 snapshots: subAgentRunEventBus.getSnapshots(),
                 focusRunId: this.focusRunId,
-                focusConversationId: this.focusConversationId
+                focusConversationId: this.focusConversationId,
+                activeRunIds: subAgentRunController.getActiveRunIds()
             }
         });
     }

@@ -48,6 +48,34 @@ import { resolveAndPersistPostToolStopState } from './postToolStopState';
 const CONVERSATION_PINNED_FILES_KEY = 'inputPinnedFiles';
 const CONVERSATION_SKILLS_KEY = 'inputSkills';
 
+const DIFF_REVIEW_TOOL_NAMES = new Set(['apply_diff', 'write_file', 'insert_code', 'delete_code']);
+
+function isDiffReviewToolCall(call: FunctionCallInfo): boolean {
+    // 修改原因：流式提前执行会把多个 diff-review 工具并行启动，多个 pending diff 的后端自动保存定时器会一起触发，造成倒计时同时出现、保存队列互相等待以及工具结果迟迟不回填。
+    // 修改方式：把“会创建 pending diff 并等待用户/自动审阅”的工具抽象成 diff-review 调用；search_in_files 只有 replace 模式属于该类，普通搜索仍可提前执行。
+    // 修改目的：让文件修改类工具回到统一的顺序执行与进度上报通道，避免 OpenAI Responses 参数流刚完成就隐式并行创建多个 diff。
+    if (DIFF_REVIEW_TOOL_NAMES.has(call.name)) {
+        return true;
+    }
+
+    if (call.name === 'search_in_files') {
+        const mode = typeof call.args?.mode === 'string' ? call.args.mode : 'search';
+        return mode === 'replace';
+    }
+
+    return false;
+}
+
+function shouldStartToolDuringModelStream(
+    call: FunctionCallInfo,
+    toolExecutionService: ToolExecutionService
+): boolean {
+    // 修改原因：原逻辑只看“是否需要工具执行前确认”，没有区分工具执行后是否还会进入 pending diff 审阅，导致 diff-review 工具在模型仍输出时并行悬挂。
+    // 修改方式：保留非确认工具的流式提前执行能力，但把 diff-review 调用排除，让它们在模型完成后走 executeFunctionCallsWithProgress 的串行队列。
+    // 修改目的：同时保留只读/普通自动工具的低延迟优势，并让文件修改工具拥有确定的单队列生命周期。
+    return !toolExecutionService.toolNeedsConfirmation(call.name) && !isDiffReviewToolCall(call);
+}
+
 /**
  * 工具迭代循环配置
  */
@@ -536,8 +564,11 @@ export class ToolIterationLoopService {
                     if (!abortSignal?.aborted) {
                         const newCalls = processor.getAccumulator().getNewCompletedFunctionCalls();
                         for (const fc of newCalls) {
-                            // 只对不需要确认的工具提前执行
-                            if (!this.toolExecutionService.toolNeedsConfirmation(fc.name)) {
+                            // 只对不需要确认、且不会创建 pending diff 审阅会话的工具提前执行。
+                            // 修改原因：OpenAI Responses 会在 arguments.done 后立刻让多个文件修改工具变为“可执行”，旧逻辑会把 apply_diff/write_file 等全部并行启动。
+                            // 修改方式：通过 shouldStartToolDuringModelStream 统一排除 diff-review 工具，等待模型输出结束后再由常规工具队列串行执行。
+                            // 修改目的：消除多个自动保存倒计时一起出现、最后一个 pending diff 卡住后阻塞整批 toolStatus 回填的问题。
+                            if (shouldStartToolDuringModelStream(fc, this.toolExecutionService)) {
                                 this.log.info('stream.early_tool_start', { conversationId, iteration, toolName: fc.name, toolId: fc.id });
                                 // 使用 executeFunctionCallsWithResults 而非 executeFunctionCalls，
                                 // 这样既能拿到 responseParts（写入历史），

@@ -202,11 +202,21 @@ export function createWriteFileTool(): Tool {
     const isMultiRoot = workspaces.length > 1;
     
     // 根据工作区数量生成描述
+    // 修改原因：write_file 和 apply_diff 一样是单文件 schema，模型容易把它误解为“一轮回复只能调用一次”。
+    // 修改方式：在 description 中加入批量写入规则，明确多个独立新文件或重写文件应在同一轮连续输出多个 write_file 调用。
+    // 修改目的：让工具声明直接引导模型批量完成已明确的多文件写入计划，避免每写一个文件就停下等待下一轮。
     let description = `写入内容到一个文件。若文件不存在则创建；若文件已存在则用 content 覆盖其完整内容。执行前会展示 Diff 预览并等待用户确认。
 
 适用场景：
 - 创建新文件
 - 重写一个已有文件的完整内容
+
+批量写入规则：
+- 本工具一次调用仍然只写入一个文件；如果计划要创建或重写多个互不依赖的文件，应该在同一轮回复中连续输出多个 write_file 调用。
+- 不要在完成第一个文件的 write_file 后停止等待结果，除非后续写入依赖该工具结果或需要先确认上一处写入是否成功。
+- 对已经明确、互不依赖的多文件写入，应一次性输出所有 write_file 调用，以减少无意义的工具迭代。
+- 错误示例：写入 A 文件后停止，等下一轮再写入 B 文件。
+- 正确示例：同一轮依次输出 write_file(A)、write_file(B)、write_file(C)。
 
 注意：path 是相对于工作区根目录的路径；content 必须是文件的完整目标内容。修改大文件时，优先考虑 apply_diff，避免整文件重写带来的误删风险。`;
     let pathDescription = '文件路径，相对于当前工作区根目录。例如：docs/example.md。';

@@ -40,6 +40,23 @@ export interface ConversationStorageIntegrity {
     metadataErrorMessage?: string;
 }
 
+export interface ConversationStorageLocation {
+    /**
+     * 文件管理器应该 reveal 的 URI。
+     *
+     * 修改原因：历史页按钮需要打开真实存储位置，但不同存储格式可能是 legacy 单文件或 segmented 目录。
+     * 修改方式：由存储适配器返回已解析好的 revealUri，而不是让 webview handler 猜路径。
+     * 修改目的：路径规则保持单一来源，后续存储格式升级时只改适配器。
+     */
+    revealUri: any;
+    /** 展示给前端或日志的人类可读路径 */
+    displayPath: string;
+    /** 是否定位到了该 conversation 的具体文件或目录 */
+    exists: boolean;
+    /** 文件缺失或使用兜底目录时的提示 */
+    warning?: string;
+}
+
 /**
  * 存储适配器接口
  * 
@@ -88,6 +105,15 @@ export interface IStorageAdapter {
     loadMetadata(conversationId: string): Promise<ConversationMetadata | null>;
     loadMetadataWithStatus(conversationId: string): Promise<StorageReadResult<ConversationMetadata>>;
     getConversationIntegrity(conversationId: string): Promise<ConversationStorageIntegrity>;
+
+    /**
+     * 获取对话在本地文件系统中的可定位位置。
+     *
+     * 修改原因：历史 UI 需要“在文件管理器中显示”对话记录，但 handler 不应该复制存储路径规则。
+     * 修改方式：文件系统适配器实现该可选窄接口；非文件系统存储可不实现。
+     * 修改目的：保持存储布局的单一来源，并让按钮在 legacy/segmented 两种格式下都可用。
+     */
+    getConversationStorageLocation?(conversationId: string): Promise<ConversationStorageLocation | null>;
     
     /**
      * 保存快照
@@ -443,6 +469,16 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
         );
     }
 
+    private getConversationsRootDir(): any {
+        // 修改原因：reveal 兜底需要打开 conversations 根目录，而不是在 handler 中拼接存储路径。
+        // 修改方式：把 root URI 构造留在 FileSystemStorageAdapter 内部复用 baseDir 和 VS Code Uri API。
+        // 修改目的：所有 conversation 存储路径规则集中在存储适配器里维护。
+        return this.vscode.Uri.joinPath(
+            this.vscode.Uri.parse(this.baseDir),
+            'conversations'
+        );
+    }
+
     private isNotFoundError(error: any): boolean {
         const code = String(error?.code || '');
         if (code === 'FileNotFound' || code === 'EntryNotFound' || code === 'ENOENT') {
@@ -463,6 +499,41 @@ export class FileSystemStorageAdapter implements IStorageAdapter {
     private async exists(uri: any): Promise<boolean> {
         try { await this.vscode.workspace.fs.stat(uri); return true; }
         catch { return false; }
+    }
+
+    async getConversationStorageLocation(conversationId: string): Promise<ConversationStorageLocation> {
+        // 修改原因：历史页“在文件管理器中显示”需要优先定位真实存在的对话存储文件。
+        // 修改方式：按当前存储格式优先级选择 segmented history.index.json，其次 legacy history，再其次 metadata；全部缺失时回退到 conversations 根目录。
+        // 修改目的：支持新旧存储格式，同时在文件缺失时给用户明确反馈而不是静默无效。
+        const historyIndexUri = this.getHistoryIndexPath(conversationId);
+        const legacyHistoryUri = this.getLegacyHistoryPath(conversationId);
+        const metadataUri = this.getMetadataPath(conversationId);
+        const conversationDir = this.getConversationDir(conversationId);
+        const conversationsRoot = this.getConversationsRootDir();
+
+        if (await this.exists(historyIndexUri)) {
+            return { revealUri: historyIndexUri, displayPath: historyIndexUri.fsPath || historyIndexUri.toString(), exists: true };
+        }
+        if (await this.exists(legacyHistoryUri)) {
+            return { revealUri: legacyHistoryUri, displayPath: legacyHistoryUri.fsPath || legacyHistoryUri.toString(), exists: true };
+        }
+        if (await this.exists(metadataUri)) {
+            return { revealUri: metadataUri, displayPath: metadataUri.fsPath || metadataUri.toString(), exists: true };
+        }
+        if (await this.exists(conversationDir)) {
+            return {
+                revealUri: conversationDir,
+                displayPath: conversationDir.fsPath || conversationDir.toString(),
+                exists: false,
+                warning: `Conversation storage files are missing for ${conversationId}; opened the conversation directory instead.`
+            };
+        }
+        return {
+            revealUri: conversationsRoot,
+            displayPath: conversationsRoot.fsPath || conversationsRoot.toString(),
+            exists: false,
+            warning: `Conversation storage files are missing for ${conversationId}; opened the conversations directory instead.`
+        };
     }
 
     private async readJsonFile<T>(uri: any): Promise<StorageReadResult<T>> {

@@ -19,6 +19,7 @@ import { StreamResponseProcessor, isAsyncGenerator } from '../../modules/api/cha
 import { ToolCallParserService } from '../../modules/api/chat/services/ToolCallParserService';
 import type { Content } from '../../modules/conversation/types';
 import { subAgentRunEventBus } from './runEventBus';
+import { subAgentRunController } from './runController';
 
 /**
  * 子代理内部工具执行结果。
@@ -276,10 +277,11 @@ export function createDefaultExecutor(
         const toolCalls: SubAgentToolCall[] = [];
         let steps = 0;
         let modelVersion: string | undefined;
-        // 修改原因：主聊天卡片和 Monitor 需要用稳定 ID 关联同一次 SubAgent 运行，但内部事件不写入主对话历史。
-        // 修改方式：默认执行器在运行开始时创建 runId，并通过内存事件总线广播生命周期事件。
-        // 修改目的：实现“主卡片摘要 + Monitor 详情”的路由基础，同时保持内部过程不持久化。
-        const runId = `subagent_run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+        // 修改原因：主聊天卡片和 Monitor 需要用稳定 ID 关联同一次 SubAgent 运行，但 pending 阶段前端还拿不到最终 ToolResult。
+        // 修改方式：优先使用 handler 根据主工具调用 id 预分配的 runId；没有外部 runId 时才回退为本地随机 runId。
+        // 修改目的：让 pending、完成态和历史态的 Open details 都能定位同一次运行，同时兼容非主聊天入口。
+        const requestedRunId = typeof request.runId === 'string' && request.runId.trim() ? request.runId.trim() : undefined;
+        const runId = requestedRunId || `subagent_run_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
         const initialPromptContent: Content = {
             role: 'user',
             parts: [{
@@ -308,39 +310,93 @@ export function createDefaultExecutor(
             conversationStore: context.conversationStore,
             initialContents: [initialPromptContent]
         });
+        // 修改原因：Monitor 顶部控制按钮只能控制仍在等待主窗口工具结果的活跃 run。
+        // 修改方式：默认 executor 创建 run 后立即注册到 SubAgentRunController，完成/失败时在 finally 中注销。
+        // 修改目的：让 Monitor 可以区分“可中止/退出”的活跃 run 和只能查看的历史 run。
+        subAgentRunController.register(runId, config.name);
         const maxIterations = config.maxIterations ?? 20;
         const maxRuntime = config.maxRuntime ?? 300; // 默认 5 分钟
         const startTime = Date.now();
+        const getActiveElapsedMs = (): number => Math.max(0, Date.now() - startTime - subAgentRunController.getInactiveDurationMs(runId));
         
         // 创建超时控制器
         let timeoutController: AbortController | null = null;
-        let combinedSignal: AbortSignal | undefined = abortSignal;
-        
-        if (maxRuntime > 0) {
-            timeoutController = new AbortController();
-            // 设置超时定时器
-            const timeoutId = setTimeout(() => {
-                timeoutController?.abort();
-            }, maxRuntime * 1000);
-            
-            // 组合信号：用户取消 + 超时
-            if (abortSignal) {
-                // 监听用户取消
-                abortSignal.addEventListener('abort', () => {
-                    clearTimeout(timeoutId);
-                    timeoutController?.abort();
-                });
-            }
-            combinedSignal = timeoutController.signal;
-        }
+        let timeoutId: ReturnType<typeof setInterval> | undefined;
         
         // 检查是否超时的辅助函数
         const checkTimeout = (): { exceeded: boolean; elapsed: number } => {
-            const elapsed = Math.floor((Date.now() - startTime) / 1000);
+            const elapsed = Math.floor(getActiveElapsedMs() / 1000);
             if (maxRuntime > 0 && elapsed >= maxRuntime) {
                 return { exceeded: true, elapsed };
             }
             return { exceeded: false, elapsed };
+        };
+
+        if (maxRuntime > 0) {
+            timeoutController = new AbortController();
+            // 修改原因：Monitor 暂停和等待用户操作的时间不应计入 maxRuntime，固定 setTimeout 会误把暂停时间算入运行时间。
+            // 修改方式：用短间隔轮询 checkTimeout，checkTimeout 会扣除 runController 记录的 inactiveDurationMs。
+            // 修改目的：用户暂停查看 Monitor 或等待手动决策时，SubAgent 不会因为真实墙钟时间流逝而超时失败。
+            timeoutId = setInterval(() => {
+                if (checkTimeout().exceeded) {
+                    timeoutController?.abort();
+                }
+            }, 500);
+            if (abortSignal) {
+                abortSignal.addEventListener('abort', () => {
+                    if (timeoutId) clearInterval(timeoutId);
+                    timeoutController?.abort();
+                });
+            }
+        }
+
+        const createOperationSignal = (): AbortSignal | undefined => {
+            const signals = [abortSignal, timeoutController?.signal, subAgentRunController.getAbortSignal(runId)]
+                .filter((signal): signal is AbortSignal => !!signal);
+            if (signals.length === 0) return undefined;
+            const controller = new AbortController();
+            const abort = () => controller.abort();
+            for (const signal of signals) {
+                if (signal.aborted) {
+                    controller.abort();
+                    break;
+                }
+                signal.addEventListener('abort', abort, { once: true });
+            }
+            return controller.signal;
+        };
+
+        let lastResponse: string = '';
+
+        const buildCancelledResult = (error: string): SubAgentResult => ({
+            success: false,
+            response: lastResponse,
+            modelVersion,
+            steps,
+            runId,
+            toolCalls,
+            error,
+            cancelled: true
+        });
+
+        const waitForControlIfNeeded = async (): Promise<SubAgentResult | null> => {
+            const state = subAgentRunController.getState(runId);
+            if (!state) return null;
+            if (state.status === 'cancelled') {
+                return buildCancelledResult(subAgentRunController.getExitReason(runId) || '用户主动终止 SubAgent 执行');
+            }
+            if (state.status === 'paused' || state.status === 'awaiting_monitor_action') {
+                const status = await subAgentRunController.waitUntilRunnable(runId);
+                if (status === 'cancelled') {
+                    return buildCancelledResult(subAgentRunController.getExitReason(runId) || '用户主动终止 SubAgent 执行');
+                }
+            }
+            return null;
+        };
+
+        const isControlInterruption = (): boolean => {
+            const state = subAgentRunController.getState(runId);
+            return !!state && (state.status === 'paused' || state.status === 'awaiting_monitor_action' || state.status === 'cancelled');
         };
         
         // 检查是否超出迭代次数的辅助函数
@@ -348,10 +404,20 @@ export function createDefaultExecutor(
             if (maxIterations === -1) return false; // -1 表示无限制
             return steps >= maxIterations;
         };
+
+        const resolveFailureModeAfterRetries = (): 'fail_parent_tool' | 'wait_for_monitor_action' => {
+            // 修改原因：旧 SubAgent 配置可能没有 failureModeAfterRetries，但运行时必须有明确策略。
+            // 修改方式：优先使用单个 SubAgent 覆盖值，其次使用全局 SubAgents 默认值，最后回退到 fail_parent_tool。
+            // 修改目的：满足“运行时补齐，不主动写回”的兼容策略。
+            const own = config.failureModeAfterRetries;
+            if (own === 'wait_for_monitor_action' || own === 'fail_parent_tool') return own;
+            const global = context.settingsManager?.getSubAgentsConfig?.()?.failureModeAfterRetries;
+            return global === 'wait_for_monitor_action' ? 'wait_for_monitor_action' : 'fail_parent_tool';
+        };
         
         try {
             // 检查是否取消
-            if (combinedSignal?.aborted || abortSignal?.aborted) {
+            if (abortSignal?.aborted || timeoutController?.signal.aborted) {
                 return {
                     success: false,
                     error: 'Cancelled before execution',
@@ -391,11 +457,15 @@ export function createDefaultExecutor(
             ];
             
             // 工具迭代循环
-            let lastResponse: string = '';
             
             while (true) {
+                const controlWaitResult = await waitForControlIfNeeded();
+                if (controlWaitResult) {
+                    return controlWaitResult;
+                }
+
                 // 检查是否取消或超时
-                if (combinedSignal?.aborted || abortSignal?.aborted) {
+                if (abortSignal?.aborted || timeoutController?.signal.aborted) {
                     const timeoutCheck = checkTimeout();
                     const isTimeout = timeoutCheck.exceeded;
                     return {
@@ -439,13 +509,29 @@ export function createDefaultExecutor(
                 steps++;
                 
                 // 调用 AI
+                const operationSignal = createOperationSignal();
+                let retryFailedInThisCall = false;
                 const generateRequest: any = {
                     configId: config.channel.channelId,
                     history: history,
                     dynamicSystemPrompt: systemPrompt,
-                    abortSignal: combinedSignal,
+                    abortSignal: operationSignal,
                     toolOverrides: availableTools.length > 0 ? availableTools : undefined,
                     suppressRetryNotification: true,
+                    retryStatusCallback: (status: any) => {
+                        if (status?.type === 'retryFailed') {
+                            retryFailedInThisCall = true;
+                        }
+                        // 修改原因：SubAgent 内部自动重试状态不能进入主窗口 retryStatus，但用户需要在 Monitor 里看到。
+                        // 修改方式：通过 GenerateRequest.retryStatusCallback 把 ChannelManager 的 retrying/retrySuccess/retryFailed 事件路由到 SubAgent runEventBus。
+                        // 修改目的：继续复用 Provider 自动重试配置，同时让 Monitor 成为内部重试状态的唯一展示位置。
+                        subAgentRunEventBus.emit({
+                            runId,
+                            agentName: config.name,
+                            type: status?.type || 'run_updated',
+                            payload: status
+                        });
+                    },
                     // 修改原因：SubAgent 解析 XML/JSON prompt tool mode 时必须和主请求使用同一份模式快照。
                     // 修改方式：把父请求解析好的 promptModeSnapshot 继续传给 ChannelManager。
                     // 修改目的：避免 SubAgent 工具声明和工具调用解析在不同 prompt mode 下再次分叉。
@@ -465,7 +551,7 @@ export function createDefaultExecutor(
                         requestStartTime,
                         providerType,
                         toolMode,
-                        abortSignal: combinedSignal,
+                        abortSignal: operationSignal,
                         conversationId: runId
                     });
                     
@@ -474,7 +560,7 @@ export function createDefaultExecutor(
                         // 修改方式：复用 StreamResponseProcessor，并把处理后的 chunk 原样通过事件总线转给 Monitor。
                         // 修改目的：SubAgent Monitor 与主窗口共享流式解析、contentSnapshot 和取消语义。
                         for await (const chunkData of streamProcessor.processStream(result as AsyncGenerator<any>)) {
-                            if (combinedSignal?.aborted || checkTimeout().exceeded) {
+                            if (operationSignal?.aborted || checkTimeout().exceeded) {
                                 break;
                             }
                             subAgentRunEventBus.emit({
@@ -522,6 +608,20 @@ export function createDefaultExecutor(
                             error: `Exceeded maximum runtime (${maxRuntime}s). Elapsed: ${timeoutCheck.elapsed}s`
                         };
                     }
+                    if (operationSignal?.aborted && isControlInterruption()) {
+                        const controlResult = await waitForControlIfNeeded();
+                        if (controlResult) return controlResult;
+                        continue;
+                    }
+
+                    if (retryFailedInThisCall && resolveFailureModeAfterRetries() === 'wait_for_monitor_action') {
+                        const reason = e instanceof Error ? e.message : String(e);
+                        subAgentRunController.markAwaitingMonitorAction(runId, reason);
+                        const controlResult = await waitForControlIfNeeded();
+                        if (controlResult) return controlResult;
+                        continue;
+                    }
+
                     return {
                         success: false,
                         response: lastResponse,
@@ -598,7 +698,8 @@ export function createDefaultExecutor(
                 for (const call of currentToolCalls) {
                     // 执行工具前检查超时
                     const timeoutCheck = checkTimeout();
-                    if (timeoutCheck.exceeded || combinedSignal?.aborted) {
+                    const toolOperationSignal = createOperationSignal();
+                    if (timeoutCheck.exceeded || abortSignal?.aborted || timeoutController?.signal.aborted) {
                         return {
                             success: false,
                             response: lastResponse,
@@ -614,7 +715,7 @@ export function createDefaultExecutor(
                         call.name,
                         call.args,
                         context,
-                        combinedSignal,
+                        toolOperationSignal,
                         allowedToolNames,
                         config,
                         call.id,
@@ -694,6 +795,11 @@ export function createDefaultExecutor(
                 toolCalls,
                 error
             };
+        } finally {
+            // 修改原因：run 完成、失败或取消后不能继续显示为可控制的活跃执行。
+            // 修改方式：executor 最外层 finally 注销 runController 中的活跃记录，事件总线快照仍保留历史。
+            // 修改目的：避免 Monitor 对历史 run 展示“中止/退出”等会影响主工具的按钮。
+            subAgentRunController.unregister(runId);
         }
     };
 }

@@ -902,18 +902,31 @@ export const saveImageToPath: MessageHandler = async (data, requestId, ctx) => {
 
 export const revealConversationInExplorer: MessageHandler = async (data, requestId, ctx) => {
   try {
-    const { conversationId } = data;
-    const conversationsDir = ctx.storagePathManager.getConversationsPath();
-    const conversationFile = vscode.Uri.file(path.join(conversationsDir, `${conversationId}.json`));
-    
-    try {
-      await vscode.workspace.fs.stat(conversationFile);
-    } catch {
-      throw new Error(t('webview.errors.conversationFileNotExists'));
+    const conversationId = typeof data?.conversationId === 'string' ? data.conversationId.trim() : '';
+    if (!conversationId) {
+      ctx.sendError(requestId, 'REVEAL_IN_EXPLORER_ERROR', 'conversationId is required');
+      return;
     }
-    
-    await vscode.commands.executeCommand('revealFileInOS', conversationFile);
-    ctx.sendResponse(requestId, { success: true });
+
+    // 修改原因：旧实现只查找 conversations/{id}.json，但当前历史已迁移到 segmented 目录，导致历史页按钮经常无法使用。
+    // 修改方式：委托 ConversationManager/StorageAdapter 返回真实 revealUri，兼容 history.index.json、legacy json 和 metadata 文件。
+    // 修改目的：让“在文件管理器中显示”跟随存储格式演进，而不是在 handler 中硬编码旧路径。
+    const location = await ctx.conversationManager.getConversationStorageLocation(conversationId);
+    if (!location) {
+      ctx.sendError(requestId, 'REVEAL_IN_EXPLORER_ERROR', 'Current conversation storage does not expose a filesystem location');
+      return;
+    }
+
+    await vscode.commands.executeCommand('revealFileInOS', location.revealUri);
+    if (!location.exists && location.warning) {
+      void vscode.window.showWarningMessage(`LimCode: ${location.warning}`);
+    }
+    ctx.sendResponse(requestId, {
+      success: true,
+      path: location.displayPath,
+      exists: location.exists,
+      warning: location.warning
+    });
   } catch (error: any) {
     ctx.sendError(requestId, 'REVEAL_IN_EXPLORER_ERROR', error.message || t('webview.errors.cannotRevealInExplorer'));
   }

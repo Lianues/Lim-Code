@@ -22,6 +22,24 @@ export interface GenerateRequest {
     
     /** 取消信号 */
     abortSignal?: AbortSignal;
+
+    /**
+     * 单次请求专用重试状态回调。
+     *
+     * 修改原因：SubAgent 内部自动重试状态需要显示在 Monitor，但不能污染主窗口全局 retryStatus UI。
+     * 修改方式：在 GenerateRequest 上增加局部 retryStatusCallback；ChannelManager 优先使用它，否则再使用全局回调。
+     * 修改目的：Provider 自动重试仍由 ChannelManager 统一负责，同时允许调用方自定义重试状态路由。
+     */
+    retryStatusCallback?: (status: {
+        type: 'retrying' | 'retrySuccess' | 'retryFailed';
+        attempt: number;
+        maxAttempts: number;
+        error?: string;
+        errorDetails?: any;
+        nextRetryIn?: number;
+        createdAt: number;
+        conversationId?: string;
+    }) => void;
     
     /**
      * 动态系统提示词（可选）

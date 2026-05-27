@@ -510,6 +510,11 @@ const ja: LanguageMessages = {
                 viewDiff: '差分を表示',
                 viewDiffInVSCode: 'VSCode で差分を表示',
                 openDiffFailed: 'diff プレビューを開くのに失敗しました',
+                // 修改原因：SubAgent details の入口は Vue の直書きボタンではなく ToolConfig action で描画されるようになった。
+                // 修改方式：ToolMessage action が参照する message.tool 名前空間にラベルと tooltip を追加する。
+                // 修改目的：pending と完了状態の Open details を同じ多言語文言で表示する。
+                openDetails: '詳細を開く',
+                openSubAgentMonitorDetails: 'SubAgent Monitor の詳細を開く',
                 todoWrite: {
                     label: 'TODO',
                     labelWithCount: 'TODO · {count}',
@@ -1432,6 +1437,19 @@ const ja: LanguageMessages = {
                 globalConfig: 'グローバル設定',
                 maxConcurrentAgents: '最大同時実行数',
                 maxConcurrentAgentsHint: 'AI が一度に呼び出せるサブエージェントの最大数（-1 で無制限）',
+                failureMode: {
+                    // 修改原因：SubAgent の自動再試行失敗後の動作が設定可能になり、設定画面で一貫して表示する必要がある。
+                    // 修改方式：zh-CN/en と同じキー構造を追加し、Vue 側の参照パスを共通化する。
+                    // 修改目的：UI 文言の直書きを避け、多言語設定画面の整合性を保つ。
+                    globalLabel: '再試行失敗後の既定処理',
+                    globalHint: 'Provider の自動再試行がすべて失敗した後のグローバル既定動作。',
+                    agentLabel: '再試行失敗後の処理',
+                    agentHint: 'このサブエージェントで Provider の自動再試行がすべて失敗した後の動作。',
+                    failParentTool: '親ツールをすぐ失敗させる',
+                    failParentToolDescription: '既定動作：SubAgent を失敗にし、その失敗をメインチャットのツールへ返します。',
+                    waitForMonitorAction: 'Monitor の操作を待つ',
+                    waitForMonitorActionDescription: 'メインチャットのツールを待機させ、Monitor で再試行または退出を選びます。'
+                },
                 basicInfo: '基本情報',
                 description: '説明',
                 descriptionPlaceholder: 'メイン AI がこのサブエージェントを使用すべき状況を説明',

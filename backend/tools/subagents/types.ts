@@ -15,6 +15,15 @@ import type { ResolvedPromptModeSnapshot } from '../../modules/settings/types';
 export type SubAgentType = string;
 
 /**
+ * Provider 自动重试耗尽后的 SubAgent 处理策略。
+ *
+ * 修改原因：SubAgent 复用 ChannelManager 自动重试后，仍需要决定重试耗尽时主工具是否立即失败。
+ * 修改方式：在 SubAgent 运行时类型中声明同一组稳定枚举值，与 SettingsManager 的持久化字段保持一致。
+ * 修改目的：让 executor、registry 和 Monitor 控制器共享同一语义，避免字符串特判散落。
+ */
+export type SubAgentFailureModeAfterRetries = 'fail_parent_tool' | 'wait_for_monitor_action';
+
+/**
  * 子代理渠道配置
  * 
  * 指定子代理使用的 AI 渠道和模型
@@ -83,6 +92,15 @@ export interface SubAgentConfig {
     
     /** 最大运行时间（秒，默认 300，-1 表示无限制） */
     maxRuntime?: number;
+
+    /**
+     * Provider 自动重试耗尽后的处理策略。
+     *
+     * 修改原因：单个 SubAgent 需要能覆盖全局默认策略，决定失败后是否等待 Monitor 操作。
+     * 修改方式：字段保持可选，运行时由 settings 全局默认值补齐。
+     * 修改目的：兼容旧配置，并为后续暂停/等待状态机提供明确策略输入。
+     */
+    failureModeAfterRetries?: SubAgentFailureModeAfterRetries;
     
     /** 是否启用（禁用的代理不会出现在工具列表中） */
     enabled?: boolean;
@@ -100,6 +118,15 @@ export interface SubAgentRequest {
     
     /** 附加上下文（可选） */
     context?: string;
+
+    /**
+     * 外部预分配的 SubAgent 运行实例 ID。
+     *
+     * 修改原因：主窗口工具卡片在 pending 阶段还没有 ToolResult，但需要立即显示并打开 Open details。
+     * 修改方式：subagents handler 根据主工具调用 id 预先生成 runId，再交给默认 executor 使用。
+     * 修改目的：pending、完成态和历史态都用同一个 runId 打开同一次 Monitor 运行。
+     */
+    runId?: string;
 }
 
 /**

@@ -777,9 +777,9 @@ export function createSearchInFilesTool(): Tool {
     const workspaces = getAllWorkspaces();
     const isMultiRoot = workspaces.length > 1;
     
-    let pathDescription = 'Search path relative to workspace root. This parameter accepts exactly one file or directory, not a whitespace-separated list. Use "dir/" (trailing slash) for one directory, or "dir/file.ext" for one file. For multiple directories/files, make separate parallel search_in_files calls. Default "." searches the entire workspace.';
+    let pathDescription = '搜索路径，相对于工作区根目录。该参数只能填写一个文件或一个目录，不能填写用空格分隔的多个路径。搜索一个目录时使用 "dir/"（末尾斜杠），搜索一个文件时使用 "dir/file.ext"。如果要搜索多个目录或文件，请分别并行调用多次 search_in_files。默认 "." 表示搜索整个工作区。';
     if (isMultiRoot) {
-        pathDescription = `Search path, use "workspace_name/path" format. This parameter accepts exactly one file or directory, not a whitespace-separated list. Use "workspace_name/dir/" (trailing slash) for one directory, or "workspace_name/file.ext" for one file. For multiple directories/files, make separate parallel search_in_files calls. Use "." to search all workspaces. Available workspaces: ${workspaces.map(w => w.name).join(', ')}`;
+        pathDescription = `搜索路径，使用 "workspace_name/path" 格式。该参数只能填写一个文件或一个目录，不能填写用空格分隔的多个路径。搜索一个目录时使用 "workspace_name/dir/"（末尾斜杠），搜索一个文件时使用 "workspace_name/file.ext"。如果要搜索多个目录或文件，请分别并行调用多次 search_in_files。使用 "." 搜索所有工作区。可用工作区：${workspaces.map(w => w.name).join(', ')}`;
     }
     
     return {
@@ -788,11 +788,11 @@ export function createSearchInFilesTool(): Tool {
             strict: true,  // API 端强制 schema 校验
             // 这段 description 是模型实际看到的工具提示词。
             // 为什么要改：旧文案只说“搜索关键词或正则”，没有说明多关键词兜底，也没有区分文件搜索与 history_search 的 read 流程。
-            // 怎么改：把非正则空格关键词兜底、`|` 仅属于正则模式、path 只能填一个路径、以及后续读取必须用 read_file 写进主描述。
-            // 目的：降低模型把 history_search 的 start_line/end_line 语法或“多个路径塞进一个 path 字符串”的错误用法迁移到 search_in_files 的概率。
+            // 怎么改：把非正则空格关键词兜底、`|` 仅属于正则模式、path 只能填一个路径、以及后续读取必须用 read_file 写进主描述，并把面向模型的说明统一改为中文。
+            // 目的：降低模型把 history_search 的 start_line/end_line 语法或“多个路径塞进一个 path 字符串”的错误用法迁移到 search_in_files 的概率，同时让中文用户场景下的模型更容易遵循工具边界。
             description: isMultiRoot
-                ? `Search or search-and-replace content in multiple workspace files. Supports regular expressions. In search mode with isRegex=false, whitespace-separated multi-keyword queries first try the exact phrase and, if no matches are found, automatically fall back to keyword OR search. Use isRegex=true for regex OR such as "foo|bar"; in non-regex mode "|" is a literal character. This tool has no read mode or start_line/end_line parameters; use read_file to read matched files. The path parameter accepts exactly one file or directory, not multiple whitespace-separated paths; for multiple paths, call search_in_files separately for each path in parallel. Use "workspace_name/dir/" (trailing slash) for one directory, or "workspace_name/file.ext" for one file. Use "." to search all workspaces. Available workspaces: ${workspaces.map(w => w.name).join(', ')}.`
-                : 'Search or search-and-replace content in workspace files. Supports regular expressions. In search mode with isRegex=false, whitespace-separated multi-keyword queries first try the exact phrase and, if no matches are found, automatically fall back to keyword OR search. Use isRegex=true for regex OR such as "foo|bar"; in non-regex mode "|" is a literal character. This tool has no read mode or start_line/end_line parameters; use read_file to read matched files. The path parameter accepts exactly one file or directory, not multiple whitespace-separated paths; for multiple paths, call search_in_files separately for each path in parallel. Use "dir/" (trailing slash) for one directory, or "dir/file.ext" for one file. Returns matching files and context.',
+                ? `在多个工作区文件中搜索内容，或执行搜索并替换。支持正则表达式。搜索模式下，当 isRegex=false 时，空格分隔的多关键词查询会先尝试完整短语；如果没有命中，会自动降级为关键词 OR 搜索。需要使用 "foo|bar" 这类正则 OR 时，请设置 isRegex=true；非正则模式下 "|" 是普通字面字符。本工具没有 read 模式，也没有 start_line/end_line 参数；需要读取匹配文件时请使用 read_file。path 参数只能填写一个文件或一个目录，不能填写多个空格分隔路径；如果要搜索多个路径，请分别并行调用多次 search_in_files。搜索一个目录时使用 "workspace_name/dir/"（末尾斜杠），搜索一个文件时使用 "workspace_name/file.ext"。使用 "." 搜索所有工作区。可用工作区：${workspaces.map(w => w.name).join(', ')}。`
+                : '在工作区文件中搜索内容，或执行搜索并替换。支持正则表达式。搜索模式下，当 isRegex=false 时，空格分隔的多关键词查询会先尝试完整短语；如果没有命中，会自动降级为关键词 OR 搜索。需要使用 "foo|bar" 这类正则 OR 时，请设置 isRegex=true；非正则模式下 "|" 是普通字面字符。本工具没有 read 模式，也没有 start_line/end_line 参数；需要读取匹配文件时请使用 read_file。path 参数只能填写一个文件或一个目录，不能填写多个空格分隔路径；如果要搜索多个路径，请分别并行调用多次 search_in_files。搜索一个目录时使用 "dir/"（末尾斜杠），搜索一个文件时使用 "dir/file.ext"。返回匹配文件和上下文。',
             category: 'search',
             parameters: {
                 type: 'object',
@@ -800,12 +800,12 @@ export function createSearchInFilesTool(): Tool {
                     mode: {
                         type: 'string',
                         enum: ['search', 'replace'],
-                        description: 'Operation mode. Use "search" for finding content only, use "replace" for search and replace.',
+                        description: '操作模式。使用 "search" 只搜索内容；使用 "replace" 执行搜索并替换。',
                         default: 'search'
                     },
                     query: {
                         type: 'string',
-                        description: 'Search keyword, exact phrase, or regular expression. In search mode with isRegex=false, whitespace-separated multi-keyword queries first try the exact phrase and, if no matches are found, automatically fall back to keyword OR search. Use isRegex=true for explicit regex OR such as "foo|bar"; non-regex "|" is searched literally.'
+                        description: '搜索关键词、完整短语或正则表达式。搜索模式下，当 isRegex=false 时，空格分隔的多关键词查询会先尝试完整短语；如果没有命中，会自动降级为关键词 OR 搜索。需要使用 "foo|bar" 这类显式正则 OR 时，请设置 isRegex=true；非正则模式下 "|" 会按普通字面字符搜索。'
                     },
                     path: {
                         type: 'string',
@@ -814,26 +814,29 @@ export function createSearchInFilesTool(): Tool {
                     },
                     pattern: {
                         type: 'string',
-                        description: 'File matching pattern, e.g., "*.ts" or "**/*.js"',
+                        // 为什么要改：模型会把 "*.ts" 当成递归搜索，导致在 webview/handlers 这类子目录中漏搜。
+                        // 怎么改：在 pattern 参数描述里明确 glob 递归语义，说明 "*.ts" 只匹配当前搜索根的一级文件，递归要用 "**/*.ts"；同时把说明改为中文。
+                        // 目的：让模型在不知道具体子目录时优先使用递归 pattern，减少“正则正确但文件模式过窄”的零命中。
+                        description: '文件匹配模式，例如 "*.ts" 或 "**/*.js"。"*.ts" 只匹配搜索路径直属的一层文件；如果要递归搜索子目录，请使用 "**/*.ts"。',
                         default: '**/*'
                     },
                     isRegex: {
                         type: 'boolean',
-                        description: 'Whether to treat query as a regular expression',
+                        description: '是否把 query 当作正则表达式处理。',
                         default: false
                     },
                     maxResults: {
                         type: 'number',
-                        description: '[Search mode] Maximum number of match results',
+                        description: '[search 模式] 最大匹配结果数量。',
                         default: 100
                     },
                     replace: {
                         type: 'string',
-                        description: '[Replace mode] Replacement string. Supports regex capture groups like $1, $2 when isRegex is true.'
+                        description: '[replace 模式] 替换字符串。当 isRegex=true 时，支持 $1、$2 这类正则捕获组引用。'
                     },
                     maxFiles: {
                         type: 'number',
-                        description: '[Replace mode] Maximum number of files to process',
+                        description: '[replace 模式] 最多处理的文件数量。',
                         default: 50
                     }
                 },

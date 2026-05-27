@@ -3,6 +3,7 @@
  */
 
 import { registerTool } from '../../toolRegistry'
+import { createDiffPreviewAction } from '../diffPreviewAction'
 import SearchInFilesComponent from '../../../components/tools/search/search_in_files.vue'
 
 // 注册 search_in_files 工具
@@ -49,26 +50,24 @@ registerTool('search_in_files', {
   
   // 使用自定义组件显示内容
   contentComponent: SearchInFilesComponent,
-  
-  // 启用 diff 预览功能（仅在替换模式下）
-  hasDiffPreview: true,
-  
-  // 获取所有替换的文件路径
-  getDiffFilePath: (args: Record<string, unknown>, result?: Record<string, unknown>) => {
-    // 只有替换模式才支持 diff 预览
-    const mode = args.mode as string || 'search'
-    if (mode !== 'replace') {
-      return []
-    }
-    
-    // 从结果中获取替换的文件路径
-    const resultData = result?.data as Record<string, unknown> | undefined
-    const results = resultData?.results as Array<{ file: string }> | undefined
-    
-    if (!results || results.length === 0) {
-      return []
-    }
-    
-    return results.map(r => r.file)
-  }
+  actions: [
+    createDiffPreviewAction((args: Record<string, unknown>, result?: Record<string, unknown>) => {
+      // 修改原因：search_in_files 只有 replace 模式会生成 diff，旧 hasDiffPreview 需要迁移为 action 的 visible 条件。
+      // 修改方式：resolver 在非 replace 模式返回空数组；共享 action 会因此隐藏按钮。
+      // 修改目的：搜索模式不显示 diff 按钮，替换模式继续保留旧的查看差异行为。
+      const mode = args.mode as string || 'search'
+      if (mode !== 'replace') {
+        return []
+      }
+      
+      const resultData = result?.data as Record<string, unknown> | undefined
+      const results = resultData?.results as Array<{ file: string }> | undefined
+      
+      if (!results || results.length === 0) {
+        return []
+      }
+      
+      return results.map(r => r.file)
+    })
+  ]
 })

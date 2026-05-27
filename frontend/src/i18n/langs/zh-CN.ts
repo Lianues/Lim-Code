@@ -510,6 +510,11 @@ const zhCN: LanguageMessages = {
                 viewDiff: '查看差异',
                 viewDiffInVSCode: '在 VSCode 中查看差异',
                 openDiffFailed: '打开 diff 预览失败',
+                // 修改原因：SubAgent 详情入口已改为 ToolConfig 通用 action，不能继续在 Vue 里硬编码英文或中文。
+                // 修改方式：把按钮文案和 tooltip 放入 message.tool 命名空间，供 ToolMessage 统一读取。
+                // 修改目的：让 pending 和完成态的 Open details 都走同一套国际化文案。
+                openDetails: '打开详情',
+                openSubAgentMonitorDetails: '打开 SubAgent Monitor 详情',
                 todoWrite: {
                     label: 'TODO',
                     labelWithCount: 'TODO · {count}',
@@ -1432,6 +1437,19 @@ const zhCN: LanguageMessages = {
                 globalConfig: '全局配置',
                 maxConcurrentAgents: '最大并发数',
                 maxConcurrentAgentsHint: 'AI 一次性可调用的最大子代理数量（-1 表示无限制）',
+                failureMode: {
+                    // 修改原因：SubAgent 自动重试耗尽后的行为已变成可配置项，需要在设置页明确表达两种后果。
+                    // 修改方式：把全局和单代理设置文案放在 subagents 命名空间下，沿用现有 i18n 结构。
+                    // 修改目的：避免在 Vue 组件内硬编码中文，同时让英文/日文语言包保持同构。
+                    globalLabel: '自动重试失败后的默认处理',
+                    globalHint: 'Provider 自动重试全部失败后的全局默认行为。',
+                    agentLabel: '自动重试失败后的处理',
+                    agentHint: '此子代理的 Provider 自动重试全部失败后如何处理。',
+                    failParentTool: '立刻让主工具失败',
+                    failParentToolDescription: '默认行为：SubAgent 失败，并把失败返回给主聊天工具。',
+                    waitForMonitorAction: '等待 Monitor 手动处理',
+                    waitForMonitorActionDescription: '主聊天工具保持等待，用户在 Monitor 中选择继续重试或退出。'
+                },
                 basicInfo: '基本信息',
                 description: '描述',
                 descriptionPlaceholder: '向主 AI 说明何时使用此子代理',

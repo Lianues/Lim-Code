@@ -1039,6 +1039,15 @@ export interface SummarizeConfig {
 }
 
 /**
+ * Provider 自动重试耗尽后的 SubAgent 处理策略。
+ *
+ * 修改原因：SubAgent 已复用 Provider 自动重试，但自动重试耗尽后需要由用户配置主工具是立即失败还是等待 Monitor 手动处理。
+ * 修改方式：定义可同步设置中的稳定枚举值，供全局 SubAgents 配置和单个 SubAgent 配置共同使用。
+ * 修改目的：避免在 executor 或 UI 中散落字符串常量，确保后续状态机和设置页使用同一语义来源。
+ */
+export type SubAgentFailureModeAfterRetries = 'fail_parent_tool' | 'wait_for_monitor_action';
+
+/**
  * 子代理工具配置
  */
 export interface SubAgentToolsConfig {
@@ -1101,6 +1110,15 @@ export interface SubAgentConfigItem {
      * 默认: 300 (5分钟)
      */
     maxRuntime?: number;
+
+    /**
+     * Provider 自动重试耗尽后的处理策略。
+     *
+     * 修改原因：每个 SubAgent 需要能覆盖全局默认值，决定自动重试失败后是立刻让主窗口工具失败，还是等待 Monitor 操作。
+     * 修改方式：字段保持可选，旧配置运行时按全局默认值补齐，不在读取时主动写回 Settings Sync。
+     * 修改目的：兼容旧 SubAgent，同时为后续 run 状态机提供明确策略输入。
+     */
+    failureModeAfterRetries?: SubAgentFailureModeAfterRetries;
     
     /**
      * 是否启用
@@ -1122,6 +1140,15 @@ export interface SubAgentsConfig extends Record<string, unknown> {
      * 默认: 3
      */
     maxConcurrentAgents?: number;
+
+    /**
+     * 全局默认的 Provider 自动重试耗尽处理策略。
+     *
+     * 修改原因：需要有一个可同步的全局默认值覆盖所有未显式配置的旧 SubAgent。
+     * 修改方式：放在现有 limcode.toolsConfig.subagents 下，继续走 VS Code Settings Sync。
+     * 修改目的：不新增并行存储机制，同时让用户能统一调整 SubAgent 默认失败恢复行为。
+     */
+    failureModeAfterRetries?: SubAgentFailureModeAfterRetries;
 }
 
 /**
@@ -1129,7 +1156,11 @@ export interface SubAgentsConfig extends Record<string, unknown> {
  */
 export const DEFAULT_SUBAGENTS_CONFIG: SubAgentsConfig = {
     agents: [],
-    maxConcurrentAgents: 3
+    maxConcurrentAgents: 3,
+    // 修改原因：设计要求每个 SubAgent 默认在 Provider 自动重试耗尽后立刻让主窗口工具失败。
+    // 修改方式：全局默认值设为 fail_parent_tool；旧配置读取时会合并该默认值，但不会主动写回。
+    // 修改目的：保持安全的默认行为，同时允许后续用户显式改为等待 Monitor 手动处理。
+    failureModeAfterRetries: 'fail_parent_tool'
 };
 
 /**

@@ -12,7 +12,7 @@
 
 import { ref, computed, h, watchEffect, watch, nextTick, onMounted, onBeforeUnmount, type Component, type ComponentPublicInstance } from 'vue'
 import type { ToolUsage, Message } from '../../types'
-import { getToolConfig } from '../../utils/toolRegistry'
+import { getToolConfig, type ToolActionConfig, type ToolActionContext } from '../../utils/toolRegistry'
 import { ensureMcpToolRegistered } from '../../utils/tools'
 import { useChatStore } from '../../stores'
 import { sendToExtension, onExtensionCommand, showNotification } from '../../utils/vscode'
@@ -850,20 +850,47 @@ function shouldShowToolContent(tool: ToolUsage): boolean {
   return isExpandable(tool) && isExpanded(tool.id)
 }
 
-// 检查工具是否支持 diff 预览
-function hasDiffPreview(tool: ToolUsage): boolean {
-  const config = getToolConfig(tool.name)
-  return config?.hasDiffPreview === true
+function getToolActionContext(): ToolActionContext {
+  // 修改原因：工具 action 需要知道当前 conversationId，例如历史 SubAgent 卡片打开 Monitor 时要用它恢复 metadata 子记录。
+  // 修改方式：由 ToolMessage 统一从 chatStore 注入上下文，而不是让每个工具 action 自己读取 UI 状态。
+  // 修改目的：保持 ToolConfig action 是通用声明，同时避免各工具重复依赖 chatStore。
+  return { conversationId: chatStore.currentConversationId }
 }
 
-// 获取 diff 预览的文件路径
-function getDiffFilePaths(tool: ToolUsage): string[] {
+function resolveToolActionText(
+  value: ToolActionConfig['label'] | ToolActionConfig['title'] | undefined,
+  tool: ToolUsage,
+  fallback = ''
+): string {
+  if (!value) return fallback
+  return typeof value === 'function' ? value(tool, getToolActionContext()) : value
+}
+
+function getVisibleToolActions(tool: ToolUsage): ToolActionConfig[] {
   const config = getToolConfig(tool.name)
-  if (!config?.getDiffFilePath) return []
-  
-  const result = config.getDiffFilePath(tool.args, tool.result as Record<string, unknown> | undefined)
-  if (Array.isArray(result)) return result
-  return result ? [result] : []
+  const actions = config?.actions || []
+  const context = getToolActionContext()
+  // 修改原因：不同工具 action 的显示条件不同，subagents 在 pending 阶段会用 tool.id 推导 runId。
+  // 修改方式：ToolMessage 统一执行 visible 谓词过滤，默认显示未声明 visible 的 action。
+  // 修改目的：避免在模板里为具体工具写条件分支，同时让“执行中打开详情”由工具配置自行决定。
+  return actions.filter(action => {
+    try {
+      return action.visible ? action.visible(tool, context) : true
+    } catch {
+      return false
+    }
+  })
+}
+
+async function runToolAction(action: ToolActionConfig, tool: ToolUsage) {
+  try {
+    // 修改原因：显眼操作按钮可能打开 VS Code 面板或触发后端 handler，需要统一阻止事件冒泡并处理错误。
+    // 修改方式：ToolMessage 调用 action.run，并传入同一份 ToolActionContext。
+    // 修改目的：所有工具 action 共用执行入口，避免每个按钮都复制 sendToExtension 错误处理。
+    await action.run(tool, getToolActionContext())
+  } catch (err) {
+    console.error(`Failed to run tool action ${action.id}:`, err)
+  }
 }
 
 // 获取 diff 警戒值警告（优先使用实时 pending 数据，其次使用工具结果中的兜底数据）
@@ -886,28 +913,6 @@ function getDiffGuardWarning(tool: ToolUsage): { warning: string; deletePercent:
     }
   }
   return null
-}
-
-// 打开 diff 预览（在 VSCode 中）
-async function openDiffPreview(tool: ToolUsage) {
-  const paths = getDiffFilePaths(tool)
-  if (paths.length === 0) return
-  
-  try {
-    // 使用 JSON 序列化确保数据可克隆
-    const serializedArgs = JSON.parse(JSON.stringify(tool.args || {}))
-    const serializedResult = tool.result ? JSON.parse(JSON.stringify(tool.result)) : undefined
-    
-    await sendToExtension('diff.openPreview', {
-      toolId: tool.id,
-      toolName: tool.name,
-      filePaths: paths,
-      args: serializedArgs,
-      result: serializedResult
-    })
-  } catch (err) {
-    console.error(t('components.message.tool.openDiffFailed'), err)
-  }
 }
 
 // 获取状态图标
@@ -1147,17 +1152,20 @@ function renderToolContent(tool: ToolUsage) {
               <span class="reject-btn-text">{{ t('components.message.tool.reject') }}</span>
             </button>
             
-            <!-- diff 预览按钮 -->
+            <!-- 通用工具显眼操作按钮 -->
             <button
-              v-if="hasDiffPreview(tool) && getDiffFilePaths(tool).length > 0"
-              class="diff-preview-btn"
-              :title="t('components.message.tool.viewDiffInVSCode')"
-              @click.stop="openDiffPreview(tool)"
+              v-for="action in getVisibleToolActions(tool)"
+              :key="action.id"
+              class="tool-action-btn"
+              :class="action.variant ? `tool-action-${action.variant}` : ''"
+              :title="resolveToolActionText(action.title, tool, resolveToolActionText(action.label, tool))"
+              @click.stop="runToolAction(action, tool)"
             >
-              <span class="diff-btn-icon codicon codicon-diff"></span>
-              <span class="diff-btn-text">{{ t('components.message.tool.viewDiff') }}</span>
-              <span class="diff-btn-arrow codicon codicon-arrow-right"></span>
+              <span v-if="action.icon" :class="['tool-action-icon', 'codicon', action.icon]"></span>
+              <span class="tool-action-text">{{ resolveToolActionText(action.label, tool) }}</span>
+              <span class="tool-action-arrow codicon codicon-arrow-right"></span>
             </button>
+
           </div>
         </div>
       </div>
@@ -1336,7 +1344,10 @@ function renderToolContent(tool: ToolUsage) {
 
 .tool-description-row {
   display: flex;
-  align-items: flex-start;
+  /* 修改原因：通用 action 按钮放在描述行右侧，flex-start 会让 Open details 贴到描述顶部而不是上下居中。
+     修改方式：把交叉轴对齐改为 center，保留旧描述行结构和右侧按钮位置。
+     修改目的：让 pending 与完成态的详情按钮都与描述文本纵向居中，同时不破坏旧 Diff 预览按钮布局。 */
+  align-items: center;
   justify-content: space-between;
   gap: var(--spacing-sm, 8px);
   margin-left: 28px; /* 对齐图标 */
@@ -1470,8 +1481,10 @@ function renderToolContent(tool: ToolUsage) {
   white-space: nowrap;
 }
 
-/* Diff 预览按钮 - 极简灰白设计 */
-.diff-preview-btn {
+/* 修改原因：Open details 和 View Diff 是同一层级的工具头部显眼操作，不能再使用展开区的新按钮样式。
+   修改方式：通用 action 按钮完整沿用旧 Diff 预览按钮的灰白描边、尺寸和 hover 反馈。
+   修改目的：恢复修改前老按钮的视觉体系，并让新增的 SubAgent 详情入口与现有工具操作一致。 */
+.tool-action-btn {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -1482,36 +1495,42 @@ function renderToolContent(tool: ToolUsage) {
   color: var(--vscode-foreground);
   font-size: 11px;
   font-weight: 500;
+  line-height: 1;
   cursor: pointer;
   transition: all 0.12s ease;
   flex-shrink: 0;
 }
 
-.diff-preview-btn:hover {
+.tool-action-btn:hover {
   background: rgba(128, 128, 128, 0.1);
   border-color: #777777;
 }
 
-.diff-preview-btn:active {
+.tool-action-btn:active {
   background: rgba(128, 128, 128, 0.2);
 }
 
-.diff-btn-icon {
+.tool-action-danger {
+  border-color: var(--vscode-errorForeground);
+  color: var(--vscode-errorForeground);
+}
+
+.tool-action-icon {
   font-size: 12px;
   opacity: 0.85;
 }
 
-.diff-btn-text {
+.tool-action-text {
   white-space: nowrap;
 }
 
-.diff-btn-arrow {
+.tool-action-arrow {
   font-size: 10px;
   opacity: 0.5;
   transition: transform 0.12s ease, opacity 0.12s ease;
 }
 
-.diff-preview-btn:hover .diff-btn-arrow {
+.tool-action-btn:hover .tool-action-arrow {
   transform: translateX(2px);
   opacity: 0.8;
 }

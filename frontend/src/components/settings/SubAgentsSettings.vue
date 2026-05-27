@@ -19,6 +19,12 @@ const { t } = useI18n()
 
 // ==================== 类型定义 ====================
 
+// Provider 自动重试耗尽后的处理策略。
+// 修改原因：设置页需要同时编辑全局默认策略和单个 SubAgent 覆盖策略。
+// 修改方式：在前端声明与后端一致的稳定枚举，供 CustomSelect 选项和保存逻辑复用。
+// 修改目的：避免 UI 中散落字符串常量，后续 Monitor 状态机接入时仍保持同一语义。
+type FailureModeAfterRetries = 'fail_parent_tool' | 'wait_for_monitor_action'
+
 // 子代理工具配置
 interface SubAgentToolsConfig {
   mode: 'all' | 'builtin' | 'mcp' | 'whitelist' | 'blacklist'
@@ -40,6 +46,7 @@ interface SubAgentConfig {
   tools: SubAgentToolsConfig
   maxIterations?: number
   maxRuntime?: number
+  failureModeAfterRetries?: FailureModeAfterRetries
   enabled?: boolean
 }
 
@@ -66,6 +73,10 @@ interface ToolInfo {
 
 // 全局配置
 const maxConcurrentAgents = ref(3)
+// 修改原因：Provider 自动重试耗尽后的默认处理策略属于 SubAgents 全局配置。
+// 修改方式：用独立 ref 保存后端运行时补齐后的全局默认值，并通过 updateGlobalConfig 写回 limcode.toolsConfig.subagents。
+// 修改目的：继续复用 VS Code Settings Sync，不新增并行存储。
+const globalFailureModeAfterRetries = ref<FailureModeAfterRetries>('fail_parent_tool')
 
 // 子代理列表
 const subAgents = ref<SubAgentConfig[]>([])
@@ -137,6 +148,20 @@ const modelOptions = computed<SelectOption[]>(() => {
   }))
 })
 
+// Provider 自动重试耗尽后的策略选项
+const failureModeOptions = computed<SelectOption[]>(() => [
+  {
+    value: 'fail_parent_tool',
+    label: t('components.settings.subagents.failureMode.failParentTool'),
+    description: t('components.settings.subagents.failureMode.failParentToolDescription')
+  },
+  {
+    value: 'wait_for_monitor_action',
+    label: t('components.settings.subagents.failureMode.waitForMonitorAction'),
+    description: t('components.settings.subagents.failureMode.waitForMonitorActionDescription')
+  }
+])
+
 // 工具模式选项
 const toolModeOptions = computed<SelectOption[]>(() => [
   { value: 'all', label: t('components.settings.subagents.toolMode.all') },
@@ -203,13 +228,17 @@ async function toggleTool(toolName: string, selected: boolean) {
 async function loadSubAgents() {
   isLoading.value = true
   try {
-    const response = await sendToExtension<{ agents: SubAgentConfig[], maxConcurrentAgents?: number }>('subagents.list', {})
+    const response = await sendToExtension<{ agents: SubAgentConfig[], maxConcurrentAgents?: number, failureModeAfterRetries?: FailureModeAfterRetries }>('subagents.list', {})
     if (response?.agents) {
       subAgents.value = response.agents
       // 加载全局配置
       if (response.maxConcurrentAgents !== undefined) {
         maxConcurrentAgents.value = response.maxConcurrentAgents
       }
+      // 修改原因：旧后端或旧配置可能不返回该字段，设置页仍需要有安全默认值。
+      // 修改方式：读取后端运行时补齐值；缺失时回退到 fail_parent_tool。
+      // 修改目的：保持“默认立刻失败”的语义，并避免 UI 出现空选项。
+      globalFailureModeAfterRetries.value = response.failureModeAfterRetries || 'fail_parent_tool'
       // 如果有代理但没有选中，选中第一个
       if (subAgents.value.length > 0 && !currentAgentType.value) {
         currentAgentType.value = subAgents.value[0].type
@@ -222,6 +251,13 @@ async function loadSubAgents() {
   }
 }
 
+function normalizeFailureMode(value: unknown): FailureModeAfterRetries {
+  // 修改原因：CustomSelect 事件值来自通用组件，类型层面是 unknown/string，不能直接信任。
+  // 修改方式：集中校验两个设计确认的枚举值，非法值回退到安全默认 fail_parent_tool。
+  // 修改目的：避免错误配置写入 Settings Sync，并确保后续运行状态机只处理已知策略。
+  return value === 'wait_for_monitor_action' ? 'wait_for_monitor_action' : 'fail_parent_tool'
+}
+
 // 更新全局配置
 async function updateGlobalConfig(key: string, value: unknown) {
   try {
@@ -229,6 +265,22 @@ async function updateGlobalConfig(key: string, value: unknown) {
   } catch (error) {
     console.error('Failed to update global config:', error)
   }
+}
+
+async function updateGlobalFailureMode(value: unknown) {
+  // 修改原因：全局失败策略需要先更新本地 UI，再写入现有 subagents 全局配置。
+  // 修改方式：通过 normalizeFailureMode 收敛值域，然后复用 updateGlobalConfig。
+  // 修改目的：保持 UI 响应即时，同时不绕过后端的枚举校验。
+  const mode = normalizeFailureMode(value)
+  globalFailureModeAfterRetries.value = mode
+  await updateGlobalConfig('failureModeAfterRetries', mode)
+}
+
+async function updateAgentFailureMode(value: unknown) {
+  // 修改原因：单个 SubAgent 可以覆盖全局默认策略，但旧配置缺失字段时不能因读取而主动写回。
+  // 修改方式：只有用户在选择框中明确修改时，才通过 updateAgentField 持久化该字段。
+  // 修改目的：满足“运行时补齐，不主动写回”的兼容要求。
+  await updateAgentField('failureModeAfterRetries', normalizeFailureMode(value))
 }
 
 // 加载渠道列表
@@ -353,6 +405,10 @@ async function createAgent() {
       systemPrompt: '',
       channel: { channelId: '' },
       tools: { mode: 'all' },
+      // 修改原因：产品要求每个新建 SubAgent 默认在 Provider 自动重试耗尽后立刻让主窗口工具失败。
+      // 修改方式：创建请求显式传入 fail_parent_tool，后端也会兜底同一默认值。
+      // 修改目的：即使全局默认后续被用户改为等待，新建代理仍有清晰的单代理默认策略。
+      failureModeAfterRetries: 'fail_parent_tool',
       enabled: true
     })
     
@@ -475,6 +531,20 @@ onMounted(async () => {
             />
             <span class="field-hint">{{ t('components.settings.subagents.maxConcurrentAgentsHint') }}</span>
           </div>
+          <div class="form-group flex-1">
+            <label>{{ t('components.settings.subagents.failureMode.globalLabel') }}</label>
+            <!--
+              修改原因：用户需要配置 Provider 自动重试耗尽后，SubAgent 主工具是立即失败还是等待 Monitor 手动处理。
+              修改方式：复用现有 CustomSelect，值写入 limcode.toolsConfig.subagents.failureModeAfterRetries。
+              修改目的：不新增设置存储机制，同时保持全局默认策略可同步。
+            -->
+            <CustomSelect
+              :modelValue="globalFailureModeAfterRetries"
+              :options="failureModeOptions"
+              @update:modelValue="updateGlobalFailureMode"
+            />
+            <span class="field-hint">{{ t('components.settings.subagents.failureMode.globalHint') }}</span>
+          </div>
         </div>
       </div>
       
@@ -555,6 +625,21 @@ onMounted(async () => {
             </div>
           </div>
           
+          <div class="form-group">
+            <label>{{ t('components.settings.subagents.failureMode.agentLabel') }}</label>
+            <!--
+              修改原因：单个 SubAgent 需要能覆盖全局默认失败恢复策略，且新建代理默认立刻让主工具失败。
+              修改方式：把当前代理的 failureModeAfterRetries 作为显式字段保存；旧代理缺失时按 fail_parent_tool 显示但不因读取而写回。
+              修改目的：兼容旧配置，并为后续 executor 状态机提供清晰的单代理策略输入。
+            -->
+            <CustomSelect
+              :modelValue="currentAgent.failureModeAfterRetries || 'fail_parent_tool'"
+              :options="failureModeOptions"
+              @update:modelValue="updateAgentFailureMode"
+            />
+            <span class="field-hint">{{ t('components.settings.subagents.failureMode.agentHint') }}</span>
+          </div>
+
           <div class="form-group">
             <CustomCheckbox
               :modelValue="currentAgent.enabled !== false"

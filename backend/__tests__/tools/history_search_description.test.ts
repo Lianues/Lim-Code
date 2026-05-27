@@ -15,16 +15,16 @@ describe('history_search tool description', () => {
         const declaration = createHistorySearchToolDeclaration();
         const description = declaration.description;
 
-        // 这个测试锁定 history_search 的提示词契约。
+        // 这个测试锁定 history_search 的中文提示词契约。
         // 为什么要测 description：模型是否正确使用 history_search 主要取决于工具声明，而不是 handler 内部逻辑。
         // 怎么测：只断言关键行为提示，不做完整快照，避免文案微调造成脆弱测试。
         // 目的：防止后续维护时重新引入 startLine/endLine 或“search 等于完整读取”的误导。
-        expect(description).toContain('Search returns only matching line numbers');
+        expect(description).toContain('search 只返回匹配行号和少量上下文');
         expect(description).toContain('mode="read"');
-        expect(description).toContain('start_line and end_line');
-        expect(description).toContain('not read_file\'s startLine/endLine names');
-        expect(description).toContain('not repository files');
-        expect(description).toContain('single-line reads are never truncated');
+        expect(description).toContain('start_line 和 end_line');
+        expect(description).toContain('不要使用 read_file 的 startLine/endLine');
+        expect(description).toContain('而不是仓库文件');
+        expect(description).toContain('单行读取永不截断');
     });
 
     it('marks search query as required and documents whitespace keyword fallback', () => {
@@ -33,9 +33,9 @@ describe('history_search tool description', () => {
 
         // query 不能在 JSON Schema 中条件必填，所以必须在参数 description 里说清楚。
         // 这里同时锁定多关键词兜底说明，因为模型经常用 “关键词 关键词 关键词” 的查询形态。
-        expect(queryDescription).toContain('[search mode, required]');
-        expect(queryDescription).toContain('whitespace-separated keywords');
-        expect(queryDescription).toContain('not the full historical content');
+        expect(queryDescription).toContain('[search 模式，必填]');
+        expect(queryDescription).toContain('空格分隔关键词');
+        expect(queryDescription).toContain('不是完整历史内容');
     });
 });
 

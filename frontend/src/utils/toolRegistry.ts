@@ -4,6 +4,29 @@
  */
 
 import type { Component } from 'vue'
+import type { ToolUsage } from '../types'
+
+export interface ToolActionContext {
+  /** 当前主聊天对话 ID，历史 SubAgent 卡片打开 Monitor 时需要用它恢复 metadata 快照 */
+  conversationId?: string | null
+}
+
+export interface ToolActionConfig {
+  /** 操作 ID，用于按钮 key 和日志定位 */
+  id: string
+  /** 操作文案 */
+  label: string | ((tool: ToolUsage, context: ToolActionContext) => string)
+  /** 悬停提示 */
+  title?: string | ((tool: ToolUsage, context: ToolActionContext) => string)
+  /** codicon 图标 */
+  icon?: string
+  /** 是否显示该操作 */
+  visible?: (tool: ToolUsage, context: ToolActionContext) => boolean
+  /** 操作执行函数 */
+  run: (tool: ToolUsage, context: ToolActionContext) => Promise<void> | void
+  /** 视觉样式 */
+  variant?: 'default' | 'primary' | 'danger'
+}
 
 /**
  * 工具配置
@@ -33,11 +56,14 @@ export interface ToolConfig {
   /** 是否可展开（默认为 true，如果设置为 false 则不显示展开按钮和详细内容） */
   expandable?: boolean
   
-  /** 是否支持 diff 预览（显示"查看差异"按钮） */
-  hasDiffPreview?: boolean
-  
-  /** 获取 diff 预览所需的文件路径 */
-  getDiffFilePath?: (args: Record<string, unknown>, result?: Record<string, unknown>) => string | string[]
+  /**
+   * 工具头部显眼操作按钮。
+   *
+   * 修改原因：subagents 需要像 write_file/apply_diff 一样把“打开详情”放在工具卡片显眼位置，但不能在 ToolMessage.vue 写工具名特例。
+   * 修改方式：把按钮声明抽象到 ToolConfig，由 ToolMessage 统一渲染并传入 ToolUsage 与当前对话上下文。
+   * 修改目的：未来其它工具也可以复用“打开产物/查看详情”等显眼动作，避免 UI 逻辑继续分叉。
+   */
+  actions?: ToolActionConfig[]
   
   /** 是否隐藏此工具（不在消息列表中显示） */
   hidden?: boolean

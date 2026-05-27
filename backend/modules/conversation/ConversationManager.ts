@@ -24,8 +24,9 @@ import {
     HistorySnapshot,
     ConversationStats
 } from './types';
-import type { ConversationStorageIntegrity, IStorageAdapter } from './storage';
+import type { ConversationStorageIntegrity, ConversationStorageLocation, IStorageAdapter } from './storage';
 import { cleanFunctionResponseForAPI } from './helpers';
+import { deleteLogicalMessage, truncateFrom } from './TranscriptMutation';
 
 /**
  * 多模态能力（用于过滤历史中的多模态数据）
@@ -104,6 +105,16 @@ export interface GetHistoryOptions {
  */
 export class ConversationManager {
     constructor(private storage: IStorageAdapter) {}
+
+    async getConversationStorageLocation(conversationId: string): Promise<ConversationStorageLocation | null> {
+        // 修改原因：webview handler 需要打开对话存储位置，但 ConversationManager 外部不应知道具体存储布局。
+        // 修改方式：通过 IStorageAdapter 的可选窄接口委托给文件系统存储实现；非文件存储返回 null。
+        // 修改目的：保持路径规则单一来源，避免后续 segmented/legacy 存储格式升级时遗漏历史 reveal 功能。
+        if (!this.storage.getConversationStorageLocation) {
+            return null;
+        }
+        return await this.storage.getConversationStorageLocation(conversationId);
+    }
 
     private resolveIntegrityStatus(
         integrity: ConversationStorageIntegrity | null
@@ -544,8 +555,11 @@ export class ConversationManager {
         if (messageIndex < 0 || messageIndex >= history.length) {
             throw new Error(t('modules.conversation.errors.messageIndexOutOfBounds', { index: messageIndex }));
         }
-        history.splice(messageIndex, 1);
-        await this.storage.saveHistory(conversationId, history);
+        // 修改原因：删除单条消息时，如果目标模型消息包含工具调用，必须同步删除配对 functionResponse，避免留下孤儿工具结果。
+        // 修改方式：委托 TranscriptMutation.deleteLogicalMessage 处理配对删除和 index 规范化。
+        // 修改目的：让主对话与 SubAgent Monitor 复用同一套消息变更规则。
+        const nextHistory = deleteLogicalMessage(history, messageIndex);
+        await this.storage.saveHistory(conversationId, nextHistory);
     }
 
     /**
@@ -627,11 +641,13 @@ export class ConversationManager {
             throw new Error(t('modules.conversation.errors.messageIndexOutOfBounds', { index: targetIndex }));
         }
         
-        // 从后往前删除，直到删除到目标索引（包括目标索引）
-        const deleteCount = history.length - targetIndex;
-        history.splice(targetIndex, deleteCount);
+        // 修改原因：重试/删除到指定消息的语义是从目标索引开始截断，不能在主对话和 SubAgent 子对话各写一套实现。
+        // 修改方式：委托 TranscriptMutation.truncateFrom 统一处理截断和 index 规范化。
+        // 修改目的：保证后续工具配对规则升级时，主窗口和 Monitor 同步继承。
+        const nextHistory = truncateFrom(history, targetIndex);
+        const deleteCount = history.length - nextHistory.length;
         
-        await this.storage.saveHistory(conversationId, history);
+        await this.storage.saveHistory(conversationId, nextHistory);
         return deleteCount;
     }
 

@@ -510,6 +510,11 @@ const en: LanguageMessages = {
                 viewDiff: 'View Diff',
                 viewDiffInVSCode: 'View diff in VSCode',
                 openDiffFailed: 'Failed to open diff preview',
+                // 修改原因：SubAgent details entry is now rendered by the shared ToolConfig action system instead of a hard-coded Vue button.
+                // 修改方式：Keep the visible label and tooltip in the message.tool namespace used by ToolMessage actions.
+                // 修改目的：Avoid hard-coded English text and keep Open details consistent across pending and completed states.
+                openDetails: 'Open details',
+                openSubAgentMonitorDetails: 'Open SubAgent Monitor details',
                 todoWrite: {
                     label: 'TODO',
                     labelWithCount: 'TODO · {count}',
@@ -1432,6 +1437,19 @@ const en: LanguageMessages = {
                 globalConfig: 'Global Configuration',
                 maxConcurrentAgents: 'Max Concurrent Agents',
                 maxConcurrentAgentsHint: 'Maximum number of sub-agents AI can invoke at once (-1 for unlimited)',
+                failureMode: {
+                    // 修改原因：SubAgent retry-exhaustion behavior is now configurable and must be described consistently in settings UI.
+                    // 修改方式：Keep the English locale shape identical to zh-CN so Vue can use one translation path.
+                    // 修改目的：Avoid hard-coded UI text and preserve multilingual settings behavior.
+                    globalLabel: 'Default handling after retry failure',
+                    globalHint: 'Global default after all Provider automatic retries fail.',
+                    agentLabel: 'Handling after retry failure',
+                    agentHint: 'How this sub-agent behaves after all Provider automatic retries fail.',
+                    failParentTool: 'Fail the parent tool immediately',
+                    failParentToolDescription: 'Default behavior: fail the SubAgent and return the failure to the main chat tool.',
+                    waitForMonitorAction: 'Wait for Monitor action',
+                    waitForMonitorActionDescription: 'Keep the main chat tool waiting until the user retries or exits in Monitor.'
+                },
                 basicInfo: 'Basic Info',
                 description: 'Description',
                 descriptionPlaceholder: 'Describe when the main AI should use this sub-agent',

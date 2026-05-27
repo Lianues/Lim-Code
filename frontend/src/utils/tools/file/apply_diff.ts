@@ -3,6 +3,7 @@
  */
 
 import { registerTool } from '../../toolRegistry'
+import { createDiffPreviewAction } from '../diffPreviewAction'
 import ApplyDiffComponent from '../../../components/tools/file/apply_diff.vue'
 
 // 单个 diff 块类型
@@ -54,12 +55,10 @@ registerTool('apply_diff', {
   
   // 使用自定义组件显示内容
   contentComponent: ApplyDiffComponent,
-  
-  // 启用 diff 预览功能
-  hasDiffPreview: true,
-  
-  // 获取 diff 文件路径
-  getDiffFilePath: (args) => {
-    return (args.path as string) || ''
-  }
+  actions: [
+    // 修改原因：diff 预览按钮已迁移到 ToolConfig actions，不能再依赖 ToolMessage.vue 的 hasDiffPreview 特判。
+    // 修改方式：通过共享 createDiffPreviewAction 声明打开 diff 预览所需的文件路径解析逻辑。
+    // 修改目的：主窗口和 SubAgent Monitor 复用同一工具 action 渲染机制。
+    createDiffPreviewAction((args) => (args.path as string) || '')
+  ]
 })

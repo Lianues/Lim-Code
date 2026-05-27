@@ -274,6 +274,10 @@ export class ChannelManager {
         const maxRetries = (config as any).retryCount ?? 3;         // 默认3次
         const retryInterval = (config as any).retryInterval ?? 3000;  // 默认3秒
         const totalAttempts = retryEnabled ? (maxRetries + 1) : 1;
+        // 修改原因：SubAgent 内部重试状态需要进入 Monitor，而不是主窗口全局 retryStatus。
+        // 修改方式：优先使用 GenerateRequest.retryStatusCallback；没有局部回调时才按 suppressRetryNotification 决定是否使用全局回调。
+        // 修改目的：保持 ChannelManager 自动重试单一来源，同时允许调用方自定义重试状态路由。
+        const retryStatusCallback = request.retryStatusCallback || (request.suppressRetryNotification ? undefined : this.retryStatusCallback);
         
         // 8. 执行 HTTP 调用（带重试）
         let lastError: any;
@@ -299,8 +303,8 @@ export class ChannelManager {
                 }
                 
                 // 如果是重试成功，通知前端
-                if (attempt > 1 && this.retryStatusCallback && !request.suppressRetryNotification) {
-                    this.retryStatusCallback({
+                if (attempt > 1 && retryStatusCallback) {
+                    retryStatusCallback({
                         type: 'retrySuccess',
                         attempt: attempt - 1,
                         maxAttempts: maxRetries,
@@ -329,8 +333,8 @@ export class ChannelManager {
                 // 检查是否可重试
                 if (!retryEnabled || !this.isRetryableError(error) || attempt >= totalAttempts) {
                     // 不能重试或已达到最大重试次数
-                    if (attempt > 1 && this.retryStatusCallback && !request.suppressRetryNotification) {
-                        this.retryStatusCallback({
+                    if (attempt > 1 && retryStatusCallback) {
+                        retryStatusCallback({
                             type: 'retryFailed',
                             attempt: Math.min(maxRetries, attempt - 1),
                             maxAttempts: maxRetries,
@@ -352,8 +356,8 @@ export class ChannelManager {
                 }
                 
                 // 通知前端正在重试
-                if (this.retryStatusCallback && !request.suppressRetryNotification) {
-                    this.retryStatusCallback({
+                if (retryStatusCallback) {
+                    retryStatusCallback({
                         type: 'retrying',
                         attempt,
                         maxAttempts: maxRetries,
@@ -443,6 +447,10 @@ export class ChannelManager {
         const maxRetries = (config as any).retryCount ?? 3;         // 默认3次
         const retryInterval = (config as any).retryInterval ?? 3000;  // 默认3秒
         const totalAttempts = retryEnabled ? (maxRetries + 1) : 1;
+        // 修改原因：流式请求同样需要支持 SubAgent Monitor 专用重试状态路由。
+        // 修改方式：优先使用 request.retryStatusCallback，未提供时保留原全局回调与 suppressRetryNotification 语义。
+        // 修改目的：非流式和流式自动重试行为保持一致。
+        const retryStatusCallback = request.retryStatusCallback || (request.suppressRetryNotification ? undefined : this.retryStatusCallback);
         
         // 7. 执行流式请求（带重试）
         let lastError: any;
@@ -451,8 +459,8 @@ export class ChannelManager {
                 const stream = await this.executeStreamRequest(httpRequest, request.abortSignal);
                 
                 // 如果是重试成功，通知前端
-                if (attempt > 1 && this.retryStatusCallback && !request.suppressRetryNotification) {
-                    this.retryStatusCallback({
+                if (attempt > 1 && retryStatusCallback) {
+                    retryStatusCallback({
                         type: 'retrySuccess',
                         attempt: attempt - 1,
                         maxAttempts: maxRetries,
@@ -487,8 +495,8 @@ export class ChannelManager {
                 // 检查是否可重试
                 if (!retryEnabled || !this.isRetryableError(error) || attempt >= totalAttempts) {
                     // 不能重试或已达到最大重试次数
-                    if (attempt > 1 && this.retryStatusCallback && !request.suppressRetryNotification) {
-                        this.retryStatusCallback({
+                    if (attempt > 1 && retryStatusCallback) {
+                        retryStatusCallback({
                             type: 'retryFailed',
                             attempt: Math.min(maxRetries, attempt - 1),
                             maxAttempts: maxRetries,
@@ -510,8 +518,8 @@ export class ChannelManager {
                 }
                 
                 // 通知前端正在重试
-                if (this.retryStatusCallback && !request.suppressRetryNotification) {
-                    this.retryStatusCallback({
+                if (retryStatusCallback) {
+                    retryStatusCallback({
                         type: 'retrying',
                         attempt,
                         maxAttempts: maxRetries,

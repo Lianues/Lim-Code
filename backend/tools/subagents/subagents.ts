@@ -197,10 +197,23 @@ export function getSubAgentsToolDeclaration(): ToolDeclaration {
 /**
  * 工具处理器
  */
+function normalizeToolIdForRunId(toolId: string): string {
+    // 修改原因：pending 阶段前端需要根据同一个 toolId 推导出后端即将创建的 SubAgent runId。
+    // 修改方式：与前端 subagents action 使用相同规则，只保留字母、数字、下划线和连字符。
+    // 修改目的：让 Open details 在工具执行中也能直接聚焦当前 SubAgent 运行，而不是只能打开最新运行。
+    return toolId.trim().replace(/[^A-Za-z0-9_-]/g, '_');
+}
+
+function getPreallocatedRunId(context?: ToolContext): string | undefined {
+    const toolId = typeof context?.toolId === 'string' ? normalizeToolIdForRunId(context.toolId) : '';
+    return toolId ? `subagent_run_${toolId}` : undefined;
+}
+
 async function subAgentsHandler(args: Record<string, any>, context?: ToolContext): Promise<ToolResult> {
     const agentName = args.agentName as string;
     const prompt = args.prompt as string;
     const additionalContext = args.context as string | undefined;
+    const runId = getPreallocatedRunId(context);
     
     if (!agentName || !prompt) {
         return { success: false, error: `${!agentName ? 'agentName' : 'prompt'} is required` };
@@ -243,11 +256,18 @@ async function subAgentsHandler(args: Record<string, any>, context?: ToolContext
         const result = await runtimeExecutor({
             agentType: agentEntry.config.type,
             prompt,
-            context: additionalContext
+            context: additionalContext,
+            // 修改原因：前端 pending 卡片需要在 ToolResult 返回前就能打开同一次 Monitor 运行。
+            // 修改方式：把由主工具调用 id 派生的 runId 传给默认 executor，executor 会用它创建事件总线 run。
+            // 修改目的：顶部 Open details 在 pending 和完成后都指向同一个 SubAgent run。
+            runId
         }, abortSignal);
         
         if (result.cancelled || abortSignal?.aborted) {
-            return { success: false, error: 'User cancelled the sub-agent execution. Please wait for user\'s next instruction.', cancelled: true };
+            // 修改原因：Monitor 的“退出 SubAgent 执行”需要把“用户主动终止 SubAgent 执行”作为主工具失败原因返回，而不是被泛化成普通取消。
+            // 修改方式：优先透传 executor 返回的 result.error，缺失时才使用旧的通用取消文案。
+            // 修改目的：让主窗口 subagents 工具卡片能准确显示用户主动退出的失败原因。
+            return { success: false, error: result.error || 'User cancelled the sub-agent execution. Please wait for user\'s next instruction.', cancelled: true };
         }
         
         // 构建公共 data：子代理运行信息

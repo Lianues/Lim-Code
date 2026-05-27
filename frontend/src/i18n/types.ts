@@ -432,6 +432,11 @@ export interface LanguageMessages {
                 viewDiff: string;
                 viewDiffInVSCode: string;
                 openDiffFailed: string;
+                // 修改原因：SubAgent Open details 已纳入通用工具 action，语言包必须声明对应类型。
+                // 修改方式：在 message.tool 命名空间补齐按钮 label 和 tooltip 两个 key。
+                // 修改目的：让 TypeScript 在任一语言漏配详情按钮文案时直接报错。
+                openDetails: string;
+                openSubAgentMonitorDetails: string;
                 todoWrite: {
                     label: string;
                     labelWithCount: string;
@@ -1615,6 +1620,19 @@ export interface LanguageMessages {
                 globalConfig: string;
                 maxConcurrentAgents: string;
                 maxConcurrentAgentsHint: string;
+                failureMode: {
+                    // 修改原因：SubAgent 自动重试耗尽策略新增为设置页字段，类型定义必须和语言包结构保持一致。
+                    // 修改方式：在 subagents 类型命名空间下声明全局和单代理文案键。
+                    // 修改目的：让 TypeScript 在新增或漏配任一语言文案时及时报错。
+                    globalLabel: string;
+                    globalHint: string;
+                    agentLabel: string;
+                    agentHint: string;
+                    failParentTool: string;
+                    failParentToolDescription: string;
+                    waitForMonitorAction: string;
+                    waitForMonitorActionDescription: string;
+                };
                 basicInfo: string;
                 description: string;
                 descriptionPlaceholder: string;

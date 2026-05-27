@@ -704,6 +704,9 @@ export function createApplyDiffTool(): Tool {
         const format = getApplyDiffFormat();
 
         if (format === 'search_replace') {
+            // 修改原因：旧版 search/replace 声明只强调“单次调用单文件”，容易让模型误以为每改一个文件后必须停止等待。
+            // 修改方式：在工具 description 中加入批量修改规则，明确“一个工具调用单文件”和“一轮回复多个工具调用”并不冲突。
+            // 修改目的：鼓励模型在多文件修改计划已经明确且互不依赖时，同一轮连续输出多个 apply_diff 调用，减少无意义的工具迭代。
             return {
                 name: 'apply_diff',
                 category: 'file',
@@ -723,6 +726,13 @@ export function createApplyDiffTool(): Tool {
 - search 必须精确匹配，包括空格、缩进和换行。
 - diffs 会按数组顺序应用。
 - 某个 diff 失败时，该 diff 不会生效。
+
+批量修改规则：
+- 本工具一次调用仍然只修改一个文件；如果计划要修改多个互不依赖的文件，应该在同一轮回复中连续输出多个 apply_diff 调用。
+- 不要在完成第一个文件的 apply_diff 后停止等待结果，除非后续修改依赖该工具结果或需要先确认上一处修改是否成功。
+- 对已经明确、互不依赖的多文件修改，应一次性输出所有 apply_diff 调用，以减少无意义的工具迭代。
+- 错误示例：修改 A 文件后停止，等下一轮再修改 B 文件。
+- 正确示例：同一轮依次输出 apply_diff(A)、apply_diff(B)、apply_diff(C)。
 
 ${descriptionSuffix}`,
 
@@ -764,6 +774,9 @@ ${descriptionSuffix}`,
         // 为什么要把默认声明改为结构化 hunks：旧 patch 字符串让模型混淆 JSON 转义和 unified diff 文本，双引号、反斜杠等内容容易写错。
         // 怎么改：主推 hunks[{oldContent,newContent,startLine?}]，同时保留 patch 字符串作为历史兼容字段。
         // 目的：让 newContent 像 write_file.content 一样表示最终内容，并保留一次调用处理多个连续片段的能力。
+        // 修改原因：模型会把“apply_diff 一次调用只处理一个文件”误读成“一轮只能调用一次 apply_diff”。
+        // 修改方式：在默认结构化 hunk 声明中补充批量修改规则，明确多文件计划应在同一轮连续输出多个 apply_diff 调用。
+        // 修改目的：让工具说明本身承担行为引导，减少用户反复用自然语言纠正模型每次只改一个文件的问题。
         return {
             name: 'apply_diff',
             category: 'file',
@@ -783,6 +796,13 @@ ${descriptionSuffix}`,
 - 不能让两个 hunk 修改同一段或互相覆盖的文本；如果要改同一个区块，应该合并成一个 hunk。
 - oldContent 必须能匹配；如果 oldContent 重复出现，请提供 startLine 或增加上下文让它唯一。
 - patch 字段仅作为兼容旧 unified diff hunk 字符串的 fallback；新调用优先使用 hunks。
+
+批量修改规则：
+- 本工具一次调用仍然只修改一个文件；如果计划要修改多个互不依赖的文件，应该在同一轮回复中连续输出多个 apply_diff 调用。
+- 不要在完成第一个文件的 apply_diff 后停止等待结果，除非后续修改依赖该工具结果或需要先确认上一处修改是否成功。
+- 对已经明确、互不依赖的多文件修改，应一次性输出所有 apply_diff 调用，以减少无意义的工具迭代。
+- 错误示例：修改 A 文件后停止，等下一轮再修改 B 文件。
+- 正确示例：同一轮依次输出 apply_diff(A)、apply_diff(B)、apply_diff(C)。
 
 示例：
 {

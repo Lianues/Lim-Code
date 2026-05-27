@@ -17,10 +17,19 @@ export interface SubAgentRunEvent extends ToolProgressEvent {
     timestamp: number;
 }
 
+/**
+ * SubAgent run 的显式状态机。
+ *
+ * 修改原因：原有 running/completed/failed/cancelled 无法区分 Monitor 暂停、等待用户处理和扩展重载中断。
+ * 修改方式：增加 paused、awaiting_monitor_action、interrupted，并作为持久快照的唯一状态类型。
+ * 修改目的：让 UI 控制按钮、主工具等待语义和历史 run 展示不再混用 failed/cancelled。
+ */
+export type SubAgentRunStatus = 'running' | 'paused' | 'awaiting_monitor_action' | 'completed' | 'failed' | 'cancelled' | 'interrupted';
+
 export interface SubAgentRunPersistedRecord {
     runId: string;
     agentName?: string;
-    status: 'running' | 'completed' | 'failed' | 'cancelled';
+    status: SubAgentRunStatus;
     createdAt: number;
     updatedAt: number;
     contents: Content[];
@@ -118,6 +127,17 @@ class SubAgentRunEventBus {
             snapshot.status = 'failed';
         } else if (normalized.type === 'run_cancelled') {
             snapshot.status = 'cancelled';
+        } else if (normalized.type === 'run_paused') {
+            // 修改原因：Monitor 中止不能被记录成 failed，否则主窗口工具会误判 SubAgent 已经失败。
+            // 修改方式：运行事件总线将 run_paused 映射为 paused 状态。
+            // 修改目的：保留主工具等待语义，同时让 Monitor 明确显示“已暂停”。
+            snapshot.status = 'paused';
+        } else if (normalized.type === 'run_resumed') {
+            snapshot.status = 'running';
+        } else if (normalized.type === 'run_awaiting_monitor_action') {
+            snapshot.status = 'awaiting_monitor_action';
+        } else if (normalized.type === 'run_interrupted') {
+            snapshot.status = 'interrupted';
         }
 
         this.notify(normalized, snapshot);
@@ -179,6 +199,49 @@ class SubAgentRunEventBus {
         };
         snapshot.events.push(event);
         this.notify(event, snapshot);
+    }
+
+    replaceContents(runId: string, contents: Content[]): SubAgentRunSnapshot | undefined {
+        const snapshot = this.snapshots.get(runId);
+        if (!snapshot) {
+            return undefined;
+        }
+
+        // 修改原因：Monitor 删除/重试内部楼层后，新的 Content[] 必须写回 run 快照和 conversation metadata。
+        // 修改方式：由事件总线提供 replaceContents 作为唯一写入口，统一更新时间、通知前端和入队持久化。
+        // 修改目的：避免 SubAgentsHandlers 直接改 snapshot.contents，保证内存和持久化记录同步。
+        const now = Date.now();
+        snapshot.contents = contents.map((content, index) => ({
+            ...content,
+            index,
+            timestamp: content.timestamp || now
+        } as Content));
+        snapshot.updatedAt = now;
+
+        const event: SubAgentRunEvent = {
+            runId,
+            agentName: snapshot.agentName,
+            type: 'content_snapshot',
+            timestamp: now,
+            payload: { contents: snapshot.contents }
+        };
+        snapshot.events.push(event);
+        this.notify(event, snapshot);
+        this.enqueuePersist(runId);
+        return snapshot;
+    }
+
+    mutateContents(runId: string, mutator: (contents: Content[]) => Content[]): SubAgentRunSnapshot | undefined {
+        const snapshot = this.snapshots.get(runId);
+        if (!snapshot) {
+            return undefined;
+        }
+
+        // 修改原因：SubAgent 子对话要复用 TranscriptMutation 这类纯变更函数，同时由事件总线负责保存结果。
+        // 修改方式：复制当前 contents 后交给 mutator，再通过 replaceContents 统一落盘和广播。
+        // 修改目的：让 Monitor 消息操作不绕过事件总线的持久化队列。
+        const nextContents = mutator(JSON.parse(JSON.stringify(snapshot.contents || [])) as Content[]);
+        return this.replaceContents(runId, nextContents);
     }
 
     subscribe(listener: SubAgentRunListener): () => void {

@@ -68,6 +68,9 @@ ${paramsList}
 </tool>`;
     }).join('\n\n');
     
+    // 修改原因：原 Best Practices 中的“One step at a time”会压过工具 description 里的批量调用建议，导致模型每输出一个工具就停止。
+    // 修改方式：把等待规则改成依赖驱动，并在 XML 工具说明中明确独立多文件修改应同轮输出多个工具块。
+    // 修改目的：让 XML prompt 工具模式不再鼓励 apply_diff/write_file 串行到每轮只处理一个文件。
     return `## Tool Usage Guide
 
 You are a powerful AI assistant with access to various tools. You should actively use these tools to gather information, perform actions, and provide accurate responses.
@@ -117,9 +120,9 @@ Writing files:
 
 2. **Place tool calls at the end**: Structure your response so that tool calls appear at the end of your message. First provide any explanations or context, then call the necessary tools.
 
-3. **One step at a time**: After each tool call, wait for the result before proceeding. Use the tool results to inform your next steps.
+3. **Wait only when dependent**: Wait for a tool result only when later tool calls depend on that result. For independent operations, output all relevant tool calls in the same response.
 
-4. **Combine tools effectively**: You can call multiple tools in a single response when needed. Use the results from one tool to inform subsequent tool calls.
+4. **Combine tools effectively**: You can call multiple tools in a single response when needed. If a plan requires changing several independent files, emit multiple apply_diff or write_file tool blocks in that same response instead of stopping after the first file.
 
 ---
 

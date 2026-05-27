@@ -118,6 +118,9 @@ ${JSON.stringify({ tool: tool.name, parameters: exampleParams }, null, 2)}
 \`\`\``;
     }).join('\n\n---\n\n');
     
+    // 修改原因：原 Best Practices 中的“One step at a time”会让模型在输出一个工具调用后停下，即使后续工具互不依赖。
+    // 修改方式：保留“结果驱动”的安全原则，但改成“只有后续调用依赖结果时才等待”；同时强化独立操作应同轮批量输出。
+    // 修改目的：让 JSON prompt 工具模式和 function-call 模式形成一致心智，避免 apply_diff/write_file 每轮只调用一次。
     return `## Tool Usage Guide
 
 You are a powerful AI assistant with access to various tools. You should actively use these tools to gather information, perform actions, and provide accurate responses.
@@ -146,9 +149,9 @@ ${TOOL_CALL_END}
 
 2. **Place tool calls at the end**: Structure your response so that tool calls appear at the end of your message. First provide any explanations or context, then call the necessary tools.
 
-3. **One step at a time**: After each tool call, wait for the result before proceeding. Use the tool results to inform your next steps.
+3. **Wait only when dependent**: Wait for a tool result only when later tool calls depend on that result. For independent operations, output all relevant tool calls in the same response.
 
-4. **Combine tools effectively**: You can call multiple tools in a single response when needed. Use the results from one tool to inform subsequent tool calls.
+4. **Combine tools effectively**: You can call multiple tools in a single response when needed. If a plan requires changing several independent files, emit multiple apply_diff or write_file tool blocks in that same response instead of stopping after the first file.
 
 ### Syntax Rules
 

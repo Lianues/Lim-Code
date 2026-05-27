@@ -3,7 +3,8 @@
  */
 
 import { t } from '../../backend/i18n';
-import { subAgentRegistry, refreshSubAgentsTool, subAgentRunEventBus } from '../../backend/tools/subagents';
+import { subAgentRegistry, refreshSubAgentsTool, subAgentRunController, subAgentRunEventBus } from '../../backend/tools/subagents';
+import { deleteLogicalMessage, truncateFrom } from '../../backend/modules/conversation';
 import type { SubAgentConfigItem } from '../../backend/modules/settings/types';
 import type { HandlerContext, MessageHandler } from '../types';
 
@@ -16,8 +17,12 @@ export const listSubAgents: MessageHandler = async (data, requestId, ctx) => {
     const config = ctx.settingsManager.getSubAgentsConfig();
     const agents = config.agents || [];
     const maxConcurrentAgents = config.maxConcurrentAgents ?? 3;
+    const failureModeAfterRetries = config.failureModeAfterRetries || 'fail_parent_tool';
     
-    ctx.sendResponse(requestId, { agents, maxConcurrentAgents });
+    // 修改原因：前端设置页需要显示全局自动重试耗尽策略，同时旧配置不能被读取操作主动写回。
+    // 修改方式：返回 SettingsManager 运行时补齐后的全局默认值，agents 仍保持各自原始覆盖字段。
+    // 修改目的：让 UI 可以区分全局默认和单个 SubAgent 覆盖，且不污染 VS Code Settings Sync。
+    ctx.sendResponse(requestId, { agents, maxConcurrentAgents, failureModeAfterRetries });
   } catch (error: any) {
     ctx.sendError(requestId, 'LIST_SUBAGENTS_ERROR', error.message || 'Failed to list subagents');
   }
@@ -55,6 +60,11 @@ export const createSubAgent: MessageHandler = async (data, requestId, ctx) => {
       channel: data.channel || { channelId: '' },
       tools: data.tools || { mode: 'all' },
       maxIterations: data.maxIterations,
+      maxRuntime: data.maxRuntime,
+      // 修改原因：新建 SubAgent 的默认策略必须是 Provider 自动重试耗尽后立即让主窗口工具失败。
+      // 修改方式：如果前端未传入策略，后端创建时显式写入 fail_parent_tool。
+      // 修改目的：保证“每个 SubAgent 默认立刻失败”的产品语义，不依赖前端是否及时升级。
+      failureModeAfterRetries: data.failureModeAfterRetries || 'fail_parent_tool',
       enabled: data.enabled !== false
     };
     
@@ -224,6 +234,121 @@ export const openSubAgentMonitor: MessageHandler = async (data, requestId, ctx) 
   }
 };
 
+export const pauseRun: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const runId = typeof data?.runId === 'string' ? data.runId.trim() : '';
+    if (!runId) {
+      ctx.sendError(requestId, 'SUBAGENT_PAUSE_RUN_INVALID_INPUT', 'runId is required');
+      return;
+    }
+
+    // 修改原因：Monitor 的中止按钮只暂停 SubAgent 内部执行，不应直接让主窗口 subagents 工具失败。
+    // 修改方式：调用活跃运行控制器的 pause，由控制器广播 run_paused 并 abort 当前 run signal。
+    // 修改目的：控制语义集中在 runController，handler 不直接改快照状态。
+    const success = subAgentRunController.pause(runId);
+    ctx.sendResponse(requestId, { success });
+  } catch (error: any) {
+    ctx.sendError(requestId, 'SUBAGENT_PAUSE_RUN_ERROR', error.message || 'Failed to pause SubAgent run');
+  }
+};
+
+export const resumeRun: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const runId = typeof data?.runId === 'string' ? data.runId.trim() : '';
+    if (!runId) {
+      ctx.sendError(requestId, 'SUBAGENT_RESUME_RUN_INVALID_INPUT', 'runId is required');
+      return;
+    }
+
+    // 修改原因：暂停或等待 Monitor 操作的 run 需要从同一 runId 继续，而不是创建新的历史 run。
+    // 修改方式：调用 runController.resume 重建控制信号并广播 run_resumed。
+    // 修改目的：让 Monitor 顶部“重试/继续”按钮复用同一活跃控制入口。
+    const success = subAgentRunController.resume(runId);
+    ctx.sendResponse(requestId, { success });
+  } catch (error: any) {
+    ctx.sendError(requestId, 'SUBAGENT_RESUME_RUN_ERROR', error.message || 'Failed to resume SubAgent run');
+  }
+};
+
+export const exitRun: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const runId = typeof data?.runId === 'string' ? data.runId.trim() : '';
+    const reason = typeof data?.reason === 'string' && data.reason.trim()
+      ? data.reason.trim()
+      : '用户主动终止 SubAgent 执行';
+    if (!runId) {
+      ctx.sendError(requestId, 'SUBAGENT_EXIT_RUN_INVALID_INPUT', 'runId is required');
+      return;
+    }
+
+    // 修改原因：退出 SubAgent 执行必须区别于 pause，会让主窗口工具调用以用户主动终止失败。
+    // 修改方式：调用 runController.exit 记录原因、abort 当前 run，并广播 run_cancelled。
+    // 修改目的：后续 executor 接入控制器后能用同一 reason 返回给主工具。
+    const success = subAgentRunController.exit(runId, reason);
+    ctx.sendResponse(requestId, { success });
+  } catch (error: any) {
+    ctx.sendError(requestId, 'SUBAGENT_EXIT_RUN_ERROR', error.message || 'Failed to exit SubAgent run');
+  }
+};
+
+export const deleteRunMessage: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const runId = typeof data?.runId === 'string' ? data.runId : '';
+    const contentIndex = Number(data?.contentIndex);
+    const conversationId = typeof data?.conversationId === 'string' ? data.conversationId : undefined;
+
+    if (!runId || !Number.isFinite(contentIndex)) {
+      ctx.sendError(requestId, 'SUBAGENT_DELETE_MESSAGE_INVALID_INPUT', 'runId and contentIndex are required');
+      return;
+    }
+
+    // 修改原因：Monitor 删除楼层只影响 SubAgent 子对话，但必须复用主对话同一套工具配对删除逻辑。
+    // 修改方式：先按 conversationId 恢复持久化快照，再通过 runEventBus.mutateContents 调用 TranscriptMutation.deleteLogicalMessage。
+    // 修改目的：删除带工具调用的模型消息时同步删除配对 functionResponse，避免后续重试历史不完整。
+    if (conversationId) {
+      await subAgentRunEventBus.loadConversationSnapshots(conversationId, ctx.conversationManager);
+    }
+    const snapshot = subAgentRunEventBus.mutateContents(runId, contents => deleteLogicalMessage(contents, contentIndex));
+    if (!snapshot) {
+      ctx.sendError(requestId, 'SUBAGENT_RUN_NOT_FOUND', `SubAgent run not found: ${runId}`);
+      return;
+    }
+
+    ctx.sendResponse(requestId, { success: true, snapshot });
+  } catch (error: any) {
+    ctx.sendError(requestId, 'SUBAGENT_DELETE_MESSAGE_ERROR', error.message || 'Failed to delete SubAgent message');
+  }
+};
+
+export const retryRunFromMessage: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const runId = typeof data?.runId === 'string' ? data.runId : '';
+    const contentIndex = Number(data?.contentIndex);
+    const conversationId = typeof data?.conversationId === 'string' ? data.conversationId : undefined;
+
+    if (!runId || !Number.isFinite(contentIndex)) {
+      ctx.sendError(requestId, 'SUBAGENT_RETRY_MESSAGE_INVALID_INPUT', 'runId and contentIndex are required');
+      return;
+    }
+
+    // 修改原因：Monitor 的单楼重试语义是截断该楼及之后的子对话，再由后续运行控制继续同一个 run。
+    // 修改方式：当前阶段先复用 TranscriptMutation.truncateFrom 更新子对话快照；运行恢复由 run 控制器后续接管。
+    // 修改目的：先确保历史变更的单一来源正确，避免 UI 自己裁剪 Content[]。
+    if (conversationId) {
+      await subAgentRunEventBus.loadConversationSnapshots(conversationId, ctx.conversationManager);
+    }
+    const snapshot = subAgentRunEventBus.mutateContents(runId, contents => truncateFrom(contents, contentIndex));
+    if (!snapshot) {
+      ctx.sendError(requestId, 'SUBAGENT_RUN_NOT_FOUND', `SubAgent run not found: ${runId}`);
+      return;
+    }
+
+    ctx.sendResponse(requestId, { success: true, snapshot });
+  } catch (error: any) {
+    ctx.sendError(requestId, 'SUBAGENT_RETRY_MESSAGE_ERROR', error.message || 'Failed to retry SubAgent message');
+  }
+};
+
 export const updateGlobalConfig: MessageHandler = async (data, requestId, ctx) => {
   try {
     const updates: Record<string, unknown> = {};
@@ -231,6 +356,13 @@ export const updateGlobalConfig: MessageHandler = async (data, requestId, ctx) =
     // 支持的全局配置字段
     if (data.maxConcurrentAgents !== undefined) {
       updates.maxConcurrentAgents = data.maxConcurrentAgents;
+    }
+
+    // 修改原因：SubAgents 的自动重试耗尽策略需要作为可同步的全局默认设置保存。
+    // 修改方式：只接受设计中确认的两个稳定枚举值，避免前端或旧扩展写入未知字符串。
+    // 修改目的：让后续 executor 可以安全根据该字段决定主工具失败还是等待 Monitor 操作。
+    if (data.failureModeAfterRetries === 'fail_parent_tool' || data.failureModeAfterRetries === 'wait_for_monitor_action') {
+      updates.failureModeAfterRetries = data.failureModeAfterRetries;
     }
     
     if (Object.keys(updates).length > 0) {
@@ -278,4 +410,9 @@ export function registerSubAgentsHandlers(registry: Map<string, MessageHandler>)
   registry.set('subagents.setEnabled', setSubAgentEnabled);
   registry.set('subagents.updateGlobalConfig', updateGlobalConfig);
   registry.set('subagents.openMonitor', openSubAgentMonitor);
+  registry.set('subagents.pauseRun', pauseRun);
+  registry.set('subagents.resumeRun', resumeRun);
+  registry.set('subagents.exitRun', exitRun);
+  registry.set('subagents.deleteRunMessage', deleteRunMessage);
+  registry.set('subagents.retryRunFromMessage', retryRunFromMessage);
 }

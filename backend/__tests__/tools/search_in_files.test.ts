@@ -37,21 +37,27 @@ describe('search_in_files tool description', () => {
         const description = tool.declaration.description;
         const queryDescription = tool.declaration.parameters.properties.query.description;
         const pathDescription = tool.declaration.parameters.properties.path.description;
+        const patternDescription = tool.declaration.parameters.properties.pattern.description;
 
-        // 这个测试锁定 search_in_files 的提示词契约。
+        // 这个测试锁定 search_in_files 的中文提示词契约。
         // 为什么要测 description：模型是否把 file search 当成 history_search 使用，主要取决于工具声明，而不是 handler 内部实现。
         // 怎么测：只断言关键行为提示，避免完整快照让自然语言微调变得脆弱。
         // 目的：防止后续维护重新丢失“空格兜底、| 只属正则、没有 read 模式”的边界说明。
-        expect(description).toContain('whitespace-separated multi-keyword queries first try the exact phrase');
-        expect(description).toContain('Use isRegex=true for regex OR such as "foo|bar"');
-        expect(description).toContain('in non-regex mode "|" is a literal character');
-        expect(description).toContain('This tool has no read mode or start_line/end_line parameters');
-        expect(description).toContain('use read_file to read matched files');
-        expect(description).toContain('The path parameter accepts exactly one file or directory');
-        expect(description).toContain('call search_in_files separately for each path in parallel');
-        expect(queryDescription).toContain('automatically fall back to keyword OR search');
-        expect(pathDescription).toContain('accepts exactly one file or directory');
-        expect(pathDescription).toContain('make separate parallel search_in_files calls');
+        expect(description).toContain('空格分隔的多关键词查询会先尝试完整短语');
+        expect(description).toContain('需要使用 "foo|bar" 这类正则 OR 时，请设置 isRegex=true');
+        expect(description).toContain('非正则模式下 "|" 是普通字面字符');
+        expect(description).toContain('本工具没有 read 模式，也没有 start_line/end_line 参数');
+        expect(description).toContain('需要读取匹配文件时请使用 read_file');
+        expect(description).toContain('path 参数只能填写一个文件或一个目录');
+        expect(description).toContain('请分别并行调用多次 search_in_files');
+        expect(queryDescription).toContain('自动降级为关键词 OR 搜索');
+        expect(pathDescription).toContain('只能填写一个文件或一个目录');
+        expect(pathDescription).toContain('分别并行调用多次 search_in_files');
+        // 为什么要测 pattern 文案：模型常把 *.ts 误当递归匹配，导致路径正确但子目录文件漏搜。
+        // 怎么测：只锁定递归语义关键词，不对完整中文描述做快照，避免措辞调整导致测试脆弱。
+        // 目的：防止 search_in_files 重新退回到只给 glob 示例、没有解释递归差异的提示词。
+        expect(patternDescription).toContain('"*.ts" 只匹配搜索路径直属的一层文件');
+        expect(patternDescription).toContain('递归搜索子目录，请使用 "**/*.ts"');
     });
 });
 

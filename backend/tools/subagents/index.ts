@@ -36,8 +36,19 @@ export {
 export {
     subAgentRunEventBus,
     type SubAgentRunEvent,
-    type SubAgentRunSnapshot
+    type SubAgentRunSnapshot,
+    type SubAgentRunStatus
 } from './runEventBus';
+
+// 导出活跃运行控制器
+export {
+    // 修改原因：Monitor 控制按钮需要访问活跃 run 的 pause/resume/exit 能力，但不应直接操作事件总线。
+    // 修改方式：从 subagents 模块统一导出 subAgentRunController。
+    // 修改目的：让后端 handler 和 executor 复用同一控制入口，避免控制状态散落。
+    subAgentRunController,
+    type SubAgentControlAction,
+    type SubAgentRunControlState
+} from './runController';
 
 // 导出工具
 export { 

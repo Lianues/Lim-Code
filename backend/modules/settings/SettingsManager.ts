@@ -2073,7 +2073,13 @@ export class SettingsManager {
      * 获取子代理配置
      */
     getSubAgentsConfig(): SubAgentsConfig {
-        return this.settings.toolsConfig?.subagents || DEFAULT_SUBAGENTS_CONFIG;
+        // 修改原因：旧版设置中可能没有 failureModeAfterRetries，但读取配置时需要始终有全局默认策略。
+        // 修改方式：只在返回值中合并 DEFAULT_SUBAGENTS_CONFIG，不改写 this.settings，也不触发 VS Code Settings Sync。
+        // 修改目的：满足“运行时补齐，不主动写回”的兼容要求，避免用户配置被无意义同步污染。
+        return {
+            ...DEFAULT_SUBAGENTS_CONFIG,
+            ...(this.settings.toolsConfig?.subagents || {})
+        };
     }
     
     /**

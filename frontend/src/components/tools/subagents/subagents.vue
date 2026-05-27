@@ -1,13 +1,10 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useI18n } from '@/composables'
-import { sendToExtension } from '@/utils/vscode'
-import { useChatStore } from '@/stores'
 import { TaskCard, MarkdownRenderer, CustomScrollbar } from '../../common'
 import { extractPreviewText, formatSubAgentRuntimeBadge } from '../../../utils/taskCards'
 
 const { t } = useI18n()
-const chatStore = useChatStore()
 
 const props = defineProps<{
   args: Record<string, unknown>
@@ -21,6 +18,9 @@ const context = computed(() => (props.args.context as string) || '')
 const resultData = computed(() => ((props.result as any)?.data || {}) as any)
 const responseText = computed(() => (resultData.value.response || resultData.value.partialResponse || '') as string)
 const errorMessage = computed(() => (props.result as any)?.error as string | undefined)
+// 修改原因：展开区不再提供独立“打开详情”按钮，runId 只作为完成后的诊断信息展示。
+// 修改方式：按钮能力已合并到 ToolMessage 的通用 Open details action，这里保留 runId 文本辅助定位。
+// 修改目的：避免同一功能出现两个入口，同时让 pending 阶段也能通过顶部按钮打开 Monitor。
 const runId = computed(() => resultData.value.runId as string | undefined)
 
 const cardStatus = computed<'pending' | 'running' | 'success' | 'error'>(() => {
@@ -47,16 +47,6 @@ const preview = computed(() => {
   const src = responseText.value || prompt.value
   return extractPreviewText(src, { maxLines: 10, maxChars: 1200 })
 })
-
-async function openMonitor() {
-  // 修改原因：SubAgent 主卡片只显示摘要，完整内部过程需要在独立 Monitor 编辑器页查看。
-  // 修改方式：点击按钮时把 runId 发送给扩展，由后端打开或 reveal SubAgent Monitor。
-  // 修改目的：不污染主对话时间线，同时能定位到当前 SubAgent 运行详情。
-  await sendToExtension('subagents.openMonitor', {
-    runId: runId.value,
-    conversationId: chatStore.currentConversationId || undefined
-  })
-}
 </script>
 
 <template>
@@ -86,12 +76,11 @@ async function openMonitor() {
           </CustomScrollbar>
         </div>
 
-        <div class="actions">
-          <button class="action-button" type="button" @click.stop="openMonitor">
-            <i class="codicon codicon-open-preview"></i>
-            <span>打开详情</span>
-          </button>
-          <span v-if="runId" class="run-id">{{ runId }}</span>
+        <!-- 修改原因：详情入口已合并到工具头部 Open details，展开区不能再保留重复的“打开详情”按钮。
+             修改方式：这里只在最终结果返回 runId 后展示文本，pending 阶段由顶部 action 负责打开 Monitor。
+             修改目的：统一入口、统一 i18n 和统一旧版按钮样式。 -->
+        <div v-if="runId" class="actions">
+          <span class="run-id">{{ runId }}</span>
         </div>
 
         <div v-if="errorMessage" class="error">{{ errorMessage }}</div>
@@ -143,23 +132,6 @@ async function openMonitor() {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
-}
-
-.action-button {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 8px;
-  border: 1px solid var(--vscode-button-border, transparent);
-  border-radius: 6px;
-  background: var(--vscode-button-secondaryBackground);
-  color: var(--vscode-button-secondaryForeground);
-  cursor: pointer;
-  font-size: 12px;
-}
-
-.action-button:hover {
-  background: var(--vscode-button-secondaryHoverBackground);
 }
 
 .run-id {

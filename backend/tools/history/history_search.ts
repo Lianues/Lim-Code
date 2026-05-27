@@ -417,25 +417,28 @@ export function createHistorySearchToolDeclaration(): ToolDeclaration {
             properties: {
                 mode: {
                     type: 'string',
+                    // 为什么要改：history_search 的参数说明会直接进入模型上下文，英文说明在中文对话里更容易被模型忽略或和 read_file 语法混淆。
+                    // 怎么改：保留 mode 的枚举值不变，只把说明改成中文，并继续强调 search 后 read 的两步流程。
+                    // 目的：让模型先定位历史行号，再用 start_line/end_line 精确读取，而不是把搜索结果当完整历史内容。
                     description:
-                        'Operation mode. Use "search" first to locate matching line numbers and context snippets; use "read" afterwards to fetch exact lines by start_line/end_line.',
+                        '操作模式。先使用 "search" 定位匹配行号和上下文片段；随后使用 "read" 通过 start_line/end_line 精确读取历史行。',
                     enum: ['search', 'read']
                 },
                 query: {
                     type: 'string',
-                    description: '[search mode, required] Keyword, whitespace-separated keywords, exact phrase, or regex pattern to locate earlier conversation lines. In non-regex mode, multi-word input first tries the exact phrase; if that finds nothing, it falls back to individual whitespace-separated keywords. Search output is only a locator/snippet, not the full historical content.'
+                    description: '[search 模式，必填] 用于定位早期对话行的关键词、空格分隔关键词、完整短语或正则表达式。非正则模式下，多词输入会先尝试完整短语；如果没有命中，会降级为逐个空格分隔关键词搜索。search 输出只是定位器和片段，不是完整历史内容。'
                 },
                 is_regex: {
                     type: 'boolean',
-                    description: '[search mode] Whether to treat query as a regular expression. Default: false'
+                    description: '[search 模式] 是否把 query 当作正则表达式处理。默认 false。'
                 },
                 start_line: {
                     type: 'number',
-                    description: '[read mode] Start line number from a previous search result or round header, 1-based and inclusive. Use snake_case start_line, not read_file startLine.'
+                    description: '[read 模式] 从前一次 search 结果或轮次标题中取得的起始行号，1-based，包含该行。必须使用 snake_case 的 start_line，不要使用 read_file 的 startLine。'
                 },
                 end_line: {
                     type: 'number',
-                    description: '[read mode] End line number from the virtual history document, 1-based and inclusive. Max ' + MAX_READ_LINES + ' lines per read. Use the same value as start_line to fetch one complete long line.'
+                    description: '[read 模式] 虚拟历史文档中的结束行号，1-based，包含该行。每次最多读取 ' + MAX_READ_LINES + ' 行。如果需要读取某一条完整长行，请让 end_line 与 start_line 相同。'
                 }
             },
             required: ['mode']
@@ -445,21 +448,21 @@ export function createHistorySearchToolDeclaration(): ToolDeclaration {
     Object.defineProperty(declaration, 'description', {
         get() {
             const scope = getGlobalSettingsManager()?.getHistorySearchConfig()?.searchScope ?? 'all';
-            const scopeText = scope === 'summarized' ? 'compressed/summarized history ONLY' : 'ENTIRE conversation history';
+            const scopeText = scope === 'summarized' ? '仅压缩/摘要历史' : '完整对话历史';
             // 这段 description 是模型实际看到的工具提示词。
             // 为什么要写得更明确：旧文案把 history_search 类比成 read_file，并出现 startLine/endLine，模型容易误用参数名或把 search 结果当完整内容。
-            // 怎么改：把工具边界、两步流程、虚拟文档格式、snake_case 参数名和单行完整读取规则都放在主描述里。
+            // 怎么改：把工具边界、两步流程、虚拟文档格式、snake_case 参数名和单行完整读取规则都放在主描述里，并统一改成中文。
             // 目的：让模型先用 search 定位行号，再用 read 精确取证，同时避免把它误用于代码库文件搜索。
-            return `Search and read this chat's conversation history, not repository files. ` +
-                `Use this when earlier turns, previous tool calls, previous tool results, or user decisions are needed. ` +
-                `For workspace file search use search_in_files or find_files instead. ` +
-                `CURRENT SETTINGS ALLOW SEARCHING: [${scopeText}].\n` +
-                `The history is formatted as a virtual document with line numbers. Output lines look like "  42 | text"; the number and pipe are locators, not message content. ` +
-                `Round headers show their line range, e.g. "══ Round 3 (L45-L88) ══"; use that L range with read to retrieve the whole round.\n` +
-                `Workflow:\n` +
-                `1. mode="search": provide query, or query plus is_regex=true. Search returns only matching line numbers and a few context lines; it is a locator, not complete historical content. In non-regex mode, query="keyword1 keyword2 keyword3" is supported: the tool first tries the exact phrase, then automatically falls back to individual whitespace-separated keywords if the exact phrase is not found.\n` +
-                `2. mode="read": after search, provide start_line and end_line from the virtual document to fetch exact lines. Use snake_case start_line/end_line, not read_file's startLine/endLine names. Max ${MAX_READ_LINES} lines per read.\n` +
-                `3. If a search result says a long line was truncated, or if you need one complete tool result line, call read with start_line=N and end_line=N for that same single line; single-line reads are never truncated.`;
+            return `搜索并读取本次聊天的对话历史，而不是仓库文件。` +
+                `当需要查找早期轮次、之前的工具调用、工具结果或用户决定时使用本工具。` +
+                `如果要搜索工作区文件，请改用 search_in_files 或 find_files。` +
+                `当前设置允许搜索范围：[${scopeText}]。\n` +
+                `历史内容会被格式化成带行号的虚拟文档。输出行形如 "  42 | text"；其中行号和竖线只是定位标记，不属于消息正文。` +
+                `轮次标题会显示行范围，例如 "══ Round 3 (L45-L88) ══"；需要读取整轮内容时，用该 L 范围调用 read。\n` +
+                `工作流：\n` +
+                `1. mode="search"：提供 query，或同时提供 query 与 is_regex=true。search 只返回匹配行号和少量上下文；它是定位器，不是完整历史内容。非正则模式下支持 query="关键词1 关键词2 关键词3"：工具会先搜索完整短语；如果没有命中，会自动降级为逐个空格分隔关键词搜索。\n` +
+                `2. mode="read"：search 定位后，使用虚拟文档中的 start_line 和 end_line 精确读取历史行。必须使用 snake_case 的 start_line/end_line，不要使用 read_file 的 startLine/endLine。每次最多读取 ${MAX_READ_LINES} 行。\n` +
+                `3. 如果 search 结果提示某一长行被截断，或你需要读取一条完整工具结果行，请调用 read，并设置 start_line=N 且 end_line=N；单行读取永不截断。`;
         },
         enumerable: true
     });

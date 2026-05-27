@@ -17,6 +17,14 @@ export interface ToolProgressEvent {
     runId?: string;
     /** 事件类型，覆盖结构级、内容级和工具级进度 */
     type: 'run_created' | 'run_updated' | 'run_completed' | 'run_failed' | 'run_cancelled'
+        // 修改原因：SubAgent Monitor 新增暂停、恢复、等待用户操作和扩展重载中断状态，需要通过同一进度 envelope 广播。
+        // 修改方式：把 run_paused/run_resumed/run_awaiting_monitor_action/run_interrupted 纳入通用事件类型，而不是在 SubAgent 单独绕开类型系统。
+        // 修改目的：保持主聊天、SubAgent Monitor 和未来长任务的进度事件仍然使用同一协议。
+        | 'run_paused' | 'run_resumed' | 'run_awaiting_monitor_action' | 'run_interrupted'
+        // 修改原因：ChannelManager 的局部 retryStatusCallback 会把 SubAgent 内部自动重试状态转发给 Monitor。
+        // 修改方式：把 retrying/retrySuccess/retryFailed 纳入通用进度事件类型。
+        // 修改目的：自动重试仍由 ChannelManager 负责，Monitor 可通过同一事件总线观察状态。
+        | 'retrying' | 'retrySuccess' | 'retryFailed'
         | 'llm_delta' | 'content_snapshot'
         | 'tool_started' | 'tool_progress' | 'tool_completed' | 'tool_failed';
     /** 工具调用 ID；工具级事件使用 */

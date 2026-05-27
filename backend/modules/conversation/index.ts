@@ -17,6 +17,21 @@ export {
     FileSystemStorageAdapter
 } from './storage';
 export type {
+    // 修改原因：webview 层和未来测试需要复用对话存储定位结果类型，而不应重新声明同构对象。
+    // 修改方式：从 conversation 模块统一导出 ConversationStorageLocation。
+    // 修改目的：保持历史 reveal 的返回结构类型单一来源。
+    ConversationStorageLocation
+} from './storage';
+export {
+    // 修改原因：主对话和 SubAgent 子对话都要复用同一套消息截断与工具配对删除规则。
+    // 修改方式：从 conversation 模块统一导出 TranscriptMutation 的纯函数和 adapter 变更入口。
+    // 修改目的：调用方不再各自复制 functionCall/functionResponse 配对处理逻辑。
+    truncateFrom,
+    deleteLogicalMessage,
+    mutateTranscript
+} from './TranscriptMutation';
+export type { TranscriptAdapter } from './TranscriptMutation';
+export type {
     Content,
     ContentPart,
     ConversationHistory,

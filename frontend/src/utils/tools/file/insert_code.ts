@@ -3,6 +3,7 @@
  */
 
 import { registerTool } from '../../toolRegistry'
+import { createDiffPreviewAction } from '../diffPreviewAction'
 import InsertCodeComponent from '../../../components/tools/file/insert_code.vue'
 
 // 单个插入条目类型
@@ -27,14 +28,14 @@ registerTool('insert_code', {
   
   // 使用自定义组件显示内容
   contentComponent: InsertCodeComponent,
-  
-  // 启用 diff 预览功能
-  hasDiffPreview: true,
-  
-  // 获取所有插入的文件路径
-  getDiffFilePath: (args) => {
-    const files = args.files as InsertEntry[] | undefined
-    if (!files || !Array.isArray(files) || files.length === 0) return []
-    return files.map(f => f.path)
-  }
+  actions: [
+    // 修改原因：insert_code 的 diff 预览按钮不应继续由 ToolMessage 专用逻辑渲染。
+    // 修改方式：将文件列表解析封装为共享 diff preview action。
+    // 修改目的：所有显眼操作按钮统一由 ToolConfig.actions 驱动。
+    createDiffPreviewAction((args) => {
+      const files = args.files as InsertEntry[] | undefined
+      if (!files || !Array.isArray(files) || files.length === 0) return []
+      return files.map(f => f.path)
+    })
+  ]
 })
