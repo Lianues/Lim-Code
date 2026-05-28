@@ -33,6 +33,8 @@ const TASK_TYPE_TERMINAL = 'terminal';
  */
 type ShellType = 'default' | 'powershell' | 'cmd' | 'bash' | 'zsh' | 'sh' | 'gitbash' | 'wsl';
 
+type WorkspaceRootPromptInfo = { name: string; path: string };
+
 /**
  * 终端进程信息
  */
@@ -366,7 +368,7 @@ function getWorkspaceRootPath(): string | undefined {
 /**
  * 获取所有工作区路径
  */
-function getAllWorkspaceRoots(): Array<{ name: string; path: string }> {
+function getAllWorkspaceRoots(): WorkspaceRootPromptInfo[] {
     const folders = vscode.workspace.workspaceFolders;
     if (!folders) return [];
     return folders.map(f => ({ name: f.name, path: f.uri.fsPath }));
@@ -601,7 +603,10 @@ function getUnavailableShellsDescription(): string {
  * 设计原则：保持 execute_command 作为 pure shell 工具，不新增 argv/script/stdin 模式；
  * 通过明确每种 shell 的解析规则降低模型误用概率。
  */
-function getExecuteCommandShellGuidanceDescription(): string {
+function getExecuteCommandShellGuidanceDescription(
+    workspaceRoots: WorkspaceRootPromptInfo[],
+    isMultiRoot: boolean
+): string {
     const defaultShellType = getDefaultShellType();
     const maxOutputLines = getMaxOutputLines() === -1 ? '全部' : `最后 ${getMaxOutputLines()}`;
 
@@ -609,6 +614,8 @@ function getExecuteCommandShellGuidanceDescription(): string {
         '## 重要语义',
         '',
         '`command` 是一段 Shell 文本，不是 argv 数组。Function Calling 只负责把字符串交给工具；随后该字符串会被 `shell` 参数指定的 Shell 继续解析。你必须按照所选 Shell 的语法书写命令。',
+        '',
+        getCwdGuidanceDescription(workspaceRoots, isMultiRoot),
         '',
         '## Shell 选择规则',
         '',
@@ -644,6 +651,68 @@ function getExecuteCommandShellGuidanceDescription(): string {
         '',
         getSshGuidanceDescription()
     ].join('\n');
+}
+
+/**
+ * 1.2.1-fix：补全 execute_command 的 cwd 选择规则。
+ *
+ * 为什么要改：模型只看到“relative to workspace root”时，容易把 `cwd`、`command` 内路径、workspace 内外绝对路径混在一起。
+ * 怎么改：在主工具描述中集中解释 `cwd` 的职责、单根/多根工作区格式，以及 workspace 内外路径边界。
+ * 目的：让模型稳定选择工作目录，减少把 workspace 根目录拼成绝对路径或在多根工作区误用默认根目录的情况。
+ */
+function getCwdGuidanceDescription(workspaceRoots: WorkspaceRootPromptInfo[], isMultiRoot: boolean): string {
+    const baseRules = [
+        '## cwd 工作目录规则',
+        '',
+        '- `cwd` 是 Shell 的启动工作目录，不是要操作的文件或目录参数；真正的操作目标仍应写在 `command` 里。',
+        '- `cwd` 主要用于 workspace 内目录；当操作目标在 workspace 根目录之内时，`cwd` 和 `command` 里的路径都应使用相对路径。',
+        '- 不要把 workspace 根目录拼成绝对路径，例如不要把 `backend` 写成 `C:\\...\\workspace\\backend`。',
+        '- 文件就在 workspace 根目录时，`cwd` 不填或填 `.`，并在 `command` 中直接写文件名，例如 `Get-Content package.json`。',
+        '- 子目录操作时，`cwd` 写相对目录，例如 `backend`、`frontend/src`，命令内再写相对于该 `cwd` 的路径。',
+        '- 只有操作目标位于 workspace 之外时，才在 `command` 中使用绝对路径，例如系统临时目录、下载目录或其他盘符；`cwd` 仍优先保持在 workspace 内。'
+    ];
+
+    if (workspaceRoots.length === 0) {
+        return [
+            ...baseRules,
+            '- 当前没有打开 workspace，工具执行时会报错；打开 workspace 后再按上述规则填写 `cwd`。'
+        ].join('\n');
+    }
+
+    if (isMultiRoot) {
+        return [
+            ...baseRules,
+            '- 多根工作区不要依赖省略 `cwd` 的默认首个工作区；必须显式写 `workspace_name/path` 或 `@workspace_name/path`。',
+            '- 多根工作区的根目录写 `workspace_name` 或 `@workspace_name`；子目录写 `workspace_name/backend`、`@workspace_name/frontend/src`。',
+            `- 当前可用工作区：${workspaceRoots.map(w => w.name).join(', ')}。`
+        ].join('\n');
+    }
+
+    return [
+        ...baseRules,
+        '- 单根工作区中，不传 `cwd` 或传 `.` 表示当前 workspace 根目录。'
+    ].join('\n');
+}
+
+/**
+ * 1.2.1-fix：把同一套 cwd 规则压缩到参数 schema 描述里。
+ *
+ * 为什么要改：不同模型有时只读参数描述，不一定完整读完主工具描述。
+ * 怎么改：让 `cwd` 字段本身也说明根目录、相对路径、多根工作区和外部路径边界。
+ * 目的：在 Function Calling 参数层直接降低 `cwd` 填错概率。
+ */
+function getCwdParameterDescription(workspaceRoots: WorkspaceRootPromptInfo[], isMultiRoot: boolean): string {
+    const common = '`cwd` 是 Shell 启动工作目录，不是目标文件路径；workspace 内使用相对路径，不要拼接 workspace 绝对路径。';
+
+    if (workspaceRoots.length === 0) {
+        return `${common} 当前没有打开 workspace，工具执行时会报错。`;
+    }
+
+    if (isMultiRoot) {
+        return `${common} 多根工作区必须使用 "workspace_name/path" 或 "@workspace_name/path"；根目录写 workspace_name 或 @workspace_name。Available workspaces: ${workspaceRoots.map(w => w.name).join(', ')}`;
+    }
+
+    return `${common} 单根工作区不传或填 "." 表示 workspace 根目录；子目录写 "backend"、"frontend/src"；workspace 外目标使用 command 内的绝对路径。`;
 }
 
 function getPowerShellGuidanceDescription(): string {
@@ -776,11 +845,11 @@ export function createExecuteCommandTool(): Tool {
             '\n\nUse "workspace_name/path" format to specify the working directory';
     }
     
-    // cwd 参数描述
-    let cwdDescription = 'Working directory (relative to workspace root), defaults to workspace root';
-    if (isMultiRoot) {
-        cwdDescription = `Working directory, must use "workspace_name/path" format. Available workspaces: ${workspaceRoots.map(w => w.name).join(', ')}`;
-    }
+    // 1.2.1-fix：cwd 参数描述复用统一规则生成器。
+    // 为什么要改：旧描述过短，模型经常不知道应填工作区相对路径还是绝对路径。
+    // 怎么改：按单根/多根工作区动态生成 schema 字段说明。
+    // 目的：让只读取参数 schema 的模型也能正确选择 cwd。
+    const cwdDescription = getCwdParameterDescription(workspaceRoots, isMultiRoot);
     
     return {
         declaration: {
@@ -797,7 +866,7 @@ export function createExecuteCommandTool(): Tool {
 **Enabled Shells / 当前可用 Shell：**
 ${getAvailableShellsDescription()}${workspaceDescription}
 
-${getExecuteCommandShellGuidanceDescription()}`,
+${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
             parameters: {
                 type: 'object',
                 properties: {

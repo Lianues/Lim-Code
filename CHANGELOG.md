@@ -3,6 +3,11 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.2.1-fix] - 2026-05-28
+
+### 修复（Tool Prompt）
+  - 1.2.1-fix：为 `execute_command` 工具描述补充 `cwd` 工作目录规则，明确 workspace 内使用相对路径、多根工作区使用 `workspace_name/path` 或 `@workspace_name/path`、workspace 外目标在 `command` 中使用绝对路径，降低模型误填 `cwd` 的概率。
+
 ## [1.2.1] - 2026-05-28
 
 ### 发布范围
