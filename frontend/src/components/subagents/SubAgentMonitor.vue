@@ -19,6 +19,15 @@ import {
   reduceMonitorToolStatusOverlay,
   type MonitorToolStatusOverlay
 } from './monitorToolStatusOverlay'
+import {
+  DEFAULT_MONITOR_LIVE_DELTA_BUFFER_LIMIT,
+  enqueueMonitorLiveDelta,
+  getMonitorLiveDeltaRevision,
+  getMonitorLiveDeltaSequence,
+  hasRenderableMonitorLiveDelta,
+  selectReplayableMonitorLiveDeltas,
+  type MonitorLiveDeltaEvent
+} from './monitorLiveDeltaBuffer'
 import type { Content, ContentPart, Message, ToolUsage } from '@/types'
 
 // 修改原因：Monitor 需要区分暂停、等待用户处理和扩展重载中断，不能把它们都展示成失败。
@@ -89,6 +98,10 @@ const loadingOlderRunWindows = ref<Set<string>>(new Set())
 // 修改方式：用普通 Set 记录 dirty run，请求完成后自动补发一次 force refresh；requestSeq 防止旧响应覆盖新窗口。
 // 修改目的：保证 content_snapshot/run_completed 等边界事件最终一定校准当前窗口。
 const pendingForcedRunWindowRefreshes = new Set<string>()
+// 修改原因：Monitor 在流式中途打开时，llm_delta 可能早于 getRunWindow 响应到达，旧逻辑会直接丢弃这些正文增量。
+// 修改方式：为每个 run 维护有界 live delta 缓冲；窗口可用且 revision 匹配后按 eventSequence 回放。
+// 修改目的：不恢复 full snapshot 传输，也能让实时打开 Monitor 的显示最终追上同一轮流式输出。
+const liveDeltaBuffersByRunId = new Map<string, MonitorLiveDeltaEvent[]>()
 const latestRunWindowRequestSeq = new Map<string, number>()
 let runWindowRequestSeq = 0
 const focusedRunId = ref<string | undefined>((window as any).__LIMCODE_INITIAL_RUN_ID || undefined)
@@ -245,7 +258,13 @@ async function requestRunWindow(runId: string | undefined, force = false) {
       return
     }
     if (response?.manifest) upsertManifest(response.manifest)
-    if (response?.window) upsertWindow(response.window)
+    if (response?.window) {
+      upsertWindow(response.window)
+      // 修改原因：窗口响应可能是 Monitor 打开后第一次可用的 transcript 基线，之前到达的 llm_delta 不能再丢弃。
+      // 修改方式：窗口写入缓存后立即尝试回放同 run 的有界 live delta 缓冲。
+      // 修改目的：解决流式过程中打开 Monitor 时正文或工具调用只在结束后才恢复的问题。
+      replayBufferedLiveDeltas(response.window.runId)
+    }
     updateActiveRunIds(response?.activeRunIds)
   } finally {
     const nextLoading = new Set(loadingRunWindows.value)
@@ -300,6 +319,101 @@ async function loadOlderMessages() {
   }
 }
 
+function setLiveDeltaBuffer(runId: string, buffer: MonitorLiveDeltaEvent[]) {
+  // 修改原因：缓冲区是 Map，Vue 不需要追踪它；但必须集中删除空数组，避免长期打开 Monitor 后残留空 run key。
+  // 修改方式：空缓冲直接 delete，非空缓冲替换为新数组引用。
+  // 修改目的：让有界缓冲的生命周期清晰，避免后台 run 持续占用内存。
+  if (buffer.length === 0) {
+    liveDeltaBuffersByRunId.delete(runId)
+  } else {
+    liveDeltaBuffersByRunId.set(runId, buffer)
+  }
+}
+
+function bufferLiveDeltaEvent(event: SubAgentRunEvent) {
+  if (!event.runId || !hasRenderableMonitorLiveDelta(event)) return
+  const current = liveDeltaBuffersByRunId.get(event.runId)
+  setLiveDeltaBuffer(
+    event.runId,
+    enqueueMonitorLiveDelta(current, event, DEFAULT_MONITOR_LIVE_DELTA_BUFFER_LIMIT)
+  )
+}
+
+function clearSupersededLiveDeltaBuffer(runId: string, revision: number | undefined) {
+  const current = liveDeltaBuffersByRunId.get(runId)
+  if (!current || typeof revision !== 'number') return
+  // 修改原因：content_snapshot 表示后端 transcript 已进入更新 revision，旧 revision 的 live delta 已被权威窗口取代。
+  // 修改方式：低于新 revision 的缓冲 delta 提前淘汰，等于或高于 revision 的 delta 继续等待匹配窗口。
+  // 修改目的：流结束或工具结果写入后，不让旧实时片段重新追加到新窗口。
+  setLiveDeltaBuffer(runId, current.filter(event => getMonitorLiveDeltaRevision(event) >= revision))
+}
+
+function applyLiveDeltaToWindow(
+  event: MonitorLiveDeltaEvent,
+  contentWindow: SubAgentRunContentWindow,
+  manifest?: SubAgentRunManifest
+): SubAgentRunContentWindow | undefined {
+  if (!event.runId || !hasRenderableMonitorLiveDelta(event)) return contentWindow
+  const eventRevision = getMonitorLiveDeltaRevision(event)
+  const windowRevision = typeof contentWindow.contentRevision === 'number' ? contentWindow.contentRevision : 0
+  if (eventRevision < windowRevision) return contentWindow
+
+  const freshness = {
+    contentCount: manifest?.contentCount ?? contentWindow.totalCount,
+    contentRevision: eventRevision,
+    eventSequence: getMonitorLiveDeltaSequence(event) ?? manifest?.eventSequence ?? contentWindow.eventSequence
+  }
+  if (!isRunWindowTailAuthoritative(contentWindow, freshness)) return undefined
+
+  // 修改原因：后端不再为每个 SubAgent llm_delta 附带完整 snapshot，否则大输出会造成 postMessage 与事件数组 O(n²) 膨胀。
+  // 修改方式：当事件仍携带轻量可渲染 delta 且窗口已确认是同 revision 尾部时，Monitor 前端用共享 Content[] delta reducer 本地更新已加载 run。
+  // 修改目的：兼容旧协议实时输出，同时新瘦身协议不会把大正文塞进 event。
+  const timestamp = event.timestamp || Date.now()
+  const nextContents = applyStreamChunkToContents(contentWindow.contents || [], event.payload, timestamp, contentWindow.startIndex || 0)
+  const sequence = getMonitorLiveDeltaSequence(event)
+  return {
+    ...contentWindow,
+    contents: nextContents,
+    endIndex: Math.max(contentWindow.endIndex, contentWindow.startIndex + nextContents.length),
+    totalCount: Math.max(contentWindow.totalCount, contentWindow.startIndex + nextContents.length),
+    contentRevision: eventRevision,
+    eventSequence: Math.max(contentWindow.eventSequence || 0, sequence ?? manifest?.eventSequence ?? 0)
+  }
+}
+
+function replayBufferedLiveDeltas(runId: string) {
+  const currentWindow = windowsByRunId.value[runId]
+  const currentBuffer = liveDeltaBuffersByRunId.get(runId)
+  if (!currentWindow || !currentBuffer?.length) return
+
+  const { replayable, remaining } = selectReplayableMonitorLiveDeltas(currentBuffer, currentWindow)
+  if (replayable.length === 0) {
+    setLiveDeltaBuffer(runId, remaining)
+    return
+  }
+
+  let workingWindow = currentWindow
+  const stillBlocked: MonitorLiveDeltaEvent[] = []
+  for (const event of replayable) {
+    const nextWindow = applyLiveDeltaToWindow(event, workingWindow, {
+      contentCount: workingWindow.totalCount,
+      contentRevision: getMonitorLiveDeltaRevision(event),
+      eventSequence: getMonitorLiveDeltaSequence(event) ?? workingWindow.eventSequence
+    })
+    if (!nextWindow) {
+      stillBlocked.push(event)
+      continue
+    }
+    workingWindow = nextWindow
+  }
+
+  windowsByRunId.value = {
+    ...windowsByRunId.value,
+    [runId]: workingWindow
+  }
+  setLiveDeltaBuffer(runId, [...stillBlocked, ...remaining])
+}
+
 function applyLiveDeltaEvent(event: SubAgentRunEvent) {
   if (event.type !== 'llm_delta' || !event.runId) return
 
@@ -321,42 +435,40 @@ function applyLiveDeltaEvent(event: SubAgentRunEvent) {
     lastMessageRole: existingManifest?.lastMessageRole
   })
 
-  if (!existingWindow) {
-    // 修改原因：未聚焦 run 没有加载窗口，不能为每个后台 delta 构造完整 Content[]，否则会回到全量状态模型。
-    // 修改方式：仅更新 manifest 的 updatedAt/status，等用户切到该 run 时再拉窗口。
-    // 目的：并发 SubAgent 的后台大输出不占用前端内存和 Markdown 渲染预算。
-    return
-  }
-
-  const latestManifest = manifests.value.find(item => item.runId === event.runId) || existingManifest
-  const hasRenderableDelta = Array.isArray(event.payload?.delta) || !!event.payload?.contentSnapshot
-  if (!hasRenderableDelta) {
+  if (!hasRenderableMonitorLiveDelta(event)) {
     // 修改原因：Monitor 后端事件瘦身后，llm_delta 可能只携带 deltaCount/done 等状态计数，不再包含正文 delta。
     // 修改方式：没有可渲染正文时只更新 manifest，不调用 Content[] reducer 创建空 model 楼层。
     // 目的：遵守“正文走 window”原则，同时避免状态事件污染当前 transcript window。
     return
   }
 
-  if (!isRunWindowTailAuthoritative(existingWindow, latestManifest)) {
-    // 修改原因：可渲染 delta 没有独立 content identity，只能追加到已确认最新的尾部窗口。
-    // 修改方式：窗口落后、非尾部或 manifest revision 更高时，不应用 delta，而是强制拉取权威窗口。
-    // 目的：避免 stale window 把下一轮模型输出追加到上一轮 model 楼层。
+  if (!existingWindow) {
+    const isFocusedLiveRun = event.runId === focusedRunId.value || event.runId === focusedManifest.value?.runId
+    if (isFocusedLiveRun) {
+      // 修改原因：打开 Monitor 的首个 getRunWindow 可能尚未返回；此时直接 return 会永久丢失已经到达的正文或 functionCall delta。
+      // 修改方式：只为当前聚焦 run 缓冲可渲染 live delta，并触发一次窗口请求；窗口到达后按 revision/sequence 回放。
+      // 目的：仍然避免为所有后台 run 构造 Content[]，但当前查看 run 不再缺字或缺工具卡。
+      bufferLiveDeltaEvent(event)
+      void requestRunWindow(event.runId, true)
+    }
+    return
+  }
+
+  const latestManifest = manifests.value.find(item => item.runId === event.runId) || existingManifest
+  const nextWindow = applyLiveDeltaToWindow(event, existingWindow, latestManifest)
+  if (!nextWindow) {
+    // 修改原因：可渲染 delta 没有独立 content identity，只能追加到同 revision 的尾部窗口；窗口落后时不能丢弃 delta。
+    // 修改方式：先把 delta 放入有界缓冲，再强制拉取权威窗口，等待窗口 revision 匹配后回放。
+    // 目的：避免 stale window 混楼，同时修复中途窗口校准导致的实时片段丢失。
+    bufferLiveDeltaEvent(event)
     void requestRunWindow(event.runId, true)
     return
   }
 
-  // 修改原因：后端不再为每个 SubAgent llm_delta 附带完整 snapshot，否则大输出会造成 postMessage 与事件数组 O(n²) 膨胀。
-  // 修改方式：当事件仍携带轻量可渲染 delta 且窗口已确认是最新尾部时，Monitor 前端用共享 Content[] delta reducer 本地更新已加载 run。
-  // 目的：兼容旧协议实时输出，同时新瘦身协议不会把大正文塞进 event。
-  const nextContents = applyStreamChunkToContents(existingWindow.contents || [], event.payload, timestamp, existingWindow.startIndex || 0)
-  upsertWindow({
-    ...existingWindow,
-    contents: nextContents,
-    endIndex: Math.max(existingWindow.endIndex, existingWindow.startIndex + nextContents.length),
-    totalCount: Math.max(existingWindow.totalCount, existingWindow.startIndex + nextContents.length),
-    contentRevision: latestManifest?.contentRevision ?? existingWindow.contentRevision,
-    eventSequence: latestManifest?.eventSequence ?? existingWindow.eventSequence
-  })
+  windowsByRunId.value = {
+    ...windowsByRunId.value,
+    [event.runId]: nextWindow
+  }
 }
 
 function getFunctionResponseMap(contents: Content[]): Map<string, NonNullable<ContentPart['functionResponse']>> {
@@ -596,22 +708,31 @@ onMounted(async () => {
   disposeMessageListener = onMessageFromExtension((message: any) => {
     if (message.type === 'subagentMonitor.event') {
       if (message.data?.manifest) upsertManifest(message.data.manifest)
+      if (shouldApplyEventFocus({
+        currentFocusRunId: focusedRunId.value,
+        incomingFocusRunId: message.data?.focusRunId,
+        hasUserSelectedRun: hasUserSelectedRun.value
+      })) {
+        // 修改原因：实时事件携带的 focusRunId 是用户从主界面打开详情时的导航意图，delta 处理前需要先知道当前聚焦 run。
+        // 修改方式：把焦点同步提前到 event 应用之前，后续无窗口 delta 才能进入当前 run 的有界缓冲。
+        // 修改目的：修复“刚打开 Monitor 时首批 delta 被当成后台 run 丢弃”的时序漏洞。
+        focusedRunId.value = message.data.focusRunId
+      }
       if (message.data?.event) {
         appendEvent(message.data.event)
         applyLiveDeltaEvent(message.data.event)
+        if (message.data.event.type === 'content_snapshot') {
+          clearSupersededLiveDeltaBuffer(
+            message.data.event.runId,
+            message.data.event.contentRevision ?? message.data.event.payload?.contentRevision
+          )
+        }
         if (message.data.event.type !== 'llm_delta' && message.data.event.runId === focusedRun.value?.runId) {
           // 修改原因：content_snapshot/run_completed 等低频事件代表后端真源可能已校准，当前聚焦窗口需要刷新但不能接收完整 snapshot。
           // 修改方式：只对当前聚焦 run 强制重新拉取窗口；非聚焦 run 等用户切换时再拉。
           // 修改目的：保证当前可见内容最终一致，同时避免后台 run 大 transcript 进入前端。
           void requestRunWindow(message.data.event.runId, true)
         }
-      }
-      if (shouldApplyEventFocus({
-        currentFocusRunId: focusedRunId.value,
-        incomingFocusRunId: message.data?.focusRunId,
-        hasUserSelectedRun: hasUserSelectedRun.value
-      })) {
-        focusedRunId.value = message.data.focusRunId
       }
       updateActiveRunIds(message.data?.activeRunIds)
     }

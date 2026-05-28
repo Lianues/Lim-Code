@@ -2,6 +2,20 @@
 
 All notable changes to the "Lim Code" extension will be documented in this file.
 
+## [1.2.3] - 2026-05-28
+
+### 修复（apply_diff）
+  - 结构化 `hunks` 在 `oldContent` 精确匹配失败时新增行首缩进容错兜底：只忽略每行开头的空格和 tab，不忽略行内空白、字符串内容或空行数量。
+  - 缩进容错命中后会把 `newContent` 的相对缩进重映射到真实匹配块，降低语言文件、嵌套对象和代码块修改时因模型缩进误差导致的失败或错位风险。
+  - 多候选 fallback 仍遵守原有 `startLine` / `lineDelta` 规则；无 `startLine` 时拒绝自动猜测并返回候选行。
+  - 修复前序 hunk 删除整行到空字符串时 `lineDelta` 多减一行的问题，后续重复 `oldContent` 会按真实 LF 数量变化定位。
+
+### 测试
+  - 为结构化 hunk 增加 exact 优先、缩进 fallback、行内空白严格匹配、多候选拒绝/定位、final newline 和删除行偏移回归测试。
+
+### 发布整理
+  - 根扩展包、前端包、lockfile、设置页展示版本、内部模块元数据、MCP clientInfo、README 和发布说明统一更新到 `1.2.3`。
+
 ## [1.2.2] - 2026-05-28
 
 ### 发布说明

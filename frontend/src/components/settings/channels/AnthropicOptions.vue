@@ -50,6 +50,11 @@ const effortOptions = computed<SelectOption[]>(() => [
     description: t('components.channels.anthropic.thinking.effortMax')
   },
   {
+    value: 'xhigh',
+    label: 'xhigh',
+    description: t('components.channels.anthropic.thinking.effortXHigh')
+  },
+  {
     value: 'high',
     label: 'high',
     description: t('components.channels.anthropic.thinking.effortHigh')

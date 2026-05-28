@@ -581,15 +581,28 @@ export class AnthropicFormatter extends BaseFormatter {
             genConfig.max_tokens = config.options.max_tokens;
         }
         
-        if (optionsEnabled.temperature && config.options?.temperature !== undefined) {
+        // 为什么先判断 thinking 再决定采样参数：Anthropic 官方规定 thinking 启用时
+        // 与 temperature、top_k 不兼容（会返回 400），且 top_p 仅允许 0.95~1。
+        // 因此 thinking 生效时必须屏蔽 temperature / top_k，并夹紧 top_p。
+        const thinkingEnabled = optionsEnabled.thinking;
+        const thinking = config.options?.thinking;
+        // 仅当 type 为 adaptive 或 enabled（含未配置默认 enabled）时才算“思考真正生效”；disabled 不算。
+        const thinkingActive = !!(thinkingEnabled && thinking && (thinking.type === 'adaptive' || thinking.type === 'enabled' || thinking.type === undefined));
+        
+        if (optionsEnabled.temperature && config.options?.temperature !== undefined && !thinkingActive) {
             genConfig.temperature = config.options.temperature;
         }
         
         if (optionsEnabled.top_p && config.options?.top_p !== undefined) {
-            genConfig.top_p = config.options.top_p;
+            if (thinkingActive) {
+                // 思考生效时，top_p 仅允许 [0.95, 1]，越界则夹紧，避免 400。
+                genConfig.top_p = Math.min(1, Math.max(0.95, config.options.top_p));
+            } else {
+                genConfig.top_p = config.options.top_p;
+            }
         }
         
-        if (optionsEnabled.top_k && config.options?.top_k !== undefined) {
+        if (optionsEnabled.top_k && config.options?.top_k !== undefined && !thinkingActive) {
             genConfig.top_k = config.options.top_k;
         }
         
@@ -598,26 +611,25 @@ export class AnthropicFormatter extends BaseFormatter {
         }
         
         // 添加 thinking 配置（如果启用）
-        const thinkingEnabled = optionsEnabled.thinking;
-        const thinking = config.options?.thinking;
-        
         if (thinkingEnabled && thinking) {
             const thinkingType = thinking.type || 'enabled';
             
             if (thinkingType === 'adaptive') {
-                // 自适应思考模式（Opus 4.6+）
+                // 自适应思考模式（Opus 4.6 / 4.7 推荐，4.7 唯一可用模式）
                 genConfig.thinking = {
                     type: 'adaptive'
                 };
                 
-                // effort 通过 output_config 发送
-                if (thinking.effort) {
+                // effort 通过顶层 output_config 发送（官方文档确认的位置）。
+                // 校验白名单，过滤非法值（4.6 支持 max/high/medium/low，4.7 额外支持 xhigh）。
+                const allowedEfforts = ['max', 'xhigh', 'high', 'medium', 'low'];
+                if (thinking.effort && allowedEfforts.includes(thinking.effort)) {
                     genConfig.output_config = {
                         effort: thinking.effort
                     };
                 }
             } else if (thinkingType === 'enabled') {
-                // 传统手动思考模式
+                // 传统手动思考模式（4.5 等旧模型唯一可用模式）
                 const thinkingConfig: any = {
                     type: 'enabled'
                 };
@@ -631,6 +643,13 @@ export class AnthropicFormatter extends BaseFormatter {
                 }
                 
                 genConfig.thinking = thinkingConfig;
+            }
+            
+            // display 与 type 正交：adaptive 和 enabled 都接受 display 字段。
+            // 统一显式声明 summarized，让 4.7（默认 omitted）、旧模型（默认 summarized）
+            // 都稳定返回可读的思考摘要文本，而不是空 thinking。不依赖任何型号判断。
+            if (genConfig.thinking) {
+                genConfig.thinking.display = 'summarized';
             }
         }
         

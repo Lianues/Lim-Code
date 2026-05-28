@@ -1792,9 +1792,9 @@ const zhCN: LanguageMessages = {
                     title: '应用信息',
                     name: 'Lim Code - Vibe Coding助手',
                     // 为什么同步展示版本号：设置页版本曾落后于 package.json，用户会误判当前安装包。
-                    // 怎么改：随 1.2.2 流式稳定性发布把展示字符串同步到扩展版本。
+                    // 怎么改：随 1.2.3 apply_diff 缩进容错发布把展示字符串同步到扩展版本。
                     // 目的：让设置页、package 元数据和发布说明保持一致。
-                    version: '版本：1.2.2',
+                    version: '版本：1.2.3',
                     repository: '项目仓库',
                     developer: '开发者'
                 }
@@ -2194,6 +2194,7 @@ const zhCN: LanguageMessages = {
                     budgetHint: '思考过程使用的最大 Token 数量，建议 5000-50000',
                     effortLabel: '思考努力级别 (Effort)',
                     effortMax: '最大努力（仅 Opus 4.6）',
+                    effortXHigh: '超高努力（仅 Opus 4.7）',
                     effortHigh: '高努力（默认）',
                     effortMedium: '中等努力',
                     effortLow: '低努力',

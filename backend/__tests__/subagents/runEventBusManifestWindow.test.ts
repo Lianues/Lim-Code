@@ -59,12 +59,17 @@ describe('SubAgentRunEventBus manifest/window accessors', () => {
 
     const contentWindow = subAgentRunEventBus.getContentWindow('window-run-1', { limit: 2, fromTail: true });
 
+    // 修改原因：Monitor 前端依赖 contentRevision/eventSequence 判断窗口是否可接收 live delta，窗口协议测试不能再停留在旧字段集合。
+    // 修改方式：tail window 断言同时包含初始 run_created 后的 sequence 与初始 revision。
+    // 修改目的：防止后端 getContentWindow 回归到无法参与 stale window 判断的旧协议。
     expect(contentWindow).toEqual({
       runId: 'window-run-1',
       contents: [createContent(3, '消息 3'), createContent(4, '消息 4')],
       startIndex: 3,
       endIndex: 5,
       totalCount: 5,
+      contentRevision: 0,
+      eventSequence: 1,
       hasMoreBefore: true,
       hasMoreAfter: false
     });
@@ -84,6 +89,11 @@ describe('SubAgentRunEventBus manifest/window accessors', () => {
       startIndex: 2,
       endIndex: 4,
       totalCount: 6,
+      // 修改原因：older window 与 tail window 走同一 freshness 协议，不能只在尾部请求中携带 revision/sequence。
+      // 修改方式：断言分页窗口同样返回初始 revision 与 run_created sequence。
+      // 修改目的：加载更早后再校准尾部时，前端仍能用统一字段判断窗口新旧。
+      contentRevision: 0,
+      eventSequence: 1,
       hasMoreBefore: true,
       hasMoreAfter: true
     });

@@ -1792,9 +1792,9 @@ const en: LanguageMessages = {
                     title: 'Application Info',
                     name: 'Lim Code - Vibe Coding Assistant',
                     // Why keep this in sync: the settings page previously lagged behind package.json, which made installed builds look stale.
-                    // How this changes it: bump the displayed release string together with the 1.2.2 streaming stability release.
+                    // How this changes it: bump the displayed release string together with the 1.2.3 apply_diff indentation fallback release.
                     // Purpose: keep package metadata, release notes, and the settings UI consistent.
-                    version: 'Version: 1.2.2',
+                    version: 'Version: 1.2.3',
                     repository: 'Repository',
                     developer: 'Developer'
                 }
@@ -2194,6 +2194,7 @@ const en: LanguageMessages = {
                     budgetHint: 'Maximum token count for thinking process, recommended 5000-50000',
                     effortLabel: 'Thinking Effort',
                     effortMax: 'Maximum (Opus 4.6 only)',
+                    effortXHigh: 'Extra High (Opus 4.7 only)',
                     effortHigh: 'High (default)',
                     effortMedium: 'Medium',
                     effortLow: 'Low',

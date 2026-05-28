@@ -1792,9 +1792,9 @@ const ja: LanguageMessages = {
                     title: 'アプリケーション情報',
                     name: 'Lim Code - Vibe Coding アシスタント',
                     // なぜ同期するか：設定画面の表示バージョンが package.json より古く、インストール済みビルドを誤認しやすかったため。
-                    // どう変えるか：1.2.2 のストリーミング安定化リリースに合わせて表示文字列も更新する。
+                    // どう変えるか：1.2.3 の apply_diff インデント許容リリースに合わせて表示文字列も更新する。
                     // 目的：package メタデータ、リリースノート、設定 UI のバージョンを一致させる。
-                    version: 'バージョン：1.2.2',
+                    version: 'バージョン：1.2.3',
                     repository: 'リポジトリ',
                     developer: '開発者'
                 }
@@ -2194,6 +2194,7 @@ const ja: LanguageMessages = {
                     budgetHint: '思考プロセスに使用する最大トークン数、5000-50000 を推奨',
                     effortLabel: '思考エフォートレベル (Effort)',
                     effortMax: '最大（Opus 4.6 のみ）',
+                    effortXHigh: '超高（Opus 4.7 のみ）',
                     effortHigh: '高（デフォルト）',
                     effortMedium: '中',
                     effortLow: '低',

@@ -20,9 +20,9 @@ export function createConversationModule(storage: IStorageAdapter): ModuleDefini
         id: 'conversation',
         name: 'Conversation Manager',
         // 为什么同步模块版本：对话历史、工具响应和前端窗口投影都依赖该模块，旧版本号会误导问题定位。
-        // 怎么改：随 1.2.2 流式稳定性发布统一内部模块版本展示。
-        // 目的：让历史加载、窗口化读取和工具结果相关诊断能对应到当前修复批次。
-        version: '1.2.2',
+        // 怎么改：随 1.2.3 apply_diff 缩进容错发布统一内部模块版本展示。
+        // 目的：让历史加载、窗口化读取和工具结果相关诊断能对应到当前工具稳定性修复批次。
+        version: '1.2.3',
         description: 'Provides conversation history management including message operations, snapshots, and statistics',
 
         apis: [

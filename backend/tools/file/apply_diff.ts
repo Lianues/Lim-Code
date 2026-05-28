@@ -142,12 +142,442 @@ function getLineNumberAtIndex(normalizedContent: string, index: number): number 
 }
 
 function countTextLines(normalizedText: string): number {
-    // 为什么要统一计算行数：应用 hunk 后要维护 startLine 的行号偏移，供后续重复 oldContent 定位使用。
-    // 怎么改：按 normalize 后的 LF 数量计算展示/定位意义上的行数，空字符串按 0 行处理。
-    // 目的：让多个 hunk 在同一次调用中按原文件行号稳定应用。
+    // 为什么要统一计算展示行数：diff block 的 endLine 需要描述替换内容在审阅面板里的可见范围。
+    // 怎么改：按 normalize 后的 LF 分割计算展示意义上的行数，空字符串按 0 行处理；lineDelta 另用 countLineBreaks 计算真实行号偏移。
+    // 目的：区分“展示范围”和“后续 startLine 偏移”，避免删除整行时把后续定位多减一行。
     if (!normalizedText) return 0;
     return normalizedText.split('\n').length;
 }
+
+function countLineBreaks(normalizedText: string): number {
+    // 修改原因：startLine 的 lineDelta 表示后续原始行号被前序 hunk 推动了多少行，真实变化取决于 LF 数量差，而不是展示行数差。
+    // 修改方式：单独统计文本中的 LF 字符数量，避免删除 `first\n` 到空字符串时把行号多减一。
+    // 修改目的：让前序插入、删除和替换都能正确调整后续重复 oldContent 的 startLine 定位。
+    let count = 0;
+    for (let i = 0; i < normalizedText.length; i++) {
+        if (normalizedText.charCodeAt(i) === 10) count++;
+    }
+    return count;
+}
+
+type StructuredMatchKind = 'exact' | 'indent_fallback';
+
+interface StructuredLineSpan {
+    content: string;
+    newline: '' | '\n';
+    startIndex: number;
+    endIndex: number;
+    lineNumber: number;
+}
+
+interface StructuredMatchCandidate {
+    startIndex: number;
+    endIndex: number;
+    startLine: number;
+    matchedOldContent: string;
+}
+
+interface ResolvedStructuredMatch {
+    kind: StructuredMatchKind;
+    startIndex: number;
+    endIndex: number;
+    startLine: number;
+    matchCount: number;
+    candidateLines?: number[];
+    matchedOldContent: string;
+    replacementContent: string;
+}
+
+function tokenizeNormalizedLinesWithSpans(normalizedText: string): StructuredLineSpan[] {
+    // 修改原因：缩进容错必须在“完整连续行窗口”上匹配，不能退化成不安全的任意子串 fuzzy 匹配。
+    // 修改方式：把已规范化为 LF 的文本切成带起止字符偏移、行号和末尾换行标记的逻辑行。
+    // 修改目的：后续 fallback 能用真实字符范围 splice，同时保留 final newline 的精确语义。
+    const lines: StructuredLineSpan[] = [];
+    if (!normalizedText) return lines;
+
+    let startIndex = 0;
+    let lineNumber = 1;
+
+    while (startIndex < normalizedText.length) {
+        const newlineIndex = normalizedText.indexOf('\n', startIndex);
+        if (newlineIndex === -1) {
+            lines.push({
+                content: normalizedText.slice(startIndex),
+                newline: '',
+                startIndex,
+                endIndex: normalizedText.length,
+                lineNumber
+            });
+            break;
+        }
+
+        lines.push({
+            content: normalizedText.slice(startIndex, newlineIndex),
+            newline: '\n',
+            startIndex,
+            endIndex: newlineIndex + 1,
+            lineNumber
+        });
+
+        startIndex = newlineIndex + 1;
+        lineNumber++;
+    }
+
+    return lines;
+}
+
+function getLeadingHorizontalWhitespace(line: string): string {
+    // 修改原因：AI 最常见的 oldContent 失败来自每行行首缩进误差，而不是代码主体变化。
+    // 修改方式：只识别空格和 tab 组成的行首横向缩进，不触碰行内空白或其它字符。
+    // 修改目的：把容错边界限制在缩进层面，避免字符串内容、参数间空格等语义内容被误忽略。
+    return line.match(/^[ \t]*/)?.[0] ?? '';
+}
+
+function stripLeadingHorizontalWhitespace(line: string): string {
+    return line.slice(getLeadingHorizontalWhitespace(line).length);
+}
+
+function hasNonWhitespaceBody(lines: StructuredLineSpan[]): boolean {
+    // 修改原因：只包含空行或缩进的 oldContent 在缩进容错下信息量为零，自动应用风险过高。
+    // 修改方式：要求至少一行在去掉行首缩进后仍有非空主体。
+    // 修改目的：阻止纯空白块通过 fallback 命中任意空白区域。
+    return lines.some(line => stripLeadingHorizontalWhitespace(line.content).trim().length > 0);
+}
+
+function findIndentFallbackCandidates(
+    normalizedContent: string,
+    normalizedOldContent: string
+): { candidates: StructuredMatchCandidate[]; disabledReason?: string } {
+    // 修改原因：精确匹配失败时需要兜底 AI 写错缩进的 oldContent，但不能引入通用 fuzzy 匹配的误落点风险。
+    // 修改方式：按连续完整行窗口扫描；比较时只忽略每行行首空格/tab，行内空白、空行数量和换行结尾保持严格。
+    // 修改目的：让缩进错误可以自动恢复，同时保留候选唯一性/startLine 这条安全边界。
+    const contentLines = tokenizeNormalizedLinesWithSpans(normalizedContent);
+    const searchLines = tokenizeNormalizedLinesWithSpans(normalizedOldContent);
+
+    if (searchLines.length === 0) {
+        return { candidates: [], disabledReason: 'oldContent has no logical lines.' };
+    }
+
+    if (!hasNonWhitespaceBody(searchLines)) {
+        return {
+            candidates: [],
+            disabledReason: 'oldContent contains only blank or indentation-only lines; provide non-whitespace context.'
+        };
+    }
+
+    if (searchLines.length > contentLines.length) {
+        return { candidates: [] };
+    }
+
+    const candidates: StructuredMatchCandidate[] = [];
+
+    for (let startLineIndex = 0; startLineIndex <= contentLines.length - searchLines.length; startLineIndex++) {
+        let ok = true;
+
+        for (let offset = 0; offset < searchLines.length; offset++) {
+            const searchLine = searchLines[offset];
+            const contentLine = contentLines[startLineIndex + offset];
+
+            if (stripLeadingHorizontalWhitespace(searchLine.content) !== stripLeadingHorizontalWhitespace(contentLine.content)) {
+                ok = false;
+                break;
+            }
+
+            if (searchLine.newline === '\n' && contentLine.newline !== '\n') {
+                ok = false;
+                break;
+            }
+        }
+
+        if (!ok) continue;
+
+        const firstLine = contentLines[startLineIndex];
+        const lastSearchLine = searchLines[searchLines.length - 1];
+        const lastContentLine = contentLines[startLineIndex + searchLines.length - 1];
+        const endIndex = lastSearchLine.newline === '\n'
+            ? lastContentLine.endIndex
+            : lastContentLine.startIndex + lastContentLine.content.length;
+
+        candidates.push({
+            startIndex: firstLine.startIndex,
+            endIndex,
+            startLine: firstLine.lineNumber,
+            matchedOldContent: normalizedContent.slice(firstLine.startIndex, endIndex)
+        });
+    }
+
+    return { candidates };
+}
+
+function buildNewToOldLineAlignment(oldLines: StructuredLineSpan[], newLines: StructuredLineSpan[]): Array<number | undefined> {
+    // 修改原因：fallback 命中后，newContent 的缩进也可能跟 oldContent 一样是模型误写的，不能按同一行号硬套真实缩进。
+    // 修改方式：先用去行首缩进后的主体做 LCS 找稳定锚点，再在锚点之间按顺序配对 changed chunk。
+    // 修改目的：插入、删除、替换混合出现时，缩进重映射仍能依赖相对可靠的行级对应关系。
+    const oldBodies = oldLines.map(line => stripLeadingHorizontalWhitespace(line.content));
+    const newBodies = newLines.map(line => stripLeadingHorizontalWhitespace(line.content));
+    const dp: number[][] = Array.from({ length: oldBodies.length + 1 }, () => Array(newBodies.length + 1).fill(0));
+
+    for (let i = oldBodies.length - 1; i >= 0; i--) {
+        for (let j = newBodies.length - 1; j >= 0; j--) {
+            dp[i][j] = oldBodies[i] === newBodies[j]
+                ? dp[i + 1][j + 1] + 1
+                : Math.max(dp[i + 1][j], dp[i][j + 1]);
+        }
+    }
+
+    const anchors: Array<{ oldIndex: number; newIndex: number }> = [];
+    let oldIndex = 0;
+    let newIndex = 0;
+
+    while (oldIndex < oldBodies.length && newIndex < newBodies.length) {
+        if (oldBodies[oldIndex] === newBodies[newIndex]) {
+            anchors.push({ oldIndex, newIndex });
+            oldIndex++;
+            newIndex++;
+        } else if (dp[oldIndex + 1][newIndex] >= dp[oldIndex][newIndex + 1]) {
+            oldIndex++;
+        } else {
+            newIndex++;
+        }
+    }
+
+    const alignment: Array<number | undefined> = Array(newLines.length).fill(undefined);
+    let previousOld = -1;
+    let previousNew = -1;
+
+    for (const anchor of [...anchors, { oldIndex: oldLines.length, newIndex: newLines.length }]) {
+        const oldGapStart = previousOld + 1;
+        const newGapStart = previousNew + 1;
+        const oldGapLength = anchor.oldIndex - oldGapStart;
+        const newGapLength = anchor.newIndex - newGapStart;
+        const pairedGapLength = Math.min(oldGapLength, newGapLength);
+
+        for (let i = 0; i < pairedGapLength; i++) {
+            alignment[newGapStart + i] = oldGapStart + i;
+        }
+
+        if (anchor.newIndex < newLines.length) {
+            alignment[anchor.newIndex] = anchor.oldIndex;
+        }
+
+        previousOld = anchor.oldIndex;
+        previousNew = anchor.newIndex;
+    }
+
+    return alignment;
+}
+
+function findNearestAlignedOldIndex(alignment: Array<number | undefined>, newLineIndex: number): number | undefined {
+    for (let i = newLineIndex - 1; i >= 0; i--) {
+        if (alignment[i] !== undefined) return alignment[i];
+    }
+
+    for (let i = newLineIndex + 1; i < alignment.length; i++) {
+        if (alignment[i] !== undefined) return alignment[i];
+    }
+
+    return undefined;
+}
+
+function findFirstNonEmptyLineIndex(lines: StructuredLineSpan[]): number | undefined {
+    const index = lines.findIndex(line => stripLeadingHorizontalWhitespace(line.content).trim().length > 0);
+    return index === -1 ? undefined : index;
+}
+
+function remapNewContentIndentation(
+    normalizedOldContent: string,
+    normalizedNewContent: string,
+    matchedOldContent: string
+): string {
+    // 修改原因：缩进 fallback 找到真实块以后，如果直接写入模型的 newContent，会把同样错误的缩进带进目标文件。
+    // 修改方式：基于 oldContent/newContent 的行级 alignment，把 newContent 每行的“相对模型缩进”平移到真实匹配块的缩进上。
+    // 修改目的：既自动修正 AI 的整体缩进偏差，又保留新增嵌套行相对锚点更深一层的缩进。
+    const oldLines = tokenizeNormalizedLinesWithSpans(normalizedOldContent);
+    const newLines = tokenizeNormalizedLinesWithSpans(normalizedNewContent);
+    const matchedLines = tokenizeNormalizedLinesWithSpans(matchedOldContent);
+
+    if (newLines.length === 0) return '';
+
+    const alignment = buildNewToOldLineAlignment(oldLines, newLines);
+    const fallbackOldIndex = findFirstNonEmptyLineIndex(oldLines);
+
+    return newLines.map((line, newLineIndex) => {
+        if (stripLeadingHorizontalWhitespace(line.content).trim().length === 0) {
+            return line.content + line.newline;
+        }
+
+        const oldLineIndex = alignment[newLineIndex]
+            ?? findNearestAlignedOldIndex(alignment, newLineIndex)
+            ?? fallbackOldIndex;
+
+        if (oldLineIndex === undefined || !oldLines[oldLineIndex] || !matchedLines[oldLineIndex]) {
+            return line.content + line.newline;
+        }
+
+        const modelAnchorIndent = getLeadingHorizontalWhitespace(oldLines[oldLineIndex].content);
+        const realAnchorIndent = getLeadingHorizontalWhitespace(matchedLines[oldLineIndex].content);
+        const modelLineIndent = getLeadingHorizontalWhitespace(line.content);
+
+        if (!modelLineIndent.startsWith(modelAnchorIndent)) {
+            // 修改原因：有些修改是有意 outdent，强行重映射会改变用户想要的结构。
+            // 修改方式：当前行无法证明是相对锚点的缩进时保留原样，只修正可证明的整体缩进偏移。
+            // 修改目的：让 fallback 保守地修正常见 AI 缩进偏差，而不是替用户猜测语义级缩进调整。
+            return line.content + line.newline;
+        }
+
+        return realAnchorIndent + line.content.slice(modelAnchorIndent.length) + line.newline;
+    }).join('');
+}
+
+function resolveStructuredHunkMatch(
+    currentContent: string,
+    oldContent: string,
+    newContent: string,
+    hunk: StructuredDiffHunk,
+    lineDelta: number
+): { success: true; match: ResolvedStructuredMatch } | {
+    success: false;
+    error: string;
+    matchCount?: number;
+    candidateLines?: number[];
+} {
+    // 修改原因：结构化 hunk 需要同时支持精确匹配和缩进容错 fallback，二者必须共享 startLine、lineDelta 和候选歧义规则。
+    // 修改方式：先执行原有 exact indexOf 逻辑；仅当 exact 为 0 时，才进入完整行窗口的 indent fallback。
+    // 修改目的：保持历史成功路径完全不变，同时把 AI 缩进误差收敛到一个可审计的匹配解析函数。
+    const matches = findAllExactMatchIndexes(currentContent, oldContent);
+
+    if (matches.length === 1) {
+        const startIndex = matches[0];
+        return {
+            success: true,
+            match: {
+                kind: 'exact',
+                startIndex,
+                endIndex: startIndex + oldContent.length,
+                startLine: getLineNumberAtIndex(currentContent, startIndex),
+                matchCount: 1,
+                matchedOldContent: oldContent,
+                replacementContent: newContent
+            }
+        };
+    }
+
+    if (matches.length > 1) {
+        const candidateLines = matches.map(index => getLineNumberAtIndex(currentContent, index));
+        if (hunk.startLine === undefined) {
+            return {
+                success: false,
+                error: `Multiple matches found (${matches.length}). Provide startLine to choose which oldContent occurrence to replace. Candidate match lines: ${candidateLines.join(', ')}.`,
+                matchCount: matches.length,
+                candidateLines
+            };
+        }
+
+        const adjustedStartLine = hunk.startLine + lineDelta;
+        const startOffset = getCharOffsetForLine(currentContent, adjustedStartLine);
+        if (startOffset === undefined) {
+            return {
+                success: false,
+                error: `startLine ${hunk.startLine} adjusted to ${adjustedStartLine}, which is outside the current file after previous hunks.`,
+                matchCount: matches.length,
+                candidateLines
+            };
+        }
+
+        const startIndex = matches.find(index => index >= startOffset);
+        if (startIndex === undefined) {
+            return {
+                success: false,
+                error: `Multiple matches found (${matches.length}), but none occur at or after startLine ${hunk.startLine} after line-offset adjustment. Candidate match lines: ${candidateLines.join(', ')}.`,
+                matchCount: matches.length,
+                candidateLines
+            };
+        }
+
+        return {
+            success: true,
+            match: {
+                kind: 'exact',
+                startIndex,
+                endIndex: startIndex + oldContent.length,
+                startLine: getLineNumberAtIndex(currentContent, startIndex),
+                matchCount: matches.length,
+                candidateLines,
+                matchedOldContent: oldContent,
+                replacementContent: newContent
+            }
+        };
+    }
+
+    const fallback = findIndentFallbackCandidates(currentContent, oldContent);
+    if (fallback.disabledReason) {
+        return {
+            success: false,
+            error: `No exact match found for oldContent. Indentation fallback was not attempted: ${fallback.disabledReason}`,
+            matchCount: 0
+        };
+    }
+
+    if (fallback.candidates.length === 0) {
+        return {
+            success: false,
+            error: 'No exact match found for oldContent. Also tried indentation-tolerant line matching (leading spaces/tabs only), but no candidate block matched. Please verify the non-indentation content exactly.',
+            matchCount: 0
+        };
+    }
+
+    const candidateLines = fallback.candidates.map(candidate => candidate.startLine);
+    let candidate: StructuredMatchCandidate | undefined;
+
+    if (fallback.candidates.length === 1) {
+        candidate = fallback.candidates[0];
+    } else {
+        if (hunk.startLine === undefined) {
+            return {
+                success: false,
+                error: `No exact match found for oldContent. Indentation fallback found multiple candidates (${fallback.candidates.length}). Provide startLine to choose which occurrence to replace. Candidate match lines: ${candidateLines.join(', ')}.`,
+                matchCount: fallback.candidates.length,
+                candidateLines
+            };
+        }
+
+        const adjustedStartLine = hunk.startLine + lineDelta;
+        const startOffset = getCharOffsetForLine(currentContent, adjustedStartLine);
+        if (startOffset === undefined) {
+            return {
+                success: false,
+                error: `No exact match found for oldContent. Indentation fallback found candidates, but startLine ${hunk.startLine} adjusted to ${adjustedStartLine}, which is outside the current file after previous hunks.`,
+                matchCount: fallback.candidates.length,
+                candidateLines
+            };
+        }
+
+        candidate = fallback.candidates.find(item => item.startIndex >= startOffset);
+        if (!candidate) {
+            return {
+                success: false,
+                error: `No exact match found for oldContent. Indentation fallback found multiple candidates (${fallback.candidates.length}), but none occur at or after startLine ${hunk.startLine} after line-offset adjustment. Candidate match lines: ${candidateLines.join(', ')}.`,
+                matchCount: fallback.candidates.length,
+                candidateLines
+            };
+        }
+    }
+
+    return {
+        success: true,
+        match: {
+            kind: 'indent_fallback',
+            startIndex: candidate.startIndex,
+            endIndex: candidate.endIndex,
+            startLine: candidate.startLine,
+            matchCount: fallback.candidates.length,
+            candidateLines: fallback.candidates.length > 1 ? candidateLines : undefined,
+            matchedOldContent: candidate.matchedOldContent,
+            replacementContent: remapNewContentIndentation(oldContent, newContent, candidate.matchedOldContent)
+        }
+    };
+}
+
 
 export function applyStructuredDiffHunksBestEffort(
     originalContent: string,
@@ -166,14 +596,15 @@ export function applyStructuredDiffHunksBestEffort(
         endLine?: number;
         matchCount?: number;
         candidateLines?: number[];
+        matchKind?: StructuredMatchKind;
     }>;
     blocks: Array<{ index: number; startLine: number; endLine: number }>;
     appliedCount: number;
     failedCount: number;
 } {
     // 为什么要把结构化 hunk 应用逻辑做成导出函数：工具入口和 DiffManager 块级接受/拒绝都需要同一套重放语义，不能各写一份。
-    // 怎么改：逐 hunk 处理；oldContent 唯一时直接替换，重复时才使用 startLine，并根据已应用 hunk 的行数变化维护偏移。
-    // 目的：同时解决 JSON 转义误写、多个修改点行号漂移、以及块级拒绝后重新计算内容的一致性问题。
+    // 怎么改：逐 hunk 处理；先保持 exact 匹配原有语义，exact 为 0 时才启用行首缩进容错，并根据已应用 hunk 的行数变化维护偏移。
+    // 目的：同时解决 JSON 转义误写、多个修改点行号漂移、AI 缩进误差、以及块级拒绝后重新计算内容的一致性问题。
     let currentContent = normalizeLineEndings(originalContent);
     let lineDelta = 0;
 
@@ -185,6 +616,7 @@ export function applyStructuredDiffHunksBestEffort(
         endLine?: number;
         matchCount?: number;
         candidateLines?: number[];
+        matchKind?: StructuredMatchKind;
     }> = [];
     const blocks: Array<{ index: number; startLine: number; endLine: number }> = [];
 
@@ -215,79 +647,46 @@ export function applyStructuredDiffHunksBestEffort(
             continue;
         }
 
-        const matches = findAllExactMatchIndexes(currentContent, oldContent);
-        let matchIndex: number | undefined;
+        const resolved = resolveStructuredHunkMatch(currentContent, oldContent, newContent, hunk, lineDelta);
 
-        if (matches.length === 0) {
+        // 修改原因：当前 TypeScript 配置不会在 `!resolved.success` 下稳定收窄布尔字面量联合类型。
+        // 修改方式：改用 `resolved.success === false`，让失败分支可以安全读取 error/matchCount/candidateLines。
+        // 修改目的：保持匹配结果类型严格，同时避免为了通过编译而放宽成 any。
+        if (resolved.success === false) {
             results.push({
                 index: i,
                 success: false,
-                error: 'No exact match found for oldContent. Please verify the content matches exactly.',
-                matchCount: 0
+                error: resolved.error,
+                matchCount: resolved.matchCount,
+                candidateLines: resolved.candidateLines
             });
             continue;
         }
 
-        if (matches.length === 1) {
-            matchIndex = matches[0];
-        } else {
-            const candidateLines = matches.map(index => getLineNumberAtIndex(currentContent, index));
-            if (hunk.startLine === undefined) {
-                results.push({
-                    index: i,
-                    success: false,
-                    error: `Multiple matches found (${matches.length}). Provide startLine to choose which oldContent occurrence to replace. Candidate match lines: ${candidateLines.join(', ')}.`,
-                    matchCount: matches.length,
-                    candidateLines
-                });
-                continue;
-            }
+        const { match } = resolved;
+        const oldLineCount = countTextLines(match.matchedOldContent);
+        const newLineCount = countTextLines(match.replacementContent);
+        const endLine = match.startLine + Math.max(newLineCount, 1) - 1;
 
-            const adjustedStartLine = hunk.startLine + lineDelta;
-            const startOffset = getCharOffsetForLine(currentContent, adjustedStartLine);
-            if (startOffset === undefined) {
-                results.push({
-                    index: i,
-                    success: false,
-                    error: `startLine ${hunk.startLine} adjusted to ${adjustedStartLine}, which is outside the current file after previous hunks.`,
-                    matchCount: matches.length,
-                    candidateLines
-                });
-                continue;
-            }
-
-            matchIndex = matches.find(index => index >= startOffset);
-            if (matchIndex === undefined) {
-                results.push({
-                    index: i,
-                    success: false,
-                    error: `Multiple matches found (${matches.length}), but none occur at or after startLine ${hunk.startLine} after line-offset adjustment. Candidate match lines: ${candidateLines.join(', ')}.`,
-                    matchCount: matches.length,
-                    candidateLines
-                });
-                continue;
-            }
-        }
-
-        const startLine = getLineNumberAtIndex(currentContent, matchIndex);
-        const oldLineCount = countTextLines(oldContent);
-        const newLineCount = countTextLines(newContent);
-        const endLine = startLine + Math.max(newLineCount, 1) - 1;
-
+        // 修改原因：缩进 fallback 的真实替换范围可能不同于模型给出的 oldContent 字符串，不能再用 oldContent.length 拼接。
+        // 修改方式：统一使用解析后的 startIndex/endIndex 和 replacementContent 执行 splice。
+        // 修改目的：让 exact 与 indent_fallback 共享同一条安全替换路径，并保留 final newline 的真实范围。
         currentContent =
-            currentContent.substring(0, matchIndex) +
-            newContent +
-            currentContent.substring(matchIndex + oldContent.length);
+            currentContent.substring(0, match.startIndex) +
+            match.replacementContent +
+            currentContent.substring(match.endIndex);
 
-        lineDelta += newLineCount - oldLineCount;
+        lineDelta += countLineBreaks(match.replacementContent) - countLineBreaks(match.matchedOldContent);
         results.push({
             index: i,
             success: true,
-            startLine,
+            startLine: match.startLine,
             endLine,
-            matchCount: matches.length
+            matchCount: match.matchCount,
+            candidateLines: match.candidateLines,
+            matchKind: match.kind
         });
-        blocks.push({ index: i, startLine, endLine });
+        blocks.push({ index: i, startLine: match.startLine, endLine });
     }
 
     const appliedCount = results.filter(x => x.success).length;

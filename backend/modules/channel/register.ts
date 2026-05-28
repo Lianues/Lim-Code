@@ -27,10 +27,10 @@ export function registerChannelModule(
     return {
         id: 'channel',
         name: 'Channel Manager',
-        // 为什么同步模块版本：Channel 模块仍是本次工具格式、流式合并和 provider formatter 修复的核心路径。
-        // 怎么改：随 1.2.2 流式稳定性发布统一内部模块版本展示。
-        // 目的：排查渠道 formatter 与流式热路径问题时可以识别当前修复批次。
-        version: '1.2.2',
+        // 为什么同步模块版本：Channel 模块仍是工具格式、流式合并和 provider formatter 修复的核心路径。
+        // 怎么改：随 1.2.3 apply_diff 缩进容错发布统一内部模块版本展示。
+        // 目的：排查渠道 formatter 与工具调用问题时可以识别当前修复批次。
+        version: '1.2.3',
         description: '管理 LLM 渠道调用，支持 Gemini、OpenAI、Anthropic 等多种格式',
         
         apis: [

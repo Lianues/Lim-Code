@@ -2237,6 +2237,7 @@ export interface LanguageMessages {
                     budgetHint: string;
                     effortLabel: string;
                     effortMax: string;
+                    effortXHigh: string;
                     effortHigh: string;
                     effortMedium: string;
                     effortLow: string;
