@@ -54,14 +54,21 @@ export function reduceMonitorToolStatusOverlay(
   }
 }
 
+function hasArgsSnapshot(args: unknown): args is Record<string, unknown> {
+  return !!args && typeof args === 'object' && !Array.isArray(args) && Object.keys(args).length > 0
+}
+
 export function applyMonitorToolOverlay(tool: ToolUsage, overlay: MonitorToolStatusOverlay | undefined): ToolUsage {
   const patch = overlay?.[tool.id]
   if (!patch) return tool
-  // 修改原因：functionCall 解析出的 ToolUsage 仍是工具卡结构真源，overlay 只负责运行态字段。
-  // 修改方式：保留工具 name/args/partialArgs 等展示字段，只覆盖 status/error/duration/result 等状态字段。
-  // 修改目的：避免工具事件携带的瘦身 payload 覆盖已解析好的参数，同时让状态实时更新。
+  const toolHasArgs = hasArgsSnapshot(tool.args)
+  const patchHasArgs = hasArgsSnapshot(patch.args)
+  // 修改原因：SubAgent Monitor 实时态可能先收到 tool_started/tool_completed，functionCall delta 尚未合并出完整 args，工具卡会临时显示 "?"。
+  // 修改方式：仍以 functionCall 解析出的 ToolUsage 为结构真源；只有当原工具缺少 args 且 overlay 携带完整 args 快照时才补齐参数，并清理 partialArgs。
+  // 修改目的：重开 Monitor 与实时 Monitor 显示一致，同时不让瘦身事件覆盖已解析好的完整参数。
   return {
     ...tool,
+    ...(patchHasArgs && !toolHasArgs ? { args: patch.args, partialArgs: undefined } : {}),
     status: patch.status ?? tool.status,
     error: patch.error ?? tool.error,
     duration: patch.duration ?? tool.duration,

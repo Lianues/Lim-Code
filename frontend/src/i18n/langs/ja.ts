@@ -1792,9 +1792,9 @@ const ja: LanguageMessages = {
                     title: 'アプリケーション情報',
                     name: 'Lim Code - Vibe Coding アシスタント',
                     // なぜ同期するか：設定画面の表示バージョンが package.json より古く、インストール済みビルドを誤認しやすかったため。
-                    // どう変えるか：1.2.1 の性能最適化リリースに合わせて表示文字列も更新する。
+                    // どう変えるか：1.2.2 のストリーミング安定化リリースに合わせて表示文字列も更新する。
                     // 目的：package メタデータ、リリースノート、設定 UI のバージョンを一致させる。
-                    version: 'バージョン：1.2.1',
+                    version: 'バージョン：1.2.2',
                     repository: 'リポジトリ',
                     developer: '開発者'
                 }
@@ -2505,7 +2505,11 @@ const ja: LanguageMessages = {
                     filesModified: '{count} ファイル',
                     viewMatches: '一致項目',
                     viewDiff: '差分',
-                    loadingDiff: '差分を読み込み中...'
+                    loadingDiff: '差分を読み込み中...',
+                    // 修改原因：検索置換 diff は未変更の大きな範囲を折りたたむため、コンポーネント内の固定文言ではなく翻訳文言が必要です。
+                    // 修改方式：省略された未変更行数を受け取る共通プレースホルダー文言を追加します。
+                    // 修改目的：メインチャットと SubAgent Monitor で同じ読みやすい hunk 省略表示を共有します。
+                    omittedUnchangedLines: '… 未変更の {count} 行を省略 …'
                 }
             },
             history: {

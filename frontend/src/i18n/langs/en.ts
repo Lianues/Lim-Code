@@ -1792,9 +1792,9 @@ const en: LanguageMessages = {
                     title: 'Application Info',
                     name: 'Lim Code - Vibe Coding Assistant',
                     // Why keep this in sync: the settings page previously lagged behind package.json, which made installed builds look stale.
-                    // How this changes it: bump the displayed release string together with the 1.2.1 performance release.
+                    // How this changes it: bump the displayed release string together with the 1.2.2 streaming stability release.
                     // Purpose: keep package metadata, release notes, and the settings UI consistent.
-                    version: 'Version: 1.2.1',
+                    version: 'Version: 1.2.2',
                     repository: 'Repository',
                     developer: 'Developer'
                 }
@@ -2505,7 +2505,11 @@ const en: LanguageMessages = {
                     filesModified: '{count} files',
                     viewMatches: 'Matches',
                     viewDiff: 'Diff',
-                    loadingDiff: 'Loading diff...'
+                    loadingDiff: 'Loading diff...',
+                    // 修改原因：search/replace diff now folds large unchanged spans, so the omitted-row label must be localized instead of hard-coded in the component.
+                    // 修改方式：add a reusable placeholder string; the diff hunk cropper passes the omitted unchanged line count.
+                    // 修改目的：keep the main chat and SubAgent Monitor using the same readable hunk omission message.
+                    omittedUnchangedLines: '… {count} unchanged lines omitted …'
                 }
             },
             history: {

@@ -28,6 +28,20 @@ describe('applyStreamChunkToContents structural sharing', () => {
     expect(model.parts[0].text).toBe('旧回答');
   });
 
+  it('creates live model content with window absolute index when delta arrives after a non-model tail', () => {
+    const userTail = createContent(20, '窗口尾部用户消息', 'user');
+
+    const next = applyStreamChunkToContents([userTail], { delta: [{ text: '实时回答' }] }, 3000, 20);
+
+    // 修改原因：Monitor 的 transcript window 不一定从 0 开始，实时 delta 新建 model 楼层时不能使用局部数组下标作为 backendIndex。
+    // 修改方式：applyStreamChunkToContents 接收 baseIndex，并用 baseIndex + contents.length 生成 live baseline index。
+    // 修改目的：SubAgent Monitor 实时输出后，delete/retry 仍指向真实 Content.index。
+    expect(next).toHaveLength(2);
+    expect(next[0]).toBe(userTail);
+    expect(next[1]).toMatchObject({ role: 'model', index: 21 });
+    expect(next[1].parts[0].text).toBe('实时回答');
+  });
+
   it('keeps functionCall merge semantics while only replacing the tail model content', () => {
     const first = createContent(0, '用户消息', 'user');
     const model: Content = {

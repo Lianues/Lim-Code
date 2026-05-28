@@ -348,7 +348,7 @@ function applyLiveDeltaEvent(event: SubAgentRunEvent) {
   // 修改原因：后端不再为每个 SubAgent llm_delta 附带完整 snapshot，否则大输出会造成 postMessage 与事件数组 O(n²) 膨胀。
   // 修改方式：当事件仍携带轻量可渲染 delta 且窗口已确认是最新尾部时，Monitor 前端用共享 Content[] delta reducer 本地更新已加载 run。
   // 目的：兼容旧协议实时输出，同时新瘦身协议不会把大正文塞进 event。
-  const nextContents = applyStreamChunkToContents(existingWindow.contents || [], event.payload, timestamp)
+  const nextContents = applyStreamChunkToContents(existingWindow.contents || [], event.payload, timestamp, existingWindow.startIndex || 0)
   upsertWindow({
     ...existingWindow,
     contents: nextContents,
@@ -384,6 +384,9 @@ function toRenderableMessages(run: SubAgentRunSnapshot | undefined): Message[] {
   if (!run) return []
   const responseMap = getFunctionResponseMap(run.contents || [])
   const toolOverlay = toolStatusOverlaysByRunId.value[run.runId]
+  const contentWindow = windowsByRunId.value[run.runId]
+  const isLiveRun = activeRunIds.value.has(run.runId)
+    && (run.status === 'running' || run.status === 'paused' || run.status === 'awaiting_monitor_action')
 
   return (run.contents || [])
     .map((content, windowOffset) => ({ content, windowOffset }))
@@ -394,9 +397,21 @@ function toRenderableMessages(run: SubAgentRunSnapshot | undefined): Message[] {
       // 修改目的：删除/重试时仍传给后端真实 contentIndex，不会误删窗口内相邻消息。
       const contentIndex = typeof content.index === 'number'
         ? content.index
-        : (windowsByRunId.value[run.runId]?.startIndex || 0) + windowOffset
+        : (contentWindow?.startIndex || 0) + windowOffset
       const message = contentToMessageEnhanced(content, `${run.runId}_${contentIndex}`)
       message.backendIndex = contentIndex
+
+      // 修改原因：Monitor 复用 MessageItem 但过去没有给活跃尾部 model 消息标记 streaming，导致它不走主窗口同一流式 Markdown 策略。
+      // 修改方式：当当前窗口覆盖 transcript 尾部，且 run 仍由后端 active controller 管理时，只把尾部 model 楼层投影为 streaming。
+      // 修改目的：SubAgent Monitor 与主聊天共享“活跃尾部消息流式渲染、历史消息完成态渲染”的统一契约。
+      if (
+        isLiveRun &&
+        content.role === 'model' &&
+        contentWindow?.hasMoreAfter !== true &&
+        contentIndex === Math.max(0, (contentWindow?.totalCount || 0) - 1)
+      ) {
+        message.streaming = true
+      }
 
       if (message.tools && message.tools.length > 0) {
         message.tools = message.tools.map(tool => {

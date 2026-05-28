@@ -2,13 +2,31 @@
 
 All notable changes to the "Lim Code" extension will be documented in this file.
 
+## [1.2.2] - 2026-05-28
 
-## [1.2.1-fix] - 2026-05-28
+### 发布说明
+  - 1.2.1 尚未正式发布；本版本吸收原 1.2.1 / 1.2.1-fix 预发布内容，并追加本 session 的流式渲染稳定性、SubAgent Monitor 实时输出和工具卡参数显示修复。
+
+### 修复（用户可见）
+  - 主聊天流式正文不再因 text / thought block key 随正文长度变化而闪烁重建；长回复 streaming 期间已输出内容会保持可见并稳定增长。
+  - SubAgent Monitor 恢复实时输出：`llm_delta` 事件允许携带轻量 text / thought / functionCall 增量，同时继续剥离完整 transcript、工具大结果和其它大对象。
+  - 修复 SubAgent Monitor 实时工具卡参数显示：`read_file` 等工具在实时态缺少 functionCall args 时，会使用工具事件中的 args 快照兜底，不再显示 `?`。
+  - Monitor 活跃尾部 model 消息对齐主聊天 streaming 渲染语义，live delta 使用窗口 `baseIndex` 生成真实 transcript index，避免实时输出与重开 Monitor 后显示不一致。
+
+### 性能与一致性
+  - `MarkdownRenderer` 的 streaming 调度从纯 debounce 调整为 leading / trailing / max-wait 策略：首个非空片段立即显示，持续输出有最大等待上限，尾部补齐最终渲染。
+  - 主聊天和 SubAgent Monitor 共享“稳定 RenderBlock 身份 + 轻量 delta + 完成态 window 校准”的渲染原则，避免只修一边造成协议分叉。
+
+### 发布整理
+  - 根扩展包、前端包、lockfile、设置页展示版本、内部模块元数据、MCP clientInfo 和发布说明统一更新到 `1.2.2`。
+  - 定向 Jest、`npm run compile`、`cd frontend && npm run build` 已通过；仍不声明未经运行时基线量化验证的具体性能收益数字。
+
+## [1.2.1-fix] - 2026-05-28 （未正式发布，已并入 1.2.2）
 
 ### 修复（Tool Prompt）
   - 1.2.1-fix：为 `execute_command` 工具描述补充 `cwd` 工作目录规则，明确 workspace 内使用相对路径、多根工作区使用 `workspace_name/path` 或 `@workspace_name/path`、workspace 外目标在 `command` 中使用绝对路径，降低模型误填 `cwd` 的概率。
 
-## [1.2.1] - 2026-05-28
+## [1.2.1] - 2026-05-28 （未正式发布，已并入 1.2.2）
 
 ### 发布范围
   - 架构整理并追加性能优化。

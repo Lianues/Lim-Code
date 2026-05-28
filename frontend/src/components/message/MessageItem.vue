@@ -158,7 +158,10 @@ const renderBlocks = computed<RenderBlock[]>(() => {
     if (currentTextBlock.length > 0) {
       const text = currentTextBlock.join('')
       if (text.trim()) {
-        blocks.push({ type: 'text', text, key: `${blocks.length}:text:${text.length}:${text.slice(0, 80)}` })
+        // 修改原因：流式正文每个 delta 都会改变 text.length；把长度/正文片段写进 key 会让 Vue 销毁重建 MarkdownRenderer，触发闪烁。
+        // 修改方式：key 只表达结构身份（第几个 block + 类型），内容增长只通过 props 更新。
+        // 修改目的：让主聊天与 Monitor 的流式文本块都复用同一组件实例，保留旧 HTML 直到新 HTML 渲染完成。
+        blocks.push({ type: 'text', text, key: `${blocks.length}:text` })
       }
       currentTextBlock = []
     }
@@ -181,7 +184,10 @@ const renderBlocks = computed<RenderBlock[]>(() => {
     if (currentThoughtBlock.length > 0) {
       const text = currentThoughtBlock.join('')
       if (text.trim()) {
-        blocks.push({ type: 'thought', text, key: `${blocks.length}:thought:${text.length}:${text.slice(0, 80)}` })
+        // 修改原因：thought 与正文共享同一 RenderBlock 身份契约；思考内容增长也不应改变组件身份。
+        // 修改方式：移除 text.length/text.slice 这类内容派生 key，只保留结构位置和类型。
+        // 修改目的：避免展开思考块接入流式渲染后重现正文闪烁问题。
+        blocks.push({ type: 'thought', text, key: `${blocks.length}:thought` })
       }
       currentThoughtBlock = []
     }

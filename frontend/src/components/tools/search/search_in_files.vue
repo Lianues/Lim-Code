@@ -221,7 +221,7 @@ function isLoadingDiff(path: string): boolean {
 
 // 计算差异行
 interface DiffLine {
-  type: 'unchanged' | 'deleted' | 'added'
+  type: 'unchanged' | 'deleted' | 'added' | 'omitted'
   content: string
   oldLineNum?: number
   newLineNum?: number
@@ -363,20 +363,82 @@ function getDiffStats(diffLines: DiffLine[]) {
 // 预览 diff 行数
 const previewDiffLineCount = 20
 
+// 变更上下文行数
+const diffContextLineCount = 1
+
 // Diff 展开状态
 const expandedDiffs = ref<Set<string>>(new Set())
 
+function getContextualDiffLines(diffLines: DiffLine[]): DiffLine[] {
+  // 修改原因：search_in_files 替换模式保存的是整文件 originalContent/newContent，直接展示会让一行命中展开成整文件 diff。
+  // 修改方式：先找出 added/deleted 变更行，再把每个变更区域裁剪为前后 1 行上下文，并在不连续区域之间插入省略行。
+  // 修改目的：保留完整 diff 统计和行号语义，同时让主聊天与 SubAgent Monitor 的工具卡都只展示真正相关的 hunk。
+  const changedIndexes = diffLines
+    .map((line, index) => (line.type === 'added' || line.type === 'deleted') ? index : -1)
+    .filter(index => index >= 0)
+
+  if (changedIndexes.length === 0) {
+    return diffLines
+  }
+
+  const ranges: Array<{ start: number; end: number }> = []
+  for (const index of changedIndexes) {
+    const start = Math.max(0, index - diffContextLineCount)
+    const end = Math.min(diffLines.length - 1, index + diffContextLineCount)
+    const previous = ranges[ranges.length - 1]
+
+    if (previous && start <= previous.end + 1) {
+      previous.end = Math.max(previous.end, end)
+    } else {
+      ranges.push({ start, end })
+    }
+  }
+
+  const contextualLines: DiffLine[] = []
+  let previousEnd = -1
+
+  for (const range of ranges) {
+    const omittedBefore = range.start - previousEnd - 1
+    if (omittedBefore > 0) {
+      contextualLines.push({
+        type: 'omitted',
+        content: t('components.tools.search.searchInFilesPanel.omittedUnchangedLines', { count: omittedBefore })
+      })
+    }
+
+    contextualLines.push(...diffLines.slice(range.start, range.end + 1))
+    previousEnd = range.end
+  }
+
+  const omittedAfter = diffLines.length - previousEnd - 1
+  if (omittedAfter > 0) {
+    contextualLines.push({
+      type: 'omitted',
+      content: t('components.tools.search.searchInFilesPanel.omittedUnchangedLines', { count: omittedAfter })
+    })
+  }
+
+  return contextualLines
+}
+
 // 检查 diff 是否需要展开
 function needsDiffExpand(diffLines: DiffLine[]): boolean {
-  return diffLines.length > previewDiffLineCount
+  return getContextualDiffLines(diffLines).length > previewDiffLineCount
 }
 
 // 获取显示的 diff 行
 function getDisplayDiffLines(diffLines: DiffLine[], path: string): DiffLine[] {
-  if (expandedDiffs.value.has(path) || diffLines.length <= previewDiffLineCount) {
-    return diffLines
+  const contextualLines = getContextualDiffLines(diffLines)
+  if (expandedDiffs.value.has(path) || contextualLines.length <= previewDiffLineCount) {
+    return contextualLines
   }
-  return diffLines.slice(0, previewDiffLineCount)
+  return contextualLines.slice(0, previewDiffLineCount)
+}
+
+function getHiddenDiffLineCount(diffLines: DiffLine[], path: string): number {
+  const contextualLines = getContextualDiffLines(diffLines)
+  if (expandedDiffs.value.has(path)) return 0
+  return Math.max(0, contextualLines.length - previewDiffLineCount)
 }
 
 // 切换 diff 展开状态
@@ -514,6 +576,7 @@ function isDiffExpanded(path: string): boolean {
                 <span class="line-marker">
                   <span v-if="line.type === 'deleted'" class="marker deleted">-</span>
                   <span v-else-if="line.type === 'added'" class="marker added">+</span>
+                  <span v-else-if="line.type === 'omitted'" class="marker omitted">⋯</span>
                   <span v-else class="marker unchanged">&nbsp;</span>
                 </span>
                 <span class="line-content">{{ line.content || ' ' }}</span>
@@ -525,7 +588,7 @@ function isDiffExpanded(path: string): boolean {
           <div v-if="needsDiffExpand(computeDiffLines(getDiffContent(replaceResult.file)!.originalContent, getDiffContent(replaceResult.file)!.newContent))" class="expand-section">
             <button class="expand-btn" @click="toggleDiffExpand(replaceResult.file)">
               <span :class="['codicon', isDiffExpanded(replaceResult.file) ? 'codicon-chevron-up' : 'codicon-chevron-down']"></span>
-              {{ isDiffExpanded(replaceResult.file) ? t('components.tools.search.searchInFilesPanel.collapse') : t('components.tools.search.searchInFilesPanel.expandRemaining', { count: computeDiffLines(getDiffContent(replaceResult.file)!.originalContent, getDiffContent(replaceResult.file)!.newContent).length - previewDiffLineCount }) }}
+              {{ isDiffExpanded(replaceResult.file) ? t('components.tools.search.searchInFilesPanel.collapse') : t('components.tools.search.searchInFilesPanel.expandRemaining', { count: getHiddenDiffLineCount(computeDiffLines(getDiffContent(replaceResult.file)!.originalContent, getDiffContent(replaceResult.file)!.newContent), replaceResult.file) }) }}
             </button>
           </div>
         </div>
@@ -894,6 +957,15 @@ function isDiffExpanded(path: string): boolean {
   background: rgba(0, 200, 83, 0.15);
 }
 
+.diff-line.line-omitted {
+  /* 修改原因：diff 现在会裁剪整文件中未变化的大段，需要给用户明确的视觉断点而不是让行号跳变显得像渲染错误。
+     修改方式：为 omitted 虚拟行使用弱化背景和说明文字，和真实 added/deleted/unchanged 行区分。
+     修改目的：让“只显示变更前后 1 行”的上下文裁剪可读且不会误导用户以为中间内容被删除。 */
+  background: var(--vscode-editor-inactiveSelectionBackground);
+  color: var(--vscode-descriptionForeground);
+  font-style: italic;
+}
+
 /* 行号 */
 .line-nums {
   display: flex;
@@ -942,6 +1014,10 @@ function isDiffExpanded(path: string): boolean {
 
 .marker.unchanged {
   color: transparent;
+}
+
+.marker.omitted {
+  color: var(--vscode-descriptionForeground);
 }
 
 /* 行内容 */

@@ -654,7 +654,7 @@ function getExecuteCommandShellGuidanceDescription(
 }
 
 /**
- * 1.2.1-fix：补全 execute_command 的 cwd 选择规则。
+ * 1.2.2-fix：补全 execute_command 的 cwd 选择规则。
  *
  * 为什么要改：模型只看到“relative to workspace root”时，容易把 `cwd`、`command` 内路径、workspace 内外绝对路径混在一起。
  * 怎么改：在主工具描述中集中解释 `cwd` 的职责、单根/多根工作区格式，以及 workspace 内外路径边界。
@@ -695,7 +695,7 @@ function getCwdGuidanceDescription(workspaceRoots: WorkspaceRootPromptInfo[], is
 }
 
 /**
- * 1.2.1-fix：把同一套 cwd 规则压缩到参数 schema 描述里。
+ * 1.2.2-fix：把同一套 cwd 规则压缩到参数 schema 描述里。
  *
  * 为什么要改：不同模型有时只读参数描述，不一定完整读完主工具描述。
  * 怎么改：让 `cwd` 字段本身也说明根目录、相对路径、多根工作区和外部路径边界。
@@ -845,7 +845,7 @@ export function createExecuteCommandTool(): Tool {
             '\n\nUse "workspace_name/path" format to specify the working directory';
     }
     
-    // 1.2.1-fix：cwd 参数描述复用统一规则生成器。
+    // 1.2.2-fix：cwd 参数描述复用统一规则生成器。
     // 为什么要改：旧描述过短，模型经常不知道应填工作区相对路径还是绝对路径。
     // 怎么改：按单根/多根工作区动态生成 schema 字段说明。
     // 目的：让只读取参数 schema 的模型也能正确选择 cwd。

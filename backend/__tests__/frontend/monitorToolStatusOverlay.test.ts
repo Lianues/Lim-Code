@@ -45,6 +45,37 @@ describe('SubAgent Monitor tool status overlay', () => {
     });
   });
 
+  it('fills missing realtime args from overlay snapshots without waiting for monitor reopen', () => {
+    const liveToolWithoutArgs: ToolUsage = {
+      id: 'tool-1',
+      name: 'read_file',
+      args: {},
+      partialArgs: '{"path":"README.md"',
+      status: 'streaming'
+    };
+
+    const overlay = reduceMonitorToolStatusOverlay({}, {
+      runId: 'run-1',
+      type: 'tool_started',
+      toolId: 'tool-1',
+      toolName: 'read_file',
+      payload: { args: { path: 'README.md' } }
+    });
+
+    const rendered = applyMonitorToolOverlay(liveToolWithoutArgs, overlay);
+
+    // 修改原因：Monitor 实时态曾经因为 overlay 不补 args，read_file 描述 formatter 只能显示 "?"；重开后 window 中最终 args 才正常。
+    // 修改方式：当 functionCall 投影尚无完整 args 时，用 tool_started/tool_completed 的 args 快照补齐。
+    // 修改目的：实时流式显示与重开后的权威 window 显示一致。
+    expect(rendered).toMatchObject({
+      id: 'tool-1',
+      name: 'read_file',
+      args: { path: 'README.md' },
+      status: 'executing'
+    });
+    expect(rendered.partialArgs).toBeUndefined();
+  });
+
   it('maps failed tool events to error without overwriting parsed args', () => {
     const parsedTool: ToolUsage = {
       id: 'tool-2',

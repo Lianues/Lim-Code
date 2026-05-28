@@ -229,9 +229,9 @@ export class DependencyManager {
             const tempPackageJson = {
                 name: 'limcode-deps',
                 // 为什么同步临时依赖包版本：依赖安装目录里的 package.json 也属于 LimCode 运行时元数据。
-                // 怎么改：随 1.2.1 性能优化发布同步临时 package 版本，不改第三方依赖版本。
+                // 怎么改：随 1.2.2 流式稳定性发布同步临时 package 版本，不改第三方依赖版本。
                 // 目的：让依赖安装诊断对应当前窗口序列化与 Monitor 架构优化批次。
-                version: '1.2.1',
+                version: '1.2.2',
                 dependencies: {
                     [name]: config.version
                 }

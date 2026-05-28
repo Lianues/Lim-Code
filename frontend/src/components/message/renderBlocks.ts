@@ -15,17 +15,23 @@ export interface RenderBlock {
   key?: string
 }
 
-/** 为渲染块生成稳定 key，避免 v-memo 缓存跨元素错位。 */
+/**
+ * 为渲染块生成稳定 key，避免 v-memo 缓存跨元素错位。
+ *
+ * 修改原因：流式 text/thought 的内容会持续增长，key 若包含 text.length 或正文片段，Vue 会把同一段输出误判为新块并重建 MarkdownRenderer。
+ * 修改方式：调用方优先提供结构 key；兜底也只使用类型/工具身份，不再从正文内容派生身份。
+ * 修改目的：把“块是谁”和“块显示什么”分开，主聊天与 SubAgent Monitor 共享同一流式块身份契约。
+ */
 export function getRenderBlockKey(block: RenderBlock): string {
   if (block.key) {
     return block.key
   }
 
-  const suffix =
-    block.type === 'tool'
-      ? (block.tools ?? []).map(tool => tool.id).join('|') || 'tool'
-      : `${(block.text ?? '').length}:${(block.text ?? '').slice(0, 80)}`
-  return `${block.type}:${suffix}`
+  if (block.type === 'tool') {
+    return `tool:${(block.tools ?? []).map(tool => tool.id).join('|') || 'tool'}`
+  }
+
+  return `${block.type}:unkeyed`
 }
 
 /** 为 MessageRenderBlock 生成 v-memo 依赖数组；只放真正影响渲染输出的值。 */

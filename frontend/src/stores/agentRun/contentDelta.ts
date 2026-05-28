@@ -99,7 +99,7 @@ function appendContentPart(target: Content, part: ContentPart): void {
   target.parts.push({ ...part })
 }
 
-function ensureLastModelContent(contents: Content[], timestamp: number): Content {
+function ensureLastModelContent(contents: Content[], timestamp: number, baseIndex: number): Content {
   const last = contents[contents.length - 1]
   if (last?.role === 'model') {
     return last
@@ -112,13 +112,16 @@ function ensureLastModelContent(contents: Content[], timestamp: number): Content
     role: 'model' as const,
     parts: [],
     timestamp,
-    index: contents.length
+    // 修改原因：Monitor window 可能不是从 0 开始；新建 live model 楼层必须保留完整 transcript 的绝对 index。
+    // 修改方式：由调用方传入 window.startIndex 作为 baseIndex，默认 0 兼容单元测试和旧调用。
+    // 目的：delete/retry/backendIndex 不因实时 delta 在分页窗口内生成局部 index 而错位。
+    index: baseIndex + contents.length
   } as Content
   contents.push(created)
   return created
 }
 
-export function applyStreamChunkToContents(contents: Content[], chunk: any, timestamp: number = Date.now()): Content[] {
+export function applyStreamChunkToContents(contents: Content[], chunk: any, timestamp: number = Date.now(), baseIndex: number = 0): Content[] {
   // 修改原因：SubAgent Monitor 不能继续依赖每个 llm_delta 附带完整 snapshot，否则 events 和 contents 都会随输出长度 O(n²) 膨胀。
   // 修改方式：把主聊天流式 reducer 的核心语义收敛为 Content[] delta reducer，支持 text、thought、functionCall、contentSnapshot 和 usage。
   // 目的：Monitor 实时显示 SubAgent 输出，同时保持后端只发送轻量 delta。
@@ -132,7 +135,7 @@ export function applyStreamChunkToContents(contents: Content[], chunk: any, time
     const replacement = cloneContent({
       ...snapshot,
       timestamp: snapshot.timestamp || timestamp,
-      index: typeof snapshot.index === 'number' ? snapshot.index : Math.max(0, next.length - 1)
+      index: typeof snapshot.index === 'number' ? snapshot.index : baseIndex + Math.max(0, next.length - 1)
     } as Content)
     let lastModelIndex = -1
     for (let index = next.length - 1; index >= 0; index--) {
@@ -144,7 +147,7 @@ export function applyStreamChunkToContents(contents: Content[], chunk: any, time
     if (lastModelIndex >= 0) {
       next[lastModelIndex] = replacement
     } else {
-      replacement.index = next.length
+      replacement.index = baseIndex + next.length
       next.push(replacement)
     }
     return next
@@ -159,7 +162,7 @@ export function applyStreamChunkToContents(contents: Content[], chunk: any, time
     modelContent = cloneContent(next[lastIndex])
     next[lastIndex] = modelContent
   } else {
-    modelContent = ensureLastModelContent(next, timestamp)
+    modelContent = ensureLastModelContent(next, timestamp, baseIndex)
   }
 
   for (const part of chunk?.delta || []) {

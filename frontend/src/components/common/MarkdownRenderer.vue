@@ -944,6 +944,7 @@ function renderContent(content: string, latexOnly: boolean, renderProfile: Rende
 const renderedContent = shallowRef('')
 
 const STREAM_RENDER_DEBOUNCE_MS = 120
+const STREAM_RENDER_MAX_WAIT_MS = 180
 /**
  * 为什么要加完成态渲染缓存：消息列表在 store 变化时会重新走父级渲染流程，
  * 已完成消息即使内容不变，也可能再次进入 MarkdownRenderer。
@@ -964,6 +965,8 @@ let lastRenderedLatexOnly = false
 let lastRenderedLanguage = ''
 let lastRenderedMode: 'streaming' | 'completed' | '' = ''
 let lastCompletedRenderCacheKey = ''
+/** 上一次流式阶段实际 render 的时间，用于把纯 debounce 升级为 leading + max-wait 节流。 */
+let lastStreamingRenderAt = 0
 /** 后处理（图片/Mermaid/链接校验）是否已对当前内容完成 */
 let postProcessedSource = ''
 let postProcessedProfile: RenderProfile = 'default'
@@ -1069,22 +1072,57 @@ function clearRenderTimer() {
   }
 }
 
+async function applyPostRenderDomState(rendered: boolean, needsPostProcess = false): Promise<void> {
+  if (rendered || needsPostProcess) {
+    // Mermaid / workspace images 需要基于最新 DOM 执行；流式阶段只回填轻量代码块状态。
+    await nextTick()
+    applyCodeBlockWrapStates()
+  }
+}
+
+async function renderStreamingNow(): Promise<void> {
+  const rendered = renderCurrentContent()
+  if (rendered) {
+    lastStreamingRenderAt = Date.now()
+  }
+  await applyPostRenderDomState(rendered)
+}
+
 function scheduleRender() {
-  const delay = props.isStreaming ? STREAM_RENDER_DEBOUNCE_MS : 0
   clearRenderTimer()
 
+  if (props.isStreaming) {
+    const now = Date.now()
+    const shouldRenderLeading = !!props.content && renderedContent.value === ''
+    const shouldRenderByMaxWait = !!props.content && now - lastStreamingRenderAt >= STREAM_RENDER_MAX_WAIT_MS
+
+    // 修改原因：纯 debounce 在流式高频更新时会一直推迟渲染；若组件新实例初始 HTML 为空，还会造成正文闪白。
+    // 修改方式：流式阶段采用 leading + trailing + max-wait：首个非空内容立即渲染，持续输出最多等待固定窗口，尾部再补一次。
+    // 修改目的：保留 50ms chunk 批处理的性能收益，同时让旧 HTML 在新 HTML 准备好前持续可见，不再闪烁或长时间滞后。
+    if (shouldRenderLeading || shouldRenderByMaxWait) {
+      void renderStreamingNow()
+    }
+
+    renderTimer = window.setTimeout(() => {
+      void renderStreamingNow()
+    }, STREAM_RENDER_DEBOUNCE_MS)
+    return
+  }
+
+  lastStreamingRenderAt = 0
+
   // 非流式 + 首次渲染：同步执行 render，让组件挂载瞬间就有内容（消除切换对话闪白）
-  if (!props.isStreaming && renderedContent.value === '') {
+  if (renderedContent.value === '') {
     renderCurrentContent()
 
     // 后处理（图片/Mermaid/链接校验、代码块换行状态）仍异步执行
     renderTimer = window.setTimeout(async () => {
       await nextTick()
       applyCodeBlockWrapStates()
-      if (!props.isStreaming && (
+      if (
         postProcessedSource !== props.content ||
         postProcessedProfile !== props.renderProfile
-      )) {
+      ) {
         await prevalidateFilePaths(props.content)
 
         // 为什么这里要在预校验后再尝试一次 render：
@@ -1106,29 +1144,19 @@ function scheduleRender() {
   }
 
   renderTimer = window.setTimeout(async () => {
-    if (!props.isStreaming) {
-      // 非流式阶段：渲染前预校验文件路径，写入缓存供 markdown-it 插件查询。
-      // 这样 memoized render 也能感知“文件是否存在”这个渲染边界，不会把未知状态缓存成最终结果。
-      await prevalidateFilePaths(props.content)
-    }
+    // 非流式阶段：渲染前预校验文件路径，写入缓存供 markdown-it 插件查询。
+    // 这样 memoized render 也能感知“文件是否存在”这个渲染边界，不会把未知状态缓存成最终结果。
+    await prevalidateFilePaths(props.content)
 
     const rendered = renderCurrentContent()
 
     // 需要后处理（图片/Mermaid）且尚未完成
-    const needsPostProcess = !props.isStreaming && (
+    const needsPostProcess = (
       postProcessedSource !== props.content ||
       postProcessedProfile !== props.renderProfile
     )
 
-    if (rendered || needsPostProcess) {
-      // Mermaid / workspace images 需要基于最新 DOM 执行
-      await nextTick()
-      // 回填代码块换行状态（流式阶段也需要保持）
-      applyCodeBlockWrapStates()
-    }
-
-    // 流式阶段跳过重操作（仍保留 Markdown/LaTeX 实时渲染）
-    if (props.isStreaming) return
+    await applyPostRenderDomState(rendered, needsPostProcess)
 
     if (!rendered && !needsPostProcess) return
 
@@ -1137,7 +1165,7 @@ function scheduleRender() {
 
     postProcessedSource = props.content
     postProcessedProfile = props.renderProfile
-  }, delay)
+  }, 0)
 }
 
 /**

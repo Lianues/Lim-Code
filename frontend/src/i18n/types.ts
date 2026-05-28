@@ -2574,6 +2574,12 @@ export interface LanguageMessages {
                     viewMatches: string;
                     viewDiff: string;
                     loadingDiff: string;
+                    /**
+                     * 修改原因：search_in_files diff 裁剪会插入“未变化内容已省略”的虚拟行，需要类型层同步约束翻译键。
+                     * 修改方式：为 searchInFilesPanel 增加 omittedUnchangedLines 字段，所有语言包必须提供该文案。
+                     * 修改目的：避免组件调用新增翻译键时失去类型保护。
+                     */
+                    omittedUnchangedLines: string;
                 };
             };
             /** 历史检索工具 */

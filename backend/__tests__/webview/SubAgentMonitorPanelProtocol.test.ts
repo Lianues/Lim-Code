@@ -183,6 +183,23 @@ describe('SubAgentMonitorPanel manifest/window protocol', () => {
       toolId: 'tool-1',
       payload: { response: '大响应', content: '大内容', result: { data: '大结果' }, data: 'base64', status: 'running', attempt: 2 }
     } as any, snapshot);
+    const llmDeltaEvent = createMonitorEventPayload({
+      runId: 'sanitize-run',
+      type: 'llm_delta',
+      timestamp: 13,
+      payload: {
+        delta: [
+          { text: '实时正文' },
+          { text: '思考', thought: true },
+          { functionCall: { id: 'tool-1', name: 'read_file', partialArgs: '{"path"', args: { path: 'README.md' }, result: '不应透传' } },
+          { functionResponse: { id: 'tool-1', response: { huge: true } } }
+        ],
+        contentSnapshot: { contents: snapshot.contents },
+        usage: { candidatesTokenCount: 3 },
+        done: false,
+        modelVersion: 'm'
+      }
+    } as any, snapshot);
 
     // 修改原因：postEvent 的瘦身逻辑必须覆盖已知大事件和未来未知大 payload，不能只删除 run_completed.response。
     // 修改方式：直接测试导出的 createMonitorEventPayload helper，锁定 contents/response/content/data/result 等字段不会进入 transport。
@@ -197,6 +214,24 @@ describe('SubAgentMonitorPanel manifest/window protocol', () => {
     expect((unknownEvent.payload as any).result).toBeUndefined();
     expect((unknownEvent.payload as any).data).toBeUndefined();
     expect(unknownEvent.payload).toMatchObject({ status: 'running', attempt: 2 });
+    // 修改原因：Monitor 必须实时显示 SubAgent 输出，但不能回退到每个事件携带完整 transcript。
+    // 修改方式：llm_delta 只允许轻量 text/thought/functionCall delta 通过，contentSnapshot/functionResponse/result 仍被剥离。
+    // 修改目的：锁定“实时正文走轻量 delta，大对象走 window”的 docs/pm 统一协议。
+    expect(llmDeltaEvent.payload).toMatchObject({
+      delta: [
+        { text: '实时正文' },
+        { text: '思考', thought: true },
+        { functionCall: { id: 'tool-1', name: 'read_file', partialArgs: '{"path"', args: { path: 'README.md' } } }
+      ],
+      contentCount: 1,
+      usage: { candidatesTokenCount: 3 },
+      modelVersion: 'm',
+      contentRevision: 7,
+      eventSequence: 9
+    });
+    expect(JSON.stringify(llmDeltaEvent.payload)).not.toContain('functionResponse');
+    expect(JSON.stringify(llmDeltaEvent.payload)).not.toContain('不应透传');
+    expect(JSON.stringify(llmDeltaEvent.payload)).not.toContain('contents');
   });
 
   it('getRunWindow returns the requested run window only', async () => {

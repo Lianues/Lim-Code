@@ -74,6 +74,73 @@ function sanitizeMonitorPayloadValue(value: unknown): unknown {
     return sanitized;
 }
 
+function cloneJsonSafeValue(value: unknown): unknown {
+    if (value === undefined) return undefined;
+    if (value === null) return null;
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return value;
+    try {
+        return JSON.parse(JSON.stringify(value));
+    } catch {
+        return undefined;
+    }
+}
+
+function sanitizeLlmDeltaPart(part: unknown): Record<string, unknown> | undefined {
+    if (!part || typeof part !== 'object') return undefined;
+    const source = part as Record<string, any>;
+
+    if (typeof source.text === 'string') {
+        const textPart: Record<string, unknown> = { text: source.text };
+        if (source.thought === true) textPart.thought = true;
+        return textPart;
+    }
+
+    if (source.functionCall && typeof source.functionCall === 'object') {
+        const fc = source.functionCall as Record<string, unknown>;
+        const safeFunctionCall: Record<string, unknown> = {};
+        for (const key of ['id', 'name', 'args', 'partialArgs', 'index', 'itemId', 'finalArgs', 'rejected']) {
+            if (!(key in fc)) continue;
+            const cloned = cloneJsonSafeValue(fc[key]);
+            if (cloned !== undefined) safeFunctionCall[key] = cloned;
+        }
+        return Object.keys(safeFunctionCall).length > 0
+            ? { functionCall: safeFunctionCall }
+            : undefined;
+    }
+
+    return undefined;
+}
+
+function createLlmDeltaPayload(event: SubAgentRunEvent, snapshot: SubAgentRunSnapshot): Record<string, unknown> {
+    const rawPayload = (event.payload || {}) as Record<string, any>;
+    const rawDelta = Array.isArray(rawPayload.delta) ? rawPayload.delta : [];
+    const delta = rawDelta
+        .map(sanitizeLlmDeltaPart)
+        .filter((part): part is Record<string, unknown> => !!part);
+
+    const payload: Record<string, unknown> = {
+        deltaCount: rawDelta.length,
+        contentCount: rawPayload.contentSnapshot ? 1 : undefined,
+        done: rawPayload.done === true,
+        modelVersion: rawPayload.modelVersion,
+        thinkingStartTime: rawPayload.thinkingStartTime,
+        usage: cloneJsonSafeValue(rawPayload.usage),
+        // 修改原因：llm_delta 需要轻量正文 delta 才能满足 Monitor 实时显示，但不能重新携带完整 snapshot.contents 或工具大结果。
+        // 修改方式：只白名单 text/thought/functionCall 增量字段；contentSnapshot 继续只以计数提示窗口校准。
+        // 修改目的：保持“实时正文走轻量 delta，大对象走 getRunWindow”的统一协议边界。
+        delta: delta.length > 0 ? delta : undefined,
+        contentRevision: snapshot.contentRevision,
+        eventSequence: snapshot.eventSequence
+    };
+
+    for (const key of Object.keys(payload)) {
+        if (payload[key] === undefined) {
+            delete payload[key];
+        }
+    }
+    return payload;
+}
+
 export function createMonitorEventPayload(event: SubAgentRunEvent, snapshot: SubAgentRunSnapshot): SubAgentRunEvent {
     // 修改原因：Monitor 的 postMessage 事件流是热路径，不能传输完整 transcript、模型长回答或工具大结果。
     // 修改方式：所有事件统一经过白名单/瘦身 helper；content_snapshot 只发 contentCount，run_completed 不发 response，未知事件也剥离大字段。
@@ -98,21 +165,9 @@ export function createMonitorEventPayload(event: SubAgentRunEvent, snapshot: Sub
     }
 
     if (event.type === 'llm_delta') {
-        const delta = (event.payload as any)?.delta;
-        const contentSnapshot = (event.payload as any)?.contentSnapshot;
         return {
             ...event,
-            payload: {
-                deltaCount: Array.isArray(delta) ? delta.length : undefined,
-                contentCount: contentSnapshot ? 1 : undefined,
-                done: (event.payload as any)?.done === true,
-                modelVersion: (event.payload as any)?.modelVersion,
-                // 修改原因：llm_delta 被瘦身后通常不再携带正文，但它仍会刷新 run 时序。
-                // 修改方式：透传当前 revision/sequence，让前端发现本地窗口旧了就只触发 window 校准。
-                // 修改目的：兼容未来轻量 delta 协议，同时阻止 stale window 盲目追加。
-                contentRevision: snapshot.contentRevision,
-                eventSequence: snapshot.eventSequence
-            }
+            payload: createLlmDeltaPayload(event, snapshot)
         };
     }
 

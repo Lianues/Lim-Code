@@ -62,4 +62,19 @@ describe('WP31 messageRenderBlock memoization source guards', () => {
     expect(source).toContain('export function getRenderBlockKey');
     expect(source).toContain('export function getRenderBlockMemoDeps');
   });
+
+  it('keeps stream text/thought block keys structural instead of content-derived', () => {
+    // 修改原因：流式正文增长时如果 key 包含 text.length/text.slice，会让 Vue 反复销毁 MarkdownRenderer 并触发闪烁。
+    // 修改方式：源码守卫 text/thought block key 只使用结构位置和类型，fallback key 也不得从正文内容派生。
+    // 修改目的：锁定“块身份”和“块内容”分离的主聊天/Monitor 统一契约。
+    const messageItemSource = readWorkspaceFile('frontend/src/components/message/MessageItem.vue');
+    const renderBlocksSource = readWorkspaceFile('frontend/src/components/message/renderBlocks.ts');
+
+    expect(messageItemSource).toContain('key: `${blocks.length}:text`');
+    expect(messageItemSource).toContain('key: `${blocks.length}:thought`');
+    expect(messageItemSource).not.toContain(':text:${text.length}');
+    expect(messageItemSource).not.toContain(':thought:${text.length}');
+    expect(renderBlocksSource).not.toMatch(/block\.text[\s\S]*?\.length/);
+    expect(renderBlocksSource).not.toContain('slice(0, 80)');
+  });
 });

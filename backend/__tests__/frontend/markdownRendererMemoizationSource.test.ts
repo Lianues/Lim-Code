@@ -29,6 +29,18 @@ describe('WP31 markdown memoization source guards', () => {
     expect(source).toContain('function renderCurrentContent(): boolean');
   });
 
+  it('uses stream rendering leading/trailing/max-wait scheduling instead of empty first-frame debounce', () => {
+    // 修改原因：流式 MarkdownRenderer 新实例如果只做 120ms debounce，会在正文组件重建或首次出现时短暂空白。
+    // 修改方式：源码守卫流式调度必须包含首帧立即渲染、尾部补渲染和 max-wait 上限。
+    // 修改目的：保证主聊天和 Monitor 的流式正文保留旧 HTML，避免闪烁或持续高频输入下长期不刷新。
+    const source = readWorkspaceFile('frontend/src/components/common/MarkdownRenderer.vue');
+
+    expect(source).toContain('const STREAM_RENDER_MAX_WAIT_MS =');
+    expect(source).toContain('const shouldRenderLeading = !!props.content && renderedContent.value ===');
+    expect(source).toContain('const shouldRenderByMaxWait = !!props.content && now - lastStreamingRenderAt >= STREAM_RENDER_MAX_WAIT_MS');
+    expect(source).toContain('function renderStreamingNow()');
+  });
+
   it('memoizes MarkdownRenderer call sites in MessageItem without changing the component tree shape', () => {
     // 修改原因：当前仓库没有 Vue SFC 单测运行时；需要一个结构守卫确认 MessageItem 挂上了 v-memo。
     // 修改方式：校验 MarkdownRenderer 调用点保留原有组件标签，仅新增 v-memo 依赖表达式。

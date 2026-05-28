@@ -1792,9 +1792,9 @@ const zhCN: LanguageMessages = {
                     title: '应用信息',
                     name: 'Lim Code - Vibe Coding助手',
                     // 为什么同步展示版本号：设置页版本曾落后于 package.json，用户会误判当前安装包。
-                    // 怎么改：随 1.2.1 性能优化发布把展示字符串同步到扩展版本。
+                    // 怎么改：随 1.2.2 流式稳定性发布把展示字符串同步到扩展版本。
                     // 目的：让设置页、package 元数据和发布说明保持一致。
-                    version: '版本：1.2.1',
+                    version: '版本：1.2.2',
                     repository: '项目仓库',
                     developer: '开发者'
                 }
@@ -2738,7 +2738,11 @@ const zhCN: LanguageMessages = {
                     filesModified: '{count} 个文件',
                     viewMatches: '匹配项',
                     viewDiff: '差异',
-                    loadingDiff: '加载差异中...'
+                    loadingDiff: '加载差异中...',
+                    // 修改原因：搜索替换 diff 现在会折叠未变化的大段，需要本地化省略行提示，避免中文界面混入英文。
+                    // 修改方式：新增通用占位文案，由 diff 裁剪逻辑传入被省略的未变化行数。
+                    // 修改目的：让主聊天和 SubAgent Monitor 共享同一套可读的 hunk 省略提示。
+                    omittedUnchangedLines: '… 已省略 {count} 行未变化内容 …'
                 }
             },
             history: {
