@@ -9,6 +9,7 @@ import type { ChatStoreState, AttachmentData } from './types'
 import { sendToExtension } from '../../utils/vscode'
 import { generateId } from '../../utils/format'
 import { calculateBackendIndex } from './messageActions'
+import { appendMessage, replaceAllMessages } from './state'
 import { syncTotalMessagesFromWindow, setTotalMessagesFromWindow, trimWindowFromTop } from './windowUtils'
 import { loadCheckpoints, refreshCurrentConversationBuildSession } from './conversationActions'
 
@@ -145,7 +146,10 @@ export async function restoreAndRetry(
     const backendIndex = calculateBackendIndex(state.allMessages.value, messageIndex, state.windowStartIndex.value)
     
     // 3. 删除该消息及后续的本地消息和检查点
-    state.allMessages.value = state.allMessages.value.slice(0, messageIndex)
+    // 修改原因：checkpoint 回档会截断消息窗口，旧 id 下标整体失效。
+    // 修改方式：统一通过 helper 截断消息窗口，并在同一维护点刷新索引。
+    // 修改目的：保证 restoreAndRetry 之后所有基于 id 的定位都与截断后的窗口一致。
+    replaceAllMessages(state, state.allMessages.value.slice(0, messageIndex))
     clearCheckpointsFromIndex(state, backendIndex)
     setTotalMessagesFromWindow(state)
     
@@ -179,7 +183,7 @@ export async function restoreAndRetry(
         modelVersion: currentModelName
       }
     }
-    state.allMessages.value.push(assistantMessage)
+    appendMessage(state, assistantMessage)
     syncTotalMessagesFromWindow(state)
     trimWindowFromTop(state)
     state.streamingMessageId.value = assistantMessageId
@@ -254,7 +258,10 @@ export async function restoreAndDelete(
     const backendIndex = calculateBackendIndex(state.allMessages.value, messageIndex, state.windowStartIndex.value)
     
     // 3. 删除该消息及后续的本地消息和检查点
-    state.allMessages.value = state.allMessages.value.slice(0, messageIndex)
+    // 修改原因：restoreAndDelete 同样会裁剪消息窗口，必须同步刷新派生索引。
+    // 修改方式：统一通过 helper 截断 allMessages，并在同一维护点刷新索引。
+    // 修改目的：避免删除后继续使用旧下标映射造成 id 定位失配。
+    replaceAllMessages(state, state.allMessages.value.slice(0, messageIndex))
     clearCheckpointsFromIndex(state, backendIndex)
     setTotalMessagesFromWindow(state)
     
@@ -342,7 +349,10 @@ export async function restoreAndEdit(
     targetMessage.attachments = attachments && attachments.length > 0 ? attachments : undefined
     
     // 3. 删除该消息之后的本地消息和该消息及之后的检查点（因为消息内容已变化）
-    state.allMessages.value = state.allMessages.value.slice(0, messageIndex + 1)
+    // 修改原因：restoreAndEdit 会保留被编辑消息、裁掉其后的所有消息，索引需要同步收敛。
+    // 修改方式：统一通过 helper 截断消息窗口，并在同一维护点刷新索引，再继续插入新的 assistant 占位。
+    // 修改目的：保证 edit/retry 之后新的 streamingMessageId 定位不会混用旧窗口下标。
+    replaceAllMessages(state, state.allMessages.value.slice(0, messageIndex + 1))
     clearCheckpointsFromIndex(state, backendMessageIndex)
     setTotalMessagesFromWindow(state)
 
@@ -363,7 +373,7 @@ export async function restoreAndEdit(
         modelVersion: currentModelName
       }
     }
-    state.allMessages.value.push(assistantMessage)
+    appendMessage(state, assistantMessage)
     syncTotalMessagesFromWindow(state)
     trimWindowFromTop(state)
     state.streamingMessageId.value = assistantMessageId

@@ -6,9 +6,8 @@
  */
 
 import * as vscode from 'vscode';
-import * as path from 'path';
 import type { Tool, ToolContext, ToolDeclaration, ToolResult } from '../types';
-import { getAllWorkspaces, resolveUriWithInfo } from '../utils';
+import { getAllWorkspaces, resolveUriWithInfo, ensureParentDir } from '../utils';
 import { isReviewPathAllowed } from '../../modules/settings/modeToolsPolicy';
 import {
   buildInitialReviewDocument,
@@ -52,11 +51,6 @@ function isReviewModePathAllowedWithMultiRoot(pathStr: string): boolean {
 
   const rest = normalized.slice(slashIndex + 1);
   return isReviewPathAllowed(rest);
-}
-
-async function ensureParentDir(uriFsPath: string): Promise<void> {
-  const dir = path.dirname(uriFsPath);
-  await vscode.workspace.fs.createDirectory(vscode.Uri.file(dir));
 }
 
 export function createCreateReviewToolDeclaration(): ToolDeclaration {

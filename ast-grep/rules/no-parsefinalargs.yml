@@ -1,0 +1,10 @@
+# 规则：禁止 parseFinalArgs 在仓库任何位置再次出现
+# WP15 已将 parseFinalArgs 全部消除；本条规则防止复活。
+# 参考: https://ast-grep.github.io/reference/rule.html
+
+id: no-parsefinalargs
+message: "parseFinalArgs 已在 WP15 消除，禁止重新引入。请使用 functionCallMerge.tryParseArgs。"
+severity: error
+language: TypeScript
+rule:
+  pattern: parseFinalArgs

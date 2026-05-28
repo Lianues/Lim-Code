@@ -1,6 +1,8 @@
 import type { Message, ToolUsage } from '../types'
 import { extractReviewCardData, isReviewToolName } from './reviewCards'
 import { isDesignDocPath, isPlanDocPath } from './taskCards'
+// WP14: 保留 null 返回值语义，使用 asRecordOrNull（兼容旧行为：不排除数组、返回 null）
+import { asRecordOrNull as asRecord } from './typeGuards'
 import {
   getPlanExecutionPrompt,
   getPlanGenerationPrompt,
@@ -26,9 +28,7 @@ export interface ResolvePendingAgentActionInput {
   conversationId?: string | null
 }
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === 'object' ? value as Record<string, unknown> : null
-}
+// WP14: asRecord 已从 typeGuards 通过 asRecordOrNull 别名导入，此处不再重复定义
 
 function normalizeString(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined

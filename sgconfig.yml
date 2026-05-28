@@ -1,0 +1,16 @@
+# ast-grep 项目配置（Lim Code）
+# ast-grep 0.43.0 | sgconfig.yml
+# 参考: https://ast-grep.github.io/reference/sgconfig.html
+
+# 规则目录：所有 YAML rule 放在 ast-grep/rules/ 下。
+# ruleDirs 条目相对于 sgconfig.yml 所在目录解析。
+ruleDirs:
+  - ast-grep/rules
+
+# 语言策略：
+# - TypeScript / TSX / JavaScript / JSX 使用 ast-grep 0.43.0 内建扩展名识别，
+#   不用 languageGlobs 覆盖 .ts/.tsx，以免把 .ts 误映射成 tsx 导致 TypeScript 规则跳过。
+# - Vue SFC (.vue) 不启用原生 AST 扫描。
+#   ast-grep 0.43.0 没有 -l vue 能力，也没有内置 tree-sitter-vue。
+#   详见 docs/ast-grep/USAGE.md §"Vue 文件扫描策略"。
+# - 如果未来安装 tree-sitter-vue 自定义语言，可按官方 customLanguages 规范在此扩展。

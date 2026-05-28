@@ -37,6 +37,48 @@ export class ConfigManager {
     constructor(
         private storageAdapter: ConfigStorageAdapter
     ) {}
+
+    /**
+     * 修改原因：上下文管理曾由两个旧布尔字段分散表达，前端两次保存或旧配置残留都可能让后端误判为开启。
+     * 修改方式：在配置管理入口归一化为 contextManagementEnabled + contextManagementMode，同时回写旧字段作为兼容镜像。
+     * 修改目的：让配置文件自身始终保持一个权威上下文管理策略，避免 provider 设置显示关闭但后端仍自动裁剪/总结。
+     */
+    private normalizeContextManagementConfig<T extends Record<string, any>>(config: T): T {
+        // 修改原因：泛型 T 只保证是对象，直接写新增上下文管理字段会触发 TypeScript 对具体键名的静态限制。
+        // 修改方式：在函数内部用 Record<string, any> 作为可写归一化视图，返回时再收窄回调用方原类型。
+        // 修改目的：保留 updateConfig 对 ChannelConfig 的类型边界，同时允许统一补齐新旧上下文管理字段。
+        const normalized: Record<string, any> = { ...config };
+        const hasExplicitEnabled = typeof normalized.contextManagementEnabled === 'boolean';
+        const legacySummarizeEnabled = normalized.autoSummarizeEnabled === true;
+        const legacyTrimEnabled = normalized.contextThresholdEnabled === true;
+
+        if (!hasExplicitEnabled) {
+            if (legacySummarizeEnabled) {
+                normalized.contextManagementEnabled = true;
+                normalized.contextManagementMode = 'summarize';
+            } else if (legacyTrimEnabled) {
+                normalized.contextManagementEnabled = true;
+                normalized.contextManagementMode = 'trim';
+            } else {
+                normalized.contextManagementEnabled = false;
+                normalized.contextManagementMode = normalized.contextManagementMode === 'summarize' ? 'summarize' : 'trim';
+            }
+        }
+
+        if (normalized.contextManagementEnabled === true) {
+            const mode = normalized.contextManagementMode === 'summarize' ? 'summarize' : 'trim';
+            normalized.contextManagementMode = mode;
+            normalized.contextThresholdEnabled = mode === 'trim';
+            normalized.autoSummarizeEnabled = mode === 'summarize';
+        } else {
+            normalized.contextManagementEnabled = false;
+            normalized.contextManagementMode = normalized.contextManagementMode === 'summarize' ? 'summarize' : 'trim';
+            normalized.contextThresholdEnabled = false;
+            normalized.autoSummarizeEnabled = false;
+        }
+
+        return normalized as T;
+    }
     
     /**
      * 初始化管理器（加载所有配置到缓存）
@@ -77,6 +119,11 @@ export class ConfigManager {
             retryEnabled: true,
             retryCount: 3,
             retryInterval: 3000,
+            // 修改原因：默认配置也需要写入显式上下文管理策略，避免新建 provider 继续依赖两个旧布尔字段推导。
+            // 修改方式：默认总开关关闭，模式保留为 trim，旧字段同步为 false。
+            // 修改目的：让“未启用上下文管理”在新配置中具有明确、可持久化的后端语义。
+            contextManagementEnabled: false,
+            contextManagementMode: 'trim' as const,
             contextThresholdEnabled: false,
             contextThreshold: '80%',
             autoSummarizeEnabled: false,
@@ -220,13 +267,20 @@ export class ConfigManager {
         const defaults = this.getDefaultConfig(input.type);
         
         // 构建完整配置（输入值覆盖默认值）
-        const config: ChannelConfig = {
+        const rawConfig = {
             ...defaults,
             ...input,
             id,
             createdAt: now,
             updatedAt: now
-        } as ChannelConfig;
+        };
+        if (!Object.prototype.hasOwnProperty.call(input, 'contextManagementEnabled')) {
+            // 修改原因：默认配置会带 contextManagementEnabled=false；导入旧 provider 配置时，如果只携带旧字段 true，会被默认显式 false 吞掉。
+            // 修改方式：当创建输入没有显式总开关时，移除默认总开关，让 normalizeContextManagementConfig 按旧字段兼容推导。
+            // 修改目的：新建配置仍有显式默认值，旧配置导入/创建也不会丢失原本的裁剪或自动总结语义。
+            delete (rawConfig as Record<string, unknown>).contextManagementEnabled;
+        }
+        const config: ChannelConfig = this.normalizeContextManagementConfig(rawConfig) as ChannelConfig;
         
         // 保存（不验证配置）
         await this.storageAdapter.save(config);
@@ -273,14 +327,14 @@ export class ConfigManager {
         }
         
         // 合并更新
-        const updated: ChannelConfig = {
+        const updated: ChannelConfig = this.normalizeContextManagementConfig({
             ...existing,
             ...updates,
             id: configId,  // 保持 ID 不变
             type: existing.type,  // 保持类型不变
             createdAt: existing.createdAt,  // 保持创建时间
             updatedAt: Date.now()  // 更新时间
-        } as ChannelConfig;
+        }) as ChannelConfig;
         
         // 保存（不验证配置）
         await this.storageAdapter.save(updated);

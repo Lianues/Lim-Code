@@ -16,6 +16,7 @@ import type { DependencyManager } from '../backend/modules/dependencies';
 import type { DiffStorageManager } from '../backend/modules/conversation';
 import type { ToolRegistry } from '../backend/tools';
 import type { WindowsAgentStopNotificationService } from '../backend/modules/notifications/WindowsAgentStopNotificationService';
+import type { WebviewClientId } from './runtime/WebviewClientRegistry';
 
 /**
  * 消息处理器上下文
@@ -25,6 +26,14 @@ export interface HandlerContext {
   // VSCode 上下文
   context?: vscode.ExtensionContext;
   view?: vscode.WebviewView | undefined;
+  /**
+   * 当前请求来源 webview client。
+   *
+   * 修改原因：MessageRouter 现在按 clientId + requestId 将响应送回发起方，handler 不应自己判断目标 webview。
+   * 修改方式：路由层在 HandlerContext 上附加 clientId，只作为上下文元数据向后兼容。
+   * 修改目的：保留旧 handler 签名和消息 shape，同时让必要的底层发送函数可以数据驱动路由。
+   */
+  clientId?: WebviewClientId;
   
   // 后端模块
   configManager: ConfigManager;

@@ -1,24 +1,144 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { subAgentRunController, subAgentRunEventBus, type SubAgentRunEvent, type SubAgentRunSnapshot } from '../backend/tools/subagents';
+import type { SubAgentRunConversationStore } from '../backend/tools/subagents/runEventBus';
+import { WEBVIEW_CLIENT_IDS } from './runtime/WebviewClientRegistry';
+import type { RunScope } from '../backend/core/RunController';
+
+/**
+ * Monitor 事件 payload 瘦身字段配置。
+ *
+ * 修改原因：事件流是跨进程传输热路径，未来新增事件时容易无意带上长正文或工具大结果。
+ * 修改方式：safe keys 使用小白名单，大字段使用显式黑名单提前剥离；真正正文继续走 getRunWindow。
+ * 修改目的：让状态事件保持轻量，并把大对象防护集中在一个 helper 周围。
+ */
+const MONITOR_EVENT_PAYLOAD_SAFE_KEYS = new Set([
+    'attempt',
+    'maxAttempts',
+    'error',
+    'nextRetryIn',
+    'status',
+    'steps',
+    'modelVersion',
+    'duration',
+    'contentCount',
+    'deltaCount',
+    'done',
+    'toolName',
+    'toolId',
+    'name',
+    'id',
+    // 修改原因：Monitor 事件与窗口响应已经异步解耦，payload 白名单必须允许协议版本字段透传给前端。
+    // 修改方式：把 contentRevision/eventSequence 纳入小字段白名单，仍然禁止 contents/response/result 等大对象。
+    // 修改目的：前端可用单调字段拒绝 stale delta 和旧窗口响应，而不回退到 full snapshot。
+    'contentRevision',
+    'eventSequence'
+]);
+
+const MONITOR_EVENT_PAYLOAD_BIG_KEYS = new Set([
+    'response',
+    'content',
+    'contents',
+    'parts',
+    'text',
+    'data',
+    'result'
+]);
+
+function sanitizeMonitorPayloadValue(value: unknown): unknown {
+    // 修改原因：未来新增事件可能在嵌套字段里夹带 response/content/data/result 等大正文，不能只处理已知事件名。
+    // 修改方式：递归白名单复制对象字段，遇到已知大字段直接丢弃，数组仅保留长度摘要。
+    // 修改目的：事件通道只承载状态和计数，正文统一由 getRunWindow 拉取，避免新增事件悄悄破坏优化边界。
+    if (value === null || value === undefined) return value;
+    if (typeof value === 'string') return value.length > 240 ? `${value.slice(0, 240)}…` : value;
+    if (typeof value === 'number' || typeof value === 'boolean') return value;
+    if (Array.isArray(value)) return { count: value.length };
+    if (typeof value !== 'object') return undefined;
+
+    const sanitized: Record<string, unknown> = {};
+    for (const [key, nestedValue] of Object.entries(value as Record<string, unknown>)) {
+        if (MONITOR_EVENT_PAYLOAD_BIG_KEYS.has(key)) {
+            if (Array.isArray(nestedValue)) {
+                sanitized[`${key}Count`] = nestedValue.length;
+            }
+            continue;
+        }
+        if (!MONITOR_EVENT_PAYLOAD_SAFE_KEYS.has(key)) {
+            continue;
+        }
+        const next = sanitizeMonitorPayloadValue(nestedValue);
+        if (next !== undefined) {
+            sanitized[key] = next;
+        }
+    }
+    return sanitized;
+}
+
+export function createMonitorEventPayload(event: SubAgentRunEvent, snapshot: SubAgentRunSnapshot): SubAgentRunEvent {
+    // 修改原因：Monitor 的 postMessage 事件流是热路径，不能传输完整 transcript、模型长回答或工具大结果。
+    // 修改方式：所有事件统一经过白名单/瘦身 helper；content_snapshot 只发 contentCount，run_completed 不发 response，未知事件也剥离大字段。
+    // 修改目的：把“事件只承载状态，正文走 window”固化为单一入口，防止未来新增事件再次夹带大 payload。
+    const payload = sanitizeMonitorPayloadValue(event.payload) as Record<string, unknown> | undefined;
+    const nextPayload: Record<string, unknown> | undefined = payload && typeof payload === 'object'
+        ? { ...payload }
+        : undefined;
+
+    if (event.type === 'content_snapshot') {
+        return {
+            ...event,
+            payload: {
+                contentCount: snapshot.contents?.length || 0,
+                // 修改原因：content_snapshot 是前端强制校准窗口的边界事件，必须携带当前 transcript 修订号。
+                // 修改方式：从 snapshot 下发 contentRevision/eventSequence，不携带完整 contents。
+                // 修改目的：让前端能判断本地 window 是否过期，并避免把下一轮 delta 追加到旧 model 楼层。
+                contentRevision: snapshot.contentRevision,
+                eventSequence: snapshot.eventSequence
+            }
+        };
+    }
+
+    if (event.type === 'llm_delta') {
+        const delta = (event.payload as any)?.delta;
+        const contentSnapshot = (event.payload as any)?.contentSnapshot;
+        return {
+            ...event,
+            payload: {
+                deltaCount: Array.isArray(delta) ? delta.length : undefined,
+                contentCount: contentSnapshot ? 1 : undefined,
+                done: (event.payload as any)?.done === true,
+                modelVersion: (event.payload as any)?.modelVersion,
+                // 修改原因：llm_delta 被瘦身后通常不再携带正文，但它仍会刷新 run 时序。
+                // 修改方式：透传当前 revision/sequence，让前端发现本地窗口旧了就只触发 window 校准。
+                // 修改目的：兼容未来轻量 delta 协议，同时阻止 stale window 盲目追加。
+                contentRevision: snapshot.contentRevision,
+                eventSequence: snapshot.eventSequence
+            }
+        };
+    }
+
+    return {
+        ...event,
+        payload: nextPayload
+    };
+}
 
 /**
  * SubAgent Monitor 编辑器面板。
- *
- * 修改原因：SubAgent 内部过程不应该进入主聊天时间线，但用户需要在编辑器区域实时观察 LLM 输出和内部工具调用。
- * 修改方式：创建独立 WebviewPanel，复用前端 Vue 入口，通过 window.__LIMCODE_VIEW_MODE 切换到 Monitor UI。
- * 修改目的：保持 UI 风格与主窗口统一，同时不改 conversation 保存逻辑。
+ * 内部过程进入独立 WebviewPanel，不污染主聊天时间线；前端通过 view mode 切换到 Monitor UI。
  */
 export class SubAgentMonitorPanel {
     private panel?: vscode.WebviewPanel;
     private focusRunId?: string;
     private focusConversationId?: string;
     private readonly unsubscribe: () => void;
+    private clientRegistration?: vscode.Disposable;
 
     constructor(
         private readonly context: vscode.ExtensionContext,
         private readonly devServerUrl?: string,
-        private readonly routeMessage?: (message: any, webview: vscode.Webview) => Promise<boolean>
+        private readonly routeMessage?: (message: any, webview: vscode.Webview) => Promise<boolean>,
+        private readonly registerClient?: (clientId: string, webview: vscode.Webview, runScope?: RunScope) => vscode.Disposable,
+        private readonly conversationStore?: SubAgentRunConversationStore
     ) {
         this.unsubscribe = subAgentRunEventBus.subscribe((event, snapshot) => {
             this.postEvent(event, snapshot);
@@ -31,7 +151,16 @@ export class SubAgentMonitorPanel {
 
         if (this.panel) {
             this.panel.reveal(vscode.ViewColumn.Beside);
-            this.postSnapshot();
+            this.clientRegistration?.dispose();
+            this.clientRegistration = this.registerClient?.(
+                WEBVIEW_CLIENT_IDS.subagentMonitor,
+                this.panel.webview,
+                runId ? { type: 'subagent', runId, parentConversationId: conversationId } : undefined
+            );
+            // 修改原因：已有面板被再次 reveal 时，旧实现会重新推送完整 snapshots，导致大 transcript 二次卡顿。
+            // 修改方式：只推送轻量 manifest，同步焦点后由前端按需请求当前 run window。
+            // 修改目的：Monitor 任何首包/重聚焦包都不再携带所有 contents。
+            this.postManifest();
             return;
         }
 
@@ -49,6 +178,13 @@ export class SubAgentMonitorPanel {
             }
         );
 
+        this.clientRegistration?.dispose();
+        this.clientRegistration = this.registerClient?.(
+            WEBVIEW_CLIENT_IDS.subagentMonitor,
+            this.panel.webview,
+            runId ? { type: 'subagent', runId, parentConversationId: conversationId } : undefined
+        );
+
         this.panel.webview.html = this.getHtmlForWebview(this.panel.webview);
         this.panel.webview.onDidReceiveMessage(message => {
             this.handleMessage(message).catch(error => {
@@ -57,44 +193,86 @@ export class SubAgentMonitorPanel {
         }, undefined, this.context.subscriptions);
 
         this.panel.onDidDispose(() => {
+            this.clientRegistration?.dispose();
+            this.clientRegistration = undefined;
             this.panel = undefined;
         }, undefined, this.context.subscriptions);
     }
 
     dispose(): void {
         this.unsubscribe();
+        this.clientRegistration?.dispose();
+        this.clientRegistration = undefined;
         this.panel?.dispose();
         this.panel = undefined;
     }
 
     private async handleMessage(message: any): Promise<void> {
         if (!message || typeof message !== 'object') return;
+        const clientId = typeof message.clientId === 'string' && message.clientId.trim()
+            ? message.clientId.trim()
+            : WEBVIEW_CLIENT_IDS.subagentMonitor;
 
         if (message.type === 'subagents.monitorReady') {
-            this.panel?.webview.postMessage({
+            // 修改原因：monitorReady 是打开 Monitor 的首包，不能继续返回包含完整 contents 的 snapshots。
+            // 修改方式：返回由事件总线从 snapshot 派生的 manifests；Content[] 仅通过 getRunWindow 按 run 拉取。
+            // 修改目的：大输出不会在首屏阶段进入 stringify/postMessage/deserialize/Vue state/Markdown 渲染链路。
+            await this.loadConversationSnapshotsIfPossible(this.focusConversationId);
+            this.postRoutedMessage({
+                type: 'response',
+                requestId: message.requestId,
+                success: true,
+                data: this.createManifestPayload()
+            }, clientId);
+            return;
+        }
+
+        if (message.type === 'subagents.monitor.getRunWindow') {
+            const runId = typeof message.data?.runId === 'string' ? message.data.runId.trim() : '';
+            if (!runId) {
+                this.postRoutedMessage({
+                    type: 'error',
+                    requestId: message.requestId,
+                    success: false,
+                    error: { code: 'SUBAGENT_MONITOR_WINDOW_INVALID_INPUT', message: 'runId is required' }
+                }, clientId);
+                return;
+            }
+
+            // 修改原因：历史 run 可能来自 conversation metadata，打开窗口前需先恢复到事件总线，但不能把恢复后的完整 snapshot 推给前端。
+            // 修改方式：若请求带 conversationId 或当前面板有 focusConversationId，先加载 metadata，再只返回指定 run 的窗口。
+            // 修改目的：兼容历史 Monitor 查看，同时保持按需加载边界。
+            await this.loadConversationSnapshotsIfPossible(
+                typeof message.data?.conversationId === 'string' ? message.data.conversationId : this.focusConversationId
+            );
+            const contentWindow = subAgentRunEventBus.getContentWindow(runId, message.data?.options || {});
+            if (!contentWindow) {
+                this.postRoutedMessage({
+                    type: 'error',
+                    requestId: message.requestId,
+                    success: false,
+                    error: { code: 'SUBAGENT_RUN_NOT_FOUND', message: `SubAgent run not found: ${runId}` }
+                }, clientId);
+                return;
+            }
+            this.postRoutedMessage({
                 type: 'response',
                 requestId: message.requestId,
                 success: true,
                 data: {
-                    snapshots: subAgentRunEventBus.getSnapshots(),
-                    focusRunId: this.focusRunId,
-                    focusConversationId: this.focusConversationId,
-                    // 修改原因：Monitor 顶部控制按钮只能作用于仍有主工具 Promise 等待的活跃 run。
-                    // 修改方式：把活跃 runId 列表随 ready 响应发给前端。
-                    // 修改目的：历史 run 只允许查看，避免用户误以为能复活已结束或扩展重载前的执行。
+                    window: contentWindow,
+                    manifest: subAgentRunEventBus.getManifest(runId),
                     activeRunIds: subAgentRunController.getActiveRunIds()
                 }
-            });
+            }, clientId);
             return;
         }
 
         if (this.routeMessage && this.panel) {
-            // 修改原因：Monitor 复用 MessageItem/ToolMessage 后会发送 subagents、diff、tools 和 notification 请求，不能只处理 monitorReady。
-            // 修改方式：把非 lifecycle 消息委托给 ChatViewProvider 的统一 MessageRouter，并让响应发回当前 WebviewPanel。
-            // 修改目的：避免 Monitor 按钮 promise pending、diff 操作无响应，以及与主聊天 handler 形成两套孤岛实现。
+            // 非 lifecycle 消息委托给主聊天统一 MessageRouter，避免 Monitor 复制 handler 或让 diff/tool 操作 pending。
             const handled = await this.routeMessage(message, this.panel.webview);
             if (!handled && message.requestId) {
-                this.panel.webview.postMessage({
+                this.postRoutedMessage({
                     type: 'error',
                     requestId: message.requestId,
                     success: false,
@@ -102,40 +280,59 @@ export class SubAgentMonitorPanel {
                         code: 'UNKNOWN_TYPE',
                         message: `Unknown message type: ${message.type}`
                     }
-                });
+                }, clientId);
             }
         }
     }
 
-    private postEvent(event: SubAgentRunEvent, snapshot: SubAgentRunSnapshot): void {
-        const isLiveDelta = event.type === 'llm_delta';
+    private postRoutedMessage(message: Record<string, any>, clientId = WEBVIEW_CLIENT_IDS.subagentMonitor): void {
         this.panel?.webview.postMessage({
+            ...message,
+            clientId
+        });
+    }
+
+    private postEvent(event: SubAgentRunEvent, snapshot: SubAgentRunSnapshot): void {
+        this.postRoutedMessage({
             type: 'subagentMonitor.event',
             data: {
-                event,
-                // 修改原因：llm_delta 是高频热路径，附带完整 snapshot 会随 contents/events 增长造成 O(n²) postMessage。
-                // 修改方式：实时 delta 只发送 event；状态、最终内容和控制事件仍带 snapshot 作为低频校准。
-                // 修改目的：SubAgent Monitor 实时流式显示，同时避免大输出或大工具参数把 webview 卡死。
-                snapshot: isLiveDelta ? undefined : snapshot,
+                event: createMonitorEventPayload(event, snapshot),
+                // 修改原因：无论高频 llm_delta 还是低频 content_snapshot/run_completed，都不能再附完整 snapshot.contents。
+                // 修改方式：事件推送只携带轻量 manifest；当前聚焦 run 需要校准内容时由前端 getRunWindow 拉窗口。
+                // 修改目的：避免 Monitor 打开后任一低频事件再次把大 transcript 全量送入前端。
+                manifest: subAgentRunEventBus.getManifest(snapshot.runId),
                 focusRunId: this.focusRunId,
                 focusConversationId: this.focusConversationId,
-                // 修改原因：pause/resume/exit 会改变 run 是否仍活跃，前端需要实时刷新控制按钮可见性。
-                // 修改方式：每个 Monitor 事件都附带当前 activeRunIds 快照。
-                // 修改目的：不让前端猜测状态，保持控制权以后端活跃运行控制器为准。
+                // 控制按钮可见性以后端活跃运行控制器为准，不让前端猜测 run 是否仍活跃。
                 activeRunIds: subAgentRunController.getActiveRunIds()
             }
         });
     }
 
-    private postSnapshot(): void {
-        this.panel?.webview.postMessage({
-            type: 'subagentMonitor.snapshot',
-            data: {
-                snapshots: subAgentRunEventBus.getSnapshots(),
-                focusRunId: this.focusRunId,
-                focusConversationId: this.focusConversationId,
-                activeRunIds: subAgentRunController.getActiveRunIds()
-            }
+    private async loadConversationSnapshotsIfPossible(conversationId?: string): Promise<void> {
+        if (!conversationId || !this.conversationStore) {
+            return;
+        }
+        // 修改原因：Monitor 面板自身不拥有 ConversationManager，但历史子 run 需要从父 conversation metadata 恢复。
+        // 修改方式：ChatViewProvider 构造时注入 conversationStore seam；这里仅按 conversationId 恢复到事件总线。
+        // 修改目的：不在 MessageRouter 写 endpoint 特判，也不新增 Monitor 独立状态真源。
+        await subAgentRunEventBus.loadConversationSnapshots(conversationId, this.conversationStore);
+    }
+
+    private createManifestPayload(): Record<string, any> {
+        return {
+            manifests: subAgentRunEventBus.getManifests(),
+            focusRunId: this.focusRunId,
+            focusConversationId: this.focusConversationId,
+            // 历史 run 只允许查看；控制按钮以仍有主工具 Promise 等待的 activeRunIds 为准。
+            activeRunIds: subAgentRunController.getActiveRunIds()
+        };
+    }
+
+    private postManifest(): void {
+        this.postRoutedMessage({
+            type: 'subagentMonitor.manifest',
+            data: this.createManifestPayload()
         });
     }
 
@@ -160,7 +357,7 @@ export class SubAgentMonitorPanel {
             `script-src ${webview.cspSource} 'unsafe-inline' ${devServerOrigin || ''}`,
             `connect-src ${devServerOrigin || ''}`
         ].join('; ');
-        const bootstrap = `<script>window.__LIMCODE_VIEW_MODE = 'subagentMonitor'; window.__LIMCODE_INITIAL_RUN_ID = ${JSON.stringify(this.focusRunId || null)};</script>`;
+        const bootstrap = `<script>window.__LIMCODE_VIEW_MODE = 'subagentMonitor'; window.__LIMCODE_WEBVIEW_CLIENT_ID = ${JSON.stringify(WEBVIEW_CLIENT_IDS.subagentMonitor)}; window.__LIMCODE_INITIAL_RUN_ID = ${JSON.stringify(this.focusRunId || null)};</script>`;
 
         if (devServerUrl) {
             return `<!DOCTYPE html>

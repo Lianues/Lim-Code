@@ -8,6 +8,34 @@ import { deleteLogicalMessage, truncateFrom } from '../../backend/modules/conver
 import type { SubAgentConfigItem } from '../../backend/modules/settings/types';
 import type { HandlerContext, MessageHandler } from '../types';
 
+const MUTATION_RESPONSE_WINDOW_LIMIT = 20;
+
+function createRunMutationResponse(runId: string, anchorIndex?: number) {
+  // 修改原因：删除/重试后只需要让 Monitor 校准当前 run 的轻量元数据和一个窗口，不能再返回完整 snapshot.contents。
+  // 修改方式：从事件总线唯一真源派生 manifest，并优先围绕变更位置取窗口；如果变更点在尾部之外则回退尾部窗口。
+  // 修改目的：用户操作大 run 时响应体大小保持 O(window)，同时不引入 Monitor 专用第二业务模型。
+  const manifest = subAgentRunEventBus.getManifest(runId);
+  if (!manifest) return undefined;
+
+  let contentWindow = typeof anchorIndex === 'number'
+    ? subAgentRunEventBus.getContentWindow(runId, {
+      startIndex: Math.max(0, Math.floor(anchorIndex) - Math.floor(MUTATION_RESPONSE_WINDOW_LIMIT / 2)),
+      limit: MUTATION_RESPONSE_WINDOW_LIMIT,
+      fromTail: false
+    })
+    : undefined;
+
+  if (!contentWindow || contentWindow.contents.length === 0) {
+    contentWindow = subAgentRunEventBus.getContentWindow(runId, { limit: MUTATION_RESPONSE_WINDOW_LIMIT, fromTail: true });
+  }
+
+  return {
+    success: true,
+    manifest,
+    window: contentWindow
+  };
+}
+
 /**
  * 获取所有子代理列表和全局配置
  */
@@ -308,13 +336,23 @@ export const deleteRunMessage: MessageHandler = async (data, requestId, ctx) => 
     if (conversationId) {
       await subAgentRunEventBus.loadConversationSnapshots(conversationId, ctx.conversationManager);
     }
-    const snapshot = subAgentRunEventBus.mutateContents(runId, contents => deleteLogicalMessage(contents, contentIndex));
+    const snapshot = subAgentRunEventBus.mutateContents(runId, contents => {
+      // 修改原因：Monitor 现在渲染的是 transcript window，前端传来的 contentIndex 必须继续被当作完整 Content[] 的真实索引。
+      // 修改方式：handler 不做可见消息下标换算，直接把 contentIndex 交给 TranscriptMutation.deleteLogicalMessage。
+      // 修改目的：锁定删除/重试不会因窗口偏移或隐藏 functionResponse 而误删相邻消息。
+      return deleteLogicalMessage(contents, contentIndex);
+    });
     if (!snapshot) {
       ctx.sendError(requestId, 'SUBAGENT_RUN_NOT_FOUND', `SubAgent run not found: ${runId}`);
       return;
     }
 
-    ctx.sendResponse(requestId, { success: true, snapshot });
+    const response = createRunMutationResponse(runId, contentIndex);
+    if (!response) {
+      ctx.sendError(requestId, 'SUBAGENT_RUN_NOT_FOUND', `SubAgent run not found: ${runId}`);
+      return;
+    }
+    ctx.sendResponse(requestId, response);
   } catch (error: any) {
     ctx.sendError(requestId, 'SUBAGENT_DELETE_MESSAGE_ERROR', error.message || 'Failed to delete SubAgent message');
   }
@@ -337,13 +375,23 @@ export const retryRunFromMessage: MessageHandler = async (data, requestId, ctx) 
     if (conversationId) {
       await subAgentRunEventBus.loadConversationSnapshots(conversationId, ctx.conversationManager);
     }
-    const snapshot = subAgentRunEventBus.mutateContents(runId, contents => truncateFrom(contents, contentIndex));
+    const snapshot = subAgentRunEventBus.mutateContents(runId, contents => {
+      // 修改原因：按需窗口加载后，重试按钮仍必须使用真实 contentIndex 截断完整子 transcript。
+      // 修改方式：直接复用 TranscriptMutation.truncateFrom，不把窗口内 offset 当成全局索引。
+      // 修改目的：避免只显示尾部窗口时重试从错误位置截断。
+      return truncateFrom(contents, contentIndex);
+    });
     if (!snapshot) {
       ctx.sendError(requestId, 'SUBAGENT_RUN_NOT_FOUND', `SubAgent run not found: ${runId}`);
       return;
     }
 
-    ctx.sendResponse(requestId, { success: true, snapshot });
+    const response = createRunMutationResponse(runId, contentIndex);
+    if (!response) {
+      ctx.sendError(requestId, 'SUBAGENT_RUN_NOT_FOUND', `SubAgent run not found: ${runId}`);
+      return;
+    }
+    ctx.sendResponse(requestId, response);
   } catch (error: any) {
     ctx.sendError(requestId, 'SUBAGENT_RETRY_MESSAGE_ERROR', error.message || 'Failed to retry SubAgent message');
   }

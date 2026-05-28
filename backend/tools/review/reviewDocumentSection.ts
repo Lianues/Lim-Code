@@ -3,6 +3,7 @@
  */
 
 import { createHash } from 'crypto';
+import { escapeRegExp } from '../utils';
 import {
   DEFAULT_FINAL_CONCLUSION,
   DEFAULT_REVIEW_SCOPE,
@@ -368,10 +369,6 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function normalizeLineEndings(text: string): string {
   return (text || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-}
-
-function escapeRegExp(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function normalizeSingleLineText(input: unknown): string {

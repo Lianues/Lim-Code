@@ -37,8 +37,17 @@ export {
     subAgentRunEventBus,
     type SubAgentRunEvent,
     type SubAgentRunSnapshot,
-    type SubAgentRunStatus
+    type SubAgentRunStatus,
+    type SubAgentRunManifest,
+    type SubAgentRunContentWindow,
+    type SubAgentRunContentWindowOptions
 } from './runEventBus';
+export {
+    // 修改原因：WP22 需要让子 transcript adapter 也能作为 subagents 模块的正式 seam 被测试和后续协作者复用。
+    // 修改方式：从 subagents 模块统一导出 SubAgentTranscriptRepository。
+    // 修改目的：调用方不必直接耦合具体文件路径，也避免再次出现平行 adapter 实现。
+    SubAgentTranscriptRepository
+} from './SubAgentTranscriptRepository';
 
 // 导出活跃运行控制器
 export {

@@ -11,6 +11,13 @@ import { sendToExtension } from '../../utils/vscode'
 import { generateId } from '../../utils/format'
 import { isPerfEnabled } from '../../utils/perf'
 import { calculateBackendIndex } from './messageActions'
+import {
+  appendMessage,
+  getMessageIndexById,
+  insertMessageAt,
+  removeMessageAt,
+  replaceMessageAt
+} from './state'
 import { syncTotalMessagesFromWindow, trimWindowFromTop } from './windowUtils'
 
 const duplicateFunctionResponseWarned = new Set<string>()
@@ -84,7 +91,10 @@ export function getActualIndex(
     return -1
   }
   const targetId = displayMessages[displayIndex].id
-  return state.allMessages.value.findIndex(m => m.id === targetId)
+  // 修改原因：显示索引映射会频繁按消息 id 反查 allMessages，下钻到消息操作时不应每次线性扫描。
+  // 修改方式：优先走 messageIndexById；索引缺失时由 helper 回退到 findIndex 并自动回填。
+  // 修改目的：保持 displayMessages -> allMessages 的语义不变，同时把高频定位降为 O(1)。
+  return getMessageIndexById(state, targetId)
 }
 
 /**
@@ -108,7 +118,10 @@ function stopStreamingMessage(state: ChatStoreState, messageId?: string | null):
   // 1) 优先使用传入的 messageId
   let targetIndex = -1
   if (messageId) {
-    const idx = all.findIndex(m => m.id === messageId)
+    // 修改原因：取消/停止流式时会频繁按当前 streamingMessageId 定位占位 assistant。
+    // 修改方式：先走 O(1) 索引；若索引失配则 helper 内部回退并回填，保留旧语义。
+    // 修改目的：让 stop/cancel 热路径不再反复扫描整个消息窗口。
+    const idx = getMessageIndexById(state, messageId)
     if (idx !== -1 && all[idx].role === 'assistant' && all[idx].streaming === true) {
       targetIndex = idx
     }
@@ -128,11 +141,7 @@ function stopStreamingMessage(state: ChatStoreState, messageId?: string | null):
   if (targetIndex === -1) return
 
   const msg = all[targetIndex]
-  state.allMessages.value = [
-    ...all.slice(0, targetIndex),
-    { ...msg, streaming: false },
-    ...all.slice(targetIndex + 1)
-  ]
+  replaceMessageAt(state, targetIndex, { ...msg, streaming: false })
 }
 
 /**
@@ -147,7 +156,10 @@ function removeEmptyAssistantPlaceholder(state: ChatStoreState, messageId?: stri
   // 1) 优先用 messageId 定位
   let targetIndex = -1
   if (messageId) {
-    const idx = all.findIndex(m => m.id === messageId)
+    // 修改原因：空占位删除与 stopStreamingMessage 使用同一消息 id 定位热点。
+    // 修改方式：复用 messageIndexById helper，必要时保留 findIndex fallback。
+    // 修改目的：避免取消流程里多次对 allMessages 做重复线性扫描。
+    const idx = getMessageIndexById(state, messageId)
     if (idx !== -1) targetIndex = idx
   }
 
@@ -174,10 +186,7 @@ function removeEmptyAssistantPlaceholder(state: ChatStoreState, messageId?: stri
   const hasContent = !!(msg.content && msg.content.trim())
 
   if (!hasContent && !hasTools && !hasPartsContent) {
-    state.allMessages.value = [
-      ...all.slice(0, targetIndex),
-      ...all.slice(targetIndex + 1)
-    ]
+    removeMessageAt(state, targetIndex)
   }
 }
 
@@ -190,7 +199,10 @@ function markIncompleteToolsAsError(state: ChatStoreState, messageId?: string | 
   // 1) 优先定位指定 messageId
   let targetIndex = -1
   if (messageId) {
-    targetIndex = all.findIndex(m => m.id === messageId)
+    // 修改原因：工具取消/拒绝路径会反复按 streamingMessageId 定位消息。
+    // 修改方式：统一通过 messageIndexById helper 获取目标下标，索引未命中时自动回退并回填。
+    // 修改目的：把 markIncompleteToolsAsError 的 id 定位从 O(n) 降到 O(1)。
+    targetIndex = getMessageIndexById(state, messageId)
 
     // 重要：有些场景 streamingMessageId 指向的是“后续占位的 assistant 消息”，
     // 该消息本身可能没有工具调用（或没有未完成工具）。
@@ -240,11 +252,7 @@ function markIncompleteToolsAsError(state: ChatStoreState, messageId?: string | 
     tools: updatedTools
   }
 
-  state.allMessages.value = [
-    ...all.slice(0, targetIndex),
-    updatedMessage,
-    ...all.slice(targetIndex + 1)
-  ]
+  replaceMessageAt(state, targetIndex, updatedMessage)
 
   return {
     messageIndex: targetIndex,
@@ -305,11 +313,7 @@ function ensureFunctionResponseMessageForRejectedTools(state: ChatStoreState, in
     }))
   }
 
-  state.allMessages.value = [
-    ...all.slice(0, info.messageIndex + 1),
-    responseMessage,
-    ...all.slice(info.messageIndex + 1)
-  ]
+  insertMessageAt(state, info.messageIndex + 1, responseMessage)
 
   syncTotalMessagesFromWindow(state)
   trimWindowFromTop(state)
@@ -342,7 +346,10 @@ export async function cancelStreamAndRejectTools(
   }
   
   if (currentStreamingId) {
-    const messageIndex = state.allMessages.value.findIndex(m => m.id === currentStreamingId)
+    // 修改原因：cancel/reject 工具是 UX 红线区，必须在不改语义前提下去掉热路径 findIndex。
+    // 修改方式：先走 messageIndexById；索引失配时 helper 回退到 findIndex 并回填。
+    // 修改目的：保持取消与拒绝工具的行为不变，同时避免长会话下重复线性扫描。
+    const messageIndex = getMessageIndexById(state, currentStreamingId)
     if (messageIndex !== -1) {
       const message = state.allMessages.value[messageIndex]
       
@@ -489,7 +496,10 @@ export async function rejectPendingToolsWithAnnotation(
   const trimmedAnnotation = annotation.trim()
 
   if (state.streamingMessageId.value) {
-    const messageIndex = state.allMessages.value.findIndex(m => m.id === state.streamingMessageId.value)
+    // 修改原因：等待审批时输入批注会命中这里，属于用户高频交互路径。
+    // 修改方式：使用 messageIndexById 直接定位当前 streaming assistant；helper 自带 defensive fallback。
+    // 修改目的：避免每次批注拒绝都线性扫描 allMessages。
+    const messageIndex = getMessageIndexById(state, state.streamingMessageId.value)
     if (messageIndex !== -1) {
       const message = state.allMessages.value[messageIndex]
       const updatedTools = message.tools?.map(tool => {
@@ -505,11 +515,7 @@ export async function rejectPendingToolsWithAnnotation(
         tools: updatedTools
       }
 
-      state.allMessages.value = [
-        ...state.allMessages.value.slice(0, messageIndex),
-        updatedMessage,
-        ...state.allMessages.value.slice(messageIndex + 1)
-      ]
+      replaceMessageAt(state, messageIndex, updatedMessage)
     }
   }
 
@@ -522,7 +528,7 @@ export async function rejectPendingToolsWithAnnotation(
       backendIndex: state.windowStartIndex.value + state.allMessages.value.length,
       parts: [{ text: trimmedAnnotation }]
     }
-    state.allMessages.value.push(userMessage)
+    appendMessage(state, userMessage)
     syncTotalMessagesFromWindow(state)
     trimWindowFromTop(state)
   }

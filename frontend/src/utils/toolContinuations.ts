@@ -2,6 +2,8 @@ import {
   extractReviewCardData,
   isReviewToolName
 } from './reviewCards'
+// WP14: 保留 null 返回值语义，使用 asRecordOrNull（兼容旧行为：不排除数组、返回 null）
+import { asRecordOrNull as asRecord } from './typeGuards'
 
 export type ContinuationIntent = 'generate_plan_now' | 'implement_now'
 export type ContinuationSourceArtifactType = 'design' | 'review' | 'plan'
@@ -26,9 +28,7 @@ function normalizePrompt(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
 }
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === 'object' ? value as Record<string, unknown> : null
-}
+// WP14: asRecord 已从 typeGuards 通过 asRecordOrNull 别名导入，此处不再重复定义
 
 function isContinuationIntent(value: unknown): value is ContinuationIntent {
   return value === 'generate_plan_now' || value === 'implement_now'

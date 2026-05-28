@@ -13,6 +13,7 @@ import { computed, ref, watch } from 'vue'
 import CustomScrollbar from '../../common/CustomScrollbar.vue'
 import { useI18n } from '../../../composables/useI18n'
 import { loadDiffContent as loadDiffContentFromBackend } from '@/utils/vscode'
+import { escapeRegExp } from '@/utils/format'
 
 const { t } = useI18n()
 
@@ -142,8 +143,8 @@ function highlightMatch(context: string | undefined, match: string | undefined):
   if (!context) return ''
   if (!match) return context
   
-  // 简单的转义处理
-  const escaped = match.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  // WP13b：复用前端唯一正则转义 helper；高亮匹配文本的 UI 和输出不变。
+  const escaped = escapeRegExp(match)
   return context.replace(new RegExp(escaped, 'gi'), `<mark>${match}</mark>`)
 }
 

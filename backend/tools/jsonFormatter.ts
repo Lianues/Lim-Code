@@ -11,6 +11,7 @@
  */
 
 import type { ToolDeclaration } from './types';
+import { escapeRegExp } from './utils';
 
 /**
  * 工具调用边界标记
@@ -235,13 +236,6 @@ export function parseJSONToolCalls(text: string): JSONToolCall[] {
     }
     
     return results;
-}
-
-/**
- * 转义正则表达式特殊字符
- */
-function escapeRegExp(str: string): string {
-    return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /**

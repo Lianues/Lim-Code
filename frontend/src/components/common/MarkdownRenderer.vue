@@ -54,7 +54,7 @@ const props = withDefaults(defineProps<{
   isStreaming: false
 })
 
-const { t } = useI18n()
+const { t, actualLanguage } = useI18n()
 
 // 容器引用
 const containerRef = ref<HTMLElement | null>(null)
@@ -940,18 +940,127 @@ function renderContent(content: string, latexOnly: boolean, renderProfile: Rende
 
 // ===================== 渲染节流（流式性能优化） =====================
 
-// 渲染结果（用 ref 而不是 computed，便于在流式阶段节流）
+// 渲染结果（用 shallowRef 而不是 computed，便于在流式阶段节流，且保持已完成消息的 HTML 引用稳定）
 const renderedContent = shallowRef('')
 
 const STREAM_RENDER_DEBOUNCE_MS = 120
+/**
+ * 为什么要加完成态渲染缓存：消息列表在 store 变化时会重新走父级渲染流程，
+ * 已完成消息即使内容不变，也可能再次进入 MarkdownRenderer。
+ *
+ * 怎么改：对“非 streaming”消息按内容/渲染配置/工作区文件存在性签名做 LRU memoization，
+ * 命中时直接复用已生成的 HTML，避免重复 markdown-it.render。
+ *
+ * 目的：把重渲染成本收敛到“活跃流式消息”和“内容真正变化的已完成消息”。
+ */
+const COMPLETED_RENDER_CACHE_LIMIT = 128
+const completedRenderCache = new Map<string, string>()
+
 let renderTimer: number | null = null
 /** 上一次实际渲染时使用的内容快照，用于跳过无变化的重渲染 */
 let lastRenderedSource = ''
 let lastRenderedProfile: RenderProfile = 'default'
 let lastRenderedLatexOnly = false
+let lastRenderedLanguage = ''
+let lastRenderedMode: 'streaming' | 'completed' | '' = ''
+let lastCompletedRenderCacheKey = ''
 /** 后处理（图片/Mermaid/链接校验）是否已对当前内容完成 */
 let postProcessedSource = ''
 let postProcessedProfile: RenderProfile = 'default'
+
+function buildCompletedRenderCacheKey(content: string, latexOnly: boolean, renderProfile: RenderProfile): string {
+  return `${actualLanguage.value}\u0000${latexOnly ? '1' : '0'}\u0000${renderProfile}\u0000${buildWorkspaceFileExistenceSignature(content)}\u0000${content}`
+}
+
+function buildWorkspaceFileExistenceSignature(content: string): string {
+  const paths = extractPotentialFilePaths(content)
+  if (paths.length === 0) return ''
+
+  return paths
+    .slice()
+    .sort()
+    .map((path) => {
+      if (!fileExistenceCache.has(path)) return `${path}:?`
+      return `${path}:${fileExistenceCache.get(path) === true ? '1' : '0'}`
+    })
+    .join('|')
+}
+
+function getMemoizedCompletedRender(cacheKey: string, content: string, latexOnly: boolean, renderProfile: RenderProfile): string {
+  const cached = completedRenderCache.get(cacheKey)
+  if (cached !== undefined) {
+    // LRU：命中时刷新顺序，尽量保留最近使用的已完成消息 HTML。
+    completedRenderCache.delete(cacheKey)
+    completedRenderCache.set(cacheKey, cached)
+    return cached
+  }
+
+  const html = renderContent(content, latexOnly, renderProfile)
+  completedRenderCache.set(cacheKey, html)
+
+  if (completedRenderCache.size > COMPLETED_RENDER_CACHE_LIMIT) {
+    const oldestKey = completedRenderCache.keys().next().value
+    if (typeof oldestKey === 'string') {
+      completedRenderCache.delete(oldestKey)
+    }
+  }
+
+  return html
+}
+
+function renderCurrentContent(): boolean {
+  if (!props.content) {
+    const changed = renderedContent.value !== ''
+    renderedContent.value = ''
+    lastRenderedSource = ''
+    lastRenderedProfile = props.renderProfile
+    lastRenderedLatexOnly = props.latexOnly
+    lastRenderedLanguage = actualLanguage.value
+    lastRenderedMode = props.isStreaming ? 'streaming' : 'completed'
+    lastCompletedRenderCacheKey = ''
+    return changed
+  }
+
+  if (props.isStreaming) {
+    const unchanged = (
+      lastRenderedMode === 'streaming' &&
+      props.content === lastRenderedSource &&
+      props.latexOnly === lastRenderedLatexOnly &&
+      props.renderProfile === lastRenderedProfile &&
+      actualLanguage.value === lastRenderedLanguage &&
+      renderedContent.value !== ''
+    )
+
+    if (unchanged) return false
+
+    lastRenderedSource = props.content
+    lastRenderedLatexOnly = props.latexOnly
+    lastRenderedProfile = props.renderProfile
+    lastRenderedLanguage = actualLanguage.value
+    lastRenderedMode = 'streaming'
+    lastCompletedRenderCacheKey = ''
+    renderedContent.value = renderContent(props.content, props.latexOnly, props.renderProfile)
+    return true
+  }
+
+  const cacheKey = buildCompletedRenderCacheKey(props.content, props.latexOnly, props.renderProfile)
+  const unchanged = (
+    lastRenderedMode === 'completed' &&
+    lastCompletedRenderCacheKey === cacheKey &&
+    renderedContent.value !== ''
+  )
+
+  if (unchanged) return false
+
+  lastRenderedSource = props.content
+  lastRenderedLatexOnly = props.latexOnly
+  lastRenderedProfile = props.renderProfile
+  lastRenderedLanguage = actualLanguage.value
+  lastRenderedMode = 'completed'
+  lastCompletedRenderCacheKey = cacheKey
+  renderedContent.value = getMemoizedCompletedRender(cacheKey, props.content, props.latexOnly, props.renderProfile)
+  return true
+}
 
 function clearRenderTimer() {
   if (renderTimer !== null) {
@@ -964,19 +1073,10 @@ function scheduleRender() {
   const delay = props.isStreaming ? STREAM_RENDER_DEBOUNCE_MS : 0
   clearRenderTimer()
 
-  // 非流式 + 首次渲染：同步执行 renderContent，让组件挂载瞬间就有内容（消除切换对话闪白）
+  // 非流式 + 首次渲染：同步执行 render，让组件挂载瞬间就有内容（消除切换对话闪白）
   if (!props.isStreaming && renderedContent.value === '') {
-    const contentChanged = !(
-      props.content === lastRenderedSource &&
-      props.latexOnly === lastRenderedLatexOnly &&
-      props.renderProfile === lastRenderedProfile
-    )
-    if (contentChanged) {
-      lastRenderedSource = props.content
-      lastRenderedLatexOnly = props.latexOnly
-      lastRenderedProfile = props.renderProfile
-      renderedContent.value = renderContent(props.content, props.latexOnly, props.renderProfile)
-    }
+    renderCurrentContent()
+
     // 后处理（图片/Mermaid/链接校验、代码块换行状态）仍异步执行
     renderTimer = window.setTimeout(async () => {
       await nextTick()
@@ -986,6 +1086,16 @@ function scheduleRender() {
         postProcessedProfile !== props.renderProfile
       )) {
         await prevalidateFilePaths(props.content)
+
+        // 为什么这里要在预校验后再尝试一次 render：
+        // 首次同步渲染时，工作区文件存在性缓存可能还是未知状态，
+        // 预校验完成后需要让“是否生成文件链接”这个边界重新收敛一次。
+        const rerenderedAfterPrevalidate = renderCurrentContent()
+        if (rerenderedAfterPrevalidate) {
+          await nextTick()
+          applyCodeBlockWrapStates()
+        }
+
         await loadWorkspaceImages()
         await renderMermaid()
         postProcessedSource = props.content
@@ -996,13 +1106,13 @@ function scheduleRender() {
   }
 
   renderTimer = window.setTimeout(async () => {
-    // 判断内容是否变化：变了才需要重新渲染 HTML
-    const contentChanged = !(
-      props.content === lastRenderedSource &&
-      props.latexOnly === lastRenderedLatexOnly &&
-      props.renderProfile === lastRenderedProfile &&
-      renderedContent.value !== ''
-    )
+    if (!props.isStreaming) {
+      // 非流式阶段：渲染前预校验文件路径，写入缓存供 markdown-it 插件查询。
+      // 这样 memoized render 也能感知“文件是否存在”这个渲染边界，不会把未知状态缓存成最终结果。
+      await prevalidateFilePaths(props.content)
+    }
+
+    const rendered = renderCurrentContent()
 
     // 需要后处理（图片/Mermaid）且尚未完成
     const needsPostProcess = !props.isStreaming && (
@@ -1010,18 +1120,7 @@ function scheduleRender() {
       postProcessedProfile !== props.renderProfile
     )
 
-    if (contentChanged || needsPostProcess) {
-      // 非流式阶段：渲染前预校验文件路径，写入缓存供 markdown-it 插件查询
-      // 这样不存在的路径从一开始就不会生成 <a> 标签，无闪烁
-      if (!props.isStreaming && contentChanged) {
-        await prevalidateFilePaths(props.content)
-      }
-
-      lastRenderedSource = props.content
-      lastRenderedLatexOnly = props.latexOnly
-      lastRenderedProfile = props.renderProfile
-      renderedContent.value = renderContent(props.content, props.latexOnly, props.renderProfile)
-
+    if (rendered || needsPostProcess) {
       // Mermaid / workspace images 需要基于最新 DOM 执行
       await nextTick()
       // 回填代码块换行状态（流式阶段也需要保持）
@@ -1031,7 +1130,7 @@ function scheduleRender() {
     // 流式阶段跳过重操作（仍保留 Markdown/LaTeX 实时渲染）
     if (props.isStreaming) return
 
-    if (!contentChanged && !needsPostProcess) return
+    if (!rendered && !needsPostProcess) return
 
     await loadWorkspaceImages()
     await renderMermaid()
@@ -1339,7 +1438,11 @@ onMounted(() => {
 })
 
 watch(
-  () => [props.content, props.latexOnly, props.renderProfile, props.isStreaming] as const,
+  // 为什么把语言也纳入依赖：复制按钮/换行按钮标题等 HTML 文案由 i18n 决定，
+  // 完成态缓存必须随语言切换失效，否则会把旧语言的工具栏文案错误复用到新语言界面。
+  // 怎么改：将 actualLanguage 与原有 props 一起作为渲染触发源。
+  // 目的：在不改 DOM/CSS 的前提下保持 memoized render 与现有国际化语义一致。
+  () => [props.content, props.latexOnly, props.renderProfile, props.isStreaming, actualLanguage.value] as const,
   () => {
     scheduleRender()
   },

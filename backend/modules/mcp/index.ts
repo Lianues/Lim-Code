@@ -64,3 +64,12 @@ export {
     mcpToolToDeclarationWithOptions
 } from './toolAdapter';
 export type { McpToolSchema, McpToolRegistrationOptions } from './toolAdapter';
+
+// WP12：MCP 工具名编解码器（统一编码和解码，禁止调用点手拼 mcp__ 字符串）
+export {
+    encodeMcpToolName,
+    decodeMcpToolName,
+    isMcpToolName,
+    MCP_TOOL_PREFIX,
+    MCP_TOOL_SEPARATOR
+} from './mcpToolNameCodec';

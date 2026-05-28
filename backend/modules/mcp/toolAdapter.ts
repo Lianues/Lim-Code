@@ -6,6 +6,7 @@
 
 import type { ToolDeclaration, Tool, ToolResult, MultimodalData } from '../../tools/types';
 import type { McpToolDefinition, McpToolCallResult } from './types';
+import { encodeMcpToolName, decodeMcpToolName, MCP_TOOL_PREFIX } from './mcpToolNameCodec';
 
 /**
  * MCP 工具参数 JSON Schema
@@ -28,9 +29,8 @@ export function mcpToolToDeclaration(
     tool: McpToolDefinition,
     serverId: string
 ): ToolDeclaration {
-    // MCP 工具名称格式：mcp_<serverId>_<toolName>
-    // 或者简化为：mcp_<toolName>（如果只有一个服务器）
-    const toolName = `mcp_${serverId}_${tool.name}`;
+    // WP12：统一使用 codec 编码，避免手拼 mcp_ 格式与热路径的 mcp__ 格式不一致
+    const toolName = encodeMcpToolName(serverId, tool.name);
 
     // 将 MCP 的 inputSchema 转换为 ToolDeclaration 的 parameters
     const parameters = convertInputSchemaToParameters(tool.inputSchema);
@@ -143,6 +143,17 @@ export function mcpResultToToolResult(mcpResult: McpToolCallResult): ToolResult 
  * @returns [serverId, originalToolName] 或 null
  */
 export function parseMcpToolName(toolName: string): [string, string] | null {
+    // WP12：统一使用 codec 解码，同时兼容旧的 mcp_ 单下划线格式和新的 mcp__ 双下划线格式。
+    // decodeMcpToolName 用 indexOf 而非 split，正确处理 toolName 含下划线的边界情况。
+    
+    // 先尝试双下划线格式（当前标准格式）
+    const decoded = decodeMcpToolName(toolName);
+    if (decoded) {
+        return [decoded.serverId, decoded.toolName];
+    }
+
+    // 向后兼容旧格式 mcp_<serverId>_<toolName>（单下划线）
+    // 保留此路径是为了兼容可能仍在内存或持久化存储中的旧格式工具名。
     if (!toolName.startsWith('mcp_')) {
         return null;
     }
@@ -223,23 +234,46 @@ export function collectAllMcpToolDeclarations(
 }
 
 /**
- * 生成 MCP 工具的简短名称（不带服务器 ID）
- * 用于当只有一个 MCP 服务器时简化工具名称
+ * 生成 MCP 工具的简短名称（不带服务器 ID）。
+ * 用于当只有一个 MCP 服务器时简化工具名称。
+ *
+ * @deprecated 自 WP12 修复轮次起废弃。
+ *
+ * 为什么废弃：此函数返回 `mcp__<toolName>` 格式（缺少 serverId），
+ *   `isMcpToolName()` 会将其识别为 MCP 名称，但 `decodeMcpToolName()` 无法解析
+ *   （因为缺少 `__` 分隔符后的 serverId 部分），导致执行阶段解码失败。
+ *
+ * 当前无任何调用点使用此函数（仅在 index.ts 中导出）。
+ * 如果未来需要"单 MCP 服务器简化名"功能，应在 codec 层面引入新格式
+ *   （如 `mcp__default__<toolName>`），而非生成不可解码的半格式。
  *
  * @param toolName 原始工具名称
- * @returns 简短工具名称
+ * @returns 简短工具名称（格式：mcp__${toolName}，不可被 decodeMcpToolName 解析）
  */
 export function mcpToolSimpleName(toolName: string): string {
-    return `mcp_${toolName}`;
+    // WP12 修复：保留函数签名但发出运行时警告，防止静默产生不可解码名称。
+    // 未来版本将移除此函数。
+    console.warn(
+        '[WP12] mcpToolSimpleName() is deprecated. ' +
+        'It produces names that cannot be decoded by decodeMcpToolName(). ' +
+        'Use encodeMcpToolName(serverId, toolName) instead.'
+    );
+    return `${MCP_TOOL_PREFIX}${toolName}`;
 }
 
 /**
  * MCP 工具注册选项
  */
 export interface McpToolRegistrationOptions {
-    /** 是否使用简短名称（省略服务器 ID） */
+    /** 是否使用简短名称（省略服务器 ID）。
+     * @deprecated 产生不可被 decodeMcpToolName() 解析的名称，同 mcpToolSimpleName() 问题。 */
     useSimpleName?: boolean;
-    /** 工具名称前缀 */
+    /** 工具名称前缀。
+     * === WP12 修复 3：正式移除 prefix 行为 ===
+     * 为什么移除：旧接口保留 prefix?: string 但实现不再使用它，
+     *   静默忽略会导致调用方产生"传了 prefix 应该生效"的错误预期。
+     *   扫描全代码库确认无调用方使用此选项，安全移除。
+     * @deprecated 自 WP12 修复轮次起废弃。始终被忽略，将在未来版本删除。 */
     prefix?: string;
 }
 
@@ -251,12 +285,13 @@ export function mcpToolToDeclarationWithOptions(
     serverId: string,
     options: McpToolRegistrationOptions = {}
 ): ToolDeclaration {
-    const { useSimpleName = false, prefix = 'mcp' } = options;
+    const { useSimpleName = false } = options;
 
-    // 根据选项决定工具名称格式
+    // WP12：统一使用 codec 编码；useSimpleName 模式直接使用前缀+工具名。
+    // 注：此函数当前未被调用，仅作为公共 API 导出保留。
     const toolName = useSimpleName
-        ? `${prefix}_${tool.name}`
-        : `${prefix}_${serverId}_${tool.name}`;
+        ? `${MCP_TOOL_PREFIX}${tool.name}`
+        : encodeMcpToolName(serverId, tool.name);
 
     const parameters = convertInputSchemaToParameters(tool.inputSchema);
 

@@ -490,6 +490,10 @@ export class ChatFlowService {
 
   async refreshDerivedMetadataAfterHistoryMutation(conversationId: string): Promise<void> {
     await this.rebuildTodoListMetadataFromHistory(conversationId);
+    // 修改原因：删除单条消息、删除 summary、checkpoint 回档等外部历史变更此前只刷新 TODO/Build 派生状态，旧 trimState 仍可能继续截断上下文。
+    // 修改方式：在统一派生状态刷新入口委托 ConversationManager 的上下文状态失效方法。
+    // 修改目的：让所有已接入 refreshDerivedMetadataAfterHistoryMutation 的历史变更都能恢复为重新计算上下文，而不是复用旧裁剪点。
+    await this.conversationManager.invalidateContextManagementState(conversationId, 'derived_metadata_refresh_after_history_mutation');
   }
 
   /**
@@ -774,8 +778,9 @@ export class ChatFlowService {
       await this.rebuildTodoListMetadataFromHistory(conversationId);
     }
     
-    // 5.5 清除裁剪状态（编辑后应重新计算裁剪）
-    await this.toolIterationLoopService.clearTrimState(conversationId);
+    // 修改原因：编辑消息和删除后续消息已在 ConversationManager 的结构性变更入口统一失效上下文状态。
+    // 修改方式：这里不再额外手动清 trimState，避免同一语义在 ChatFlowService 与 ConversationManager 双维护。
+    // 修改目的：让上下文状态失效只跟随 transcript mutation 发生，减少遗漏和重复。
 
     // 6. 工具调用循环（委托给 ToolIterationLoopService，非流式）
     const maxToolIterations = this.getMaxToolIterations();
@@ -1144,8 +1149,9 @@ export class ChatFlowService {
       await this.rebuildTodoListMetadataFromHistory(conversationId);
     }
     
-    // 8.5 清除裁剪状态（编辑后应重新计算裁剪）
-    await this.toolIterationLoopService.clearTrimState(conversationId);
+    // 修改原因：流式编辑同样已经通过 ConversationManager.updateMessage/deleteToMessage 统一失效上下文状态。
+    // 修改方式：移除服务层重复清理，保留 transcript mutation 入口作为单一维护点。
+    // 修改目的：避免未来新增历史变更路径时继续在 ChatFlowService 复制 clearTrimState 调用。
 
     // 9. 为编辑后的用户消息创建存档点（执行后）
     const afterEditCheckpoint = await this.checkpointService.createUserMessageCheckpoint(
@@ -1648,8 +1654,9 @@ export class ChatFlowService {
       // 6.5 根据剩余历史重放 todo 工具，修正 ConversationMetadata.custom.todoList
       await this.rebuildTodoListMetadataFromHistory(conversationId);
       
-      // 7. 清除裁剪状态（回退后应重新计算裁剪）
-      await this.toolIterationLoopService.clearTrimState(conversationId);
+      // 修改原因：deleteToMessage 已统一失效上下文状态，这里不再重复清理裁剪 metadata。
+      // 修改方式：保留删除流程本身，依赖 ConversationManager 的 history_truncated 失效事件。
+      // 修改目的：让删除回退后的上下文恢复机制集中在 transcript 结构变更入口。
 
       return {
         success: true,

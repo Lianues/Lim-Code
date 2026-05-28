@@ -38,6 +38,7 @@ import type { Content } from '../../modules/conversation/types';
 import type { HistorySearchToolConfig } from '../../modules/settings/types';
 import { DEFAULT_HISTORY_SEARCH_CONFIG } from '../../modules/settings/types';
 import { t } from '../../i18n';
+import { escapeRegExp } from '../utils';
 
 // ─── 默认常量（当 settingsManager 不可用时的 fallback） ───
 
@@ -201,10 +202,6 @@ function addLineNumbers(lines: string[], startLine: number = 1, truncateLong: bo
 
 // ─── 模式实现 ───────────────────────────────────────────
 
-function escapeRegexLiteral(value: string): string {
-    return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
 function splitKeywordQuery(query: string): string[] {
     // 多关键词搜索是给模型常见的 “keyword keyword keyword” 调用习惯兜底。
     // 为什么只在非正则模式使用：正则模式下空格本身有明确语义，不能擅自改写用户表达式。
@@ -241,7 +238,8 @@ function handleSearch(docLines: string[], query: string, isRegex: boolean, cfg: 
                 return pattern.test(line);
             });
         } else {
-            const exactPattern = new RegExp(escapeRegexLiteral(query), 'gi');
+            // WP13b：history_search 的字面量转义语义不变，只复用共享 escapeRegExp 消除跨工具副本。
+            const exactPattern = new RegExp(escapeRegExp(query), 'gi');
             matchLineIndices = collectMatchingLineIndices(docLines, cfg.maxSearchMatches, line => {
                 exactPattern.lastIndex = 0;
                 return exactPattern.test(line);
@@ -249,7 +247,8 @@ function handleSearch(docLines: string[], query: string, isRegex: boolean, cfg: 
 
             const keywordTerms = splitKeywordQuery(query);
             if (matchLineIndices.length === 0 && keywordTerms.length > 1) {
-                const keywordPatterns = keywordTerms.map(term => new RegExp(escapeRegexLiteral(term), 'gi'));
+                // WP13b：关键词兜底仍逐词字面量匹配，统一调用共享 helper，避免 escapeRegexLiteral 私有副本。
+                const keywordPatterns = keywordTerms.map(term => new RegExp(escapeRegExp(term), 'gi'));
                 matchLineIndices = collectMatchingLineIndices(docLines, cfg.maxSearchMatches, line => {
                     return keywordPatterns.some(pattern => {
                         pattern.lastIndex = 0;

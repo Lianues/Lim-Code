@@ -1,100 +1,54 @@
-import type { Content, ContentPart } from '@/types'
+/**
+ * WP15: SubAgent Monitor Content[] delta reducer。
+ *
+ * 为什么需要这个文件：SubAgent Monitor 不能直接使用主聊天的 handleFunctionCallPart（它耦合了 Message 类型和
+ * Pinia store 状态），但需要相同的 functionCall 合并语义（itemId > index > id > freshPlaceholder > legacyPartial）。
+ *
+ * 怎么改：合并逻辑（normalizeNonEmptyString、hasNonEmptyArgs、tryParseArgs、getFunctionCallMergeReason、
+ * mergeFunctionCall）已收敛到 utils/functionCallMerge.ts。本文件只保留 Monitor 特有的 Content[] 投影逻辑：
+ * cloneContent、appendContentPart、ensureLastModelContent、applyStreamChunkToContents。
+ *
+ * 目的：Main Chat 和 SubAgent Monitor 共享同一套 functionCall 合并规则，后续 WP20 统一 reducer 可直接依赖。
+ */
 
-type StreamFunctionCall = NonNullable<ContentPart['functionCall']> & {
-  itemId?: string
-  finalArgs?: boolean
-  partialArgs?: string
-}
+import type { Content, ContentPart } from '../../types'
+// WP15: 统一 functionCall merge 纯函数入口。
+// 为什么从独立模块导入：消除与 streamHelpers.ts / parsers.ts 的三份重复。
+// 怎么改：getFunctionCallMergeReason 和 mergeFunctionCall 直接引用统一模块。
+// 目的：Monitor 实时工具卡合并行为与主聊天完全一致。
+import {
+  type StreamFunctionCall,
+  normalizeNonEmptyString,
+  hasNonEmptyArgs,
+  getFunctionCallMergeReason,
+  mergeFunctionCall as unifiedMergeFunctionCall
+} from '../../utils/functionCallMerge'
 
 function cloneContent(content: Content): Content {
+  // 修改原因：只有即将被替换或被 delta 更新的 Content 需要深拷贝 parts，未变化的历史楼层应保持引用共享。
+  // 修改方式：保留单 Content 深拷贝工具，但不再在 applyStreamChunkToContents 中对整个 contents 全量 map 调用。
+  // 目的：大输出流式阶段避免每个 delta clone 所有旧消息对象，降低 Monitor 本地 reducer 的 O(n²) 风险。
   return {
     ...content,
     parts: (content.parts || []).map(part => {
       const cloned: ContentPart = { ...part }
-      if (part.functionCall) cloned.functionCall = { ...(part.functionCall as StreamFunctionCall) }
+      if (part.functionCall) cloned.functionCall = { ...(part.functionCall as StreamFunctionCall) } as ContentPart['functionCall']
       if (part.functionResponse) cloned.functionResponse = { ...part.functionResponse }
       return cloned
     })
   }
 }
 
-function normalizeNonEmptyString(value: unknown): string {
-  return typeof value === 'string' && value.trim() ? value.trim() : ''
-}
-
-function hasNonEmptyArgs(args: unknown): args is Record<string, unknown> {
-  return !!(args && typeof args === 'object' && Object.keys(args as Record<string, unknown>).length > 0)
-}
-
-function tryParseArgs(argsText: string | undefined): Record<string, unknown> | null {
-  if (typeof argsText !== 'string' || !argsText.trim()) return null
-  try {
-    const parsed = JSON.parse(argsText)
-    return parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : null
-  } catch {
-    return null
-  }
-}
-
-function getMergeReason(
-  incoming: StreamFunctionCall,
-  existing: StreamFunctionCall,
-  isLastFunctionCall: boolean
-): 'sameItemId' | 'sameIndex' | 'sameId' | 'freshPlaceholder' | 'legacyPartial' | null {
-  const incomingItemId = normalizeNonEmptyString(incoming.itemId)
-  const existingItemId = normalizeNonEmptyString(existing.itemId)
-  if (incomingItemId && existingItemId && incomingItemId === existingItemId) return 'sameItemId'
-
-  // 修改原因：OpenAI Responses 的 output_index 可以是 0，truthy 判断会把第一个工具误判为无 index。
-  // 修改方式：统一用 typeof number 判断双方 index 是否有效。
-  // 目的：让 Monitor 的 live delta reducer 与主聊天工具合并规则一致，不产生“参数 0”占位卡。
-  if (typeof incoming.index === 'number' && typeof existing.index === 'number' && incoming.index === existing.index) {
-    return 'sameIndex'
-  }
-
-  const incomingId = normalizeNonEmptyString(incoming.id)
-  const existingId = normalizeNonEmptyString(existing.id)
-  if (incomingId && existingId && incomingId === existingId) return 'sameId'
-
-  const incomingHasPartial = typeof incoming.partialArgs === 'string'
-  const incomingHasLocator = !!incomingId || typeof incoming.index === 'number' || !!incomingItemId
-  const existingIsFreshPlaceholder =
-    isLastFunctionCall &&
-    !hasNonEmptyArgs(existing.args) &&
-    (existing.partialArgs === undefined || existing.partialArgs === '')
-
-  if (!incomingHasLocator && incomingHasPartial && existingIsFreshPlaceholder) return 'freshPlaceholder'
-  if (!incomingHasLocator && incomingHasPartial && isLastFunctionCall) return 'legacyPartial'
-
-  return null
-}
-
+/**
+ * WP15: Monitor 专用的 mergeFunctionCall 薄包装。
+ * 
+ * 为什么需要这个包装：Monitor 的 live delta 不需要 Main Chat 的 JSON.parse 节流策略，
+ * 只在 finalArgs=true（流式完成事件）时解析 partialArgs。
+ * 怎么改：不传 shouldParseArgs，让统一模块使用默认的 finalArgs-only 解析策略。
+ * 目的：Monitor 大工具参数不跑不必要的 JSON.parse 循环，同时共享同一合并语义。
+ */
 function mergeFunctionCall(target: StreamFunctionCall, incoming: StreamFunctionCall): void {
-  if (incoming.name && !target.name) target.name = incoming.name
-  if (incoming.id) target.id = incoming.id
-  if (incoming.itemId && !target.itemId) target.itemId = incoming.itemId
-  if (typeof incoming.index === 'number' && typeof target.index !== 'number') target.index = incoming.index
-
-  if (typeof incoming.partialArgs === 'string') {
-    // 修改原因：arguments.delta 是增量片段，而 arguments.done/output_item.done 是完整 JSON，两者不能用同一种拼接方式。
-    // 修改方式：finalArgs=true 时覆盖已有 partialArgs 并立即尝试解析；普通 delta 只追加到当前 preview 字符串。
-    // 目的：Monitor 实时工具卡可以流式预览大参数，最终又能收束为 queued 工具而不残留重复 JSON。
-    target.partialArgs = incoming.finalArgs === true
-      ? incoming.partialArgs
-      : (target.partialArgs || '') + incoming.partialArgs
-
-    const parsed = incoming.finalArgs === true ? tryParseArgs(target.partialArgs) : null
-    if (parsed) {
-      target.args = parsed
-      delete target.partialArgs
-    }
-    return
-  }
-
-  if (hasNonEmptyArgs(incoming.args)) {
-    target.args = incoming.args
-    delete target.partialArgs
-  }
+  unifiedMergeFunctionCall(target, incoming)
 }
 
 function appendFunctionCallPart(parts: ContentPart[], incomingPart: ContentPart): void {
@@ -106,7 +60,7 @@ function appendFunctionCallPart(parts: ContentPart[], incomingPart: ContentPart)
     const existing = parts[i].functionCall as StreamFunctionCall | undefined
     if (!existing) continue
 
-    const reason = getMergeReason(incoming, existing, isLastFunctionCall)
+    const reason = getFunctionCallMergeReason(incoming, existing, isLastFunctionCall)
     if (reason) {
       mergeFunctionCall(existing, incoming)
       return
@@ -168,15 +122,25 @@ export function applyStreamChunkToContents(contents: Content[], chunk: any, time
   // 修改原因：SubAgent Monitor 不能继续依赖每个 llm_delta 附带完整 snapshot，否则 events 和 contents 都会随输出长度 O(n²) 膨胀。
   // 修改方式：把主聊天流式 reducer 的核心语义收敛为 Content[] delta reducer，支持 text、thought、functionCall、contentSnapshot 和 usage。
   // 目的：Monitor 实时显示 SubAgent 输出，同时保持后端只发送轻量 delta。
-  const next = (contents || []).map(cloneContent)
+  const source = contents || []
+  const next = [...source]
   const snapshot = chunk?.contentSnapshot as Content | undefined
   if (snapshot?.parts) {
+    // 修改原因：contentSnapshot 是结构边界校准，只需要替换最后一个 model content，不应 clone 其它未变化楼层。
+    // 修改方式：复制 contents 数组并深拷贝 replacement，旧 Content 对象引用保持共享。
+    // 目的：保持快照语义正确，同时避免低频校准也退化成全量 clone。
     const replacement = cloneContent({
       ...snapshot,
       timestamp: snapshot.timestamp || timestamp,
       index: typeof snapshot.index === 'number' ? snapshot.index : Math.max(0, next.length - 1)
     } as Content)
-    const lastModelIndex = next.length > 0 ? next.map(content => content.role).lastIndexOf('model') : -1
+    let lastModelIndex = -1
+    for (let index = next.length - 1; index >= 0; index--) {
+      if (next[index]?.role === 'model') {
+        lastModelIndex = index
+        break
+      }
+    }
     if (lastModelIndex >= 0) {
       next[lastModelIndex] = replacement
     } else {
@@ -186,7 +150,18 @@ export function applyStreamChunkToContents(contents: Content[], chunk: any, time
     return next
   }
 
-  const modelContent = ensureLastModelContent(next, timestamp)
+  const lastIndex = next.length - 1
+  let modelContent: Content
+  if (lastIndex >= 0 && next[lastIndex]?.role === 'model') {
+    // 修改原因：delta 只会改最后一个 model Content，旧实现每次克隆所有 Content 会让大 transcript 本地处理成本随历史长度增长。
+    // 修改方式：只深拷贝最后一个 model Content/parts，再原地追加 delta 到这个新对象。
+    // 目的：未被更新的旧 content 对象引用保持不变，Vue 也只需要追踪真正变化的尾部消息。
+    modelContent = cloneContent(next[lastIndex])
+    next[lastIndex] = modelContent
+  } else {
+    modelContent = ensureLastModelContent(next, timestamp)
+  }
+
   for (const part of chunk?.delta || []) {
     appendContentPart(modelContent, part)
   }

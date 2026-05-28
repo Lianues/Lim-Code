@@ -2,9 +2,10 @@
  * Design 工具路径辅助函数
  */
 
-import * as vscode from 'vscode';
-import * as path from 'path';
 import { getAllWorkspaces } from '../utils';
+// WP13 去重：ensureParentDir 原来在 design/pathUtils.ts 中独立定义，
+// 现改为从 utils.ts 重导出，消除四份重复实现。
+export { ensureParentDir } from '../utils';
 import { isDesignPathAllowed } from '../../modules/settings/modeToolsPolicy';
 
 export function isDesignModePathAllowedWithMultiRoot(pathStr: string): boolean {
@@ -23,9 +24,4 @@ export function isDesignModePathAllowedWithMultiRoot(pathStr: string): boolean {
 
   const rest = normalized.slice(slashIndex + 1);
   return isDesignPathAllowed(rest);
-}
-
-export async function ensureParentDir(uriFsPath: string): Promise<void> {
-  const dir = path.dirname(uriFsPath);
-  await vscode.workspace.fs.createDirectory(vscode.Uri.file(dir));
 }

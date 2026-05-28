@@ -9,7 +9,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs/promises';
 import type { Tool, ToolResult } from '../types';
-import { getWorkspaceRoot, getAllWorkspaces, parseWorkspacePath, toRelativePath, normalizeLineEndingsToLF } from '../utils';
+import { getWorkspaceRoot, getAllWorkspaces, parseWorkspacePath, toRelativePath, normalizeLineEndingsToLF, escapeRegExp } from '../utils';
 import { getGlobalSettingsManager } from '../../core/settingsContext';
 import { getDiffStorageManager } from '../../modules/conversation';
 import { getDiffManager } from '../file/diffManager';
@@ -51,13 +51,6 @@ function getExcludePattern(): string {
 }
 
 /**
- * 转义正则特殊字符
- */
-function escapeRegex(str: string): string {
-    return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-/**
  * 将非正则查询拆成空白分隔关键词，用于搜索模式的二阶段兜底。
  *
  * 为什么要改：模型经常自然地用空格罗列多个代码关键词；旧实现把整串当成字面短语，容易在文件搜索中零命中，
@@ -91,7 +84,8 @@ function splitWhitespaceFallbackKeywords(query: string): string[] {
  * 目的：避免普通查询误伤 `|` 字面量，同时保留正则模式下 `foo|bar` 的原生 OR 能力。
  */
 function createFallbackKeywordRegex(keywords: string[], flags: string): RegExp {
-    return new RegExp(keywords.map(escapeRegex).join('|'), flags);
+    // WP13b：复用 backend/tools/utils.ts::escapeRegExp，避免 search_in_files 保留同语义 escapeRegex 副本。
+    return new RegExp(keywords.map(escapeRegExp).join('|'), flags);
 }
 
 /**
@@ -876,7 +870,8 @@ export function createSearchInFilesTool(): Tool {
                 const flags = isReplaceMode ? 'g' : 'gim';
                 const searchRegex = isRegex
                     ? new RegExp(query, flags)
-                    : new RegExp(escapeRegex(query), flags);
+                    // WP13b：非正则查询仍按字面量转义，只把本地副本替换为共享 helper，不改搜索行为。
+                    : new RegExp(escapeRegExp(query), flags);
                 
                 // 获取配置与排除模式
                 const searchConfig = getSearchInFilesConfig();

@@ -3,6 +3,44 @@
 All notable changes to the "Lim Code" extension will be documented in this file.
 
 
+## [1.2.1] - 2026-05-28
+
+### 发布范围
+  - 1.2.0 未公开发布；本次以 1.2.1 作为对外发布版本，合并 1.2.0 阶段的架构整理并追加性能优化。
+  - 本版本聚焦结构性性能优化，不声明未经量化基线验证的具体 ms、百分比或 FPS 收益。
+
+### 新增（Internal Architecture）
+  - WP20 建立 `AgentRunEvent` / reducer / selector 草案，为 Main Chat 与 SubAgent Monitor 后续共享运行事件模型提供基础设施。
+  - WP21 将 RunController 最小共享契约迁移到 `backend/core/`，让主聊天取消与 SubAgent pause / resume / exit 具备共同接口语言。
+  - WP22 引入 `TranscriptRepository` 抽象层，收敛主聊天与 SubAgent transcript 读写入口并保持 `Content[]` 持久化格式不变。
+  - WP23 引入 client-aware Webview routing，通过可选 `clientId` 与 `requestId` 让 Main Chat 与 SubAgent Monitor 响应回到正确 Webview；WP23 运行时生命周期修复解除真实 VS Code 启动阶段的 registry 时序阻断。
+  - WP24 抽取 `DiffReviewSession` 作为 DiffManager 内部协作者，集中单个 diff review 生命周期而不改变公开 API。
+  - WP43 标准化 Anthropic `tool_use` 流式工具调用的 id / index 语义，降低工具卡重复或空参数残留风险。
+
+### 修复（User-visible）
+  - WP43 Anthropic 流式工具调用视觉一致性：触发 Anthropic 工具调用时不再出现“两个工具卡片（一个空参 + 一个有参）”等异常。
+  - WP23 Webview registry 初始化时序修复：真实 VS Code 主实例启动 Webview 时不再因 `registerClient` 调用时序抛出对应 TypeError。
+
+### 性能与复杂度（仅描述结构性优化，不声称具体数字）
+  - 优化窗口序列化与后台标签页状态恢复链路，避免窗口化大对话在裁剪、恢复和热路径定位时重复维护派生消息索引。
+  - 重构 SubAgent Monitor 前端数据流：首屏由完整 snapshots 改为轻量 manifests，聚焦 run 再按需加载 transcript window。
+  - 瘦身 SubAgent Monitor 事件 payload，大正文、完整 transcript 和工具大结果统一通过窗口接口按需读取，降低 Webview 传输、反序列化和 Markdown 渲染压力。
+  - WP30 流式热路径结构性优化：高频工具参数 delta 阶段保持轻量增量处理，最终内容解析留到受控出口。
+  - WP31 渲染边界收敛：完成态消息与活跃 streaming 消息之间形成更清晰的渲染边界。
+  - WP32 chat store 复杂度防御：按消息 id 定位的索引 helper 支撑热路径主分支定位消息，并保留 defensive fallback。
+
+### 重构（内部）
+  - WP21 RunController 共享契约迁移到 `backend/core/`，`webview/runtime/RunController.ts` 保留为兼容 shim。
+  - WP22 TranscriptRepository 抽象层收敛主聊天与 SubAgent transcript 读写，并登记旧 eventBus 兼容路径为后续收敛项。
+  - WP23 Webview client-aware routing 通过 registry / Map 数据驱动响应路由，不破坏 envelope 向后兼容。
+  - WP24 DiffReviewSession internal collaborator 由 DiffManager 持有，DiffManager 公开 API 100% 不变。
+  - SubAgent Monitor 将完整运行快照拆分为 manifest、event 与 content window，保留旧 snapshot 回退兼容但新协议不再依赖 full snapshot。
+
+### 发布整理
+  - 根扩展包、前端包、lockfile、设置页展示版本、内部模块元数据和 MCP clientInfo 统一更新到 `1.2.1`。
+  - `docs/`、两个修复资料目录和临时目录已加入上传忽略规则；发布包同样排除内部文档、修复资料、临时文件和旧 VSIX。
+  - 发布说明保留性能边界：只描述窗口序列化、Monitor 架构和流式热路径的结构优化，不给出未实测数字。
+
 ## [1.1.29] - 2026-05-27
 
 ### Added

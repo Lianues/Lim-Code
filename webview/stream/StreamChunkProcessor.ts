@@ -17,6 +17,15 @@ import type * as vscode from 'vscode';
 /** chunk 类型消息的节流间隔（毫秒） */
 const CHUNK_THROTTLE_MS = 50;
 
+interface EnqueueOptions {
+  /**
+   * 修改原因：流式 chunk 已有 50ms 节流器，若 enqueue 再安排 setTimeout(0)，节流会被下一轮事件循环抢先冲掉。
+   * 修改方式：允许调用方关闭 0ms 兜底刷新，让高频 chunk 只由 scheduleThrottledFlush 控制。
+   * 修改目的：减少 VS Code webview.postMessage 次数和 payload 反序列化成本，缓解 trace 中 HostMessaging.onmessage 长任务。
+   */
+  scheduleImmediateFlush?: boolean;
+}
+
 /**
  * 流式响应 Chunk 处理器
  */
@@ -46,9 +55,10 @@ export class StreamChunkProcessor {
     if ('checkpointOnly' in chunk && chunk.checkpointOnly) {
       this.enqueue('checkpoints', { checkpoints: chunk.checkpoints });
     } else if ('chunk' in chunk && chunk.chunk) {
-      this.enqueue('chunk', { chunk: chunk.chunk });
-      // chunk 类型使用节流：积攒一小段时间后批量 flush，
-      // 避免高速模型每个 token 都触发 postMessage
+      this.enqueue('chunk', { chunk: chunk.chunk }, { scheduleImmediateFlush: false });
+      // 修改原因：trace 显示 webview 侧卡顿集中在 postMessage / HandlePostMessage；chunk 热路径必须真正按 50ms 合并。
+      // 修改方式：chunk 入队时关闭 setTimeout(0) 兜底，只使用节流 flush 发送 streamChunkBatch。
+      // 修改目的：把高频 token 增量从“每轮事件循环一次消息”收敛为“每个节流窗口一次消息”。
       this.scheduleThrottledFlush();
     } else if ('toolsExecuting' in chunk && chunk.toolsExecuting) {
       this.enqueue('toolsExecuting', {
@@ -206,7 +216,11 @@ export class StreamChunkProcessor {
    * 使用 setTimeout(0)：在当前 event loop tick 的所有微任务完成后刷新，
    * 从而将同一 tick 内 for-await 循环产生的多条消息自动合并。
    */
-  private enqueue(type: string, data: Record<string, any>): void {
+  private enqueue(
+    type: string,
+    data: Record<string, any>,
+    options: EnqueueOptions = { scheduleImmediateFlush: true }
+  ): void {
     const createdAt = typeof data.createdAt === 'number' && Number.isFinite(data.createdAt) ? data.createdAt : Date.now()
     this.messageBuffer.push({
       conversationId: this.conversationId,
@@ -215,6 +229,13 @@ export class StreamChunkProcessor {
       ...data,
       createdAt
     });
+
+    // 修改原因：并非所有事件都应该走 0ms 兜底刷新；chunk 热路径需要由 50ms 节流窗口统一合并。
+    // 修改方式：默认保留非 chunk 事件的既有下一轮刷新语义，但允许 chunk 关闭该兜底。
+    // 修改目的：不牺牲错误、完成、状态类事件的及时性，同时让高频文本增量真正批量化。
+    if (options.scheduleImmediateFlush === false) {
+      return;
+    }
 
     if (this.flushTimer === null) {
       this.flushTimer = setTimeout(() => {

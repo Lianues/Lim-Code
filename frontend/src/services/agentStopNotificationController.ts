@@ -1,5 +1,5 @@
 import { nextTick, watch, type WatchStopHandle } from 'vue'
-import type { ErrorInfo, Message, ToolUsage } from '../types'
+import type { ErrorInfo, Message, ToolUsage, VSCodeRequestType } from '../types'
 import { getSoundSettings, type NormalizedUISoundSettings } from './soundCues'
 import {
   resolvePendingAgentAction,
@@ -38,7 +38,7 @@ export interface AgentStopNotificationControllerChatStore {
 
 export interface AgentStopNotificationControllerOptions {
   chatStore: AgentStopNotificationControllerChatStore
-  sendToExtension: <T = any>(type: string, data: any) => Promise<T>
+  sendToExtension: <T = any>(type: VSCodeRequestType, data: any) => Promise<T>
   getSoundSettings?: () => NormalizedUISoundSettings
 }
 
@@ -61,7 +61,7 @@ function findLatestMessage(messages: Message[], predicate?: (message: Message) =
 
 export class AgentStopNotificationController {
   private readonly chatStore: AgentStopNotificationControllerChatStore
-  private readonly sendToExtension: <T = any>(type: string, data: any) => Promise<T>
+  private readonly sendToExtension: <T = any>(type: VSCodeRequestType, data: any) => Promise<T>
   private readonly getRuntimeSoundSettings: () => NormalizedUISoundSettings
   private runningWatch?: WatchStopHandle
   private suppressNextStop = false

@@ -15,21 +15,18 @@ import {
   flushToolCallBuffer,
   handleFunctionCallPart
 } from './streamHelpers'
+import {
+  appendMessage,
+  getMessageIndexById,
+  insertMessageAt,
+  removeMessageAt,
+  replaceMessageAt
+} from './state'
 import { syncTotalMessagesFromWindow, trimWindowFromTop } from './windowUtils'
 import { getToolApprovalStopKind } from '../../utils/toolContinuations'
 
 function getNextBackendIndex(state: ChatStoreState): number {
   return state.windowStartIndex.value + state.allMessages.value.length
-}
-
-function replaceMessageAt(state: ChatStoreState, messageIndex: number, nextMessage: Message): void {
-  if (messageIndex < 0 || messageIndex >= state.allMessages.value.length) return
-  state.allMessages.value[messageIndex] = nextMessage
-}
-
-function removeMessageAt(state: ChatStoreState, messageIndex: number): void {
-  if (messageIndex < 0 || messageIndex >= state.allMessages.value.length) return
-  state.allMessages.value.splice(messageIndex, 1)
 }
 
 /**
@@ -180,7 +177,10 @@ function deriveToolStatusFromResult(result: Record<string, unknown>): ToolUsage[
  * 处理 chunk 类型
  */
 export function handleChunkType(chunk: StreamChunk, state: ChatStoreState): void {
-  const messageIndex = state.allMessages.value.findIndex(m => m.id === state.streamingMessageId.value)
+  // 修改原因：chunk 增量是 WP32 的核心热路径，按 streamingMessageId 的定位不应反复 O(n) 扫描。
+  // 修改方式：先查 messageIndexById；若索引缺失/过期，由 helper 回退到 findIndex 并回填。
+  // 修改目的：保持 streamingMessageId -> assistant 消息的既有语义不变，同时把查找降为 O(1)。
+  const messageIndex = getMessageIndexById(state, state.streamingMessageId.value)
   if (messageIndex === -1 || !chunk.chunk) {
     return
   }
@@ -267,7 +267,10 @@ export function handleToolsExecuting(chunk: StreamChunk, state: ChatStoreState):
   // 这解决了用户确认工具后点击取消不生效的问题
   state.isStreaming.value = true
 
-  const messageIndex = state.allMessages.value.findIndex(m => m.id === state.streamingMessageId.value)
+  // 修改原因：toolsExecuting 在工具批量推进期间可能频繁到达，属于高频状态更新路径。
+  // 修改方式：通过 messageIndexById 直接命中当前 streaming assistant；helper 保留 fallback 兼容旧快照/失配索引。
+  // 修改目的：去掉热路径 findIndex，但不改变 toolsExecuting 原有状态推进语义。
+  const messageIndex = getMessageIndexById(state, state.streamingMessageId.value)
 
   if (messageIndex !== -1 && chunk.content) {
     const message = state.allMessages.value[messageIndex]
@@ -345,7 +348,10 @@ export function handleToolStatus(chunk: StreamChunk, state: ChatStoreState): voi
   // 1) 优先更新当前 streamingMessageId 对应的消息（通常就是包含工具调用的 assistant 消息）
   let messageIndex = -1
   if (state.streamingMessageId.value) {
-    const idx = all.findIndex(m => m.id === state.streamingMessageId.value)
+    // 修改原因：toolStatus 是最容易在长会话中反复触发的高频状态事件之一。
+    // 修改方式：先用 messageIndexById 命中当前 streaming assistant；helper 内部保留 findIndex fallback 并回填索引。
+    // 修改目的：在不改变 toolStatus 状态机条件的前提下，把首选定位从 O(n) 降为 O(1)。
+    const idx = getMessageIndexById(state, state.streamingMessageId.value)
     if (idx !== -1) {
       const m = all[idx]
       if (m.role === 'assistant' && m.tools?.some(t => t.id === toolUpdate.id)) {
@@ -421,7 +427,10 @@ export function handleToolStatusBatch(chunks: StreamChunk[], state: ChatStoreSta
     // 查找目标消息
     let messageIndex = -1
     if (state.streamingMessageId.value) {
-      const idx = all.findIndex(m => m.id === state.streamingMessageId.value)
+      // 修改原因：toolStatusBatch 是专门的性能路径，内部不应继续保留按 id 的线性查找热点。
+      // 修改方式：与单条 toolStatus 共享同一个 O(1)+fallback helper，保证两条路径语义一致。
+      // 修改目的：批量状态更新时继续消除不必要的 allMessages.findIndex 扫描。
+      const idx = getMessageIndexById(state, state.streamingMessageId.value)
       if (idx !== -1) {
         const m = all[idx]
         if (m.role === 'assistant' && m.tools?.some(t => t.id === toolUpdate.id)) {
@@ -482,7 +491,10 @@ export function handleAwaitingConfirmation(
   addCheckpoint: (checkpoint: CheckpointRecord) => void
 ): void {
   // 等待用户确认工具执行
-  const messageIndex = state.allMessages.value.findIndex(m => m.id === state.streamingMessageId.value)
+  // 修改原因：awaitingConfirmation 是审批门闸 UX 红线区，不能改语义，但可以消除按 id 的线性热点。
+  // 修改方式：通过 messageIndexById 获取当前 assistant 位置；若索引失配，helper 回退到 findIndex 并回填。
+  // 修改目的：保持审批等待行为不变，同时减少长会话时的定位成本。
+  const messageIndex = getMessageIndexById(state, state.streamingMessageId.value)
   if (messageIndex !== -1 && chunk.content) {
     const message = state.allMessages.value[messageIndex]
     // 保存原有的 modelVersion
@@ -593,7 +605,7 @@ export function handleAwaitingConfirmation(
         isFunctionResponse: true,
         parts: newParts
       }
-      state.allMessages.value.push(responseMessage)
+      appendMessage(state, responseMessage)
       syncTotalMessagesFromWindow(state)
       trimWindowFromTop(state)
 
@@ -636,7 +648,10 @@ export function handleToolIteration(
   addCheckpoint: (checkpoint: CheckpointRecord) => void
 ): void {
   // 工具迭代完成：当前消息包含工具调用
-  const messageIndex = state.allMessages.value.findIndex(m => m.id === state.streamingMessageId.value)
+  // 修改原因：toolIteration 会在工具回合之间多次切换占位 assistant，属于热路径。
+  // 修改方式：优先用 messageIndexById 命中当前流式消息；helper 提供 fallback，避免旧快照/迟到包造成行为变化。
+  // 修改目的：把同一流式消息的重复定位从 O(n) 降为 O(1)。
+  const messageIndex = getMessageIndexById(state, state.streamingMessageId.value)
   
   // 检查是否有工具被取消或拒绝
   const cancelledToolIds = new Set<string>()
@@ -762,7 +777,7 @@ export function handleToolIteration(
         isFunctionResponse: true,
         parts
       }
-      state.allMessages.value.push(responseMessage)
+      appendMessage(state, responseMessage)
       syncTotalMessagesFromWindow(state)
       trimWindowFromTop(state)
 
@@ -832,7 +847,7 @@ export function handleToolIteration(
       modelVersion: state.pendingModelOverride.value || currentModelName()
     }
   }
-  state.allMessages.value.push(newAssistantMessage)
+  appendMessage(state, newAssistantMessage)
   syncTotalMessagesFromWindow(state)
   trimWindowFromTop(state)
   state.streamingMessageId.value = newAssistantMessageId
@@ -866,7 +881,10 @@ export function handleComplete(
     return
   }
 
-  const messageIndex = state.allMessages.value.findIndex(m => m.id === state.streamingMessageId.value)
+  // 修改原因：complete 是每次主响应结束都会命中的关键路径，不应继续依赖 findIndex 线性扫描。
+  // 修改方式：使用 messageIndexById helper；若索引未命中，仍回退到 findIndex 并回填，保证旧行为兼容。
+  // 修改目的：在不改变 complete 完成语义的前提下，降低消息定位复杂度。
+  const messageIndex = getMessageIndexById(state, state.streamingMessageId.value)
   if (messageIndex !== -1) {
     const message = state.allMessages.value[messageIndex]
     // 保存原有的 tools 信息（complete 阶段的 content 通常只含文本，不含 functionCall）
@@ -1025,7 +1043,7 @@ export function handleAutoSummary(
     state.allMessages.value.length
   )
 
-  state.allMessages.value.splice(localInsertIndex, 0, summaryMessage)
+  insertMessageAt(state, localInsertIndex, summaryMessage)
 
   syncTotalMessagesFromWindow(state)
   trimWindowFromTop(state)
@@ -1048,7 +1066,10 @@ export function handleCancelled(chunk: StreamChunk, state: ChatStoreState): void
 
   if (isStaleCallback) {
     // 迟到的旧请求 cancelled chunk：只尝试清理旧消息的元数据，不重置全局状态
-    const oldMsgIndex = state.allMessages.value.findIndex(m => m.id === lastCancelledId)
+    // 修改原因：迟到 cancelled 包的清理也会按旧 messageId 定位消息，长会话下同样会触发线性扫描。
+    // 修改方式：复用 messageIndexById helper，保留 fallback 以兼容旧取消标记与快照恢复后的边界情况。
+    // 修改目的：让 stale cancelled 清理与主流式路径共享同一 O(1) 定位机制。
+    const oldMsgIndex = getMessageIndexById(state, lastCancelledId)
     if (oldMsgIndex !== -1) {
       const msg = state.allMessages.value[oldMsgIndex]
       if (msg.streaming) {
@@ -1062,7 +1083,10 @@ export function handleCancelled(chunk: StreamChunk, state: ChatStoreState): void
   // 正常的 cancelled 处理
   let messageIndex = -1
   if (state.streamingMessageId.value) {
-    messageIndex = state.allMessages.value.findIndex(m => m.id === state.streamingMessageId.value)
+    // 修改原因：cancelled 正常路径仍优先依赖 streamingMessageId 定位当前消息。
+    // 修改方式：统一走 messageIndexById helper，索引失配时自动 fallback 到旧 findIndex。
+    // 修改目的：减少取消完成时对 allMessages 的重复线性扫描，同时保持原有回退分支不变。
+    messageIndex = getMessageIndexById(state, state.streamingMessageId.value)
   } else {
     // 兼容性处理：如果 streamingMessageId 已被 cancelStream 清除，则寻找最后一条助手消息
     // 仅当最后一条助手消息处于非流式状态（说明刚被 cancelStream 处理过）时才尝试更新其元数据
@@ -1176,7 +1200,10 @@ export function handleError(chunk: StreamChunk, state: ChatStoreState): void {
     // 注意：思考内容只存在于 parts 中，不在 content 中，需要检查 parts
     const hasPartsContent = !!messageToRemove?.parts?.some(p => p.text || p.functionCall)
     if (messageToRemove && !messageToRemove.content && !messageToRemove.tools && !hasPartsContent) {
-      const removeIndex = state.allMessages.value.findIndex(m => m.id === state.streamingMessageId.value)
+      // 修改原因：error 收尾删除空占位时再次按同一 id 线性查找没有必要。
+      // 修改方式：通过 messageIndexById helper 获取删除下标，helper 负责 fallback 与索引回填。
+      // 修改目的：在保持“仅删除空占位”语义不变的前提下，消除重复 findIndex。
+      const removeIndex = getMessageIndexById(state, state.streamingMessageId.value)
       removeMessageAt(state, removeIndex)
     }
     state.streamingMessageId.value = null

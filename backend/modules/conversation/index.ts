@@ -31,6 +31,19 @@ export {
     mutateTranscript
 } from './TranscriptMutation';
 export type { TranscriptAdapter } from './TranscriptMutation';
+export {
+    // 修改原因：WP22 需要让主聊天与 SubAgent 通过统一 transcript 仓储接口读写内容。
+    // 修改方式：从 conversation 模块集中导出 TranscriptRepository 抽象及主聊天 adapter。
+    // 修改目的：后续协作者只依赖 conversation 模块公开的 transcript seam，而不直接耦合具体文件路径。
+    cloneTranscriptContents,
+    DelegatingTranscriptRepository,
+    ConversationTranscriptRepository
+} from './TranscriptRepository';
+export type {
+    ITranscriptRepository,
+    TranscriptContentsMutator,
+    TranscriptRepositoryDelegate
+} from './TranscriptRepository';
 export type {
     Content,
     ContentPart,

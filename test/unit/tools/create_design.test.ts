@@ -17,11 +17,16 @@ jest.mock('vscode', () => ({
   }
 }))
 
-jest.mock('../../../backend/tools/utils', () => ({
-  getAllWorkspaces: (...args: any[]) => mockGetAllWorkspaces(...args),
-  resolveUriWithInfo: (...args: any[]) => mockResolveUriWithInfo(...args),
-  normalizeLineEndingsToLF: (input: string) => mockNormalizeLineEndingsToLF(input)
-}))
+jest.mock('../../../backend/tools/utils', () => {
+  // WP13b：集中构造 tools/utils mock，避免每个测试复制 ensureParentDir 实现。
+  const { createBackendToolsUtilsMock } = require('../../../backend/__tests__/helpers/backendToolsUtilsMock')
+  return createBackendToolsUtilsMock({
+    getAllWorkspaces: (...args: any[]) => mockGetAllWorkspaces(...args),
+    resolveUriWithInfo: (...args: any[]) => mockResolveUriWithInfo(...args),
+    normalizeLineEndingsToLF: (input: string) => mockNormalizeLineEndingsToLF(input),
+    createDirectory: mockCreateDirectory
+  })
+})
 
 jest.mock('../../../backend/tools/progress/autoSync', () => ({
   syncProgressFromDesignArtifact: (...args: any[]) => mockSyncProgressFromDesignArtifact(...args)

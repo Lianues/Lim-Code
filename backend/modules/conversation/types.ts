@@ -13,6 +13,13 @@
  */
 
 /**
+ * 修改原因：上下文裁剪状态原本用裸字符串分散在 API 服务里，历史变更入口无法统一失效它。
+ * 修改方式：把会话 metadata 中的裁剪状态 key 提升为 conversation 域常量，供 ConversationManager 与 ContextTrimService 共享。
+ * 修改目的：让删除、插入、回档等 transcript 结构变化都能通过统一 key 清理旧裁剪状态，避免旧 trimState 继续截断上下文。
+ */
+export const CONVERSATION_CONTEXT_TRIM_STATE_KEY = 'trimState';
+
+/**
  * 不同渠道的 Token 计数
  *
  * 由于不同渠道（Gemini、OpenAI、Anthropic）对同一消息的 token 计算方式不同，

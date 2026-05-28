@@ -88,8 +88,15 @@ export function highlightText(text: string, keyword: string): string {
   return text.replace(regex, '<mark>$1</mark>')
 }
 
-// 转义正则表达式特殊字符
-function escapeRegExp(str: string): string {
+/**
+ * 转义正则表达式特殊字符。
+ *
+ * WP13b 修改原因：前端高亮路径在 format.ts、history_search.vue、search_in_files.vue、
+ * FilePickerPanel.vue 各自复制同语义正则转义实现。
+ * 修改方式：format.ts 暴露唯一前端 helper，组件统一 import 使用。
+ * 修改目的：只移动实现归属，不改变任何高亮、搜索结果或 UI 输出结构。
+ */
+export function escapeRegExp(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 

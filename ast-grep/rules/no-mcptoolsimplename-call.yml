@@ -1,0 +1,11 @@
+# 规则：禁止在新代码中调用 mcpToolSimpleName()
+# 该函数已标记 @deprecated（WP12），旧定义仍存在于 backend/modules/mcp/toolAdapter.ts
+# 但禁止任何新调用点。已在 WP15/WP32 修复中验证零调用。
+# 参考: https://ast-grep.github.io/reference/rule.html
+
+id: no-mcptoolsimplename-call
+message: "mcpToolSimpleName() 已废弃（@deprecated），禁止新增调用。请使用 encodeMcpToolName。"
+severity: error
+language: TypeScript
+rule:
+  pattern: mcpToolSimpleName($$$ARGS)

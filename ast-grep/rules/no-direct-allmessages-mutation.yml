@@ -1,0 +1,30 @@
+# 规则：禁止绕过 state.ts helper 直接修改 allMessages
+# WP32 把 messageIndexById 维护点收敛到 state.ts 的 replaceAllMessages / appendMessage /
+# insertMessageAt / replaceMessageAt / removeMessageAt / rebuildMessageIndexById。
+# 因此其它 chat store 文件不得直接调用 allMessages.value 的结构性 mutator。
+# 参考: https://ast-grep.github.io/reference/rule.html
+
+id: no-direct-allmessages-mutation
+message: "禁止绕过 state.ts helper 直接修改 allMessages；请使用 replaceAllMessages/appendMessage/insertMessageAt/replaceMessageAt/removeMessageAt。"
+severity: error
+language: TypeScript
+files:
+  - frontend/src/stores/chat/**/*.ts
+ignores:
+  - frontend/src/stores/chat/state.ts
+rule:
+  any:
+    - pattern: "$STATE.allMessages.value.push($$$ARGS)"
+    - pattern: "$STATE.allMessages.value.splice($$$ARGS)"
+    - pattern: "$STATE.allMessages.value.sort($$$ARGS)"
+    - pattern: "$STATE.allMessages.value.reverse($$$ARGS)"
+    - pattern: "$STATE.allMessages.value.unshift($$$ARGS)"
+    - pattern: "$STATE.allMessages.value.shift($$$ARGS)"
+    - pattern: "$STATE.allMessages.value.pop($$$ARGS)"
+    - pattern: "allMessages.value.push($$$ARGS)"
+    - pattern: "allMessages.value.splice($$$ARGS)"
+    - pattern: "allMessages.value.sort($$$ARGS)"
+    - pattern: "allMessages.value.reverse($$$ARGS)"
+    - pattern: "allMessages.value.unshift($$$ARGS)"
+    - pattern: "allMessages.value.shift($$$ARGS)"
+    - pattern: "allMessages.value.pop($$$ARGS)"

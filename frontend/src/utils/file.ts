@@ -3,6 +3,8 @@
  */
 
 import type { Attachment, AttachmentType } from '../types'
+// WP14: generateId 已统合到 format.ts，此处从 format 导入，消除重复定义
+import { generateId } from './format'
 import {
   MAX_ATTACHMENT_SIZE,
   SUPPORTED_DOCUMENT_TYPES
@@ -258,11 +260,7 @@ export function formatFileSize(bytes: number): string {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
 }
 
-// 生成唯一ID
-function generateId(): string {
-  return `${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
-}
-
+// WP14: generateId 已从 format.ts 导入，此处不再重复定义
 // 下载文件
 export function downloadFile(data: string, filename: string, mimeType: string) {
   const blob = base64ToBlob(data, mimeType)

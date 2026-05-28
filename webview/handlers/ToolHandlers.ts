@@ -5,6 +5,8 @@
 import { t } from '../../backend/i18n';
 import { checkAllShellsAvailability, killTerminalProcess, getTerminalOutput, cancelImageGeneration, TaskManager } from '../../backend/tools';
 import type { HandlerContext, MessageHandler } from '../types';
+// WP12：统一使用 codec 编码 MCP 工具名，禁止手拼 mcp__ 字符串
+import { encodeMcpToolName } from '../../backend/modules/mcp/mcpToolNameCodec';
 
 // ========== 工具列表和配置 ==========
 
@@ -74,7 +76,7 @@ export const getMcpTools: MessageHandler = async (data, requestId, ctx) => {
     
     for (const serverTools of allMcpTools) {
       for (const tool of serverTools.tools) {
-        const fullToolName = `mcp__${serverTools.serverId}__${tool.name}`;
+        const fullToolName = encodeMcpToolName(serverTools.serverId, tool.name);
         mcpTools.push({
           name: fullToolName,
           description: tool.description || '',

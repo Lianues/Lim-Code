@@ -155,8 +155,14 @@ export class McpManager {
      * @param excludeId 排除的 ID（用于更新时排除自身）
      */
     async validateServerId(id: string, excludeId?: string): Promise<{ valid: boolean; error?: string }> {
-        // 验证 ID 格式（只允许字母、数字、下划线、中划线）
-        if (!/^[a-zA-Z0-9_-]+$/.test(id)) {
+        // 验证 ID 格式（只允许字母、数字、单下划线、中划线，禁止连续双下划线）
+        // === WP12 修复 1：禁止 serverId 含 __ ===
+        // 为什么改：旧正则为 /^[a-zA-Z0-9_-]+$/，允许 foo__bar 作为 serverId。
+        //   MCP 工具名格式为 mcp__<serverId>__<toolName>，用 __ 做分隔符，
+        //   若 serverId 自身含 __，则 decode 时无法区分 serverId 结束和分隔符开始的位置。
+        // 怎么改：在原正则基础上增加否定前瞻 (?!.*__)，禁止字符串任意位置出现连续双下划线。
+        // 目的：消除 MCP 工具名 grammar 的歧义，确保 mcp__<serverId>__<toolName> 可无歧义解析。
+        if (!/^(?!.*__)[a-zA-Z0-9_-]+$/.test(id)) {
             return { valid: false, error: t('modules.mcp.errors.invalidServerId') };
         }
         

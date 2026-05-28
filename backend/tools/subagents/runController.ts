@@ -8,6 +8,7 @@
 
 import { subAgentRunEventBus } from './runEventBus';
 import type { SubAgentRunStatus } from './runEventBus';
+import type { IRunController, RunControllerSnapshot, SubAgentRunScope } from '../../core/RunController';
 
 export type SubAgentControlAction = 'pause' | 'resume' | 'exit';
 
@@ -31,7 +32,13 @@ interface ActiveRunRecord {
     exitReason?: string;
 }
 
-export class SubAgentRunController {
+export class SubAgentRunController implements IRunController<SubAgentRunScope> {
+    /**
+     * 修改原因：WP21 需要让 SubAgent controller 在类型层成为统一 RunController 契约的一员。
+     * 修改方式：显式暴露固定的 subagent scopeType，供共享调用方读取。
+     * 修改目的：后续共享运行时不必依赖具体类名来判断 controller 作用域。
+     */
+    readonly scopeType = 'subagent' as const;
     private readonly activeRuns = new Map<string, ActiveRunRecord>();
 
     register(runId: string, agentName?: string): AbortSignal {
@@ -80,6 +87,63 @@ export class SubAgentRunController {
 
     getActiveRunIds(): string[] {
         return Array.from(this.activeRuns.keys());
+    }
+
+    /**
+     * 修改原因：IRunController 需要统一暴露 controller 的 scope 类型。
+     * 修改方式：返回固定的 subagent 字面量，不引入额外状态源。
+     * 修改目的：共享调用方可以通过统一接口识别该 controller 管理的是 SubAgent run。
+     */
+    getScopeType(): 'subagent' {
+        return this.scopeType;
+    }
+
+    /**
+     * 修改原因：统一接口要求把匿名 runId 显式包装成 RunScope 数据。
+     * 修改方式：根据当前活跃记录补齐 agentName，可选保留未来 parentConversationId 扩展位。
+     * 修改目的：scope 成为接口能力本身，而不是由调用点写 if/else 猜测来源。
+     */
+    getScope(runId: string): SubAgentRunScope {
+        const record = this.activeRuns.get(runId);
+        return {
+            type: 'subagent',
+            runId,
+            agentName: record?.agentName
+        };
+    }
+
+    /**
+     * 修改原因：IRunController 需要统一的活跃 ID 读取入口。
+     * 修改方式：复用现有 getActiveRunIds 结果，不改变活跃 run 的判定逻辑。
+     * 修改目的：后续共享运行时代码不需要知道 SubAgent controller 的旧命名。
+     */
+    listActiveIds(): string[] {
+        return this.getActiveRunIds();
+    }
+
+    /**
+     * 修改原因：WP21 共享契约需要最小只读快照，而现有 getState 仍需继续服务既有 executor / handler。
+     * 修改方式：在保留 getState 原签名的前提下，新增 getSnapshot 作为统一接口读面。
+     * 修改目的：适配共享抽象，同时不触碰 Monitor pause / exit / historical-run 的既有 UX 语义。
+     */
+    getSnapshot(runId: string): RunControllerSnapshot<SubAgentRunScope> | undefined {
+        const state = this.getState(runId);
+        if (!state) {
+            return undefined;
+        }
+
+        return {
+            scope: this.getScope(runId),
+            active: state.active,
+            status: state.status,
+            abortSignal: state.abortSignal,
+            exitReason: this.getExitReason(runId),
+            capabilities: {
+                pause: true,
+                resume: true,
+                exit: true
+            }
+        };
     }
 
     pause(runId: string): boolean {
@@ -142,6 +206,15 @@ export class SubAgentRunController {
             payload: { reason: 'User resumed SubAgent run from Monitor' }
         });
         return true;
+    }
+
+    /**
+     * 修改原因：共享接口需要一个统一的终止型 cancel 入口，而 SubAgent 现有终止语义由 exit 承担。
+     * 修改方式：cancel 直接委托给现有 exit，实现“终止并让主工具失败”的既有行为。
+     * 修改目的：让统一接口在 subagent scope 下复用既有正确语义，而不是新发明一套并行取消路径。
+     */
+    cancel(runId: string, reason?: string): boolean {
+        return this.exit(runId, reason);
     }
 
     exit(runId: string, reason = '用户主动终止 SubAgent 执行'): boolean {

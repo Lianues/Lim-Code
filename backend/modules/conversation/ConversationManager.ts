@@ -22,10 +22,12 @@ import {
     MessagePosition,
     MessageFilter,
     HistorySnapshot,
-    ConversationStats
+    ConversationStats,
+    CONVERSATION_CONTEXT_TRIM_STATE_KEY
 } from './types';
 import type { ConversationStorageIntegrity, ConversationStorageLocation, IStorageAdapter } from './storage';
 import { cleanFunctionResponseForAPI } from './helpers';
+import { ConversationTranscriptRepository, type ITranscriptRepository } from './TranscriptRepository';
 import { deleteLogicalMessage, truncateFrom } from './TranscriptMutation';
 
 /**
@@ -105,6 +107,37 @@ export interface GetHistoryOptions {
  */
 export class ConversationManager {
     constructor(private storage: IStorageAdapter) {}
+
+    /**
+     * 修改原因：上下文裁剪状态是由 transcript 结构推导出的派生状态，删除/插入/回档后继续复用旧 trimState 会造成上下文异常缺失。
+     * 修改方式：在 ConversationManager 暴露统一失效入口，由所有结构性历史变更调用；普通追加和 token 计数更新不触发。
+     * 修改目的：让上下文管理状态跟随 transcript 结构变化重新计算，而不是依赖各个 Webview handler 手动清理。
+     */
+    async invalidateContextManagementState(conversationId: string, reason: string): Promise<void> {
+        // 修改原因：失效上下文状态是高频历史变更路径的一部分，不能为了调试在正常运行时持续 console.log。
+        // 修改方式：保留 reason 参数作为调用点自说明和未来日志扩展点，但当前只统一清理 metadata。
+        // 修改目的：实现统一失效机制，同时遵守热路径日志收敛规则，避免长会话删除/回档时制造额外输出。
+        void reason;
+        await this.setCustomMetadata(conversationId, CONVERSATION_CONTEXT_TRIM_STATE_KEY, null);
+    }
+
+    private shouldInvalidateContextManagementStateForUpdate(updates: Partial<Content>): boolean {
+        return Object.prototype.hasOwnProperty.call(updates, 'parts')
+            || Object.prototype.hasOwnProperty.call(updates, 'isSummary')
+            || Object.prototype.hasOwnProperty.call(updates, 'isAutoSummary')
+            || Object.prototype.hasOwnProperty.call(updates, 'summarizedMessageCount')
+            || Object.prototype.hasOwnProperty.call(updates, 'isFunctionResponse');
+    }
+
+    getTranscriptRepository(conversationId: string): ITranscriptRepository {
+        // 修改原因：主聊天 transcript 需要一个统一的仓储入口，供当前适配和后续 WP24/WP23 之类协作者复用。
+        // 修改方式：把 ConversationManager 既有的“缺失历史时自动建会话”读取语义，与底层 saveHistory 持久化语义一起绑定到仓储委托。
+        // 修改目的：外部协作者不再直接接触 storage.loadHistory/saveHistory，也不会复制主聊天特有的初始化规则。
+        return new ConversationTranscriptRepository({
+            loadContents: async () => await this.loadHistory(conversationId),
+            saveContents: async contents => await this.storage.saveHistory(conversationId, contents)
+        });
+    }
 
     async getConversationStorageLocation(conversationId: string): Promise<ConversationStorageLocation | null> {
         // 修改原因：webview handler 需要打开对话存储位置，但 ConversationManager 外部不应知道具体存储布局。
@@ -241,7 +274,10 @@ export class ConversationManager {
                 });
             }
 
-            await this.storage.saveHistory(conversationId, history);
+            // 修改原因：展示前自动补齐被拒绝的 functionResponse 也是 transcript 的一次整份替换，不应绕开统一仓储边界。
+            // 修改方式：在完成历史规范化后，通过 repository.replaceContents 保存修正后的 transcript。
+            // 修改目的：把主聊天的自动修正规则也纳入统一 transcript 写入口。
+            await this.getTranscriptRepository(conversationId).replaceContents(history);
         }
 
         return history;
@@ -344,21 +380,23 @@ export class ConversationManager {
         parts: ContentPart[],
         metadata?: Partial<Pick<Content, 'isUserInput' | 'isFunctionResponse' | 'isSummary'>>
     ): Promise<void> {
-        const history = await this.loadHistory(conversationId);
-        history.push({
+        // 修改原因：主聊天追加消息不应继续散落成手写 load -> push -> save；这正是 TranscriptRepository 要统一的 append 语义。
+        // 修改方式：先构造完整 Content，再委托 conversation 级 transcript repository 追加。
+        // 修改目的：主聊天和 SubAgent 子 transcript 在“追加一条楼层”时走同一抽象入口。
+        await this.getTranscriptRepository(conversationId).appendContent({
             role,
             parts: JSON.parse(JSON.stringify(parts)),
             timestamp: Date.now(),  // 自动添加时间
             ...metadata  // 合并可选元数据
-        });
-        await this.storage.saveHistory(conversationId, history);
+        } as Content);
     }
 
     /**
      * 添加完整的 Content 对象（对 functionResponse 自动去重）
      */
     async addContent(conversationId: string, content: Content): Promise<void> {
-        const history = await this.loadHistory(conversationId);
+        const repository = this.getTranscriptRepository(conversationId);
+        const history = await repository.getContents();
         const contentCopy = JSON.parse(JSON.stringify(content));
         // 如果没有时间戳，自动添加
         if (!contentCopy.timestamp) {
@@ -389,15 +427,16 @@ export class ConversationManager {
             }
         }
 
-        history.push(contentCopy);
-        await this.storage.saveHistory(conversationId, history);
+        // 修改原因：addContent 是主聊天最常用的 transcript append 写入口，必须率先接到统一仓储抽象。
+        // 修改方式：保留现有 functionResponse 去重安全网，再把最终 content 交给 repository.appendContent 落盘。
+        // 修改目的：主聊天与 SubAgent 在 append 语义上共享同一接口，同时不改变去重与持久化格式。
+        await repository.appendContent(contentCopy);
     }
 
     /**
      * 批量添加消息
      */
     async addBatch(conversationId: string, contents: Content[]): Promise<void> {
-        const history = await this.loadHistory(conversationId);
         const now = Date.now();
         const contentsCopy = JSON.parse(JSON.stringify(contents)).map((content: Content, index: number) => {
             // 如果没有时间戳，自动添加（同一批次的消息时间戳递增）
@@ -406,8 +445,13 @@ export class ConversationManager {
             }
             return content;
         });
-        history.push(...contentsCopy);
-        await this.storage.saveHistory(conversationId, history);
+        // 修改原因：批量追加本质上仍是 transcript append，只是一次追加多条，没必要再维护第二套直接 saveHistory 路径。
+        // 修改方式：通过 repository.mutateContents 在单次 load/save 中把多条内容追加到当前 transcript 尾部。
+        // 修改目的：append 和 batch append 都纳入统一仓储边界，后续更容易做审计或锁语义收敛。
+        await this.getTranscriptRepository(conversationId).mutateContents(history => {
+            history.push(...contentsCopy);
+            return history;
+        });
     }
 
     /**
@@ -511,12 +555,19 @@ export class ConversationManager {
         messageIndex: number,
         updates: Partial<Content>
     ): Promise<void> {
-        const history = await this.loadHistory(conversationId);
-        if (messageIndex < 0 || messageIndex >= history.length) {
-            throw new Error(t('modules.conversation.errors.messageIndexOutOfBounds', { index: messageIndex }));
+        // 修改原因：单条楼层更新仍属于 transcript mutate，不应保留独立的直写存储流程。
+        // 修改方式：通过 repository.mutateContents 执行边界检查与原位补丁，再统一保存。
+        // 修改目的：主聊天所有“读当前 transcript 再生成新 transcript”的操作都开始收敛到统一接口。
+        await this.getTranscriptRepository(conversationId).mutateContents(history => {
+            if (messageIndex < 0 || messageIndex >= history.length) {
+                throw new Error(t('modules.conversation.errors.messageIndexOutOfBounds', { index: messageIndex }));
+            }
+            Object.assign(history[messageIndex], updates);
+            return history;
+        });
+        if (this.shouldInvalidateContextManagementStateForUpdate(updates)) {
+            await this.invalidateContextManagementState(conversationId, 'message_structure_updated');
         }
-        Object.assign(history[messageIndex], updates);
-        await this.storage.saveHistory(conversationId, history);
     }
 
     /**
@@ -534,32 +585,35 @@ export class ConversationManager {
             return;
         }
 
-        const history = await this.loadHistory(conversationId);
-
-        for (const item of updates) {
-            const { messageIndex, updates: patch } = item;
-            if (messageIndex < 0 || messageIndex >= history.length) {
-                throw new Error(t('modules.conversation.errors.messageIndexOutOfBounds', { index: messageIndex }));
+        // 修改原因：批量更新的价值就在于“一次读写避免覆盖写入”；TranscriptRepository 的 mutate 正好是这类语义的统一入口。
+        // 修改方式：把所有 patch 应用压缩到一次 repository.mutateContents 中执行。
+        // 修改目的：保留并发覆盖防御，同时消除一条重复的直接 saveHistory 路径。
+        await this.getTranscriptRepository(conversationId).mutateContents(history => {
+            for (const item of updates) {
+                const { messageIndex, updates: patch } = item;
+                if (messageIndex < 0 || messageIndex >= history.length) {
+                    throw new Error(t('modules.conversation.errors.messageIndexOutOfBounds', { index: messageIndex }));
+                }
+                Object.assign(history[messageIndex], patch);
             }
-            Object.assign(history[messageIndex], patch);
-        }
-
-        await this.storage.saveHistory(conversationId, history);
+            return history;
+        });
     }
 
     /**
      * 删除消息
      */
     async deleteMessage(conversationId: string, messageIndex: number): Promise<void> {
-        const history = await this.loadHistory(conversationId);
-        if (messageIndex < 0 || messageIndex >= history.length) {
-            throw new Error(t('modules.conversation.errors.messageIndexOutOfBounds', { index: messageIndex }));
-        }
-        // 修改原因：删除单条消息时，如果目标模型消息包含工具调用，必须同步删除配对 functionResponse，避免留下孤儿工具结果。
-        // 修改方式：委托 TranscriptMutation.deleteLogicalMessage 处理配对删除和 index 规范化。
-        // 修改目的：让主对话与 SubAgent Monitor 复用同一套消息变更规则。
-        const nextHistory = deleteLogicalMessage(history, messageIndex);
-        await this.storage.saveHistory(conversationId, nextHistory);
+        // 修改原因：deleteMessage 是 transcript mutate，而且必须保留 TranscriptMutation 的 functionCall/functionResponse 配对删除语义。
+        // 修改方式：通过 repository.mutateContents 委托 deleteLogicalMessage，仍由纯函数负责配对删除与 index 规范化。
+        // 修改目的：让主对话删除操作与 SubAgent 子对话未来删除操作共享同一仓储入口和同一删除语义。
+        await this.getTranscriptRepository(conversationId).mutateContents(history => {
+            if (messageIndex < 0 || messageIndex >= history.length) {
+                throw new Error(t('modules.conversation.errors.messageIndexOutOfBounds', { index: messageIndex }));
+            }
+            return deleteLogicalMessage(history, messageIndex);
+        });
+        await this.invalidateContextManagementState(conversationId, 'message_deleted');
     }
 
     /**
@@ -571,14 +625,19 @@ export class ConversationManager {
         role: 'user' | 'model' | 'system',
         parts: ContentPart[]
     ): Promise<void> {
-        const history = await this.loadHistory(conversationId);
-        const index = Math.max(0, Math.min(position, history.length));
-        history.splice(index, 0, {
-            role,
-            parts: JSON.parse(JSON.stringify(parts)),
-            timestamp: Date.now()  // 自动添加时间
+        // 修改原因：插入消息也是 transcript mutate；若继续手写 splice + save，会与 append/delete 的统一边界再次分叉。
+        // 修改方式：通过 repository.mutateContents 在当前 transcript 中插入构造好的 Content。
+        // 修改目的：主聊天的插入、删除、更新都开始沿同一仓储语义收敛。
+        await this.getTranscriptRepository(conversationId).mutateContents(history => {
+            const index = Math.max(0, Math.min(position, history.length));
+            history.splice(index, 0, {
+                role,
+                parts: JSON.parse(JSON.stringify(parts)),
+                timestamp: Date.now()  // 自动添加时间
+            } as Content);
+            return history;
         });
-        await this.storage.saveHistory(conversationId, history);
+        await this.invalidateContextManagementState(conversationId, 'message_inserted');
     }
 
     /**
@@ -589,15 +648,20 @@ export class ConversationManager {
         position: number,
         content: Content
     ): Promise<void> {
-        const history = await this.loadHistory(conversationId);
-        const index = Math.max(0, Math.min(position, history.length));
         const contentCopy = JSON.parse(JSON.stringify(content));
         // 如果没有时间戳，自动添加
         if (!contentCopy.timestamp) {
             contentCopy.timestamp = Date.now();
         }
-        history.splice(index, 0, contentCopy);
-        await this.storage.saveHistory(conversationId, history);
+        // 修改原因：插入完整 Content 与插入简化消息本质相同，应该复用同一 mutate 入口。
+        // 修改方式：准备好深拷贝内容后，通过 repository.mutateContents 执行 splice。
+        // 修改目的：避免 main chat 继续保留一条独立的 insertContent 直写路径。
+        await this.getTranscriptRepository(conversationId).mutateContents(history => {
+            const index = Math.max(0, Math.min(position, history.length));
+            history.splice(index, 0, contentCopy);
+            return history;
+        });
+        await this.invalidateContextManagementState(conversationId, contentCopy.isSummary ? 'summary_inserted' : 'content_inserted');
     }
 
     // ==================== 批量操作 ====================
@@ -610,11 +674,16 @@ export class ConversationManager {
         startIndex: number,
         endIndex: number
     ): Promise<void> {
-        const history = await this.loadHistory(conversationId);
-        const start = Math.max(0, startIndex);
-        const end = Math.min(history.length, endIndex + 1);
-        history.splice(start, end - start);
-        await this.storage.saveHistory(conversationId, history);
+        // 修改原因：范围删除也是 transcript mutate，不应再保留单独的 load/splice/save 模板代码。
+        // 修改方式：通过 repository.mutateContents 统一执行区间裁剪。
+        // 修改目的：为后续把更多主聊天编辑操作统一到仓储层打基础。
+        await this.getTranscriptRepository(conversationId).mutateContents(history => {
+            const start = Math.max(0, startIndex);
+            const end = Math.min(history.length, endIndex + 1);
+            history.splice(start, end - start);
+            return history;
+        });
+        await this.invalidateContextManagementState(conversationId, 'message_range_deleted');
     }
 
     /**
@@ -635,19 +704,22 @@ export class ConversationManager {
         conversationId: string,
         targetIndex: number
     ): Promise<number> {
-        const history = await this.loadHistory(conversationId);
+        const repository = this.getTranscriptRepository(conversationId);
+        const history = await repository.getContents();
         
         if (targetIndex < 0 || targetIndex >= history.length) {
             throw new Error(t('modules.conversation.errors.messageIndexOutOfBounds', { index: targetIndex }));
         }
         
         // 修改原因：重试/删除到指定消息的语义是从目标索引开始截断，不能在主对话和 SubAgent 子对话各写一套实现。
-        // 修改方式：委托 TranscriptMutation.truncateFrom 统一处理截断和 index 规范化。
+        // 修改方式：通过 TranscriptRepository.mutateContents 委托 TranscriptMutation.truncateFrom 统一处理截断和 index 规范化。
         // 修改目的：保证后续工具配对规则升级时，主窗口和 Monitor 同步继承。
-        const nextHistory = truncateFrom(history, targetIndex);
+        const nextHistory = await repository.mutateContents(currentHistory => truncateFrom(currentHistory, targetIndex));
         const deleteCount = history.length - nextHistory.length;
+        if (deleteCount > 0) {
+            await this.invalidateContextManagementState(conversationId, 'history_truncated');
+        }
         
-        await this.storage.saveHistory(conversationId, nextHistory);
         return deleteCount;
     }
 
@@ -655,7 +727,11 @@ export class ConversationManager {
      * 清空对话历史
      */
     async clearHistory(conversationId: string): Promise<void> {
-        await this.storage.saveHistory(conversationId, []);
+        // 修改原因：清空 transcript 属于 replace 整体快照的典型场景，应直接走统一 replace 入口。
+        // 修改方式：委托 repository.replaceContents([]) 保存空 transcript。
+        // 修改目的：主聊天 clear 与 SubAgent replace 拥有同一仓储操作语义。
+        await this.getTranscriptRepository(conversationId).replaceContents([]);
+        await this.invalidateContextManagementState(conversationId, 'history_cleared');
     }
 
     // ==================== 查询和过滤 ====================
@@ -764,7 +840,11 @@ export class ConversationManager {
             throw new Error(t('modules.conversation.errors.snapshotNotBelongToConversation'));
         }
         
-        await this.storage.saveHistory(conversationId, snapshot.history);
+        // 修改原因：快照恢复本质上是整份 transcript replace，适合直接落在统一 replace 入口。
+        // 修改方式：读取快照后，委托 repository.replaceContents 保存快照历史。
+        // 修改目的：主聊天的全量覆盖操作也纳入 TranscriptRepository 契约。
+        await this.getTranscriptRepository(conversationId).replaceContents(snapshot.history);
+        await this.invalidateContextManagementState(conversationId, 'snapshot_restored');
     }
 
     /**
@@ -1431,7 +1511,8 @@ export class ConversationManager {
         messageIndex: number,
         toolCallIds?: string[]
     ): Promise<void> {
-        const history = await this.loadHistory(conversationId);
+        const repository = this.getTranscriptRepository(conversationId);
+        const history = await repository.getContents();
         
         if (messageIndex < 0 || messageIndex >= history.length) {
             throw new Error(t('modules.conversation.errors.messageIndexOutOfBounds', { index: messageIndex }));
@@ -1499,7 +1580,11 @@ export class ConversationManager {
         }
         
         if (modified) {
-            await this.storage.saveHistory(conversationId, history);
+            // 修改原因：rejectToolCalls 修改的是现有 transcript 内容，应该通过统一 replace 入口保存。
+            // 修改方式：保留原有拒绝语义与 functionResponse 插入逻辑，只把最终持久化改为 repository.replaceContents。
+            // 修改目的：避免主聊天在 transcript 仓储引入后继续保留第二条同语义写路径。
+            await repository.replaceContents(history);
+            await this.invalidateContextManagementState(conversationId, 'tool_calls_rejected');
         }
     }
     
@@ -1512,7 +1597,8 @@ export class ConversationManager {
      * @param conversationId 对话 ID
      */
     async rejectAllPendingToolCalls(conversationId: string): Promise<void> {
-        const history = await this.loadHistory(conversationId);
+        const repository = this.getTranscriptRepository(conversationId);
+        const history = await repository.getContents();
         if (history.length === 0) return;
         
         // 收集所有 functionResponse 的 ID
@@ -1576,7 +1662,11 @@ export class ConversationManager {
                 });
             }
             
-            await this.storage.saveHistory(conversationId, history);
+            // 修改原因：rejectAllPendingToolCalls 与 rejectToolCalls 同属 transcript 变更，应该共享统一 replace 入口。
+            // 修改方式：沿用原有批量补 rejected functionResponse 逻辑，再通过 repository.replaceContents 落盘。
+            // 修改目的：把主聊天所有“修改现有 transcript 后保存”的热路径继续收敛到统一接口。
+            await repository.replaceContents(history);
+            await this.invalidateContextManagementState(conversationId, 'pending_tool_calls_rejected');
         }
     }
 }

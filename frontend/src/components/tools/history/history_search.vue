@@ -14,6 +14,7 @@
 import { computed, ref, onBeforeUnmount } from 'vue'
 import CustomScrollbar from '../../common/CustomScrollbar.vue'
 import { useI18n } from '@/composables'
+import { escapeRegExp } from '@/utils/format'
 
 const props = defineProps<{
   args: Record<string, unknown>
@@ -253,10 +254,6 @@ function escapeHtml(value: string): string {
     .replace(/'/g, '&#39;')
 }
 
-function escapeRegex(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-}
-
 function splitKeywordQuery(value: string): string[] {
   // 前端高亮必须复用后端的多关键词兜底语义。
   // 为什么这里也要切词：后端在完整短语无结果时会按空格分隔关键词命中行，若前端仍只高亮完整短语，用户会看到“命中了但没有高亮”。
@@ -272,18 +269,22 @@ function buildHighlightPatterns(content: string): RegExp[] {
       return [new RegExp(query.value, 'gi')]
     }
 
-    const exactPattern = new RegExp(escapeRegex(query.value), 'gi')
+    // WP13b：复用前端唯一 escapeRegExp，保持 history_search 高亮字面量匹配语义不变。
+    const exactPattern = new RegExp(escapeRegExp(query.value), 'gi')
     exactPattern.lastIndex = 0
     if (exactPattern.test(content)) {
-      return [new RegExp(escapeRegex(query.value), 'gi')]
+      // WP13b：命中完整短语时仍返回同一字面量模式，仅替换重复 helper 来源。
+      return [new RegExp(escapeRegExp(query.value), 'gi')]
     }
 
     const keywordTerms = splitKeywordQuery(query.value)
     if (keywordTerms.length > 1) {
-      return keywordTerms.map(term => new RegExp(escapeRegex(term), 'gi'))
+      // WP13b：多关键词兜底逐词转义行为不变，统一到 format.ts helper。
+      return keywordTerms.map(term => new RegExp(escapeRegExp(term), 'gi'))
     }
 
-    return [new RegExp(escapeRegex(query.value), 'gi')]
+    // WP13b：最终兜底仍是完整 query 字面量转义，只去掉组件内 escapeRegex 副本。
+    return [new RegExp(escapeRegExp(query.value), 'gi')]
   } catch {
     return []
   }

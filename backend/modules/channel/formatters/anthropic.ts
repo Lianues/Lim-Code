@@ -949,9 +949,19 @@ export class AnthropicFormatter extends BaseFormatter {
         let done = false;
         let usage: any;
         let finishReason: string | undefined;
+        // 在 adapter 边界把 Anthropic content_block.index 标准化为通用 functionCall.index，
+        // 让后端累加器与前端 merge 走统一 id/index 抽象，不在 UI 层写 provider 特判。
+        const eventType = typeof chunk.type === 'string' ? chunk.type : '';
+        const contentIndex = typeof chunk.index === 'number' ? chunk.index : undefined;
+        const providerEvent = {
+            type: eventType,
+            contentIndex,
+            callId: typeof chunk.content_block?.id === 'string' ? chunk.content_block.id : undefined,
+            isFinalArgs: false
+        };
         
         // 处理不同的事件类型
-        if (chunk.type === 'content_block_delta') {
+        if (eventType === 'content_block_delta') {
             const delta = chunk.delta;
             
             if (delta?.type === 'text_delta') {
@@ -981,12 +991,14 @@ export class AnthropicFormatter extends BaseFormatter {
                         functionCall: {
                             name: '', // 名称在 block_start 中提供，这里留空供累加器合并
                             args: {},
-                            partialArgs: delta.partial_json
-                        }
+                            partialArgs: delta.partial_json,
+                            // input_json_delta 没有 tool_use.id，必须用 content_block.index 指回对应 tool_use。
+                            index: contentIndex
+                        } as any
                     });
                 }
             }
-        } else if (chunk.type === 'content_block_start') {
+        } else if (eventType === 'content_block_start') {
             const block = chunk.content_block;
             
             if (block?.type === 'text') {
@@ -1016,11 +1028,15 @@ export class AnthropicFormatter extends BaseFormatter {
                         name: block.name,
                         args: args,
                         partialArgs: Object.keys(args).length > 0 ? JSON.stringify(args) : '',
-                        id: block.id
-                    }
+                        id: block.id,
+                        // id 是最终工具回传 ID，index 是流式片段定位键；两者不能混用。
+                        index: contentIndex
+                    } as any
                 });
             }
-        } else if (chunk.type === 'message_delta') {
+        } else if (eventType === 'content_block_stop') {
+            // content_block_stop 是单个 tool_use 的结构边界；这里只标记 providerEvent，由累加器附带 snapshot。
+        } else if (eventType === 'message_delta') {
             finishReason = chunk.delta?.stop_reason;
             
             if (chunk.usage) {
@@ -1028,9 +1044,9 @@ export class AnthropicFormatter extends BaseFormatter {
                     candidatesTokenCount: chunk.usage.output_tokens
                 };
             }
-        } else if (chunk.type === 'message_stop') {
+        } else if (eventType === 'message_stop') {
             done = true;
-        } else if (chunk.type === 'message_start') {
+        } else if (eventType === 'message_start') {
             // 消息开始，可能包含 usage 信息
             if (chunk.message?.usage) {
                 const u = chunk.message.usage;
@@ -1047,7 +1063,8 @@ export class AnthropicFormatter extends BaseFormatter {
         
         const streamChunk: StreamChunk = {
             delta: parts,
-            done
+            done,
+            providerEvent
         };
         
         if (finishReason) {

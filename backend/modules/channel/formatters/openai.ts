@@ -819,12 +819,9 @@ export class OpenAIFormatter extends BaseFormatter {
             if (delta?.tool_calls && Array.isArray(delta.tool_calls)) {
                 for (const toolCall of delta.tool_calls) {
                     if (toolCall.function) {
-                        console.log('[OpenAI Stream] tool_call chunk:', JSON.stringify({
-                            index: toolCall.index,
-                            id: toolCall.id,
-                            name: toolCall.function.name,
-                            arguments: toolCall.function.arguments
-                        }));
+                        // 修改原因：OpenAI tool_calls.arguments 会按 chunk 高频到达，逐块 console.log 会把日志 I/O 引入流式热路径。
+                        // 修改方式：热路径只保留必要的 functionCall 增量归一化，不在生产流式解析里输出调试日志。
+                        // 修改目的：避免长工具参数流因为日志刷屏拖慢 extension host，同时保持既有 StreamChunk 语义不变。
                         parts.push({
                             functionCall: {
                                 name: toolCall.function.name || '',

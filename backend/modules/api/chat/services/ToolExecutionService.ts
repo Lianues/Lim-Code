@@ -16,6 +16,8 @@ import type { ResolvedPromptModeSnapshot } from '../../../settings/types';
 import { isPlanPathAllowed } from '../../../settings/modeToolsPolicy';
 import type { McpManager } from '../../../mcp/McpManager';
 import { mcpResultToToolResult } from '../../../mcp/toolAdapter';
+// WP12：统一使用 codec 判断和解析 MCP 工具名，禁止手拼 startsWith('mcp__') 或 split('__')
+import { isMcpToolName, decodeMcpToolName } from '../../../mcp/mcpToolNameCodec';
 import type { ContentPart } from '../../../conversation/types';
 import type { BaseChannelConfig } from '../../../config/configs/base';
 import { getAllWorkspaces, getMultimodalCapability, type ChannelType as UtilChannelType, type ToolMode as UtilToolMode } from '../../../../tools/utils';
@@ -286,8 +288,8 @@ export class ToolExecutionService {
             let response: Record<string, unknown>;
 
             try {
-                // 检查是否是 MCP 工具（格式：mcp__{serverId}__{toolName}）
-                if (executionCall.name.startsWith('mcp__') && this.mcpManager) {
+                // WP12：使用 codec 统一判断 MCP 工具名
+                if (isMcpToolName(executionCall.name) && this.mcpManager) {
                     response = await this.executeMcpTool(executionCall);
                 } else {
                     response = await this.executeBuiltinTool(executionCall, conversationId, config, abortSignal, promptModeSnapshot, progressEmitter);
@@ -516,7 +518,8 @@ export class ToolExecutionService {
             let response: Record<string, unknown>;
 
             try {
-                if (executionCall.name.startsWith('mcp__') && this.mcpManager) {
+                // WP12：使用 codec 统一判断 MCP 工具名
+                if (isMcpToolName(executionCall.name) && this.mcpManager) {
                     response = await this.executeMcpTool(executionCall);
                 } else {
                     response = await this.executeBuiltinTool(executionCall, conversationId, config, abortSignal, promptModeSnapshot, progressEmitter);
@@ -597,10 +600,11 @@ export class ToolExecutionService {
      * 执行 MCP 工具
      */
     private async executeMcpTool(call: FunctionCallInfo): Promise<Record<string, unknown>> {
-        const parts = call.name.split('__');
-        if (parts.length >= 3) {
-            const serverId = parts[1];
-            const toolName = parts.slice(2).join('__');
+        // WP12：使用 codec 统一解码 MCP 工具名，用 indexOf 而非 split('__')，
+        // 正确处理 serverId/toolName 含下划线或双下划线的边界情况。
+        const decoded = decodeMcpToolName(call.name);
+        if (decoded) {
+            const { serverId, toolName } = decoded;
 
             const result = await this.mcpManager!.callTool({
                 serverId,
@@ -684,7 +688,8 @@ export class ToolExecutionService {
     private prepareToolCallForExecution(
         call: FunctionCallInfo
     ): { call: FunctionCallInfo; error: string | null } {
-        if (call.name.startsWith('mcp__')) {
+        // WP12：使用 codec 统一判断 MCP 工具名
+        if (isMcpToolName(call.name)) {
             return { call, error: null };
         }
 

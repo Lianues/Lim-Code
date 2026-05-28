@@ -19,6 +19,12 @@ import {
 import { updateTabConversationId, updateTabTitle } from './tabActions'
 import { clearCheckpointsFromIndex } from './checkpointActions'
 import { contentToMessageEnhanced } from './parsers'
+import {
+  appendMessage,
+  rebuildMessageIndexById,
+  replaceAllMessages,
+  replaceMessageAt
+} from './state'
 import { syncTotalMessagesFromWindow, setTotalMessagesFromWindow, trimWindowFromTop } from './windowUtils'
 import { persistConversationModelConfig, persistConversationPromptMode } from './configActions'
 
@@ -138,6 +144,9 @@ function upsertHiddenFunctionResponseMessage(
   state: ChatStoreState,
   payload: HiddenFunctionResponsePayload
 ): void {
+  // 修改原因：隐藏 functionResponse 的 replace/append 也是 message 数组 mutation 路径的一部分。
+  // 修改方式：在命中替换或追加后显式重建 messageIndexById，保证 retry/delete/tab restore 后仍然按最新数组定位。
+  // 修改目的：覆盖 WP32 要求的 replace/insert 路径索引一致性。
   const all = state.allMessages.value
 
   // 1) 优先按 id 定位并替换已有 functionResponse（如 create_plan 的原始响应）
@@ -165,11 +174,7 @@ function upsertHiddenFunctionResponseMessage(
       })
 
       if (matched) {
-        state.allMessages.value = [
-          ...all.slice(0, i),
-          { ...msg, parts: nextParts },
-          ...all.slice(i + 1)
-        ]
+        replaceMessageAt(state, i, { ...msg, parts: nextParts })
         // ★ 同步更新 toolResponseCache，避免 getToolResponseById 返回旧缓存
         // 导致 replayTodoStateFromMessages 看不到 planExecutionPrompt 等新合并字段
         if (payload.id) {
@@ -202,7 +207,7 @@ function upsertHiddenFunctionResponseMessage(
       }
     }]
   }
-  state.allMessages.value.push(responseMessage)
+  appendMessage(state, responseMessage)
 }
 
 export async function sendMessage(
@@ -257,7 +262,7 @@ export async function sendMessage(
         backendIndex: getNextBackendIndex(state),
         attachments: attachments && attachments.length > 0 ? attachments : undefined
       }
-      state.allMessages.value.push(userMessage)
+      appendMessage(state, userMessage)
     }
     
     const assistantMessageId = generateId()
@@ -274,7 +279,7 @@ export async function sendMessage(
         modelVersion: displayModelVersion
       }
     }
-    state.allMessages.value.push(assistantMessage)
+    appendMessage(state, assistantMessage)
     state.streamingMessageId.value = assistantMessageId
     syncTotalMessagesFromWindow(state)
     trimWindowFromTop(state)
@@ -392,7 +397,7 @@ export async function retryFromMessage(
     state.isWaitingForResponse.value = true
 
     const backendFrom = calculateBackendIndex(state.allMessages.value, messageIndex, state.windowStartIndex.value)
-    state.allMessages.value = state.allMessages.value.slice(0, messageIndex)
+    replaceAllMessages(state, state.allMessages.value.slice(0, messageIndex))
     clearCheckpointsFromIndex(state, backendFrom)
     setTotalMessagesFromWindow(state)
 
@@ -409,7 +414,7 @@ export async function retryFromMessage(
         modelVersion: computed.currentModelName.value
       }
     }
-    state.allMessages.value.push(assistantMessage)
+    appendMessage(state, assistantMessage)
     state.streamingMessageId.value = assistantMessageId
     syncTotalMessagesFromWindow(state)
     trimWindowFromTop(state)
@@ -451,7 +456,7 @@ export async function retryFromMessage(
   // 计算后端索引（在修改数组之前）
   const backendIndex = calculateBackendIndex(state.allMessages.value, messageIndex, state.windowStartIndex.value)
   
-  state.allMessages.value = state.allMessages.value.slice(0, messageIndex)
+  replaceAllMessages(state, state.allMessages.value.slice(0, messageIndex))
   clearCheckpointsFromIndex(state, backendIndex)
   setTotalMessagesFromWindow(state)
   
@@ -478,7 +483,7 @@ export async function retryFromMessage(
         const page = result?.messages || []
         state.totalMessages.value = result?.total ?? page.length
         state.windowStartIndex.value = page[0]?.index ?? 0
-        state.allMessages.value = page.map(content => contentToMessageEnhanced(content))
+        replaceAllMessages(state, page.map(content => contentToMessageEnhanced(content)))
       } catch (reloadErr) {
         console.error('[messageActions] retryFromMessage: failed to reload history after delete failure:', reloadErr)
       }
@@ -508,7 +513,7 @@ export async function retryFromMessage(
       modelVersion: computed.currentModelName.value
     }
   }
-  state.allMessages.value.push(assistantMessage)
+  appendMessage(state, assistantMessage)
   state.streamingMessageId.value = assistantMessageId
   syncTotalMessagesFromWindow(state)
   trimWindowFromTop(state)
@@ -573,7 +578,7 @@ export async function retryAfterError(
       modelVersion: computed.currentModelName.value
     }
   }
-  state.allMessages.value.push(assistantMessage)
+  appendMessage(state, assistantMessage)
   state.streamingMessageId.value = assistantMessageId
   syncTotalMessagesFromWindow(state)
   trimWindowFromTop(state)
@@ -641,7 +646,7 @@ export async function editAndRetry(
   targetMessage.parts = [{ text: newMessage }]
   targetMessage.attachments = attachments && attachments.length > 0 ? attachments : undefined
   
-  state.allMessages.value = state.allMessages.value.slice(0, messageIndex + 1)
+  replaceAllMessages(state, state.allMessages.value.slice(0, messageIndex + 1))
   clearCheckpointsFromIndex(state, backendMessageIndex)
   setTotalMessagesFromWindow(state)
 
@@ -659,7 +664,7 @@ export async function editAndRetry(
       modelVersion: computed.currentModelName.value
     }
   }
-  state.allMessages.value.push(assistantMessage)
+  appendMessage(state, assistantMessage)
   state.streamingMessageId.value = assistantMessageId
   syncTotalMessagesFromWindow(state)
   trimWindowFromTop(state)
@@ -731,7 +736,7 @@ export async function deleteMessage(
   if (isLocalOnlyAssistant(target) || isEmptyAssistantPlaceholder(target)) {
     const msgId = state.allMessages.value[targetIndex]?.id
     const backendFrom = calculateBackendIndex(state.allMessages.value, targetIndex, state.windowStartIndex.value)
-    state.allMessages.value = state.allMessages.value.slice(0, targetIndex)
+    replaceAllMessages(state, state.allMessages.value.slice(0, targetIndex))
     clearCheckpointsFromIndex(state, backendFrom)
     setTotalMessagesFromWindow(state)
     if (state.streamingMessageId.value && msgId && state.streamingMessageId.value === msgId) {
@@ -756,7 +761,7 @@ export async function deleteMessage(
     })
 
     if (response?.success) {
-      state.allMessages.value = state.allMessages.value.slice(0, targetIndex)
+      replaceAllMessages(state, state.allMessages.value.slice(0, targetIndex))
       clearCheckpointsFromIndex(state, backendIndex)
       setTotalMessagesFromWindow(state)
       await refreshCurrentConversationBuildSession(state)
@@ -814,7 +819,7 @@ export async function deleteSingleMessage(
       const page = result?.messages || []
       state.totalMessages.value = result?.total ?? page.length
       state.windowStartIndex.value = page[0]?.index ?? 0
-      state.allMessages.value = page.map(content => contentToMessageEnhanced(content))
+      replaceAllMessages(state, page.map(content => contentToMessageEnhanced(content)))
 
       state.isLoadingMoreMessages.value = false
       state.historyFolded.value = false
@@ -835,7 +840,10 @@ export async function deleteSingleMessage(
  * 清空当前对话的消息
  */
 export function clearMessages(state: ChatStoreState): void {
-  state.allMessages.value = []
+  // 修改原因：clearMessages 会切断当前窗口，是最明确的 delete/reset mutation 路径。
+  // 修改方式：通过集中 helper 一次性替换 allMessages 并同步派生索引。
+  // 修改目的：保证后续所有按 id 定位都不会命中旧会话残留索引。
+  replaceAllMessages(state, [])
   state.windowStartIndex.value = 0
   state.totalMessages.value = 0
   state.isLoadingMoreMessages.value = false

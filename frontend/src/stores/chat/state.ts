@@ -21,6 +21,151 @@ import type {
   QueuedMessage
 } from './types'
 
+export type MessageIndexState = Pick<ChatStoreState, 'allMessages' | 'messageIndexById'>
+export type MessageIndexLookupState = Pick<ChatStoreState, 'allMessages'> & Partial<Pick<ChatStoreState, 'messageIndexById'>>
+
+function hasMessageIndexState(state: MessageIndexLookupState): state is MessageIndexState {
+  return state.messageIndexById?.value instanceof Map
+}
+
+type NodeLikeGlobal = typeof globalThis & {
+  process?: {
+    env?: {
+      NODE_ENV?: string
+    }
+  }
+}
+
+const SHOULD_ASSERT_MESSAGE_INDEX_INVARIANT = (() => {
+  const nodeEnv = (globalThis as NodeLikeGlobal).process?.env?.NODE_ENV
+  return nodeEnv === 'development' || nodeEnv === 'test'
+})()
+
+function getMessageIndexMap(state: MessageIndexLookupState): Map<string, number> | null {
+  return hasMessageIndexState(state) ? state.messageIndexById.value : null
+}
+
+function assertMessageIndexInvariant(state: MessageIndexLookupState): void {
+  if (!SHOULD_ASSERT_MESSAGE_INDEX_INVARIANT || !hasMessageIndexState(state)) return
+
+  const expected = buildMessageIndexById(state.allMessages.value)
+  const actual = state.messageIndexById.value
+  const isConsistent =
+    expected.size === actual.size &&
+    Array.from(expected.entries()).every(([messageId, index]) => actual.get(messageId) === index)
+
+  console.assert(isConsistent, '[chat/state] messageIndexById invariant violated', {
+    expected: Array.from(expected.entries()),
+    actual: Array.from(actual.entries()),
+    messageIds: state.allMessages.value.map(message => message.id)
+  })
+}
+
+/** 为当前 allMessages 重建 message.id -> 首次出现位置 的索引，保持 findIndex 的首命中语义。 */
+export function buildMessageIndexById(messages: Message[]): Map<string, number> {
+  const indexById = new Map<string, number>()
+
+  for (let i = 0; i < messages.length; i++) {
+    const messageId = messages[i]?.id
+    if (typeof messageId !== 'string' || messageId.length === 0) continue
+
+    // 只记录第一次出现的位置，保持旧 findIndex 的首命中语义。
+    if (!indexById.has(messageId)) {
+      indexById.set(messageId, i)
+    }
+  }
+
+  return indexById
+}
+
+/** 集中重建索引，供数组整体替换、tab restore、历史重载等路径校正 messageIndexById。 */
+export function rebuildMessageIndexById(state: MessageIndexLookupState): void {
+  if (!hasMessageIndexState(state)) return
+
+  state.messageIndexById.value = buildMessageIndexById(state.allMessages.value)
+  assertMessageIndexInvariant(state)
+}
+
+export function replaceAllMessages(state: MessageIndexLookupState, messages: Message[]): void {
+  state.allMessages.value = messages
+  rebuildMessageIndexById(state)
+}
+
+export function appendMessage(state: MessageIndexLookupState, message: Message): void {
+  const nextIndex = state.allMessages.value.length
+  state.allMessages.value.push(message)
+
+  if (!hasMessageIndexState(state)) return
+
+  const messageId = message?.id
+  if (typeof messageId === 'string' && messageId.length > 0 && !state.messageIndexById.value.has(messageId)) {
+    state.messageIndexById.value.set(messageId, nextIndex)
+  }
+
+  assertMessageIndexInvariant(state)
+}
+
+export function insertMessageAt(state: MessageIndexLookupState, index: number, message: Message): void {
+  const boundedIndex = Math.max(0, Math.min(index, state.allMessages.value.length))
+  state.allMessages.value.splice(boundedIndex, 0, message)
+  rebuildMessageIndexById(state)
+}
+
+export function replaceMessageAt(state: MessageIndexLookupState, index: number, nextMessage: Message): void {
+  if (index < 0 || index >= state.allMessages.value.length) return
+
+  const currentMessage = state.allMessages.value[index]
+  state.allMessages.value[index] = nextMessage
+
+  if (currentMessage?.id !== nextMessage.id) {
+    rebuildMessageIndexById(state)
+    return
+  }
+
+  assertMessageIndexInvariant(state)
+}
+
+export function removeMessageAt(state: MessageIndexLookupState, index: number): void {
+  if (index < 0 || index >= state.allMessages.value.length) return
+
+  state.allMessages.value.splice(index, 1)
+  rebuildMessageIndexById(state)
+}
+
+/**
+ * messageIndexById 的唯一查询入口。
+ * 主路径走 Map；索引缺失或失配时回退到 findIndex，并在真实 store 中重建整表索引修复不变式。
+ */
+export function getMessageIndexById(state: MessageIndexLookupState, messageId: string | null | undefined): number {
+  if (!messageId) return -1
+
+  const messages = state.allMessages.value
+  const indexMap = getMessageIndexMap(state)
+  const indexed = indexMap?.get(messageId)
+  if (
+    typeof indexed === 'number' &&
+    indexed >= 0 &&
+    indexed < messages.length &&
+    messages[indexed]?.id === messageId
+  ) {
+    return indexed
+  }
+
+  const fallbackIndex = messages.findIndex(message => message.id === messageId)
+  if (fallbackIndex === -1) {
+    return -1
+  }
+
+  // 最小调用形状可能没有 messageIndexById；此时只返回 findIndex 结果，不强行绑定完整 store。
+  if (!indexMap || !state.messageIndexById) {
+    return fallbackIndex
+  }
+
+  // 走到 fallback 说明当前 Map 对本次查询不可信；重建整表，避免只修单 key 留下陈旧下标。
+  rebuildMessageIndexById(state)
+  return state.messageIndexById.value.get(messageId) ?? fallbackIndex
+}
+
 /**
  * 创建 Chat Store 状态
  */
@@ -51,6 +196,12 @@ export function createChatState(): ChatStoreState {
    * 每条消息的绝对索引通过 Message.backendIndex 对齐后端历史。
    */
   const allMessages = ref<Message[]>([])
+
+  /**
+   * message.id -> allMessages 数组下标。
+   * allMessages 仍是唯一消息真源；该 Map 只服务高频按 id 定位，并维持首命中不变式。
+   */
+  const messageIndexById = ref<Map<string, number>>(new Map())
 
   /** 当前窗口的起始绝对索引（对应 allMessages[0].backendIndex） */
   const windowStartIndex = ref(0)
@@ -169,6 +320,7 @@ export function createChatState(): ChatStoreState {
     isLoadingMoreConversations,
     currentConversationId,
     allMessages,
+    messageIndexById,
     windowStartIndex,
     totalMessages,
     isLoadingMoreMessages,

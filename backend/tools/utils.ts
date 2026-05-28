@@ -665,8 +665,12 @@ export interface ImageDimensions {
 
 /**
  * 计算最大公约数
+ *
+ * WP13 修改原因：gcd 在 utils.ts 和 read_file.ts 各有一份完全相同的实现，违反 DRY。
+ * 修改方式：将 utils.ts 版本改为 export，让 read_file.ts 共享同一实现。
+ * 修改目的：消除重复定义，后续所有调用点统一使用此函数。
  */
-function gcd(a: number, b: number): number {
+export function gcd(a: number, b: number): number {
     return b === 0 ? a : gcd(b, a % b);
 }
 
@@ -715,4 +719,32 @@ export function createImageDimensions(width: number, height: number): ImageDimen
         height,
         aspectRatio: calculateAspectRatio(width, height)
     };
+}
+
+// ==================== 文件系统辅助 ====================
+
+/**
+ * 确保目标文件的父目录存在。
+ *
+ * WP13 修改原因：ensureParentDir 在 design/pathUtils.ts、plan/pathUtils.ts、
+ * progress/pathUtils.ts、review/create_review.ts 四份文件中各有一份完全相同的实现。
+ * 修改方式：将实现提升到共享 utils.ts，各工具文件改为从 utils 导入或通过 pathUtils 重导出。
+ * 修改目的：统一文件系统辅助函数，消除四份重复实现。
+ */
+export async function ensureParentDir(uriFsPath: string): Promise<void> {
+    const dir = path.dirname(uriFsPath);
+    await vscode.workspace.fs.createDirectory(vscode.Uri.file(dir));
+}
+
+/**
+ * 转义正则表达式特殊字符。
+ *
+ * WP13 修改原因：escapeRegExp 在 jsonFormatter.ts、plan/todoListSection.ts、
+ * review/reviewDocumentSection.ts 各有一份完全相同的实现，违反 DRY 且 WP10 已将
+ * 此去重任务移交给 WP13。
+ * 修改方式：将实现提升到共享 utils.ts 并 export，三份调用点改为从 utils 导入。
+ * 修改目的：消除三份重复实现，保证 JSON/XML/plan/review 匹配行为完全不变。
+ */
+export function escapeRegExp(str: string): string {
+    return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }

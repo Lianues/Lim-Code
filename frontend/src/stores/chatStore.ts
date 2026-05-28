@@ -34,7 +34,7 @@ import { replayTodoStateFromMessages } from '../utils/todoList'
 import type { EditorNode } from '../types/editorNode'
 
 // 导入模块
-import { createChatState } from './chat/state'
+import { createChatState, rebuildMessageIndexById } from './chat/state'
 import { createChatComputed } from './chat/computed'
 import { handleStreamChunk, handleStreamChunkBatch } from './chat/streamHandler'
 import { formatTime } from './chat/utils'
@@ -549,6 +549,10 @@ export const useChatStore = defineStore('chat', () => {
     
     state.currentConversationId.value = null
     state.allMessages.value = []
+    // 修改原因：store 初始化会重置空白会话，必须显式把 messageIndexById 也归零。
+    // 修改方式：初始化空窗口后立即重建空索引。
+    // 修改目的：避免首次创建标签页前残留任何旧的消息 id 映射。
+    rebuildMessageIndexById(state)
     state.windowStartIndex.value = 0
     state.totalMessages.value = 0
     state.isLoadingMoreMessages.value = false

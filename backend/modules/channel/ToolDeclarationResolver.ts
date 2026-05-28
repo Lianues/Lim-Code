@@ -11,6 +11,7 @@ import type { ToolRegistry } from '../../tools/ToolRegistry';
 import type { SettingsManager } from '../settings/SettingsManager';
 import type { ResolvedPromptModeSnapshot } from '../settings/types';
 import type { McpManager } from '../mcp/McpManager';
+import { encodeMcpToolName } from '../mcp/mcpToolNameCodec';
 import { createReadFileTool } from '../../tools/file/read_file';
 import { createGenerateImageTool, createRemoveBackgroundTool, createCropImageTool, createResizeImageTool, createRotateImageTool } from '../../tools/media';
 import { subAgentRegistry } from '../../tools/subagents';
@@ -177,7 +178,7 @@ export class ToolDeclarationResolver {
         const mcpTools = this.mcpManager.getAllTools();
         for (const serverTools of mcpTools) {
             for (const tool of serverTools.tools || []) {
-                const toolName = `mcp__${serverTools.serverId}__${tool.name}`;
+                const toolName = encodeMcpToolName(serverTools.serverId, tool.name);
                 const rawSchema = tool.inputSchema || { type: 'object', properties: {} };
                 const schema = serverTools.cleanSchema
                     ? this.cleanJsonSchema(rawSchema)

@@ -1,0 +1,17 @@
+# 规则：禁止后端运行域混引前端 escapeRegExp
+# WP13b 已确认 escapeRegExp 分别在 backend/tools/utils.ts 与 frontend/src/utils/format.ts
+# 各保留一份（跨运行时正式豁免）。
+# 本条规则专门覆盖后端域：backend/**/*.ts 不得从 frontend/src/utils/format import escapeRegExp。
+# 前端域相反方向由 no-escaperegexp-frontend-import-backend.yml 覆盖。
+# 参考: https://ast-grep.github.io/reference/rule.html
+
+id: no-escaperegexp-cross-domain
+message: "后端运行域禁止从 frontend/src/utils/format import escapeRegExp。请使用 backend/tools/utils。"
+severity: error
+language: TypeScript
+files:
+  - backend/**/*.ts
+rule:
+  any:
+    - pattern: "import { $$$, escapeRegExp, $$$ } from 'frontend/src/utils/format'"
+    - pattern: "import escapeRegExp from 'frontend/src/utils/format'"

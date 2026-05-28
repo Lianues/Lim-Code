@@ -10,6 +10,8 @@ import type { SubAgentRequest, SubAgentResult, SubAgentConfig } from './types';
 import { subAgentRegistry } from './registry';
 import { createDefaultExecutor, getSubAgentExecutorContext } from './executor';
 import { getGlobalToolRegistry, getGlobalMcpManager, getGlobalSettingsManager, getGlobalConfigManager } from '../../core/settingsContext';
+// WP12：统一使用 codec 编码 MCP 工具名，禁止手拼 mcp__ 字符串
+import { encodeMcpToolName } from '../../modules/mcp/mcpToolNameCodec';
 
 /**
  * 获取可用的子代理名称列表
@@ -39,7 +41,7 @@ function getAgentAvailableTools(config: SubAgentConfig): string[] {
         const mcpTools = mcpManager.getAllTools();
         for (const serverTools of mcpTools) {
             for (const tool of serverTools.tools || []) {
-                mcpToolNames.push(`mcp__${serverTools.serverId}__${tool.name}`);
+                mcpToolNames.push(encodeMcpToolName(serverTools.serverId, tool.name));
             }
         }
     }

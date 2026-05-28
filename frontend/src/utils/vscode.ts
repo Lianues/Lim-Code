@@ -2,8 +2,10 @@
  * VSCode API 通信工具
  */
 
-import type { VSCodeMessage, VSCodeRequest } from '../types'
+import type { VSCodeMessage, VSCodeRequest, VSCodeRequestType } from '../types'
 import { handleSoundEvent } from '../services/soundEventController'
+
+const DEFAULT_WEBVIEW_CLIENT_ID = 'main-chat'
 
 // 获取 VSCode API
 declare function acquireVsCodeApi(): any
@@ -17,16 +19,24 @@ export function getVSCodeAPI() {
   return vscodeApi
 }
 
+export function getWebviewClientId(): string {
+  const configured = (window as any).__LIMCODE_WEBVIEW_CLIENT_ID
+  return typeof configured === 'string' && configured.trim()
+    ? configured.trim()
+    : DEFAULT_WEBVIEW_CLIENT_ID
+}
+
 // 消息请求ID生成器
 let requestIdCounter = 0
 export function generateRequestId(): string {
-  return `req_${Date.now()}_${++requestIdCounter}`
+  return `${getWebviewClientId()}_req_${Date.now()}_${++requestIdCounter}`
 }
 
 // 发送消息到插件
 // 注意：不设置前端超时，后端渠道配置已有超时设置
-export function sendToExtension<T = any>(type: string, data: any): Promise<T> {
+export function sendToExtension<T = any>(type: VSCodeRequestType, data: any): Promise<T> {
   return new Promise((resolve, reject) => {
+    const clientId = getWebviewClientId()
     const requestId = generateRequestId()
     const vscode = getVSCodeAPI()
     
@@ -44,6 +54,7 @@ export function sendToExtension<T = any>(type: string, data: any): Promise<T> {
     try {
       vscode.postMessage({
         type,
+        clientId,
         requestId,
         data
       } as VSCodeRequest)
@@ -79,6 +90,10 @@ export function onMessageFromExtension(
     }
     
     // 处理请求响应
+    if (message.clientId && message.clientId !== getWebviewClientId()) {
+      return
+    }
+
     if (message.requestId && messageHandlers.has(message.requestId)) {
       const responseHandler = messageHandlers.get(message.requestId)!
       messageHandlers.delete(message.requestId)

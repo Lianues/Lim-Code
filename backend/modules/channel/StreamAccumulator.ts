@@ -23,6 +23,7 @@ interface BuildContentOptions {
     parsePartialArgs: boolean;
     includeInternalFunctionCallFields: boolean;
     warnOnParseFailure: boolean;
+    finalizeFunctionCallIndex?: number;
 }
 
 export interface StreamingContentOptions {
@@ -228,6 +229,26 @@ export class StreamAccumulator {
             this.modelVersion = chunk.modelVersion;
         }
         
+        const stoppedAnthropicFunctionCallBlock =
+            this.providerType === 'anthropic' &&
+            chunk.providerEvent?.type === 'content_block_stop' &&
+            typeof chunk.providerEvent.contentIndex === 'number' &&
+            this.parts.some(part => part.functionCall && (part.functionCall as any).index === chunk.providerEvent?.contentIndex);
+        const shouldEmitStructuralSnapshot =
+            stoppedAnthropicFunctionCallBlock ||
+            (this.providerType === 'anthropic' && chunk.providerEvent?.type === 'message_stop');
+        if (shouldEmitStructuralSnapshot) {
+            const stoppedIndex = stoppedAnthropicFunctionCallBlock ? chunk.providerEvent?.contentIndex : undefined;
+            // Anthropic 的 content_block_stop 只终结对应 content_block.index；message_stop 才清理所有内部字段。
+            // 前端仍通过统一 snapshot 合并入口收束工具卡，不做 provider 特判。
+            chunk.contentSnapshot = this.buildContent({
+                parsePartialArgs: stoppedIndex === undefined,
+                includeInternalFunctionCallFields: stoppedIndex !== undefined,
+                warnOnParseFailure: false,
+                finalizeFunctionCallIndex: stoppedIndex
+            });
+        }
+        
         // 更新完成状态
         if (chunk.done) {
             this.isDone = true;
@@ -346,10 +367,7 @@ export class StreamAccumulator {
                     if (sameIndex) {
                         canMerge = true;
                     }
-                    // OpenAI Responses 模式：item_id 只用于流式事件定位，必须合并到占位 function_call，不能作为最终工具 ID。
-                    // 为什么新增 itemId 合并：arguments.done 没有 call_id，只能通过 item_id/output_index 找回先前的占位调用。
-                    // 怎么改：把 formatter 写入的 itemId 当作内部合并键，优先合并到同一个 functionCall part。
-                    // 目的：消除“0 参数占位工具 + 真实参数工具”被拆成两条记录的幽灵工具问题。
+                    // OpenAI Responses 的 item_id 只用于流式事件定位，必须合并到占位 function_call，不能作为最终工具 ID。
                     else if (sameItemId) {
                         canMerge = true;
                     }
@@ -357,10 +375,7 @@ export class StreamAccumulator {
                     else if (fc.id && lastFc.id) {
                         canMerge = fc.id === lastFc.id;
                     }
-                    // OpenAI Responses/兼容流：初始占位块可能没有 partialArgs 数据，后续参数块也可能没有 index；此时合并到最后一个空壳工具。
-                    // 为什么新增 fresh placeholder 兜底：部分兼容网关会省略 output_index，仅保留一个刚创建的空 function_call。
-                    // 怎么改：当最后一个工具仍是空参数占位，且当前片段提供 partialArgs 时，视为同一工具调用。
-                    // 目的：让后端与前端已有 fresh-tool 合并策略一致，避免最终残留“0 个参数”的占位工具。
+                    // 兼容流可能省略 output_index；此时把参数增量合并到最后一个刚创建的空工具壳。
                     else if (!fc.id && typeof fc.index !== 'number' && fc.partialArgs !== undefined && i === this.parts.length - 1 && lastIsFreshTool) {
                         canMerge = true;
                     }
@@ -374,18 +389,11 @@ export class StreamAccumulator {
                         if (fc.name && !lastFc.name) {
                             lastFc.name = fc.name;
                         }
-                        // 合并 ID（如果有）
-                        // 为什么 OpenAI Responses 要允许覆盖已有 id：部分兼容网关在 output_item.added 阶段没有 call_id，
-                        // 旧逻辑会给占位 part 生成本地临时 id；最终 output_item.done 才带官方 call_id。
-                        // 怎么改：当 itemId/index 已证明是同一个 Responses output item 时，用后到的官方 call_id 覆盖临时 id。
-                        // 目的：避免终结事件 content 与前端本地工具状态 id 不一致，导致 pending/executing 阶段最后一个工具显示两张卡。
+                        // 合并 ID；Responses 的官方 call_id 到达较晚时，可在 itemId/index 已证明同源后覆盖占位 id。
                         if (fc.id && (!lastFc.id || (this.providerType === 'openai-responses' && (sameItemId || sameIndex)))) {
                             lastFc.id = fc.id;
                         }
-                        // 合并 Responses itemId（如果有）
-                        // 为什么保留 itemId：它只用于后续流式片段定位，不会写入最终历史。
-                        // 怎么改：在合并阶段补齐内部 itemId，getContent 时统一删除。
-                        // 目的：让 delta、arguments.done、output_item.done 可以稳定指向同一个 functionCall。
+                        // itemId 仅用于后续流式片段定位，最终 Content 会统一删除。
                         if (fc.itemId && !lastFc.itemId) {
                             lastFc.itemId = fc.itemId;
                         }
@@ -393,6 +401,7 @@ export class StreamAccumulator {
                         if (typeof fc.index === 'number' && typeof lastFc.index !== 'number') {
                             lastFc.index = fc.index;
                         }
+                        // Anthropic delta 只有 index 没有 tool_use.id；index 命中时保留已有官方 id，维持 id/index 语义分离。
                         // 合并思考签名等其他属性
                         if (part.thoughtSignatures) {
                             existingPart.thoughtSignatures = { 
@@ -408,16 +417,12 @@ export class StreamAccumulator {
                         }
                         // 合并 partialArgs
                         if (fc.partialArgs !== undefined) {
-                            // 为什么区分最终参数和增量参数：Responses 的 arguments.done / output_item.done 给的是完整 arguments，不是 delta。
-                            // 怎么改：finalArgs=true 时覆盖已有 partialArgs；普通 delta 仍然追加。
-                            // 目的：避免把完整 JSON 再追加一次，造成 {..}{..} 无法解析，最终丢回 args={} 或残留 0 参数占位。
+                            // finalArgs 表示完整 arguments，应覆盖而不是继续追加到增量 JSON。
                             lastFc.partialArgs = fc.finalArgs === true
                                 ? fc.partialArgs
                                 : (lastFc.partialArgs || '') + fc.partialArgs;
                             
-                            // 修改原因：OpenAI Responses 的 arguments.delta 是高频半截 JSON，逐片段 JSON.parse 会造成 O(n²) CPU 消耗。
-                            // 修改方式：Responses 仅在 finalArgs=true 的 arguments.done/output_item.done 阶段解析；其它 provider 保持旧的早解析能力。
-                            // 修改目的：保留流式提前执行语义，同时让 Responses 大工具参数不再刷解析失败和卡住 extension host。
+                            // Responses 的 arguments.delta 是半截 JSON，避免在高频热路径逐片段 JSON.parse。
                             const shouldParseNow = this.providerType !== 'openai-responses' || fc.finalArgs === true;
                             if (shouldParseNow && lastFc.partialArgs.trim()) {
                                 try {
@@ -433,10 +438,7 @@ export class StreamAccumulator {
                     }
                 }
                 
-                // 找不到可合并的块，作为新块添加
-                // 修改原因：Responses 参数增量新建 part 时同样可能只是半截 JSON，不能在热路径立即解析。
-                // 修改方式：仅非 Responses 或 finalArgs=true 的结构完成事件执行 JSON.parse。
-                // 目的：把解析成本限制在可控边界，避免大参数流式输出时每个 delta 都重复解析不断增长的字符串。
+                // 找不到可合并块时作为新块添加；Responses 半截 JSON 只在 finalArgs 边界解析。
                 if (fc.partialArgs && (this.providerType !== 'openai-responses' || fc.finalArgs === true)) {
                     try {
                         fc.args = JSON.parse(fc.partialArgs);
@@ -448,11 +450,7 @@ export class StreamAccumulator {
                 const newPart: ContentPart = { ...restPart };
                 // 确保 functionCall 是深拷贝的，且处理了 args
                 newPart.functionCall = { ...fc };
-                // 只在作为新 Part 推入时才生成 id（避免在合并路径中过早赋值破坏合并逻辑）
-                // 为什么 OpenAI Responses 占位不能生成本地 id：官方 function_call_output 必须使用 call_id，
-                // 若 added 阶段还没有 call_id，本地生成 id 会在 pending 终结快照中和前端已修正的 call_id 分裂成两张工具卡。
-                // 怎么改：带 itemId 的 Responses 占位先保持无 id，等待 output_item.done 或兼容网关的 call_id 到达。
-                // 目的：让 Responses 的工具调用 id 始终以官方 call_id 为权威，而不是混入本地临时 id。
+                // 只在作为新 Part 推入时才生成 id；带 itemId 的 Responses 占位等待官方 call_id。
                 if (!newPart.functionCall.id && !(this.providerType === 'openai-responses' && (newPart.functionCall as any).itemId)) {
                     (newPart.functionCall as any).id = this.createToolCallId();
                 }
@@ -664,10 +662,7 @@ export class StreamAccumulator {
     
     /**
      * 构造 Content 的唯一内部入口。
-     *
-     * 修改原因：旧 getContent 同时服务流式 snapshot 和最终历史，导致流式热路径会反复解析半截 partialArgs 并清理内部字段。
-     * 修改方式：把“是否解析参数”和“是否保留内部合并字段”做成显式选项，由 streaming/final 两个公开方法分别调用。
-     * 修改目的：高频 delta 期间只做轻量投影，最终写历史或工具执行前才做完整 JSON 校准。
+     * streaming snapshot 只做轻量投影；最终写历史或工具执行前才解析 partialArgs 并清理内部字段。
      */
     private buildContent(options: BuildContentOptions): Content {
         let parts = this.parts
@@ -675,7 +670,11 @@ export class StreamAccumulator {
                 const part = { ...p };
                 if (part.functionCall) {
                     const fc = { ...part.functionCall } as any;
-                    if (options.parsePartialArgs && fc.partialArgs && (!fc.args || Object.keys(fc.args).length === 0)) {
+                    const shouldFinalizeFunctionCall =
+                        typeof options.finalizeFunctionCallIndex === 'number' &&
+                        typeof fc.index === 'number' &&
+                        fc.index === options.finalizeFunctionCallIndex;
+                    if ((options.parsePartialArgs || shouldFinalizeFunctionCall) && fc.partialArgs && (!fc.args || Object.keys(fc.args).length === 0)) {
                         try {
                             fc.args = JSON.parse(fc.partialArgs);
                         } catch (e) {
@@ -687,12 +686,10 @@ export class StreamAccumulator {
                         }
                     }
 
-                    if (!options.includeInternalFunctionCallFields) {
+                    if (!options.includeInternalFunctionCallFields || shouldFinalizeFunctionCall) {
                         delete fc.index;
                         delete fc.partialArgs;
-                        // 为什么删除 itemId/finalArgs：它们只是 OpenAI Responses 流式合并用的内部字段，不属于统一历史协议。
-                        // 怎么改：最终 Content 只保留 name、args、id 等跨 provider 通用字段。
-                        // 目的：避免内部流式定位信息污染历史，并确保 functionCall.id 始终表达工具回传用的 call_id。
+                        // itemId/finalArgs 只是流式合并字段，最终 Content 只保留跨 provider 通用协议。
                         delete fc.itemId;
                         delete fc.finalArgs;
                     }
@@ -776,13 +773,7 @@ export class StreamAccumulator {
         return content;
     }
 
-    /**
-     * 获取流式校准快照。
-     *
-     * 修改原因：流式阶段需要保留 itemId/index/partialArgs 等合并字段，但不能反复解析尚未完成的 JSON。
-     * 修改方式：默认保留内部字段且关闭 partialArgs 解析，仅供 initial/resync/structural snapshot 使用。
-     * 修改目的：让 snapshot 仍可校准 UI，同时不会把高频工具参数流拖进重解析路径。
-     */
+    /** 获取流式校准快照；保留内部合并字段，但不解析未完成的 partialArgs。 */
     getStreamingContent(options?: StreamingContentOptions): Content {
         return this.buildContent({
             parsePartialArgs: false,
@@ -791,13 +782,7 @@ export class StreamAccumulator {
         });
     }
 
-    /**
-     * 获取最终内容。
-     *
-     * 修改原因：最终写历史、工具执行和 complete/cancelled 需要干净的跨 provider Content。
-     * 修改方式：在最终出口解析 partialArgs，清理 itemId/index/finalArgs 等内部字段，解析失败时才告警。
-     * 修改目的：把高频 streaming projection 与最终持久化协议分离，避免互相污染。
-     */
+    /** 获取最终内容：解析 partialArgs，并清理 itemId/index/finalArgs 等内部字段。 */
     getFinalContent(): Content {
         return this.buildContent({
             parsePartialArgs: true,
@@ -978,13 +963,7 @@ export class StreamAccumulator {
             .map(part => part.redactedThinking!);
     }
     
-    /**
-     * 获取思考开始时间。
-     *
-     * 修改原因：StreamResponseProcessor 只为发送 thinkingStartTime 不应该构造完整 Content。
-     * 修改方式：暴露只读轻量 getter，直接返回累加器内部时间戳。
-     * 修改目的：让文本/reasoning 高频 delta 不再触发整条消息 clone、partialArgs 解析和 snapshot 判断。
-     */
+    /** 获取思考开始时间；避免只为发送 thinkingStartTime 而构造完整 Content。 */
     getThinkingStartTime(): number | undefined {
         return this.thinkingStartTime;
     }
@@ -1071,14 +1050,10 @@ export class StreamAccumulator {
             // 拼接到 partialArgs，JSON.parse 成功后才更新 args。
             // 仅检查 args 是否为对象会在初始阶段误判为完成，导致以空参数执行。
             //
-            // 检查 Object.keys(args).length > 0 可同时兼容所有 provider：
             // 只有 partialArgs 被成功 JSON.parse 后，args 才会含有实际的键。
             const hasRealArgs = fc.args && typeof fc.args === 'object' && Object.keys(fc.args).length > 0;
             const hasStableToolCallId = typeof fc.id === 'string' && fc.id.trim().length > 0;
-            // 为什么 Responses 必须等稳定 id：没有 call_id 时提前执行工具会生成 functionResponse.id=本地临时 id，
-            // 但 OpenAI Responses 后续上下文要求回传官方 call_id，二者不一致会造成 UI 重复和协议错误。
-            // 怎么改：仅对 openai-responses 要求 id 已稳定；其它 provider 保持既有行为。
-            // 目的：让流式提前执行不会抢在 output_item.done 修正 call_id 之前启动。
+            // Responses 必须等官方 call_id 稳定后再提前执行，否则 functionResponse.id 会与后续上下文要求不一致。
             if (hasRealArgs && fc.name && (this.providerType !== 'openai-responses' || hasStableToolCallId)) {
                 this.reportedFunctionCallIndices.add(i);
                 result.push({

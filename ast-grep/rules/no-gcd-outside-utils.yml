@@ -1,0 +1,19 @@
+# 规则：禁止 gcd 定义出现在 backend/tools/utils.ts 以外的位置
+# WP13 已将 gcd 收敛到唯一权威定义（backend/tools/utils.ts）。
+# 本条规则排除唯一授权文件后，匹配 function gcd 或 const gcd =。
+# 参考: https://ast-grep.github.io/reference/rule.html
+
+id: no-gcd-outside-utils
+message: "gcd 唯一权威定义在 backend/tools/utils.ts。禁止在其他位置重新定义。"
+severity: error
+language: TypeScript
+ignores:
+  - backend/tools/utils.ts
+rule:
+  any:
+    - all:
+        - kind: function_declaration
+        - has:
+            kind: identifier
+            regex: "^gcd$"
+    - pattern: "const gcd = $VALUE"

@@ -1,4 +1,5 @@
 import { OpenAIResponsesFormatter } from '../../modules/channel/formatters/openai-responses';
+import { OpenAIFormatter } from '../../modules/channel/formatters/openai';
 import { StreamAccumulator } from '../../modules/channel/StreamAccumulator';
 import { StreamResponseProcessor } from '../../modules/api/chat/handlers/StreamResponseProcessor';
 
@@ -233,6 +234,7 @@ describe('OpenAI Responses function-call streaming', () => {
         // 修改原因：OpenAI Responses 大工具参数卡顿的根因是 arguments.delta 热路径触发 contentSnapshot 和半截 JSON parse。
         // 修改方式：走 StreamResponseProcessor 流式路径，确认 delta 期间没有 contentSnapshot，也没有 console.warn。
         // 修改目的：防止后续改动把高频 tool args delta 重新带回完整 Content 重建路径。
+        const parseSpy = jest.spyOn(JSON, 'parse');
         const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
         const processor = new StreamResponseProcessor({
             requestStartTime: Date.now(),
@@ -274,13 +276,72 @@ describe('OpenAI Responses function-call streaming', () => {
 
             expect(received.some(chunk => chunk.contentSnapshot)).toBe(false);
             expect(warnSpy).not.toHaveBeenCalled();
+            // 修改原因：热路径 parse 退化最容易以“看不见的额外 JSON.parse”形式回归。
+            // 修改方式：直接观察原生 JSON.parse 调用次数，确认只发生在非热路径初始化 JSON 或最终断言解析中。
+            // 修改目的：把“不在 arguments.delta 期间重复 parse 半截 JSON”固化成可回归断言。
+            expect(parseSpy).toHaveBeenCalledTimes(0);
 
             const streamingContent = processor.getAccumulator().getStreamingContent();
             const call = streamingContent.parts.find(part => part.functionCall)?.functionCall as any;
             expect(call.partialArgs).toBe('{"path":"big.ts","content":"still incomplete"');
             expect(call.args).toEqual({});
+            expect(parseSpy).toHaveBeenCalledTimes(0);
+
+            const finalContent = processor.getContent();
+            const finalCall = finalContent.parts.find(part => part.functionCall)?.functionCall as any;
+            expect(finalCall.args).toEqual({});
+            expect(parseSpy).toHaveBeenCalledTimes(1);
         } finally {
+            parseSpy.mockRestore();
             warnSpy.mockRestore();
+        }
+    });
+
+    it('does not emit per-chunk console.log while normalizing OpenAI tool_call deltas', () => {
+        // 修改原因：普通 OpenAI tool_calls.arguments 也是流式热路径，调试 console.log 会在每个 chunk 触发。
+        // 修改方式：直接覆盖 OpenAI formatter 的 parseStreamChunk，确认日志侧效应被移除且归一化结果保持不变。
+        // 修改目的：锁定“热路径无 per-chunk console.log”这一约束，防止后续再次把调试输出塞回 formatter。
+        const logSpy = jest.spyOn(console, 'log').mockImplementation(() => undefined);
+        const formatter = new OpenAIFormatter();
+
+        try {
+            const chunk = formatter.parseStreamChunk({
+                id: 'chatcmpl-hot-path',
+                model: 'gpt-4.1',
+                choices: [
+                    {
+                        index: 0,
+                        delta: {
+                            tool_calls: [
+                                {
+                                    index: 0,
+                                    id: 'call_openai_hot_path',
+                                    type: 'function',
+                                    function: {
+                                        name: 'write_file',
+                                        arguments: '{"path":"demo.ts"}'
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            });
+
+            expect(logSpy).not.toHaveBeenCalled();
+            expect(chunk.delta).toEqual([
+                {
+                    functionCall: {
+                        name: 'write_file',
+                        args: {},
+                        partialArgs: '{"path":"demo.ts"}',
+                        id: 'call_openai_hot_path',
+                        index: 0
+                    }
+                }
+            ]);
+        } finally {
+            logSpy.mockRestore();
         }
     });
 });

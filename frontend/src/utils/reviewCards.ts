@@ -1,4 +1,6 @@
 import { extractPreviewText, isReviewDocPath } from './taskCards'
+// WP14: 从统合后的 typeGuards 导入，消除重复定义
+import { asBoolean, asNumber, asRecord, asString } from './typeGuards'
 
 export type ReviewToolName =
   | 'create_review'
@@ -118,12 +120,6 @@ const REVIEW_TOOL_NAMES = new Set<ReviewToolName>([
   'compare_review_documents'
 ])
 
-function asRecord(value: unknown): LooseRecord | undefined {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? value as LooseRecord
-    : undefined
-}
-
 function asRecordArray(value: unknown): LooseRecord[] | undefined {
   if (!Array.isArray(value)) return undefined
   return value
@@ -131,24 +127,7 @@ function asRecordArray(value: unknown): LooseRecord[] | undefined {
     .filter((item): item is LooseRecord => !!item)
 }
 
-function asString(value: unknown): string | undefined {
-  if (typeof value !== 'string') return undefined
-  const normalized = value.trim()
-  return normalized || undefined
-}
-
-function asNumber(value: unknown): number | undefined {
-  if (typeof value === 'number' && Number.isFinite(value)) return value
-  if (typeof value === 'string' && value.trim()) {
-    const parsed = Number(value)
-    return Number.isFinite(parsed) ? parsed : undefined
-  }
-  return undefined
-}
-
-function asBoolean(value: unknown): boolean | undefined {
-  return typeof value === 'boolean' ? value : undefined
-}
+// WP14: asString / asNumber / asBoolean 已从 typeGuards 导入，此处不再重复定义
 
 function asStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return []

@@ -2,6 +2,8 @@
  * Plan 文档中的 TODO LIST 章节处理工具
  */
 
+import { escapeRegExp } from '../utils';
+
 export type PlanTodoStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled';
 
 export interface PlanTodoItem {
@@ -22,10 +24,6 @@ function normalizeTodoStatus(value: unknown): PlanTodoStatus {
 function normalizeSingleLineText(input: unknown): string {
   if (typeof input !== 'string') return '';
   return input.replace(/\s+/g, ' ').trim();
-}
-
-function escapeRegExp(input: string): string {
-  return input.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 export function sortPlanTodoList(items: PlanTodoItem[]): PlanTodoItem[] {

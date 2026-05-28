@@ -271,8 +271,14 @@ async function updateToolOptions(config: ToolOptions) {
 
 // ==================== 上下文阈值 ====================
 
-// 上下文管理总开关（裁剪或自动总结任一开启即为开启）
+// 上下文管理总开关（优先使用后端权威字段，旧字段仅用于兼容历史 provider 配置）
 const contextManagementEnabled = computed(() => {
+  // 修改原因：旧 UI 只把两个旧布尔字段 OR 起来，无法表示“显式关闭但旧字段残留”。
+  // 修改方式：优先读取 contextManagementEnabled；只有旧配置没有该字段时才回退旧字段。
+  // 修改目的：让 provider 设置里关闭上下文管理的状态与后端策略保持一致。
+  if (typeof currentConfig.value?.contextManagementEnabled === 'boolean') {
+    return currentConfig.value.contextManagementEnabled
+  }
   return (currentConfig.value?.contextThresholdEnabled ?? false) || (currentConfig.value?.autoSummarizeEnabled ?? false)
 })
 
@@ -283,6 +289,11 @@ const contextThreshold = computed(() => {
 
 // 上下文管理模式：'trim' 或 'summarize'
 const contextManagementMode = computed(() => {
+  // 修改原因：旧模式由 autoSummarizeEnabled 反推，两个旧字段同时为 true 时语义不稳定。
+  // 修改方式：优先读取显式 contextManagementMode，旧配置再回退到 autoSummarizeEnabled。
+  // 修改目的：让模式选择成为单一枚举，而不是两个布尔字段的副作用。
+  if (currentConfig.value?.contextManagementMode === 'summarize') return 'summarize'
+  if (currentConfig.value?.contextManagementMode === 'trim') return 'trim'
   if (currentConfig.value?.autoSummarizeEnabled) return 'summarize'
   return 'trim'
 })
@@ -302,16 +313,16 @@ const contextTrimExtraCut = computed(() => {
 
 // 更新上下文管理总开关
 async function updateContextManagementEnabled(enabled: boolean) {
-  if (enabled) {
-    // 开启时，按当前模式设置对应字段
-    const mode = contextManagementMode.value
-    await updateConfigField('contextThresholdEnabled', mode === 'trim')
-    await updateConfigField('autoSummarizeEnabled', mode === 'summarize')
-  } else {
-    // 关闭时，两个都关
-    await updateConfigField('contextThresholdEnabled', false)
-    await updateConfigField('autoSummarizeEnabled', false)
-  }
+  const mode = contextManagementMode.value
+  // 修改原因：旧实现开启/关闭时连续发送两个单字段请求，失败、乱序或快速切换都可能让旧字段残留为 true。
+  // 修改方式：复用已有 updateConfigFields，一次性写入总开关、模式和旧字段兼容镜像。
+  // 修改目的：保证前端 provider 设置与后端上下文管理策略原子一致。
+  await updateConfigFields({
+    contextManagementEnabled: enabled,
+    contextManagementMode: mode,
+    contextThresholdEnabled: enabled && mode === 'trim',
+    autoSummarizeEnabled: enabled && mode === 'summarize'
+  })
 }
 
 // 更新上下文阈值
@@ -330,13 +341,16 @@ async function updateContextThreshold(value: string) {
 
 // 更新上下文管理模式
 async function updateContextManagementMode(mode: string) {
-  if (mode === 'trim') {
-    await updateConfigField('contextThresholdEnabled', true)
-    await updateConfigField('autoSummarizeEnabled', false)
-  } else {
-    await updateConfigField('contextThresholdEnabled', false)
-    await updateConfigField('autoSummarizeEnabled', true)
-  }
+  const normalizedMode = mode === 'summarize' ? 'summarize' : 'trim'
+  // 修改原因：模式切换同样不能分两次写旧字段，否则后端可能短暂看到两个模式同时开启或旧模式残留。
+  // 修改方式：一次性写入显式模式、总开关和旧字段镜像。
+  // 修改目的：让“裁剪”和“自动总结”始终互斥，避免 provider 配置保存竞态触发错误上下文管理。
+  await updateConfigFields({
+    contextManagementEnabled: true,
+    contextManagementMode: normalizedMode,
+    contextThresholdEnabled: normalizedMode === 'trim',
+    autoSummarizeEnabled: normalizedMode === 'summarize'
+  })
 }
 
 // 更新裁剪时额外裁剪量

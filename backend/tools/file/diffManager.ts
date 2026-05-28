@@ -1,6 +1,8 @@
 /**
- * Diff 管理器 - 管理待审阅的文件修改
- * 
+ * Diff 管理器 - 管理待审阅的文件修改。
+ *
+ * DiffManager 负责公开 API、diff 预览与工具等待语义；单个 review 的 outcome 由 DiffReviewSession 协作者承载。
+ *
  * 功能：
  * - 管理待处理的 diff 修改
  * - 显示 VS Code diff 视图
@@ -19,6 +21,7 @@ import {
     applyStructuredDiffHunksBestEffort,
     type StructuredDiffHunk
 } from './apply_diff';
+import { DiffReviewSession } from './DiffReviewSession';
 import { applyUnifiedDiffHunks, type UnifiedDiffHunk } from './unifiedDiff';
 
 /**
@@ -238,7 +241,7 @@ function myersDiffLines(a: string[], b: string[]): DiffOp[] {
         v = vNext;
     }
 
-    // fallback
+    // 未找到编辑脚本时返回空变更，由调用方按无差异处理。
     return [];
 }
 
@@ -286,8 +289,11 @@ function computeUserEditedNewLinesSummary(baseContent: string, userContent: stri
 export class DiffManager {
     private static instance: DiffManager | null = null;
     
-    /** 待处理的 diff 列表 */
+    /** 待处理的 diff 列表（公开返回值仍为 PendingDiff，生命周期状态由 diffSessions 持有同一对象） */
     private pendingDiffs: Map<string, PendingDiff> = new Map();
+
+    /** 单个 diff review 的内部生命周期协作者 */
+    private diffSessions: Map<string, DiffReviewSession> = new Map();
     
     /** 虚拟文档内容提供者 */
     private contentProvider: OriginalContentProvider;
@@ -522,12 +528,18 @@ export class DiffManager {
         }
     }
 
-    private finalizeAcceptedDiff(diff: PendingDiff): void {
+    private finalizeAcceptedDiff(diff: PendingDiff, options?: { partial?: boolean }): void {
         if (diff.status !== 'pending') {
             return;
         }
+        const session = this.diffSessions.get(diff.id);
+        const finalized = session
+            ? session.accept({ partial: options?.partial ?? !!diff.userEditedContent })
+            : this.finalizeLegacyPendingDiff(diff, 'accepted');
+        if (!finalized) {
+            return;
+        }
         this.disposeDiffListeners(diff.id);
-        diff.status = 'accepted';
         this.cleanup(diff.id);
         this.notifyStatusChange();
         this.notifySaveComplete(diff);
@@ -537,10 +549,36 @@ export class DiffManager {
         if (diff.status !== 'pending') {
             return;
         }
+        const session = this.diffSessions.get(diff.id);
+        const finalized = session
+            ? session.reject()
+            : this.finalizeLegacyPendingDiff(diff, 'rejected');
+        if (!finalized) {
+            return;
+        }
         this.disposeDiffListeners(diff.id);
-        diff.status = 'rejected';
         this.cleanup(diff.id);
         this.notifyStatusChange();
+    }
+
+    private finalizeCancelledDiff(diff: PendingDiff): void {
+        if (diff.status !== 'pending') {
+            return;
+        }
+        const session = this.diffSessions.get(diff.id);
+        const finalized = session
+            ? session.cancel()
+            : this.finalizeLegacyPendingDiff(diff, 'rejected');
+        if (!finalized) {
+            return;
+        }
+        this.disposeDiffListeners(diff.id);
+        this.cleanup(diff.id);
+    }
+
+    private finalizeLegacyPendingDiff(diff: PendingDiff, status: PendingDiff['status']): boolean {
+        diff.status = status;
+        return true;
     }
     
     /**
@@ -613,20 +651,19 @@ export class DiffManager {
         toolId?: string
     ): Promise<PendingDiff> {
         const id = `diff-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-        
-        const pendingDiff: PendingDiff = {
+        const session = DiffReviewSession.create({
             id,
             filePath,
             absolutePath,
             originalContent,
             newContent,
-            timestamp: Date.now(),
-            status: 'pending',
             blocks,
             rawDiffs,
-            toolId
-        };
+            toolCallId: toolId
+        });
+        const pendingDiff = session.pendingDiff;
         
+        this.diffSessions.set(id, session);
         this.pendingDiffs.set(id, pendingDiff);
         
         // 检查 diff 警戒值
@@ -730,11 +767,7 @@ export class DiffManager {
             }
             
             // 标记为已接受
-            diff.status = 'accepted';
-            this.cleanup(diff.id);
-            
-            this.notifyStatusChange();
-            this.notifySaveComplete(diff);
+            this.finalizeAcceptedDiff(diff);
             
             vscode.window.setStatusBarMessage(
                 `$(check) ${t('tools.file.diffManager.savedShort', { filePath: diff.filePath })}`,
@@ -755,6 +788,7 @@ export class DiffManager {
     }
 
     private async confirmBlockUnlocked(sessionId: string, blockIndex: number): Promise<void> {
+        this.diffSessions.get(sessionId)?.markPresented();
         const provider = getDiffCodeLensProvider();
         provider.updateBlockStatus(sessionId, blockIndex, true);
         
@@ -779,6 +813,7 @@ export class DiffManager {
     }
 
     private async rejectBlockUnlocked(sessionId: string, blockIndex: number): Promise<void> {
+        this.diffSessions.get(sessionId)?.markPresented();
         const provider = getDiffCodeLensProvider();
         provider.updateBlockStatus(sessionId, blockIndex, false);
         
@@ -888,6 +923,11 @@ export class DiffManager {
         }
     }
     
+    private hasRejectedBlocks(id: string): boolean {
+        const session = getDiffCodeLensProvider().getSession(id);
+        return !!session && session.blocks.some(b => b.rejected);
+    }
+
     private computeFinalSuggestedContent(id: string, diff: PendingDiff): string {
         // 计算最终内容（仅包含已确认的块）
         let finalContent = diff.newContent;
@@ -965,6 +1005,7 @@ export class DiffManager {
      */
     private async showDiffView(diff: PendingDiff): Promise<void> {
         const fileUri = vscode.Uri.file(diff.absolutePath);
+        this.diffSessions.get(diff.id)?.markPresented();
 
         const isPending = () => diff.status === 'pending';
 
@@ -1120,7 +1161,7 @@ export class DiffManager {
                 diff.userEditedContent = computeUserEditedNewLinesSummary(baseSuggestedContent, savedContent);
             }
 
-            this.finalizeAcceptedDiff(diff);
+            this.finalizeAcceptedDiff(diff, { partial: !!diff.userEditedContent || this.hasRejectedBlocks(diff.id) });
 
             // 非自动保存模式下，用户手动保存后自动关闭 diff 标签页
             const currentSettings = this.getSettings();
@@ -1190,18 +1231,20 @@ export class DiffManager {
         }
         
         const currentSettings = this.getSettings();
-        const timer = setTimeout(async () => {
+        const session = this.diffSessions.get(id);
+        const runAutoSave = async () => {
             // 自动保存：强制使用 AI 建议的内容（避免覆盖用户可能正在进行的手动修改）
             const accepted = await this.acceptDiff(id, true, true);
             if (!accepted) {
-                // 自动保存模式必须收敛。
-                // 为什么不能继续 pending：工具 handler 正在等待该 diff 结束；pending 会让流式提前执行的 Promise 永远不 resolve。
-                // 怎么改：保存失败后走拒绝路径恢复原始内容并触发状态变更；若拒绝也失败，则强制标记 rejected。
-                // 目的：让自动确认失败以明确错误结束，而不是卡住到用户中止。
+                // 自动保存失败必须以明确 rejected 收敛，否则等待 diff 结束的工具 Promise 会永久 pending。
                 await this.finalizeAutoSaveFailure(id, 'Auto-save failed while accepting diff. The diff was rejected to unblock tool execution.');
             }
             this.autoSaveTimers.delete(id);
-        }, currentSettings.autoSaveDelay);
+        };
+
+        const timer = session
+            ? session.scheduleAutoSave(currentSettings.autoSaveDelay, runAutoSave)
+            : setTimeout(runAutoSave, currentSettings.autoSaveDelay);
         
         this.autoSaveTimers.set(id, timer);
     }
@@ -1212,10 +1255,7 @@ export class DiffManager {
             return;
         }
 
-        // 保留 acceptDiff 捕获到的底层保存错误。
-        // 为什么不能直接覆盖：自动保存失败后用户和日志需要看到真实异常，例如磁盘写入失败、VS Code 保存失败等。
-        // 怎么改：如果 acceptDiff 已经写入 autoSaveError，就只补充兜底语义；否则使用传入的通用错误。
-        // 目的：既保证自动确认失败会收敛，也保留可诊断的根因信息。
+        // 保留 acceptDiff 捕获到的底层保存错误；这里仅补充自动保存收敛语义，避免覆盖真实异常。
         diff.autoSaveError = diff.autoSaveError
             ? `${message} ${diff.autoSaveError}`
             : message;
@@ -1225,12 +1265,8 @@ export class DiffManager {
             return;
         }
 
-        // 如果 rejectDiff 也失败，仍然必须释放等待中的工具 Promise。
-        // 此兜底只改变状态并清理监听器；不再尝试保存或恢复，避免在错误路径中重复触发 VS Code 编辑器竞态。
-        diff.status = 'rejected';
-        this.disposeDiffListeners(id);
-        this.cleanup(id);
-        this.notifyStatusChange();
+        // rejectDiff 也失败时只释放等待中的工具 Promise，不再尝试保存或恢复，避免重复触发 VS Code 编辑器竞态。
+        this.finalizeRejectedDiff(diff);
     }
     
     /**
@@ -1342,7 +1378,7 @@ export class DiffManager {
                 }
             }
             
-            this.finalizeAcceptedDiff(diff);
+            this.finalizeAcceptedDiff(diff, { partial: !!diff.userEditedContent || this.hasRejectedBlocks(id) });
             
             try {
                 vscode.window.setStatusBarMessage(`$(check) ${t('tools.file.diffManager.savedShort', { filePath: diff.filePath })}`, 3000);
@@ -1485,6 +1521,7 @@ export class DiffManager {
             clearTimeout(timer);
             this.autoSaveTimers.delete(id);
         }
+        this.diffSessions.get(id)?.clearAutoSave();
         
         this.contentProvider.removeContent(id);
 
@@ -1542,12 +1579,8 @@ export class DiffManager {
 
     /**
      * 等待指定 pending diff 结算。
-     *
-     * 为什么要集中到 DiffManager：状态监听、轮询、用户中断、AbortSignal 原本分散在各工具里，
-     * apply_diff 遗漏轮询用户中断后，会在自动保存定时器被 markUserInterrupt 清掉时永久等待。
-     * 怎么改：监听状态变化负责快速响应；100ms 轮询负责兜底捕获用户中断和漏掉的状态事件；
-     * abort/user 中断都会主动 reject 当前 diff，并清理 listener、timer 和 abort handler。
-     * 目的：让所有 diff-review 工具拥有同一个收敛协议，避免“文件已处理但工具 Promise 仍悬挂”。
+     * 统一状态监听、轮询、用户中断与 AbortSignal；abort/user 中断都会主动 reject 当前 diff 并清理资源，
+     * 避免文件已处理但工具 Promise 仍悬挂。
      */
     public waitForDiffResolution(id: string, abortSignal?: AbortSignal): Promise<DiffResolutionReason> {
         return new Promise<DiffResolutionReason>((resolve) => {
@@ -1681,8 +1714,8 @@ export class DiffManager {
                 continue;
             }
 
-            // 1. 标记为拒绝（从 pending 列表中移除）
-            diff.status = 'rejected';
+            // 1. 标记为取消（公开 PendingDiff 状态仍映射为 rejected，以保持既有 API/前端判断不变）
+            this.finalizeCancelledDiff(diff);
             cancelled.push({ ...diff });
 
             // 2. 关闭 diff 编辑器标签页
@@ -1690,33 +1723,6 @@ export class DiffManager {
                 await this.closeDiffTab(diff.absolutePath);
             } catch (err) {
                 console.warn(`[DiffManager] Failed to close diff tab for ${diff.absolutePath}:`, err);
-            }
-
-            // 3. 移除监听器
-            const saveListener = this.saveListeners.get(id);
-            if (saveListener) {
-                try {
-                    saveListener.dispose();
-                } catch {
-                    // ignore
-                }
-                this.saveListeners.delete(id);
-            }
-            const closeListener = this.closeListeners.get(id);
-            if (closeListener) {
-                try {
-                    closeListener.dispose();
-                } catch {
-                    // ignore
-                }
-                this.closeListeners.delete(id);
-            }
-
-            // 4. 清理资源（会自动移除 CodeLens 会话并通知状态变化）
-            try {
-                this.cleanup(id);
-            } catch (err) {
-                console.warn(`[DiffManager] Failed to cleanup diff ${id}:`, err);
             }
 
             // 6. 尝试恢复文件到原始状态
@@ -1775,6 +1781,11 @@ export class DiffManager {
             listener.dispose();
         }
         this.closeListeners.clear();
+
+        for (const session of this.diffSessions.values()) {
+            session.dispose();
+        }
+        this.diffSessions.clear();
 
         this.suppressedNonManualSaveDrafts.clear();
         

@@ -16,10 +16,15 @@ jest.mock('vscode', () => ({
   }
 }))
 
-jest.mock('../../../backend/tools/utils', () => ({
-  getAllWorkspaces: (...args: any[]) => mockGetAllWorkspaces(...args),
-  resolveUriWithInfo: (...args: any[]) => mockResolveUriWithInfo(...args)
-}))
+jest.mock('../../../backend/tools/utils', () => {
+  // WP13b：集中构造 tools/utils mock；escapeRegExp 通过 jest.requireActual 复用真实实现，不在 mock 中复制。
+  const { createBackendToolsUtilsMock } = require('../../../backend/__tests__/helpers/backendToolsUtilsMock')
+  return createBackendToolsUtilsMock({
+    getAllWorkspaces: (...args: any[]) => mockGetAllWorkspaces(...args),
+    resolveUriWithInfo: (...args: any[]) => mockResolveUriWithInfo(...args),
+    createDirectory: mockCreateDirectory
+  })
+})
 
 jest.mock('../../../backend/tools/progress/autoSync', () => ({
   syncProgressFromReviewArtifact: (...args: any[]) => mockSyncProgressFromReviewArtifact(...args)

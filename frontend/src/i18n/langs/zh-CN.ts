@@ -1792,9 +1792,9 @@ const zhCN: LanguageMessages = {
                     title: '应用信息',
                     name: 'Lim Code - Vibe Coding助手',
                     // 为什么同步展示版本号：设置页版本曾落后于 package.json，用户会误判当前安装包。
-                    // 怎么改：随 1.1.29 最终发布把展示字符串同步到扩展版本。
+                    // 怎么改：随 1.2.1 性能优化发布把展示字符串同步到扩展版本。
                     // 目的：让设置页、package 元数据和发布说明保持一致。
-                    version: '版本：1.1.29',
+                    version: '版本：1.2.1',
                     repository: '项目仓库',
                     developer: '开发者'
                 }

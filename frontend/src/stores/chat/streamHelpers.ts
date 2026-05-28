@@ -3,12 +3,28 @@
  * 
  * @module streamHelpers
  * 包含消息操作、工具调用解析等辅助函数
+ *
+ * WP15: functionCall merge 纯函数已收敛到 utils/functionCallMerge.ts，
+ * 本文件仅保留 Main Chat 特有的节流控制、ToolEntry 同步和 handleFunctionCallPart 入口。
  */
 
 import type { Message } from '../../types'
 import type { ChatStoreState } from './types'
 import { generateId } from '../../utils/format'
 import { isPerfEnabled } from '../../utils/perf'
+// WP15: 统一 functionCall merge 纯函数入口。
+// 为什么从独立模块导入：Main Chat 和 SubAgent Monitor 之前各自维护了相同的 normalizeNonEmptyString、
+// hasNonEmptyArgs、tryParseArgs、getFunctionCallMergeReason、mergeFunctionCall。
+// 怎么改：全部收敛到 frontend/src/utils/functionCallMerge.ts，两边保持合并语义一致。
+// 目的：后续 WP20 AgentRunEvent 统一 reducer 可以直接依赖这个模块。
+import {
+  type StreamFunctionCall,
+  normalizeNonEmptyString,
+  hasNonEmptyArgs,
+  tryParseArgs,
+  getFunctionCallMergeReason,
+  mergeFunctionCall as unifiedMergeFunctionCall
+} from '../../utils/functionCallMerge'
 
 
 const todoDebugPrinted = new Set<string>()
@@ -52,7 +68,7 @@ export function addFunctionCallToMessage(
     index: call.index,
     // 传递 partialArgs 以便 ToolMessage 组件显示流式预览
     partialArgs: call.partialArgs,
-    // 刚从流式内容里解析/拼接出来的工具调用，视为“AI 还在输出/完善工具内容”
+    // 刚从流式内容里解析/拼接出来的工具调用，视为"AI 还在输出/完善工具内容"
     // 有 partialArgs 说明参数仍在流式累积中；无 partialArgs 说明已拿到完整参数
     status: typeof call.partialArgs === 'string' ? 'streaming' : 'queued'
   })
@@ -70,7 +86,7 @@ export function addFunctionCallToMessage(
       index: call.index,
       // 为什么同步 itemId：parts 与 tools 都可能参与渲染和快照重建，两个投影必须共享同一内部合并键。
       // 怎么改：只在前端流式 part 上保存 itemId，后端最终历史会清理该字段。
-      // 目的：让最后到达的完整参数事件能覆盖初始占位 part，而不是生成“参数 0”的假工具。
+      // 目的：让最后到达的完整参数事件能覆盖初始占位 part，而不是生成"参数 0"的假工具。
       itemId: call.itemId
     }
   })
@@ -135,6 +151,8 @@ export function flushToolCallBuffer(_message: Message, _state: ChatStoreState): 
  * - 每次增量后，只有当新增数据量超过阈值时才再次尝试 parse
  * - 阈值随字符串长度动态增长：短字符串频繁 parse（保证小参数的预览体验），
  *   长字符串大幅减少 parse 次数（避免 O(N²) 卡顿）
+ *
+ * WP15: 这是 Main Chat 特有的节流策略，Monitor 内容增量 reducer 不需要此逻辑。
  */
 const partialArgsParseState = new WeakMap<object, { lastParseLen: number }>()
 
@@ -153,73 +171,10 @@ function shouldAttemptParse(fcRef: object, currentLen: number): boolean {
   return true
 }
 
-type StreamFunctionCall = {
-  id?: string
-  name?: string
-  args?: Record<string, unknown>
-  partialArgs?: string
-  index?: number
-  itemId?: string
-  finalArgs?: boolean
-}
-
-function normalizeNonEmptyString(value: unknown): string {
-  return typeof value === 'string' && value.trim() ? value.trim() : ''
-}
-
-function hasNonEmptyArgs(args: unknown): args is Record<string, unknown> {
-  return !!(args && typeof args === 'object' && Object.keys(args as Record<string, unknown>).length > 0)
-}
-
-function tryParseArgs(argsText: string | undefined): Record<string, unknown> | null {
-  if (typeof argsText !== 'string' || !argsText.trim()) return null
-  try {
-    const parsed = JSON.parse(argsText)
-    return parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : null
-  } catch {
-    return null
-  }
-}
-
-function getFunctionCallMergeReason(
-  incoming: StreamFunctionCall,
-  existing: StreamFunctionCall,
-  isLastFunctionCall: boolean
-): 'sameItemId' | 'sameIndex' | 'sameId' | 'freshPlaceholder' | 'legacyPartial' | null {
-  const incomingItemId = normalizeNonEmptyString(incoming.itemId)
-  const existingItemId = normalizeNonEmptyString(existing.itemId)
-  if (incomingItemId && existingItemId && incomingItemId === existingItemId) return 'sameItemId'
-
-  // 为什么 index 要用 typeof number 判断：Responses 的 output_index 可以是 0，不能用 truthy 判断把 0 当成缺失。
-  // 怎么改：只有双方都提供数字 index 时才按 index 合并，避免把无 index 的独立工具误并到一起。
-  // 目的：修复用户看到的“最后一个工具参数 0”占位卡无法和后续真实参数合并的问题。
-  if (typeof incoming.index === 'number' && typeof existing.index === 'number' && incoming.index === existing.index) {
-    return 'sameIndex'
-  }
-
-  const incomingId = normalizeNonEmptyString(incoming.id)
-  const existingId = normalizeNonEmptyString(existing.id)
-  if (incomingId && existingId && incomingId === existingId) return 'sameId'
-
-  const incomingHasPartial = typeof incoming.partialArgs === 'string'
-  const incomingHasIdOrIndexOrItem = !!incomingId || typeof incoming.index === 'number' || !!incomingItemId
-  const existingIsFreshPlaceholder =
-    isLastFunctionCall &&
-    !hasNonEmptyArgs(existing.args) &&
-    (existing.partialArgs === undefined || existing.partialArgs === '')
-
-  // 为什么保留 fresh placeholder 兜底：部分兼容网关会先给一个空 function_call，再给无 id/index 的参数增量。
-  // 怎么改：只允许合并到最后一个仍为空的 functionCall，且只在 incoming 是参数片段时触发。
-  // 目的：兼容旧流式格式，同时避免跨工具误合并。
-  if (!incomingHasIdOrIndexOrItem && incomingHasPartial && existingIsFreshPlaceholder) return 'freshPlaceholder'
-
-  // 为什么保留 legacyPartial：历史兼容渠道可能没有任何定位字段，只能把连续参数片段拼到最后一个工具上。
-  // 怎么改：限制为最后一个 functionCall，并且 incoming 必须只有 partialArgs。
-  // 目的：不破坏旧渠道，同时把特判收敛为“同一流式工具片段”的通用兜底。
-  if (!incomingHasIdOrIndexOrItem && incomingHasPartial && isLastFunctionCall) return 'legacyPartial'
-
-  return null
-}
+// WP15: StreamFunctionCall, normalizeNonEmptyString, hasNonEmptyArgs, tryParseArgs,
+// getFunctionCallMergeReason 已全部收敛到 utils/functionCallMerge.ts。
+// 仅保留 Main Chat 特有的 findToolEntry、syncToolEntryFromFunctionCall、
+// normalizeNewFunctionCall 和 handleFunctionCallPart。
 
 function findToolEntry(message: Message, fc: StreamFunctionCall, previousId?: string) {
   const tools = message.tools || []
@@ -269,38 +224,24 @@ function syncToolEntryFromFunctionCall(message: Message, fc: StreamFunctionCall,
   }
 }
 
+/**
+ * WP15: Main Chat 专用的 mergeFunctionCall 薄包装。
+ * 
+ * 为什么需要这个包装：Main Chat 流式路径有特有的 partialArgs JSON.parse 节流策略（shouldAttemptParse），
+ * 而 SubAgent Monitor 的 contentDelta 只在 finalArgs=true 时解析。
+ * 怎么改：把节流回调传入 unifiedMergeFunctionCall，保持 Main Chat 流式性能优化不丢失。
+ * 目的：统一合并语义的同时，保留 Main Chat 特有的 O(N²) 防护。
+ */
 function mergeFunctionCall(target: StreamFunctionCall, incoming: StreamFunctionCall): string | undefined {
-  const previousId = target.id
-
-  if (incoming.name && !target.name) target.name = incoming.name
-  if (incoming.id) target.id = incoming.id
-  if (incoming.itemId && !target.itemId) target.itemId = incoming.itemId
-  if (typeof incoming.index === 'number' && typeof target.index !== 'number') target.index = incoming.index
-
-  if (typeof incoming.partialArgs === 'string') {
-    // 为什么 finalArgs 要覆盖而不是追加：arguments.done/output_item.done 传的是完整 JSON，不是增量 delta。
-    // 怎么改：finalArgs=true 时用完整 arguments 替换已累积片段，并绕过节流立即解析。
-    // 目的：避免 {..}{..} 拼接导致解析失败，最终显示成“参数 0”的假工具。
-    target.partialArgs = incoming.finalArgs === true
-      ? incoming.partialArgs
-      : (target.partialArgs || '') + incoming.partialArgs
-
-    const parsed = incoming.finalArgs === true || shouldAttemptParse(target, target.partialArgs.length)
-      ? tryParseArgs(target.partialArgs)
-      : null
-
-    if (parsed) {
-      target.args = parsed
-      if (incoming.finalArgs === true) {
-        delete target.partialArgs
-      }
+  return unifiedMergeFunctionCall(target, incoming, {
+    shouldParseArgs: (_incoming, combinedPartialArgs) => {
+      // 为什么 finalArgs=true 时绕过节流：arguments.done 传的是完整 JSON，
+      // 必须立即解析才能让工具进入 queued 状态并触发后续执行。
+      // 怎么改：finalArgs 或节流阈值通过即解析。
+      if (_incoming.finalArgs === true) return true
+      return shouldAttemptParse(target, combinedPartialArgs.length)
     }
-  } else if (hasNonEmptyArgs(incoming.args)) {
-    target.args = { ...(target.args || {}), ...incoming.args }
-    delete target.partialArgs
-  }
-
-  return previousId
+  })
 }
 
 function normalizeNewFunctionCall(incoming: StreamFunctionCall): { args: Record<string, unknown>; partialArgs?: string } {

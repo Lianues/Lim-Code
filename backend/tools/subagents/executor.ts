@@ -117,9 +117,30 @@ async function executeToolCall(
     runId?: string,
     agentName?: string
 ): Promise<SubAgentExecutedToolCall> {
+    const executionCall = {
+        id: callId || `subagent_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        name: toolName,
+        args
+    };
+    const actualRunId = runId || executionCall.id;
+    const emitToolFailure = (error: string, payload?: Record<string, unknown>) => {
+        // 修改原因：Monitor 工具卡现在会消费 tool_started/tool_failed 事件；异常或早退路径不能只返回 functionResponse 后再等窗口刷新。
+        // 修改方式：在所有已知失败路径统一发 tool_failed，payload 保持轻量，只带错误和必要状态字段。
+        // 修改目的：工具执行失败时 UI 能立即进入 error，不会长期卡在 executing/queued。
+        subAgentRunEventBus.emit({
+            runId: actualRunId,
+            agentName,
+            type: 'tool_failed',
+            toolId: executionCall.id,
+            toolName,
+            payload: { success: false, error, ...(payload || {}) }
+        });
+    };
+
     try {
         // 检查是否取消
         if (abortSignal?.aborted) {
+            emitToolFailure('Cancelled', { cancelled: true });
             return {
                 result: null,
                 success: false,
@@ -131,38 +152,39 @@ async function executeToolCall(
         // 即使 AI 不应该调用不在列表里的工具，这里做防御性校验
         if (allowedToolNames && allowedToolNames.size > 0) {
             if (!allowedToolNames.has(toolName)) {
+                const error = `Tool not allowed for this sub-agent: ${toolName}`;
+                emitToolFailure(error);
                 return {
                     result: null,
                     success: false,
-                    error: `Tool not allowed for this sub-agent: ${toolName}`
+                    error
                 };
             }
         }
 
         if (!context.toolExecutionService || !context.configManager || !agentConfig) {
+            const error = 'SubAgent shared ToolExecutionService/configManager is missing. Refusing to use legacy fallback execution.';
+            emitToolFailure(error);
             return {
                 result: null,
                 success: false,
-                error: 'SubAgent shared ToolExecutionService/configManager is missing. Refusing to use legacy fallback execution.'
+                error
             };
         }
 
-        const executionCall = {
-            id: callId || `subagent_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-            name: toolName,
-            args
-        };
         const channelConfig = await context.configManager.getConfig(agentConfig.channel.channelId);
         if (!channelConfig) {
+            const error = `SubAgent channel config not found: ${agentConfig.channel.channelId}`;
+            emitToolFailure(error);
             return {
                 result: null,
                 success: false,
-                error: `SubAgent channel config not found: ${agentConfig.channel.channelId}`
+                error
             };
         }
 
             subAgentRunEventBus.emit({
-                runId: runId || executionCall.id,
+                runId: actualRunId,
                 agentName,
                 type: 'tool_started',
                 toolId: executionCall.id,
@@ -182,7 +204,7 @@ async function executeToolCall(
                 context.promptModeSnapshot,
                 (event: any) => subAgentRunEventBus.emit({
                     ...event,
-                    runId: runId || executionCall.id,
+                    runId: actualRunId,
                     agentName
                 })
             );
@@ -200,7 +222,7 @@ async function executeToolCall(
                 : undefined;
 
             subAgentRunEventBus.emit({
-                runId: runId || executionCall.id,
+                runId: actualRunId,
                 agentName,
                 type: success ? 'tool_completed' : 'tool_failed',
                 toolId: executionCall.id,
@@ -217,10 +239,12 @@ async function executeToolCall(
                 multimodalAttachments: fullResult.multimodalAttachments
             };
     } catch (e) {
+        const error = e instanceof Error ? e.message : String(e);
+        emitToolFailure(error);
         return {
             result: null,
             success: false,
-            error: e instanceof Error ? e.message : String(e)
+            error
         };
     }
 }
@@ -775,7 +799,10 @@ export function createDefaultExecutor(
                     role: 'user',
                     parts: toolResultParts
                 });
-                subAgentRunEventBus.appendContent(runId, functionResponseContent);
+                // 修改原因：SubAgent 工具结果写入也要经过统一 transcript 仓储接口，避免继续新增“只属于事件总线旧 API”的写路径。
+                // 修改方式：通过 runEventBus 暴露的 getTranscriptRepository().appendContent 写入 functionResponse content。
+                // 修改目的：让主聊天与 SubAgent 的 transcript append 语义完全对齐，同时不改变 event bus 的广播和持久化效果。
+                await subAgentRunEventBus.getTranscriptRepository(runId).appendContent(functionResponseContent);
             }
             
         } catch (e) {

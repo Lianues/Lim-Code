@@ -137,6 +137,14 @@ export interface ChatStoreState {
    * `Message.backendIndex`（绝对索引）用于与后端对齐。
    */
   allMessages: Ref<Message[]>
+  /**
+   * message.id -> allMessages 数组下标。
+   *
+   * 修改原因：WP32 需要把按消息 id 的高频定位从线性扫描收敛到 O(1)。
+   * 修改方式：保留 allMessages 作为唯一真源，额外维护一个与其同步的首命中索引 Map。
+   * 修改目的：不改变消息数组顺序/语义，同时让 stream/tool/tab 热路径直接按 id 取下标。
+   */
+  messageIndexById: Ref<Map<string, number>>
   /** 当前窗口的起始绝对索引（等于 allMessages[0].backendIndex） */
   windowStartIndex: Ref<number>
   /** 后端该对话的总消息数（绝对长度） */

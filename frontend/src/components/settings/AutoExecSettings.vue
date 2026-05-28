@@ -12,6 +12,8 @@ import { ref, computed, onMounted } from 'vue'
 import { CustomCheckbox } from '../common'
 import { sendToExtension } from '@/utils/vscode'
 import { t } from '@/i18n'
+// WP12：统一使用 codec 解析 MCP 工具名，不再手写 startsWith('mcp__') 或 split('__')
+import { isMcpToolName, decodeMcpToolName } from '@/utils/tools/mcp/mcpToolNameCodec'
 
 // 工具信息接口
 interface ToolInfo {
@@ -157,10 +159,11 @@ async function disableAllAutoExec() {
 
 // 获取工具显示名称
 function getToolDisplayName(tool: ToolInfo): string {
-  // 如果是 MCP 工具，提取原始工具名
-  if (tool.category === 'mcp' && tool.name.startsWith('mcp__')) {
-    const parts = tool.name.split('__')
-    const originalName = parts[2] || tool.name
+  // WP12：使用 codec 统一解码 MCP 工具名，用 indexOf 而非 split('__')，
+  // 正确处理 serverId/toolName 含下划线的边界情况。
+  if (tool.category === 'mcp' && isMcpToolName(tool.name)) {
+    const decoded = decodeMcpToolName(tool.name)
+    const originalName = decoded?.toolName || tool.name
     return originalName.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
   }
   return tool.name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())

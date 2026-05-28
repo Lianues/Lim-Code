@@ -8,6 +8,7 @@ import { ref, computed, watch, onBeforeUnmount, nextTick } from 'vue'
 import { sendToExtension } from '../../utils/vscode'
 import { useI18n } from '../../i18n'
 import { getFileIcon as getFileIconClass } from '../../utils/fileIcons'
+import { escapeRegExp } from '../../utils/format'
 import CustomScrollbar from '../common/CustomScrollbar.vue'
 
 const { t } = useI18n()
@@ -114,7 +115,8 @@ function getFileIcon(file: FileItem): string {
 function highlightMatch(text: string, query: string): string {
   if (!query.trim()) return text
   
-  const regex = new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi')
+  // WP13b：文件选择面板只复用前端唯一 escapeRegExp，不改变 @ 文件搜索高亮表现。
+  const regex = new RegExp(`(${escapeRegExp(query)})`, 'gi')
   return text.replace(regex, '<mark>$1</mark>')
 }
 

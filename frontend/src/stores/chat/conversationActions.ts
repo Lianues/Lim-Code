@@ -10,6 +10,7 @@ import { contentToMessageEnhanced } from './parsers'
 import type { Content, Message } from '../../types'
 import { perfLog, perfMeasureAsync } from '../../utils/perf'
 import { trimWindowFromTop, syncTotalMessagesFromWindow } from './windowUtils'
+import { replaceAllMessages } from './state'
 import {
   applyConversationModelConfig,
   applyConversationPromptMode,
@@ -251,7 +252,7 @@ export async function createNewConversation(
   }
   
   state.currentConversationId.value = null
-  state.allMessages.value = []  // 清空消息
+  replaceAllMessages(state, [])  // 清空消息
   state.windowStartIndex.value = 0
   state.totalMessages.value = 0
   state.isLoadingMoreMessages.value = false
@@ -463,7 +464,7 @@ export async function loadHistory(state: ChatStoreState): Promise<void> {
     state.totalMessages.value = initialWindow.totalMessages
 
     // 转换所有消息，包括 functionResponse 消息
-    state.allMessages.value = initialWindow.messages
+    replaceAllMessages(state, initialWindow.messages)
     state.windowStartIndex.value = initialWindow.windowStartIndex
     syncTotalMessagesFromWindow(state)
 
@@ -515,7 +516,7 @@ export async function loadOlderMessagesPage(
 
     const olderMsgs = older.map(c => contentToMessageEnhanced(c))
     // 追加到窗口顶部
-    state.allMessages.value = [...olderMsgs, ...state.allMessages.value]
+    replaceAllMessages(state, [...olderMsgs, ...state.allMessages.value])
 
     state.totalMessages.value = result?.total ?? state.totalMessages.value
     state.windowStartIndex.value = older[0]?.index ?? state.windowStartIndex.value
@@ -586,7 +587,7 @@ export async function switchConversation(
   // 清除状态
   state.activeBuild.value = null
   state.currentConversationId.value = id
-  state.allMessages.value = []
+  replaceAllMessages(state, [])
   state.windowStartIndex.value = 0
   state.totalMessages.value = 0
   state.isLoadingMoreMessages.value = false
@@ -633,7 +634,7 @@ export async function switchConversation(
       )
 
       state.totalMessages.value = initialWindow.totalMessages
-      state.allMessages.value = initialWindow.messages
+      replaceAllMessages(state, initialWindow.messages)
       state.windowStartIndex.value = initialWindow.windowStartIndex
       syncTotalMessagesFromWindow(state)
 

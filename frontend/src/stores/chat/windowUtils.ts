@@ -1,6 +1,7 @@
 import type { ChatStoreState } from './types'
 import type { Message } from '../../types'
 import { perfLog } from '../../utils/perf'
+import { replaceAllMessages } from './state'
 
 /** 默认消息窗口上限（按可见消息预算计算，保留完整轮次） */
 export const MAX_WINDOW_MESSAGES = 800
@@ -131,7 +132,10 @@ export function trimWindowFromTop(state: ChatStoreState, maxCount = MAX_WINDOW_M
 
   if (removeCount <= 0) return 0
 
-  state.allMessages.value = all.slice(removeCount)
+  // 修改原因：窗口顶部裁剪会整体左移所有消息下标，旧索引必须同步失效。
+  // 修改方式：统一通过 helper 替换裁剪后的窗口，并在同一维护点重建索引。
+  // 修改目的：保证 trimWindowFromTop 后，所有按 id 定位都与裁剪后的 allMessages 严格一致。
+  replaceAllMessages(state, all.slice(removeCount))
   state.windowStartIndex.value = nextWindowStartIndex
 
   // 清理窗口外的检查点，避免长期累积

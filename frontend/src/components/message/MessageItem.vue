@@ -7,11 +7,11 @@
 
 import { ref, computed, watch, onUnmounted } from 'vue'
 import MessageActions from './MessageActions.vue'
-import ToolMessage from './ToolMessage.vue'
 import MessageAttachments from './MessageAttachments.vue'
 import InlineContextMessage from './InlineContextMessage.vue'
 import MessageTaskCards from './MessageTaskCards.vue'
 import ResponseViewerDialog from './ResponseViewerDialog.vue'
+import MessageRenderBlock from './MessageRenderBlock.vue'
 import { buildResponseViewerData } from './responseViewer/buildResponseViewerData'
 import { MarkdownRenderer, RetryDialog, EditDialog } from '../common'
 import type { Message, ToolUsage, CheckpointRecord, Attachment } from '../../types'
@@ -22,6 +22,7 @@ import { buildFunctionCallToolRenderEntry, upsertToolRenderEntry } from '../../u
 import { useChatStore } from '../../stores/chatStore'
 import { useSettingsStore } from '../../stores/settingsStore'
 import { useI18n } from '../../i18n'
+import { type RenderBlock, getRenderBlockKey, getRenderBlockMemoDeps } from './renderBlocks'
 
 const { t } = useI18n()
 
@@ -69,15 +70,6 @@ const isStreaming = computed(() => props.message.streaming === true)
 
 // 总结消息展开状态
 const isSummaryExpanded = ref(false)
-
-/**
- * 渲染块类型
- */
-interface RenderBlock {
-  type: 'text' | 'tool' | 'thought'
-  text?: string
-  tools?: ToolUsage[]
-}
 
 // 思考内容展开状态
 const isThoughtExpanded = ref(false)
@@ -166,7 +158,7 @@ const renderBlocks = computed<RenderBlock[]>(() => {
     if (currentTextBlock.length > 0) {
       const text = currentTextBlock.join('')
       if (text.trim()) {
-        blocks.push({ type: 'text', text })
+        blocks.push({ type: 'text', text, key: `${blocks.length}:text:${text.length}:${text.slice(0, 80)}` })
       }
       currentTextBlock = []
     }
@@ -175,7 +167,11 @@ const renderBlocks = computed<RenderBlock[]>(() => {
   // 辅助函数：刷新工具块
   const flushTools = () => {
     if (currentToolBlock.length > 0) {
-      blocks.push({ type: 'tool', tools: [...currentToolBlock] })
+      blocks.push({
+        type: 'tool',
+        tools: [...currentToolBlock],
+        key: `${blocks.length}:tool:${currentToolBlock.map(tool => tool.id).join('|')}`
+      })
       currentToolBlock = []
     }
   }
@@ -185,7 +181,7 @@ const renderBlocks = computed<RenderBlock[]>(() => {
     if (currentThoughtBlock.length > 0) {
       const text = currentThoughtBlock.join('')
       if (text.trim()) {
-        blocks.push({ type: 'thought', text })
+        blocks.push({ type: 'thought', text, key: `${blocks.length}:thought:${text.length}:${text.slice(0, 80)}` })
       }
       currentThoughtBlock = []
     }
@@ -524,6 +520,10 @@ const responseViewerData = computed(() => buildResponseViewerData(props.message,
   allMessages: chatStore.allMessages
 }))
 
+function toggleThought() {
+  isThoughtExpanded.value = !isThoughtExpanded.value
+}
+
 function handleRetry() {
   emit('retry', props.message.id)
 }
@@ -605,6 +605,7 @@ function handleRestoreAndRetry(checkpointId: string) {
         </div>
         <div v-if="isSummaryExpanded" class="summary-content">
           <MarkdownRenderer
+            v-memo="[message.content, false, false]"
             :content="message.content"
             :latex-only="false"
             class="summary-text"
@@ -627,56 +628,25 @@ function handleRestoreAndRetry(checkpointId: string) {
         <div class="message-content">
         <!-- 有 parts 时渲染内容块（TODO 工具块会下沉到消息底部） -->
         <template v-if="renderBlocks.length > 0">
-          <template v-for="(block, index) in contentRenderBlocks" :key="index">
-            <!-- 思考块：可折叠显示 -->
-            <div v-if="block.type === 'thought'" class="thought-block">
-              <div
-                class="thought-header"
-                @click="isThoughtExpanded = !isThoughtExpanded"
-              >
-                <i class="codicon" :class="isThoughtExpanded ? 'codicon-chevron-down' : 'codicon-chevron-right'"></i>
-                <i class="codicon codicon-lightbulb thought-icon" :class="{ 'thinking-pulse': isThinking }"></i>
-                <span class="thought-label">{{ isThinking ? t('components.message.thought.thinking') : t('components.message.thought.thoughtProcess') }}</span>
-                <span v-if="thinkingTimeDisplay" class="thought-time" :class="{ 'thinking-active': isThinking }">
-                  {{ thinkingTimeDisplay }}
-                </span>
-                <span v-if="!isThoughtExpanded" class="thought-preview">
-                  {{ (block.text || '').slice(0, 50) }}{{ (block.text || '').length > 50 ? '...' : '' }}
-                </span>
-              </div>
-              <div v-if="isThoughtExpanded" class="thought-content">
-                <MarkdownRenderer
-                  :content="block.text || ''"
-                  :latex-only="false"
-                  class="thought-text"
-                />
-              </div>
-            </div>
-            
-            <!-- 文本块：使用 MarkdownRenderer 渲染 -->
-            <!-- 用户消息仅渲染 LaTeX，助手消息渲染完整 Markdown -->
-            <!-- 用户消息如果有上下文块，使用解析后的内容 -->
-            <InlineContextMessage
-              v-else-if="block.type === 'text' && isUser && hasContextBlocks(block.text || '')"
-              :content="block.text || ''"
-            />
-
-            <MarkdownRenderer
-              v-else-if="block.type === 'text'"
-              :content="block.text || ''"
-              :latex-only="isUser"
-              :is-streaming="isStreaming"
-              class="content-text"
-            />
-            
-            <!-- 工具调用块 -->
-            <ToolMessage
-              :message-backend-index="message.backendIndex"
-              v-else-if="block.type === 'tool'"
-              class="tool-message-block"
-              :tools="block.tools!"
-            />
-          </template>
+          <!--
+            WP31 修复：v-memo 与 v-for 现在共处同一 MessageRenderBlock 组件元素上。
+            修改原因：Vue 官方明确警告 v-memo 不能放在 v-for 内部子节点上。
+            修改方式：通过组件提取 + 共享类型，让 v-memo 和 v-for 在同一元素。
+            修改目的：符合 Vue 官方语义，同时保持完成态消息不重渲染的优化不变。
+          -->
+          <MessageRenderBlock
+            v-for="block in contentRenderBlocks"
+            :key="getRenderBlockKey(block)"
+            :block="block"
+            :message-role="isUser ? 'user' : 'assistant'"
+            :message-backend-index="message.backendIndex"
+            :is-streaming="isStreaming"
+            :is-thought-expanded="isThoughtExpanded"
+            :is-thinking="isThinking"
+            :thinking-time-display="thinkingTimeDisplay"
+            :toggle-thought="toggleThought"
+            v-memo="getRenderBlockMemoDeps(block, isStreaming, isUser, isThoughtExpanded, isThinking, thinkingTimeDisplay)"
+          />
         </template>
         
         <!-- 无 parts 但有 content 时：直接渲染 content -->
@@ -688,6 +658,7 @@ function handleRestoreAndRetry(checkpointId: string) {
 
         <MarkdownRenderer
           v-else-if="message.content"
+          v-memo="[message.content, isUser, isStreaming]"
           :content="message.content"
           :latex-only="isUser"
           :is-streaming="isStreaming"
@@ -910,11 +881,6 @@ function handleRestoreAndRetry(checkpointId: string) {
 
 /* .content-text 样式由 MarkdownRenderer 组件内部处理 */
 
-/* 正文与工具调用块的垂直间距，与思考面板和正文的间距保持一致 */
-.tool-message-block {
-  margin: 8px 0;
-}
-
 /* 流式指示器 - Loading 从左到右逐字波动 */
 .streaming-indicator {
   display: inline-flex;
@@ -1104,133 +1070,6 @@ function handleRestoreAndRetry(checkpointId: string) {
   opacity: 1;
 }
 
-/* 思考块样式 - 使用灰色调、斜体，保持简洁 */
-.thought-block {
-  /*
-   * 思考内容（MarkdownRenderer）样式覆写：
-   * - 以前通过 .thought-text（父组件 scoped）控制，但 scoped CSS 不会作用到子组件根节点
-   * - 改为用 CSS 变量传递给 MarkdownRenderer（变量可跨组件继承）
-   */
-  --lim-md-font-size: 12px;
-  --lim-md-line-height: 1.5;
-  --lim-md-color: var(--vscode-descriptionForeground);
-  --lim-md-font-style: italic;
-
-  margin: 8px 0;
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: 4px;
-  background: var(--vscode-textBlockQuote-background);
-  overflow: hidden;
-}
-
-.thought-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
-  cursor: pointer;
-  user-select: none;
-  transition: background-color 0.15s;
-}
-
-.thought-header:hover {
-  background: var(--vscode-list-hoverBackground);
-}
-
-.thought-header .codicon {
-  font-size: 12px;
-  color: var(--vscode-descriptionForeground);
-}
-
-.thought-icon {
-  color: var(--vscode-descriptionForeground) !important;
-}
-
-/* 思考中灯泡闪烁动画 */
-.thought-icon.thinking-pulse {
-  color: var(--vscode-charts-yellow, #ddb92f) !important;
-  animation: lightbulb-pulse 1.2s ease-in-out infinite;
-}
-
-@keyframes lightbulb-pulse {
-  0%, 100% {
-    opacity: 0.4;
-    text-shadow: none;
-  }
-  50% {
-    opacity: 1;
-    text-shadow: 0 0 8px var(--vscode-charts-yellow, #ddb92f);
-  }
-}
-
-.thought-label {
-  font-size: 12px;
-  font-weight: 500;
-  font-style: italic;
-  color: var(--vscode-descriptionForeground);
-}
-
-.thought-time {
-  font-size: 11px;
-  font-weight: 500;
-  color: var(--vscode-descriptionForeground);
-  background: var(--vscode-badge-background);
-  padding: 1px 6px;
-  border-radius: 10px;
-  margin-left: 4px;
-  transition: all 0.2s ease;
-}
-
-.thought-time.thinking-active {
-  color: var(--vscode-charts-yellow, #ddb92f);
-  animation: time-pulse 1.5s ease-in-out infinite;
-}
-
-@keyframes time-pulse {
-  0%, 100% {
-    opacity: 0.8;
-  }
-  50% {
-    opacity: 1;
-  }
-}
-
-.thought-preview {
-  flex: 1;
-  font-size: 11px;
-  font-style: italic;
-  color: var(--vscode-descriptionForeground);
-  opacity: 0.7;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.thought-content {
-  padding: 12px;
-  /*
-   * 不在标题与内容之间绘制明显分界线：
-   * 与深色模式视觉风格保持一致，改为无硬边框分隔。
-   */
-  border-top: none;
-}
-
-/*
- * 注意：.thought-text 是挂在 MarkdownRenderer 根节点上的 class。
- * 由于本文件是 scoped CSS，如需影响子组件内容，需要使用 :deep。
- * 这里保留段落间距微调。
- */
-.thought-block :deep(.thought-text p) {
-  margin: 0.5em 0;
-}
-
-.thought-block :deep(.thought-text p:first-child) {
-  margin-top: 0;
-}
-
-.thought-block :deep(.thought-text p:last-child) {
-  margin-bottom: 0;
-}
 
 /* 总结消息样式 */
 .summary-message {

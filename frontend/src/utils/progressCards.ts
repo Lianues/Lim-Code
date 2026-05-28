@@ -1,4 +1,6 @@
 import { extractPreviewText, isProgressDocPath } from './taskCards'
+// WP14: 从统合后的 typeGuards 导入，消除重复定义
+import { asBoolean, asNumber, asRecord, asString } from './typeGuards'
 
 export type ProgressToolName =
   | 'create_progress'
@@ -65,27 +67,6 @@ const PROGRESS_TOOL_NAMES = new Set<ProgressToolName>([
   'validate_progress_document'
 ])
 
-function asRecord(value: unknown): LooseRecord | undefined {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? value as LooseRecord
-    : undefined
-}
-
-function asString(value: unknown): string | undefined {
-  if (typeof value !== 'string') return undefined
-  const normalized = value.trim()
-  return normalized || undefined
-}
-
-function asNumber(value: unknown): number | undefined {
-  if (typeof value === 'number' && Number.isFinite(value)) return value
-  if (typeof value === 'string' && value.trim()) {
-    const parsed = Number(value)
-    return Number.isFinite(parsed) ? parsed : undefined
-  }
-  return undefined
-}
-
 function normalizeStatus(value: unknown): ProgressCardStatus | undefined {
   return value === 'active' || value === 'blocked' || value === 'completed' || value === 'archived'
     ? value
@@ -104,9 +85,7 @@ function normalizeMilestoneStatus(value: unknown): ProgressCardMilestoneStatus |
     : undefined
 }
 
-function asBoolean(value: unknown): boolean | undefined {
-  return typeof value === 'boolean' ? value : undefined
-}
+// WP14: asBoolean 已从 typeGuards 导入，此处不再重复定义
 
 function normalizeIssues(value: unknown): ProgressCardValidationIssue[] {
   if (!Array.isArray(value)) return []

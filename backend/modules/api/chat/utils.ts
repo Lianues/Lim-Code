@@ -30,6 +30,17 @@ export interface ContextTrimInfo {
     trimStartIndex: number;
     /** 是否需要触发自动总结（仅当 autoSummarizeEnabled 开启且 token 超过阈值时为 true） */
     needsAutoSummarize?: boolean;
+    /**
+     * 修改原因：上下文管理此前只有 trimStartIndex，无法解释本轮到底是关闭、裁剪还是自动总结。
+     * 修改方式：返回一个轻量决策记录，供日志和测试确认策略来源与动作；不改变既有调用方必填契约。
+     * 修改目的：让“关闭时完整发送、开启时才裁剪/总结”的新机制可观测、可回归验证。
+     */
+    contextManagementDecision?: {
+        enabled: boolean;
+        mode: 'off' | 'trim' | 'summarize';
+        source: 'explicit' | 'legacy';
+        action: 'disabled' | 'not_needed' | 'saved_state_reused' | 'trim_applied' | 'auto_summarize_needed';
+    };
 }
 
 /**

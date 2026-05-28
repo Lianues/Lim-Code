@@ -354,6 +354,9 @@ export class SummarizeService {
             };
 
             await this.conversationManager.insertContent(conversationId, insertIndex, summaryContent);
+            // 修改原因：插入 summary 会改变后续上下文边界，旧 trimState 的裸索引可能指向错误消息。
+            // 修改方式：清理动作由 ConversationManager.insertContent 的结构性变更入口统一触发。
+            // 修改目的：避免 SummarizeService 与其他历史变更路径分别维护同一份上下文状态失效逻辑。
 
             this.log.info('manual.completed', {
                 conversationId,
@@ -799,6 +802,9 @@ export class SummarizeService {
             };
 
             await this.conversationManager.insertContent(conversationId, insertIndex, summaryContent);
+            // 修改原因：自动 summary 插入后历史结构与 summary 边界都发生变化，旧 trimState 不能继续复用。
+            // 修改方式：清理动作由 ConversationManager.insertContent 的结构性变更入口统一触发，下一轮 continue 会重新获取历史。
+            // 修改目的：保证自动总结完成后的上下文基线来自最新 summary，而不是旧裁剪 metadata。
 
             this.log.info('auto.completed', {
                 conversationId,

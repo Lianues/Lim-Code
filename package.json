@@ -1,8 +1,8 @@
 {
   "name": "limcode",
   "displayName": "Lim Code",
-  "description": "Lim Code 是一个AI编程助手插件，支持多模态和复杂功能。",
-  "version": "1.1.29",
+  "description": "Lim Code 是一个 VS Code AI 编程助手插件，支持多渠道模型、工具调用、MCP 和 SubAgent 工作流。",
+  "version": "1.2.1",
   "publisher": "Lianues",
   "icon": "resources/icon.png",
   "engines": {
@@ -272,6 +272,7 @@
     "undici-types": "^6.21.0"
   },
   "devDependencies": {
+    "@ast-grep/cli": "^0.43.0",
     "@types/jest": "^29.5.14",
     "@types/node": "^24.10.2",
     "@types/vscode": "^1.74.0",

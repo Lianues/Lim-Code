@@ -39,6 +39,8 @@ import {
 import { DiffStorageManager } from '../backend/modules/conversation';
 import { getDiffManager } from '../backend/tools/file/diffManager';
 import { MessageRouter } from './MessageRouter';
+import { WEBVIEW_CLIENT_IDS, WebviewClientRegistry } from './runtime/WebviewClientRegistry';
+import type { RunScope } from '../backend/core/RunController';
 import { initializeSubAgentsFromSettings } from './handlers/SubAgentsHandlers';
 import type { HandlerContext, DiffPreviewContentProvider as IDiffPreviewContentProvider } from './types';
 import { WindowsAgentStopNotificationService } from '../backend/modules/notifications/WindowsAgentStopNotificationService';
@@ -101,6 +103,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private conversationStorageAdapter?: FileSystemStorageAdapter;
     private windowsAgentStopNotificationService?: WindowsAgentStopNotificationService;
     private subAgentMonitorPanel?: SubAgentMonitorPanel;
+    private mainChatClientDisposable?: vscode.Disposable;
+    private readonly webviewClientRegistry = new WebviewClientRegistry();
     
     // 消息路由器
     private messageRouter!: MessageRouter;
@@ -323,13 +327,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             toolRegistry: toolRegistry,
             mcpManager: this.mcpManager,
             settingsManager: this.settingsManager,
-            // 修改原因：SubAgent 需要使用自己的 provider 配置计算工具声明和多模态能力，而不是继承主会话 provider。
-            // 修改方式：把 ConfigManager 注入 SubAgent 运行时上下文，执行时按 agent.channel.channelId 读取配置。
-            // 修改目的：确保 SubAgent 独立 provider 与统一工具执行语义可以同时成立。
+            // SubAgent 使用自己的 provider 配置，但工具执行复用主流程 ToolExecutionService，避免复制工具调用语义。
             configManager: this.configManager,
-            // 修改原因：SubAgent 过去复制工具执行逻辑，导致主流程修复无法同步继承。
-            // 修改方式：注入 ChatHandler 内部同一个 ToolExecutionService 实例。
-            // 修改目的：让 SubAgent 内部工具调用复用主流程的参数校验、多模态回传、MCP 和工具配置注入。
             toolExecutionService: this.chatHandler.getToolExecutionService()
         });
         
@@ -357,20 +356,23 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             this.settingsManager,
             () => this._view,
             this.sendResponse.bind(this),
-            this.sendError.bind(this)
+            this.sendError.bind(this),
+            this.webviewClientRegistry
         );
         
         // 30. 初始化子代理（从持久化存储加载）
         this.initializeSubAgents();
         
-        // 30.5. 初始化 SubAgent Monitor 编辑器页管理器
-        // 修改原因：SubAgent 内部过程需要显示在独立编辑器 WebviewPanel，而不是污染主聊天时间线。
-        // 修改方式：在 ChatViewProvider 中持有 Monitor 管理器，并通过 HandlerContext 暴露 openSubAgentMonitor。
-        // 修改目的：主卡片点击“打开详情”时能 reveal 或创建统一的 Monitor 窗口。
+        // 30.5. 初始化 SubAgent Monitor 编辑器页管理器：内部过程进独立 WebviewPanel，不污染主聊天时间线。
         this.subAgentMonitorPanel = new SubAgentMonitorPanel(
             this.context,
             this.webviewDevServerUrl,
-            this.routeSubAgentMonitorMessage.bind(this)
+            this.routeSubAgentMonitorMessage.bind(this),
+            this.registerWebviewClient.bind(this),
+            // 修改原因：Monitor 直接处理 monitorReady/getRunWindow，不经过 MessageRouter，历史 run 恢复仍需要 conversation metadata seam。
+            // 修改方式：把现有 ConversationManager 以 SubAgentRunConversationStore 接口注入面板，而不是在路由器里按 endpoint 写特判。
+            // 修改目的：遵守 clientId 路由边界，同时让 Monitor 首屏 manifest 可覆盖历史子对话。
+            this.conversationManager
         );
         
 
@@ -426,19 +428,18 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         });
     }
     
-    /**
-     * 打开或聚焦 SubAgent Monitor。
-     *
-     * 修改原因：主聊天 SubAgent 卡片只应该展示摘要，完整内部过程需要放在编辑器区域。
-     * 修改方式：委托 SubAgentMonitorPanel.create/reveal，并传入 runId 用于前端定位。
-     * 修改目的：保持主时间线干净，同时让用户能按需查看实时内部执行详情。
-     */
+    /** 打开或聚焦 SubAgent Monitor；主聊天只保留摘要，完整内部过程放在编辑器区域。 */
     private openSubAgentMonitor(runId?: string, conversationId?: string): void {
         if (!this.subAgentMonitorPanel) {
             this.subAgentMonitorPanel = new SubAgentMonitorPanel(
                 this.context,
                 this.webviewDevServerUrl,
-                this.routeSubAgentMonitorMessage.bind(this)
+                this.routeSubAgentMonitorMessage.bind(this),
+                this.registerWebviewClient.bind(this),
+                // 修改原因：懒创建 Monitor 面板也必须具备历史 run manifest/window 加载能力。
+                // 修改方式：传入同一个 ConversationManager seam，避免面板自行寻找全局状态。
+                // 修改目的：保持 SubAgentTranscriptRepository/RunController 语义单一。
+                this.conversationManager
             );
         }
         this.subAgentMonitorPanel.open(runId, conversationId);
@@ -447,41 +448,62 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
 
     /**
      * 从 SubAgent Monitor WebviewPanel 路由业务请求。
-     *
-     * 修改原因：WebviewPanel 里的 MessageItem/ToolMessage 会发起与主聊天相同的 subagents/diff/tools 请求，不能在 Panel 中复制一套 handler。
-     * 修改方式：复用同一个 MessageRouter 和 HandlerContext，只把 sendResponse/sendError/postMessage 绑定到发起请求的 panel webview。
-     * 修改目的：让 Monitor 控制按钮、消息操作和 diff 工具操作共享主聊天运行时，并确保 promise 响应回到正确 client。
+     * Monitor 复用主聊天 MessageRouter/HandlerContext，响应按 clientId 回到发起的 panel，避免复制 handler。
      */
+    private normalizeClientId(clientId: unknown, fallback: string): string {
+        return typeof clientId === 'string' && clientId.trim() ? clientId.trim() : fallback;
+    }
+
+    private postRoutedWebviewMessage(clientId: string, message: Record<string, any>, fallbackWebview?: vscode.Webview): void {
+        // 保持 response/error/command 旧 shape，仅追加 clientId；registry 未命中时回退旧 webview。
+        const routedMessage = { ...message, clientId };
+        if (this.webviewClientRegistry.postMessage(clientId, routedMessage)) {
+            return;
+        }
+        fallbackWebview?.postMessage(routedMessage);
+    }
+
+    private registerWebviewClient(clientId: string, webview: vscode.Webview, runScope?: RunScope): vscode.Disposable {
+        return this.webviewClientRegistry.register({
+            clientId,
+            runScope,
+            webviewHost: { webview },
+            postMessage: (message) => webview.postMessage(message)
+        });
+    }
+
     private async routeSubAgentMonitorMessage(message: any, webview: vscode.Webview): Promise<boolean> {
         await this.initPromise;
-        const { type, data, requestId } = message;
+        const { type, data, requestId, clientId } = message;
+        const routedClientId = this.normalizeClientId(clientId, WEBVIEW_CLIENT_IDS.subagentMonitor);
         const sendResponse = (id: string, responseData: any) => {
-            webview.postMessage({
+            this.postRoutedWebviewMessage(routedClientId, {
                 type: 'response',
                 requestId: id,
                 success: true,
                 data: responseData
-            });
+            }, webview);
         };
         const sendError = (id: string, code: string, errorMessage: string) => {
-            webview.postMessage({
+            this.postRoutedWebviewMessage(routedClientId, {
                 type: 'error',
                 requestId: id,
                 success: false,
                 error: { code, message: errorMessage }
-            });
+            }, webview);
         };
 
         const ctx: HandlerContext = {
             ...this.createHandlerContext(requestId),
+            clientId: routedClientId,
             view: undefined,
             sendResponse,
             sendError,
-            postMessage: (outgoing: any) => webview.postMessage(outgoing)
+            postMessage: (outgoing: any) => this.postRoutedWebviewMessage(routedClientId, outgoing, webview)
         };
 
         try {
-            return await this.messageRouter.route(type, data, requestId, ctx);
+            return await this.messageRouter.route(type, data, requestId, ctx, routedClientId);
         } catch (error: any) {
             sendError(requestId, error.code || 'HANDLER_ERROR', error.message || String(error));
             return true;
@@ -493,6 +515,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
      */
     private initializeSubAgents(): void {
         const ctx: HandlerContext = {
+            clientId: WEBVIEW_CLIENT_IDS.mainChat,
             settingsManager: this.settingsManager,
             configManager: this.configManager,
             channelManager: this.channelManager,
@@ -508,7 +531,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             sendResponse: this.sendResponse.bind(this),
             sendError: this.sendError.bind(this),
             postMessage: (message: any) => {
-                this._view?.webview.postMessage(message);
+                this.postRoutedWebviewMessage(WEBVIEW_CLIENT_IDS.mainChat, message, this._view?.webview);
             },
             openSubAgentMonitor: this.openSubAgentMonitor.bind(this)
         };
@@ -614,6 +637,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     ) {
         this._view = webviewView;
         this.webviewReady = false;
+        this.mainChatClientDisposable?.dispose();
+        this.mainChatClientDisposable = this.registerWebviewClient(WEBVIEW_CLIENT_IDS.mainChat, webviewView.webview, {
+            type: 'conversation',
+            conversationId: 'main-chat'
+        });
 
         webviewView.webview.options = {
             enableScripts: true,
@@ -678,6 +706,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         return {
             context: this.context,
             view: this._view,
+            clientId: WEBVIEW_CLIENT_IDS.mainChat,
             configManager: this.configManager,
             channelManager: this.channelManager,
             conversationManager: this.conversationManager,
@@ -705,7 +734,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
      * 处理来自前端的消息
      */
     private async handleMessage(message: any) {
-        const { type, data, requestId } = message;
+        const { type, data, requestId, clientId } = message;
+        const routedClientId = this.normalizeClientId(clientId, WEBVIEW_CLIENT_IDS.mainChat);
 
         // The frontend sends this as soon as its JS is ready to receive commands.
         // Handle it even if backend init is still running.
@@ -713,16 +743,21 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             this.webviewReady = true;
             // Flush any queued commands.
             for (const cmd of this.pendingCommands) {
-                this._view?.webview.postMessage({
+                this.postRoutedWebviewMessage(routedClientId, {
                     type: 'command',
                     command: cmd.command,
                     data: cmd.data
-                });
+                }, this._view?.webview);
             }
             this.pendingCommands = [];
 
             if (requestId) {
-                this.sendResponse(requestId, { success: true });
+                this.postRoutedWebviewMessage(routedClientId, {
+                    type: 'response',
+                    requestId,
+                    success: true,
+                    data: { success: true }
+                }, this._view?.webview);
             }
             return;
         }
@@ -732,10 +767,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             await this.initPromise;
             
             // 创建处理器上下文
-            const ctx = this.createHandlerContext(requestId);
+            const ctx = {
+                ...this.createHandlerContext(requestId),
+                clientId: routedClientId
+            };
             
             // 使用消息路由器处理消息
-            const handled = await this.messageRouter.route(type, data, requestId, ctx);
+            const handled = await this.messageRouter.route(type, data, requestId, ctx, routedClientId);
             
             if (!handled) {
                 console.warn('Unknown message type:', type);
@@ -818,6 +856,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.windowsAgentStopNotificationService?.dispose();
         this.subAgentMonitorPanel?.dispose();
         this.subAgentMonitorPanel = undefined;
+        this.mainChatClientDisposable?.dispose();
+        this.mainChatClientDisposable = undefined;
 
         console.log('ChatViewProvider disposed');
     }
@@ -826,19 +866,19 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
      * 发送响应到前端
      */
     private sendResponse(requestId: string, data: any) {
-        this._view?.webview.postMessage({
+        this.postRoutedWebviewMessage(WEBVIEW_CLIENT_IDS.mainChat, {
             type: 'response',
             requestId,
             success: true,
             data
-        });
+        }, this._view?.webview);
     }
 
     /**
      * 发送错误到前端
      */
     private sendError(requestId: string, code: string, message: string) {
-        this._view?.webview.postMessage({
+        this.postRoutedWebviewMessage(WEBVIEW_CLIENT_IDS.mainChat, {
             type: 'error',
             requestId,
             success: false,
@@ -846,7 +886,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 code,
                 message
             }
-        });
+        }, this._view?.webview);
     }
 
     /**
@@ -859,11 +899,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             return;
         }
 
-        this._view.webview.postMessage({
+        this.postRoutedWebviewMessage(WEBVIEW_CLIENT_IDS.mainChat, {
             type: 'command',
             command,
             data
-        });
+        }, this._view.webview);
     }
 
     /**

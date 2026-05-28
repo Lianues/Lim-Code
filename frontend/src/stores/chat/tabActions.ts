@@ -8,6 +8,7 @@ import type { ChatStoreState, ConversationSessionSnapshot, TabInfo } from './typ
 import type { StreamChunk } from '../../types'
 import type { StreamHandlerContext } from './streamHandler'
 import { handleStreamChunk } from './streamHandler'
+import { replaceAllMessages } from './state'
 
 /** 最大标签页数量 */
 const MAX_TABS = 100
@@ -58,7 +59,10 @@ export function restoreSessionFromSnapshot(
   snapshot: ConversationSessionSnapshot
 ): void {
   state.currentConversationId.value = snapshot.conversationId
-  state.allMessages.value = [...snapshot.allMessages]
+  // 修改原因：tab snapshot 不保存派生索引，只保存 allMessages 真源，避免冗余状态漂移。
+  // 修改方式：restore 时统一通过 helper 替换 allMessages，并在同一维护点重建索引。
+  // 修改目的：保证切 tab 后 stream/tool 热路径继续以 O(1) 定位当前消息，且与窗口顺序完全一致。
+  replaceAllMessages(state, [...snapshot.allMessages])
   state.windowStartIndex.value = snapshot.windowStartIndex
   state.totalMessages.value = snapshot.totalMessages
   state.configId.value = snapshot.configId
@@ -89,7 +93,10 @@ export function restoreSessionFromSnapshot(
  */
 export function resetConversationState(state: ChatStoreState): void {
   state.currentConversationId.value = null
-  state.allMessages.value = []
+  // 修改原因：重置空白标签页时也需要同步清空派生索引，避免旧 tab 的 messageId 残留。
+  // 修改方式：统一通过 helper 清空 allMessages，并在同一维护点刷新空索引。
+  // 修改目的：确保后续 snapshot/restore 与新建会话都从一致的空状态开始。
+  replaceAllMessages(state, [])
   state.windowStartIndex.value = 0
   state.totalMessages.value = 0
   state.isLoadingMoreMessages.value = false

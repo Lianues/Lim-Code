@@ -1,14 +1,16 @@
 import type { ContentPart, ToolUsage } from '../types'
+// WP15: 统一 functionCall merge 纯函数入口。
+// 为什么从独立模块导入：toolRenderEntries.ts 此前自己定义了 normalizeNonEmptyString 和 hasNonEmptyArgs。
+// 怎么改：复用 utils/functionCallMerge.ts 中的统一版本。
+// 目的：渲染层的合并键判断与流式合并层完全一致。
+import {
+  normalizeNonEmptyString,
+  hasNonEmptyArgs
+} from './functionCallMerge'
 
 type FunctionCallLike = NonNullable<ContentPart['functionCall']>
 
-function normalizeNonEmptyString(value: unknown): string {
-  return typeof value === 'string' && value.trim() ? value.trim() : ''
-}
-
-function hasNonEmptyArgs(args: unknown): args is Record<string, unknown> {
-  return !!(args && typeof args === 'object' && Object.keys(args as Record<string, unknown>).length > 0)
-}
+// WP15: normalizeNonEmptyString、hasNonEmptyArgs 已收敛到 utils/functionCallMerge.ts。
 
 function areArgsEquivalent(a: unknown, b: unknown): boolean {
   try {

@@ -6,6 +6,22 @@
 
 import type { Message, Content, Attachment, ToolUsage } from '../../types'
 import { generateId } from '../../utils/format'
+// WP15: 统一 functionCall merge 纯函数入口。
+// 为什么从独立模块导入：parsers.ts 的 normalizeFunctionCallParts 此前自己定义了
+// normalizeNonEmptyString、hasNonEmptyArgs、mergeFunctionCallSnapshot、parseFinalArgs 等。
+// 怎么改：复用 utils/functionCallMerge.ts 中的统一版本，本文件仅保留快照特有的 getFunctionCallSnapshotKey 和 mergeFunctionCallSnapshot。
+// 目的：快照去重路径（contentToMessage / contentToMessageEnhanced）与流式增量路径使用一致的合并键。
+//
+// WP15 条件 1 修复：新增导入 mergeFunctionCallIdentity 和 tryParseArgs。
+// 为什么：parseFinalArgs 与 tryParseArgs 重复，身份字段合并 4 行与 mergeFunctionCall 重复。
+// 怎么改：mergeFunctionCallIdentity 替代内联的身份填充，tryParseArgs + finalArgs 判定替代 parseFinalArgs。
+// 目的：消除 parser.ts 与 functionCallMerge.ts 之间的子逻辑重复，G1 前收敛。
+import {
+  normalizeNonEmptyString,
+  hasNonEmptyArgs,
+  mergeFunctionCallIdentity,
+  tryParseArgs
+} from '../../utils/functionCallMerge'
 
 /**
  * 解析 XML 工具调用
@@ -93,23 +109,11 @@ type FunctionCallPart = NonNullable<Content['parts'][number]['functionCall']> & 
   finalArgs?: boolean
 }
 
-function hasNonEmptyArgs(args: unknown): args is Record<string, unknown> {
-  return !!(args && typeof args === 'object' && Object.keys(args as Record<string, unknown>).length > 0)
-}
-
-function normalizeNonEmptyString(value: unknown): string {
-  return typeof value === 'string' && value.trim() ? value.trim() : ''
-}
-
-function parseFinalArgs(part: FunctionCallPart): Record<string, unknown> | null {
-  if (part.finalArgs !== true || typeof part.partialArgs !== 'string' || !part.partialArgs.trim()) return null
-  try {
-    const parsed = JSON.parse(part.partialArgs)
-    return parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : null
-  } catch {
-    return null
-  }
-}
+// WP15 条件 1：parseFinalArgs 已移除。
+// 为什么：parseFinalArgs 与 utils/functionCallMerge.ts 的 tryParseArgs 功能完全重叠（安全 JSON.parse +
+// 判定 finalArgs），仅在 finalArgs 判定位置不同（tryParseArgs 由调用方自己判断 finalArgs）。
+// 怎么改：用 tryParseArgs(incoming.partialArgs) + incoming.finalArgs === true 替代 parseFinalArgs(incoming)。
+// 目的：消除 parsers.ts 与 functionCallMerge.ts 之间的子逻辑重复，G1 前收敛。
 
 function getFunctionCallSnapshotKey(part: FunctionCallPart, ordinal: number): string {
   const itemId = normalizeNonEmptyString(part.itemId)
@@ -127,12 +131,12 @@ function getFunctionCallSnapshotKey(part: FunctionCallPart, ordinal: number): st
 }
 
 function mergeFunctionCallSnapshot(target: FunctionCallPart, incoming: FunctionCallPart): void {
-  if (incoming.name && !target.name) target.name = incoming.name
-  if (incoming.id) target.id = incoming.id
-  if (incoming.itemId && !target.itemId) target.itemId = incoming.itemId
-  if (typeof incoming.index === 'number' && typeof target.index !== 'number') target.index = incoming.index
+  // WP15 条件 1：身份字段合并委托给统一函数，消除与 mergeFunctionCall 的 4 行重复。
+  mergeFunctionCallIdentity(target, incoming)
 
-  const parsedFinalArgs = parseFinalArgs(incoming)
+  // WP15 条件 1：args/partialArgs 保留快照特有语义（替换而不是 spread 合并、更长片段胜出而不是追加拼接），
+  // 这是快照路径与增量路径的合理语义差异，不做强行混同。
+  const parsedFinalArgs = incoming.finalArgs === true ? tryParseArgs(incoming.partialArgs) : null
   if (parsedFinalArgs) {
     target.args = parsedFinalArgs
     delete target.partialArgs
@@ -140,6 +144,8 @@ function mergeFunctionCallSnapshot(target: FunctionCallPart, incoming: FunctionC
   }
 
   if (hasNonEmptyArgs(incoming.args)) {
+    // 为什么快照路径用直接替换而不是 spread 合并：后端 contentSnapshot 已经是累积完成的完整状态，
+    // 不涉及流式过程中先 partialArgs 后补字段的场景，直接替换是正确的最小操作。
     target.args = incoming.args
     delete target.partialArgs
     return
@@ -181,7 +187,9 @@ function normalizeFunctionCallParts(parts: Content['parts']): Content['parts'] {
       ...part,
       functionCall: { ...functionCall }
     }
-    const parsedFinalArgs = parseFinalArgs(clonedPart.functionCall as FunctionCallPart)
+    // WP15 条件 1：用 tryParseArgs + finalArgs 判定替代已删除的 parseFinalArgs。
+    const clonedFc = clonedPart.functionCall as FunctionCallPart
+    const parsedFinalArgs = clonedFc.finalArgs === true ? tryParseArgs(clonedFc.partialArgs) : null
     if (parsedFinalArgs) {
       clonedPart.functionCall.args = parsedFinalArgs
       delete (clonedPart.functionCall as FunctionCallPart).partialArgs
