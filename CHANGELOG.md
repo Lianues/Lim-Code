@@ -6,8 +6,7 @@ All notable changes to the "Lim Code" extension will be documented in this file.
 ## [1.2.1] - 2026-05-28
 
 ### 发布范围
-  - 1.2.0 未公开发布；本次以 1.2.1 作为对外发布版本，合并 1.2.0 阶段的架构整理并追加性能优化。
-  - 本版本聚焦结构性性能优化，不声明未经量化基线验证的具体 ms、百分比或 FPS 收益。
+  - 架构整理并追加性能优化。
 
 ### 新增（Internal Architecture）
   - WP20 建立 `AgentRunEvent` / reducer / selector 草案，为 Main Chat 与 SubAgent Monitor 后续共享运行事件模型提供基础设施。
