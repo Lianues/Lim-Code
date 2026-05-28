@@ -38,7 +38,7 @@ import type { Content } from '../../modules/conversation/types';
 import type { HistorySearchToolConfig } from '../../modules/settings/types';
 import { DEFAULT_HISTORY_SEARCH_CONFIG } from '../../modules/settings/types';
 import { t } from '../../i18n';
-import { escapeRegExp } from '../utils';
+import { escapeRegExp, detectSuspectedRegexIntent, createSuspectedRegexSuggestion } from '../utils';
 
 // ─── 默认常量（当 settingsManager 不可用时的 fallback） ───
 
@@ -268,9 +268,23 @@ function handleSearch(docLines: string[], query: string, isRegex: boolean, cfg: 
     }
 
     if (matchLineIndices.length === 0) {
+        const noMatchesMessage = t('tools.history.noMatchesFound', { query, totalLines: docLines.length });
+        if (!isRegex) {
+            const regexIntent = detectSuspectedRegexIntent(query);
+            if (regexIntent.suspected) {
+                // 修改原因：history_search 和 search_in_files 一样，模型可能漏传 is_regex=true，导致正则样式 query 被静默按字面量搜索。
+                // 修改方式：零命中时追加 suspected_regex 诊断，但不自动重跑正则，保持 is_regex=false 的可预测语义。
+                // 修改目的：让模型下一轮显式补传 is_regex=true，同时避免把普通管道、表格或 union 文本误当正则 OR。
+                return {
+                    success: true,
+                    data: `${noMatchesMessage}\n\n[suspected_regex] ${createSuspectedRegexSuggestion(regexIntent.signals, 'is_regex')}`
+                };
+            }
+        }
+
         return {
             success: true,
-            data: t('tools.history.noMatchesFound', { query, totalLines: docLines.length })
+            data: noMatchesMessage
         };
     }
 
@@ -425,11 +439,11 @@ export function createHistorySearchToolDeclaration(): ToolDeclaration {
                 },
                 query: {
                     type: 'string',
-                    description: '[search 模式，必填] 用于定位早期对话行的关键词、空格分隔关键词、完整短语或正则表达式。非正则模式下，多词输入会先尝试完整短语；如果没有命中，会降级为逐个空格分隔关键词搜索。search 输出只是定位器和片段，不是完整历史内容。'
+                    description: '[search 模式，必填] 用于定位早期对话行的关键词、空格分隔关键词、完整短语或正则表达式。注意：如果 query 包含 "|"、".*"、".+"、"\\."、"\\d"、"[]"、"()"、"^" 或 "$" 等正则语法，必须设置 is_regex=true；否则这些字符会按普通文本搜索，工具不会自动切换到正则模式。非正则模式下，多词输入会先尝试完整短语；如果没有命中，会降级为逐个空格分隔关键词搜索。search 输出只是定位器和片段，不是完整历史内容。'
                 },
                 is_regex: {
                     type: 'boolean',
-                    description: '[search 模式] 是否把 query 当作正则表达式处理。默认 false。'
+                    description: '[search 模式] 是否把 query 当作正则表达式处理。默认 false。当 query 使用正则 OR、通配、转义、字符类、分组或锚点时必须设为 true，例如 "foo|bar"、"ssh.*root"、"38\\.12"、"\\d+"、"[abc]"、"(foo|bar)"、"^start"、"end$"。false 表示严格字面量搜索。'
                 },
                 start_line: {
                     type: 'number',
@@ -459,7 +473,7 @@ export function createHistorySearchToolDeclaration(): ToolDeclaration {
                 `历史内容会被格式化成带行号的虚拟文档。输出行形如 "  42 | text"；其中行号和竖线只是定位标记，不属于消息正文。` +
                 `轮次标题会显示行范围，例如 "══ Round 3 (L45-L88) ══"；需要读取整轮内容时，用该 L 范围调用 read。\n` +
                 `工作流：\n` +
-                `1. mode="search"：提供 query，或同时提供 query 与 is_regex=true。search 只返回匹配行号和少量上下文；它是定位器，不是完整历史内容。非正则模式下支持 query="关键词1 关键词2 关键词3"：工具会先搜索完整短语；如果没有命中，会自动降级为逐个空格分隔关键词搜索。\n` +
+                `1. mode="search"：提供 query，或同时提供 query 与 is_regex=true。search 只返回匹配行号和少量上下文；它是定位器，不是完整历史内容。如果 query 包含正则 OR/通配/转义/锚点，例如 "foo|bar"、"ssh.*root"、"38\\.12"、"\\d+"、"[abc]"、"(foo|bar)"、"^start" 或 "end$"，必须设置 is_regex=true；否则这些字符会按普通文本搜索，工具不会自动切换到正则模式。非正则模式下支持 query="关键词1 关键词2 关键词3"：工具会先搜索完整短语；如果没有命中，会自动降级为逐个空格分隔关键词搜索。\n` +
                 `2. mode="read"：search 定位后，使用虚拟文档中的 start_line 和 end_line 精确读取历史行。必须使用 snake_case 的 start_line/end_line，不要使用 read_file 的 startLine/endLine。每次最多读取 ${MAX_READ_LINES} 行。\n` +
                 `3. 如果 search 结果提示某一长行被截断，或你需要读取一条完整工具结果行，请调用 read，并设置 start_line=N 且 end_line=N；单行读取永不截断。`;
         },

@@ -6,6 +6,7 @@
 
 import * as cp from 'child_process';
 import { EventEmitter } from 'events';
+import { createLimCodeMcpClientInfo } from '../../core/productMetadata';
 
 /**
  * JSON-RPC 请求
@@ -163,13 +164,10 @@ export class StdioMcpClient extends EventEmitter {
             capabilities: {
                 roots: { listChanged: true }
             },
-            clientInfo: {
-                name: 'LimCode',
-                // 为什么同步 MCP 客户端版本：MCP server 初始化时会看到 clientInfo，旧版本号会让外部服务误判客户端能力。
-                // 怎么改：随 1.2.3 apply_diff 缩进容错发布同步 clientInfo.version。
-                // 目的：让 MCP 握手元数据与扩展实际发布版本一致。
-                version: '1.2.3'
-            }
+            // 修改原因：Stdio MCP clientInfo.version 过去手写发布版本，容易和 HTTP client 或 package.json 分叉。
+            // 修改方式：统一通过 productMetadata 生成 LimCode MCP clientInfo。
+            // 修改目的：让 MCP 握手元数据始终对应当前扩展 packageJSON 版本。
+            clientInfo: createLimCodeMcpClientInfo()
         });
         
         this.serverInfo = initResult.serverInfo;

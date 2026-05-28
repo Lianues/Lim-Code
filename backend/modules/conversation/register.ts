@@ -6,6 +6,7 @@
 
 import { ConversationManager } from './ConversationManager';
 import type { ModuleDefinition } from '../../core/registry';
+import { getProductVersion } from '../../core/productMetadata';
 import type { IStorageAdapter } from './storage';
 
 /**
@@ -19,10 +20,10 @@ export function createConversationModule(storage: IStorageAdapter): ModuleDefini
     return {
         id: 'conversation',
         name: 'Conversation Manager',
-        // 为什么同步模块版本：对话历史、工具响应和前端窗口投影都依赖该模块，旧版本号会误导问题定位。
-        // 怎么改：随 1.2.3 apply_diff 缩进容错发布统一内部模块版本展示。
-        // 目的：让历史加载、窗口化读取和工具结果相关诊断能对应到当前工具稳定性修复批次。
-        version: '1.2.3',
+        // 修改原因：对话模块版本原来手写发布号，容易和 package.json 不一致。
+        // 修改方式：从 productMetadata 读取当前扩展 packageJSON 版本。
+        // 修改目的：让历史、窗口化读取和工具结果相关诊断能对应到真实运行版本。
+        version: getProductVersion(),
         description: 'Provides conversation history management including message operations, snapshots, and statistics',
 
         apis: [

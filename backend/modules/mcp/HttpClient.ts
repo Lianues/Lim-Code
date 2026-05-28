@@ -6,6 +6,7 @@
 
 import { EventEmitter } from 'events';
 import { t } from '../../i18n';
+import { createLimCodeMcpClientInfo } from '../../core/productMetadata';
 
 /**
  * JSON-RPC 请求
@@ -126,13 +127,10 @@ export class HttpMcpClient extends EventEmitter {
             capabilities: {
                 roots: { listChanged: true }
             },
-            clientInfo: {
-                name: 'LimCode',
-                // 为什么同步 MCP HTTP 客户端版本：HTTP/Streamable HTTP server 会读取初始化元数据用于兼容性判断。
-                // 怎么改：随 1.2.3 apply_diff 缩进容错发布同步 clientInfo.version。
-                // 目的：避免远端 MCP server 看到过期 LimCode 客户端版本。
-                version: '1.2.3'
-            }
+            // 修改原因：HTTP MCP clientInfo.version 过去手写发布版本，容易和 Stdio client 或 package.json 分叉。
+            // 修改方式：统一通过 productMetadata 生成 LimCode MCP clientInfo。
+            // 修改目的：让远端 MCP server 始终看到当前扩展 packageJSON 版本。
+            clientInfo: createLimCodeMcpClientInfo()
         });
         
         this.serverInfo = initResult.serverInfo;

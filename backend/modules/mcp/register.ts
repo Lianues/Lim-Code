@@ -3,6 +3,7 @@
  */
 
 import type { ModuleDefinition } from '../../core/registry/types';
+import { getProductVersion } from '../../core/productMetadata';
 import type { McpStorageAdapter } from './types';
 import { McpManager } from './McpManager';
 import type {
@@ -27,10 +28,10 @@ export function registerMcpModule(
     const module: ModuleDefinition = {
         id: 'mcp',
         name: 'MCP Manager',
-        // 为什么同步模块版本：模块注册元数据长期停留在旧版本，不利于诊断当前运行的扩展能力。
-        // 怎么改：随 1.2.3 apply_diff 缩进容错发布统一内部模块版本展示。
-        // 目的：让模块注册表、MCP 客户端握手和扩展版本保持一致。
-        version: '1.2.3',
+        // 修改原因：MCP 模块注册版本过去手写发布号，容易和 MCP clientInfo 或 package.json 分叉。
+        // 修改方式：从 productMetadata 读取当前扩展 packageJSON 版本。
+        // 修改目的：让模块注册表、MCP 客户端握手和扩展版本保持一致。
+        version: getProductVersion(),
         description: 'Manage Model Context Protocol (MCP) server configuration and connections',
 
         initialize: async () => {

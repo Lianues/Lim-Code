@@ -14,6 +14,7 @@ import * as fs from 'fs';
 import * as childProcess from 'child_process';
 import { promisify } from 'util';
 import { t } from '../../i18n';
+import { getProductVersion } from '../../core/productMetadata';
 
 const exec = promisify(childProcess.exec);
 const mkdir = promisify(fs.mkdir);
@@ -228,10 +229,10 @@ export class DependencyManager {
             // 创建临时 package.json
             const tempPackageJson = {
                 name: 'limcode-deps',
-                // 为什么同步临时依赖包版本：依赖安装目录里的 package.json 也属于 LimCode 运行时元数据。
-                // 怎么改：随 1.2.3 apply_diff 缩进容错发布同步临时 package 版本，不改第三方依赖版本。
-                // 目的：让依赖安装诊断对应当前工具稳定性修复批次。
-                version: '1.2.3',
+                // 修改原因：临时依赖 package.json 版本原来手写发布号，release 时容易漏改。
+                // 修改方式：从 productMetadata 读取当前扩展 packageJSON 版本，不改第三方依赖版本。
+                // 修改目的：让依赖安装诊断自动对应当前运行的 LimCode 版本。
+                version: getProductVersion(),
                 dependencies: {
                     [name]: config.version
                 }

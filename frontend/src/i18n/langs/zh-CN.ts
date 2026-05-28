@@ -1791,10 +1791,10 @@ const zhCN: LanguageMessages = {
                 appInfo: {
                     title: '应用信息',
                     name: 'Lim Code - Vibe Coding助手',
-                    // 为什么同步展示版本号：设置页版本曾落后于 package.json，用户会误判当前安装包。
-                    // 怎么改：随 1.2.3 apply_diff 缩进容错发布把展示字符串同步到扩展版本。
-                    // 目的：让设置页、package 元数据和发布说明保持一致。
-                    version: '版本：1.2.3',
+                    // 修改原因：版本号不再写死在 i18n 文案中，避免发布时同步三份语言文件。
+                    // 修改方式：这里只保留本地化标签，SettingsPanel 会拼接后端 appInfo.version。
+                    // 修改目的：让设置页版本展示跟随 package.json 单一来源。
+                    version: '版本',
                     repository: '项目仓库',
                     developer: '开发者'
                 }

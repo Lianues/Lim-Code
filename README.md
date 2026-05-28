@@ -18,12 +18,12 @@
   支持多渠道 AI 模型 | 智能工具调用 | SubAgent Monitor | MCP
 </p>
 
-## 🔄 1.2.3 更新重点
+## 🔄 近期更新重点
 
-- `apply_diff` 结构化 `hunks` 增加行首缩进容错：`oldContent` 精确匹配失败时，只忽略每行开头空格和 tab 继续寻找安全候选。
-- 缩进容错命中后会把 `newContent` 相对缩进重映射到真实匹配块，减少语言文件和嵌套代码修改中的缩进误差。
-- 多候选仍要求 `startLine`，避免在 Python、YAML 等缩进敏感场景中自动猜测错误位置。
-- 修复前序 hunk 删除整行到空字符串时后续 `startLine` 偏移多减一行的问题。
+- `search_in_files` 工具说明强化正则触发清单：`foo|bar`、`ssh.*root`、`38\\.12`、`\\d+`、字符类、分组和锚点都必须显式设置 `isRegex=true`。
+- 非正则零命中时新增 `suspected_regex` 诊断，提示模型 query 看起来像正则但当前按字面量搜索，并给出 `isRegex=true` 重试建议。
+- 保留 `isRegex=false` 的严格字面量语义，不自动把 Markdown 表格、TypeScript union 或 Shell 管道里的 `|` 当正则 OR。
+- 完整发布记录见 [CHANGELOG.md](./CHANGELOG.md)。
 
 ## ✨ 特性
 
@@ -187,7 +187,7 @@ limcode/
 └── webview/           # Webview 集成
 ```
 
-当前说明：版本已更新为 `1.2.3`；本次发布重点是 `apply_diff` 结构化 hunk 的缩进容错、`newContent` 缩进重映射、多候选安全拒绝和删除行偏移修复。发布材料只描述实际落地的工具稳定性改进，不声明未经量化基线验证的具体性能收益数字。
+当前说明：README 不再承担每次发布的版本号同步职责；正式版本与发布说明以 `package.json` 和 [CHANGELOG.md](./CHANGELOG.md) 为准。发布材料只描述实际落地的工具稳定性改进，不声明未经量化基线验证的具体性能收益数字。
 
 ## 📄 许可证
 

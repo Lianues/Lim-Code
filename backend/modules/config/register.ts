@@ -5,6 +5,7 @@
  */
 
 import type { ModuleDefinition } from '../../core/registry/types';
+import { getProductVersion } from '../../core/productMetadata';
 import type { ConfigStorageAdapter } from './storage';
 import { ConfigManager } from './ConfigManager';
 import type {
@@ -31,10 +32,10 @@ export function registerConfigModule(
     return {
         id: 'config',
         name: 'Configuration Manager',
-        // 为什么同步模块版本：配置模块注册元数据仍显示旧版本，会干扰运行时诊断。
-        // 怎么改：随 1.2.3 apply_diff 缩进容错发布统一内部模块版本展示。
-        // 目的：让模块清单中的版本号反映当前扩展发布批次。
-        version: '1.2.3',
+        // 修改原因：配置模块版本原来跟随发布号手写，容易在 release 时漏改。
+        // 修改方式：从 productMetadata 读取当前扩展 packageJSON 版本。
+        // 修改目的：让模块注册表里的版本号与扩展实际版本保持一致。
+        version: getProductVersion(),
         description: 'Manage LLM channel configurations, supporting Gemini, OpenAI, Anthropic and other formats',
         
         apis: [

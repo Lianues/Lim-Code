@@ -2,7 +2,7 @@
   "name": "limcode",
   "displayName": "Lim Code",
   "description": "Lim Code 是一个 VS Code AI 编程助手插件，支持多渠道模型、工具调用、MCP 和 SubAgent 工作流。",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "publisher": "Lianues",
   "icon": "resources/icon.png",
   "engines": {
@@ -259,7 +259,11 @@
     "test": "node scripts/run-jest.cjs",
     "test:watch": "node scripts/run-jest.cjs --watch",
     "test:coverage": "node scripts/run-jest.cjs --coverage",
-    "test:diagnose-execute-command-order": "node scripts/run-jest.cjs test/unit/chat/tool_iteration_loop.execute_command_diagnostic.test.ts --runInBand"
+    "test:diagnose-execute-command-order": "node scripts/run-jest.cjs test/unit/chat/tool_iteration_loop.execute_command_diagnostic.test.ts --runInBand",
+    "release:prepare": "node scripts/prepare-release.cjs",
+    "release:check": "node scripts/check-release.cjs",
+    "release:verify": "npm run release:check && npm run compile && npx ast-grep scan && npm run build:frontend",
+    "package:vsix": "npx @vscode/vsce package"
   },
   "dependencies": {
     "@vscode/codicons": "^0.0.43",

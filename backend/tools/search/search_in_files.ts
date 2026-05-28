@@ -9,7 +9,16 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs/promises';
 import type { Tool, ToolResult } from '../types';
-import { getWorkspaceRoot, getAllWorkspaces, parseWorkspacePath, toRelativePath, normalizeLineEndingsToLF, escapeRegExp } from '../utils';
+import {
+    getWorkspaceRoot,
+    getAllWorkspaces,
+    parseWorkspacePath,
+    toRelativePath,
+    normalizeLineEndingsToLF,
+    escapeRegExp,
+    detectSuspectedRegexIntent,
+    createSuspectedRegexSuggestion
+} from '../utils';
 import { getGlobalSettingsManager } from '../../core/settingsContext';
 import { getDiffStorageManager } from '../../modules/conversation';
 import { getDiffManager } from '../file/diffManager';
@@ -141,6 +150,14 @@ interface SearchQueryFallbackInfo {
     applied: boolean;
     originalQuery: string;
     keywords: string[];
+    /**
+     * 修改原因：零命中时模型需要知道这是“空格关键词兜底已执行”还是“疑似忘记 isRegex=true”的诊断提示。
+     * 修改方式：给 queryFallback 增加可选 reason/suggestion/signals，保持 applied/originalQuery/keywords 向后兼容。
+     * 修改目的：让工具在不改变搜索语义的前提下，向模型返回可执行的纠错建议。
+     */
+    reason?: 'whitespace_keyword_or' | 'suspected_regex';
+    suggestion?: string;
+    signals?: string[];
 }
 
 interface SearchPathWarningInfo {
@@ -781,12 +798,12 @@ export function createSearchInFilesTool(): Tool {
             name: 'search_in_files',
             strict: true,  // API 端强制 schema 校验
             // 这段 description 是模型实际看到的工具提示词。
-            // 为什么要改：旧文案只说“搜索关键词或正则”，没有说明多关键词兜底，也没有区分文件搜索与 history_search 的 read 流程。
-            // 怎么改：把非正则空格关键词兜底、`|` 仅属于正则模式、path 只能填一个路径、以及后续读取必须用 read_file 写进主描述，并把面向模型的说明统一改为中文。
-            // 目的：降低模型把 history_search 的 start_line/end_line 语法或“多个路径塞进一个 path 字符串”的错误用法迁移到 search_in_files 的概率，同时让中文用户场景下的模型更容易遵循工具边界。
+            // 为什么要改：旧文案虽然提到 `foo|bar` 需要 isRegex=true，但没有把 `ssh.*root`、`38\\.12` 这类正则通配/转义场景前置，模型仍会漏传 isRegex。
+            // 怎么改：把正则触发清单放进主描述，同时保留非正则空格关键词兜底、path 单路径和 read_file 后续读取规则。
+            // 目的：让模型在生成工具调用前就能识别“这是正则查询”，减少零命中后才靠诊断纠错的次数。
             description: isMultiRoot
-                ? `在多个工作区文件中搜索内容，或执行搜索并替换。支持正则表达式。搜索模式下，当 isRegex=false 时，空格分隔的多关键词查询会先尝试完整短语；如果没有命中，会自动降级为关键词 OR 搜索。需要使用 "foo|bar" 这类正则 OR 时，请设置 isRegex=true；非正则模式下 "|" 是普通字面字符。本工具没有 read 模式，也没有 start_line/end_line 参数；需要读取匹配文件时请使用 read_file。path 参数只能填写一个文件或一个目录，不能填写多个空格分隔路径；如果要搜索多个路径，请分别并行调用多次 search_in_files。搜索一个目录时使用 "workspace_name/dir/"（末尾斜杠），搜索一个文件时使用 "workspace_name/file.ext"。使用 "." 搜索所有工作区。可用工作区：${workspaces.map(w => w.name).join(', ')}。`
-                : '在工作区文件中搜索内容，或执行搜索并替换。支持正则表达式。搜索模式下，当 isRegex=false 时，空格分隔的多关键词查询会先尝试完整短语；如果没有命中，会自动降级为关键词 OR 搜索。需要使用 "foo|bar" 这类正则 OR 时，请设置 isRegex=true；非正则模式下 "|" 是普通字面字符。本工具没有 read 模式，也没有 start_line/end_line 参数；需要读取匹配文件时请使用 read_file。path 参数只能填写一个文件或一个目录，不能填写多个空格分隔路径；如果要搜索多个路径，请分别并行调用多次 search_in_files。搜索一个目录时使用 "dir/"（末尾斜杠），搜索一个文件时使用 "dir/file.ext"。返回匹配文件和上下文。',
+                ? `在多个工作区文件中搜索内容，或执行搜索并替换。支持正则表达式。关键规则：如果 query 包含正则 OR/通配/转义/锚点，例如 "foo|bar"、"ssh.*root"、"38\\.12"、"\\d+"、"[abc]"、"(foo|bar)"、"^start" 或 "end$"，必须设置 isRegex=true；否则这些字符会按普通文本搜索，工具不会自动切换到正则模式。搜索模式下，当 isRegex=false 时，空格分隔的多关键词查询会先尝试完整短语；如果没有命中，会自动降级为关键词 OR 搜索。非正则模式下 "|" 是普通字面字符。本工具没有 read 模式，也没有 start_line/end_line 参数；需要读取匹配文件时请使用 read_file。path 参数只能填写一个文件或一个目录，不能填写多个空格分隔路径；如果要搜索多个路径，请分别并行调用多次 search_in_files。搜索一个目录时使用 "workspace_name/dir/"（末尾斜杠），搜索一个文件时使用 "workspace_name/file.ext"。使用 "." 搜索所有工作区。可用工作区：${workspaces.map(w => w.name).join(', ')}。`
+                : '在工作区文件中搜索内容，或执行搜索并替换。支持正则表达式。关键规则：如果 query 包含正则 OR/通配/转义/锚点，例如 "foo|bar"、"ssh.*root"、"38\\.12"、"\\d+"、"[abc]"、"(foo|bar)"、"^start" 或 "end$"，必须设置 isRegex=true；否则这些字符会按普通文本搜索，工具不会自动切换到正则模式。搜索模式下，当 isRegex=false 时，空格分隔的多关键词查询会先尝试完整短语；如果没有命中，会自动降级为关键词 OR 搜索。非正则模式下 "|" 是普通字面字符。本工具没有 read 模式，也没有 start_line/end_line 参数；需要读取匹配文件时请使用 read_file。path 参数只能填写一个文件或一个目录，不能填写多个空格分隔路径；如果要搜索多个路径，请分别并行调用多次 search_in_files。搜索一个目录时使用 "dir/"（末尾斜杠），搜索一个文件时使用 "dir/file.ext"。返回匹配文件和上下文。',
             category: 'search',
             parameters: {
                 type: 'object',
@@ -799,7 +816,7 @@ export function createSearchInFilesTool(): Tool {
                     },
                     query: {
                         type: 'string',
-                        description: '搜索关键词、完整短语或正则表达式。搜索模式下，当 isRegex=false 时，空格分隔的多关键词查询会先尝试完整短语；如果没有命中，会自动降级为关键词 OR 搜索。需要使用 "foo|bar" 这类显式正则 OR 时，请设置 isRegex=true；非正则模式下 "|" 会按普通字面字符搜索。'
+                        description: '搜索关键词、完整短语或正则表达式。注意：如果 query 包含 "|"、".*"、".+"、"\\."、"\\d"、"[]"、"()"、"^" 或 "$" 等正则语法，必须设置 isRegex=true；否则这些字符会按普通文本搜索，工具不会自动切换到正则模式。搜索模式下，当 isRegex=false 时，空格分隔的多关键词查询会先尝试完整短语；如果没有命中，会自动降级为关键词 OR 搜索。'
                     },
                     path: {
                         type: 'string',
@@ -816,7 +833,7 @@ export function createSearchInFilesTool(): Tool {
                     },
                     isRegex: {
                         type: 'boolean',
-                        description: '是否把 query 当作正则表达式处理。',
+                        description: '是否把 query 当作正则表达式处理。当 query 使用正则 OR、通配、转义、字符类、分组或锚点时必须设为 true，例如 "foo|bar"、"ssh.*root"、"38\\.12"、"\\d+"、"[abc]"、"(foo|bar)"、"^start"、"end$"。false 表示严格字面量搜索。',
                         default: false
                     },
                     maxResults: {
@@ -1080,8 +1097,23 @@ export function createSearchInFilesTool(): Tool {
                         fallbackInfo = {
                             applied: true,
                             originalQuery: query,
-                            keywords: fallbackKeywords
+                            keywords: fallbackKeywords,
+                            reason: 'whitespace_keyword_or'
                         };
+                    }
+
+                    if (allResults.length === 0 && !searchPass.budgetTruncated && !isRegex) {
+                        const regexIntent = detectSuspectedRegexIntent(query);
+                        if (regexIntent.suspected) {
+                            fallbackInfo = {
+                                applied: false,
+                                originalQuery: query,
+                                keywords: [],
+                                reason: 'suspected_regex',
+                                signals: regexIntent.signals,
+                                suggestion: createSuspectedRegexSuggestion(regexIntent.signals)
+                            };
+                        }
                     }
 
                     return {

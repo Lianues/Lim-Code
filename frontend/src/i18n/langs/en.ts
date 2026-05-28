@@ -1791,10 +1791,10 @@ const en: LanguageMessages = {
                 appInfo: {
                     title: 'Application Info',
                     name: 'Lim Code - Vibe Coding Assistant',
-                    // Why keep this in sync: the settings page previously lagged behind package.json, which made installed builds look stale.
-                    // How this changes it: bump the displayed release string together with the 1.2.3 apply_diff indentation fallback release.
-                    // Purpose: keep package metadata, release notes, and the settings UI consistent.
-                    version: 'Version: 1.2.3',
+                    // Why change this: release versions should no longer be hardcoded in each i18n file.
+                    // How this changes it: keep only the localized label; SettingsPanel appends backend appInfo.version.
+                    // Purpose: make the settings page follow package.json as the single version source.
+                    version: 'Version',
                     repository: 'Repository',
                     developer: 'Developer'
                 }

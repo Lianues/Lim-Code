@@ -5,6 +5,7 @@
  */
 
 import type { ModuleDefinition } from '../../core/registry/types';
+import { getProductVersion } from '../../core/productMetadata';
 import type { ConfigManager } from '../config/ConfigManager';
 import { ChannelManager } from './ChannelManager';
 import type {
@@ -27,10 +28,10 @@ export function registerChannelModule(
     return {
         id: 'channel',
         name: 'Channel Manager',
-        // 为什么同步模块版本：Channel 模块仍是工具格式、流式合并和 provider formatter 修复的核心路径。
-        // 怎么改：随 1.2.3 apply_diff 缩进容错发布统一内部模块版本展示。
-        // 目的：排查渠道 formatter 与工具调用问题时可以识别当前修复批次。
-        version: '1.2.3',
+        // 修改原因：模块注册元数据过去手写发布版本，每次 release 都要逐文件同步。
+        // 修改方式：从 productMetadata 读取当前扩展 packageJSON 版本。
+        // 修改目的：让模块清单自动跟随发布版本，避免诊断信息落后。
+        version: getProductVersion(),
         description: '管理 LLM 渠道调用，支持 Gemini、OpenAI、Anthropic 等多种格式',
         
         apis: [

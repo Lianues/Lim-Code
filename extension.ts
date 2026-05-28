@@ -11,6 +11,7 @@ import { getDiffEditorActionsProvider } from './backend/tools/file/DiffEditorAct
 import { getDiffInlineProvider, DiffInlineProvider } from './backend/tools/file/DiffInlineProvider';
 import { getDiffManager } from './backend/tools/file/diffManager';
 import { getSelectionContextProvider, SelectionContextProvider, type SelectionContextCommandArgs } from './backend/tools/file/SelectionContextProvider';
+import { initializeProductMetadata } from './backend/core/productMetadata';
 
 // 保存 ChatViewProvider 实例以便在停用时清理
 let chatViewProvider: ChatViewProvider | undefined;
@@ -23,6 +24,11 @@ let diffInlineDisposable: vscode.Disposable | undefined;
 
 export function activate(context: vscode.ExtensionContext) {
     console.log('LimCode extension is now active!');
+
+    // 修改原因：运行时版本号过去散落在多个模块与前端文案中，每次发布都需要手工同步。
+    // 修改方式：扩展激活时从 VS Code ExtensionContext 初始化产品元数据，后续模块通过统一 provider 读取。
+    // 修改目的：让 package.json 成为唯一版本来源，降低 release 漏改风险。
+    initializeProductMetadata(context);
 
     // 初始化日志系统：创建 OutputChannel 让日志同时输出到 VS Code 输出面板
     const outputChannel = vscode.window.createOutputChannel('LimCode');

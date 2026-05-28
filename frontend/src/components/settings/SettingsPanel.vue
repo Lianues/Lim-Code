@@ -66,6 +66,15 @@ const proxySettings = reactive({
 // 语言设置
 const languageSetting = ref<string>('auto')
 
+// 修改原因：设置页版本过去写死在三份 i18n 语言文件里，每次发布都要手工同步。
+// 修改方式：从 getSettings 响应读取后端 appInfo.version，前端只用 i18n 提供本地化标签。
+// 修改目的：让设置页版本自动跟随扩展 package.json，减少 release 机械改动。
+const appVersion = ref('')
+const appVersionLabel = computed(() => {
+  const label = t('components.settings.settingsPanel.appInfo.version')
+  return appVersion.value ? `${label}: ${appVersion.value}` : label
+})
+
 // 是否正在保存
 const isSaving = ref(false)
 // 保存状态消息
@@ -98,6 +107,10 @@ async function loadSettings() {
     if (response?.settings?.ui?.language) {
       languageSetting.value = response.settings.ui.language
       setLanguage(response.settings.ui.language)
+    }
+
+    if (response?.appInfo?.version) {
+      appVersion.value = response.appInfo.version
     }
     
     // 加载存储路径配置
@@ -636,7 +649,7 @@ onMounted(() => {
                 </label>
                 <div class="info-text">
                   <p>{{ t('components.settings.settingsPanel.appInfo.name') }}</p>
-                  <p class="version">{{ t('components.settings.settingsPanel.appInfo.version') }}</p>
+                  <p class="version">{{ appVersionLabel }}</p>
                   <div class="github-links">
                     <a href="https://github.com/Lianues/Lim-Code" target="_blank" class="github-link">
                       <svg class="github-icon" viewBox="0 0 16 16" fill="currentColor">

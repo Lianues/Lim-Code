@@ -4,6 +4,7 @@
 
 // 核心注册系统
 export { ModuleRegistry, globalRegistry } from './core/registry';
+export { initializeProductMetadata, getProductMetadata, getProductVersion } from './core/productMetadata';
 export type {
     ApiParameter,
     ApiDefinition,

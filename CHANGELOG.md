@@ -2,6 +2,17 @@
 
 All notable changes to the "Lim Code" extension will be documented in this file.
 
+## [1.2.4] - 2026-05-28
+
+### 修复（search 工具）
+  - 强化 `search_in_files` 工具说明：`foo|bar`、`ssh.*root`、`38\\.12`、`\\d+`、字符类、分组和锚点等正则查询必须显式设置 `isRegex=true`。
+  - `search_in_files` 非正则零命中时新增 `suspected_regex` 诊断；当 query 看起来像正则但 `isRegex=false` 时，返回检测到的信号和重试建议，但不会自动切换到正则模式。
+  - `history_search` 同步正则触发清单和零命中 `suspected_regex` 诊断，使用 `is_regex=true` 作为显式重试提示。
+  - 保留 `isRegex=false` / `is_regex=false` 的严格字面量语义，避免 Markdown 表格、TypeScript union、Shell 管道等包含 `|` 的普通文本被误当正则 OR。
+
+### 发布整理
+  - 根扩展包、前端包、lockfile、设置页展示版本、内部模块元数据、MCP clientInfo、README 和发布说明统一更新到 `1.2.4`。
+
 ## [1.2.3] - 2026-05-28
 
 ### 修复（apply_diff）

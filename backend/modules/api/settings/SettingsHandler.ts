@@ -10,6 +10,7 @@ import type { ToolRegistry } from '../../../tools/ToolRegistry';
 import { TokenCountService } from '../../channel/TokenCountService';
 import { getPromptManager } from '../../prompt/PromptManager';
 import type { ConversationManager } from '../../conversation/ConversationManager';
+import { getProductMetadata, getProductVersion } from '../../../core/productMetadata';
 import type {
     GetSettingsRequest,
     GetSettingsResponse,
@@ -69,7 +70,11 @@ export class SettingsHandler {
             
             return {
                 success: true,
-                settings
+                settings,
+                // 修改原因：前端设置页原先从 i18n 文案读取硬编码版本号，每次发布都要同步三种语言。
+                // 修改方式：随 getSettings 返回统一产品元数据，前端只组合本地化标签和动态版本值。
+                // 修改目的：让设置页展示版本自动跟随扩展 packageJSON，避免 release 漏改。
+                appInfo: getProductMetadata()
             };
         } catch (error) {
             const err = error as any;
@@ -894,16 +899,10 @@ export class SettingsHandler {
      * 获取当前插件版本
      */
     private getCurrentVersion(): string {
-        try {
-            const vscode = require('vscode');
-            const extension = vscode.extensions.getExtension('Lianues.limcode');
-            if (extension) {
-                return extension.packageJSON.version || '';
-            }
-            return '';
-        } catch {
-            return '';
-        }
+        // 修改原因：公告版本判断和设置页/MCP/module 元数据应该共享同一个版本来源。
+        // 修改方式：改为读取 productMetadata provider，而不是在 SettingsHandler 内重复访问 vscode.extensions。
+        // 修改目的：减少版本读取逻辑副本，避免未来某条路径读到过期或空版本。
+        return getProductVersion();
     }
     
     /**

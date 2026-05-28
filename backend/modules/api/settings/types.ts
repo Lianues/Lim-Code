@@ -95,6 +95,17 @@ export interface GetSettingsSuccessData {
     
     /** 完整的设置数据 */
     settings: GlobalSettings;
+
+    /**
+     * 修改原因：设置页版本展示不应继续写死在三份 i18n 文案里。
+     * 修改方式：getSettings 响应携带由扩展 packageJSON 派生的应用元数据，前端只负责本地化标签。
+     * 修改目的：让设置页显示版本跟随 package.json，减少 release 手工同步点。
+     */
+    appInfo?: {
+        name: string;
+        displayName: string;
+        version: string;
+    };
 }
 
 /**

@@ -748,3 +748,48 @@ export async function ensureParentDir(uriFsPath: string): Promise<void> {
 export function escapeRegExp(str: string): string {
     return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
+
+export interface RegexIntentDetection {
+    suspected: boolean;
+    signals: string[];
+}
+
+export function detectSuspectedRegexIntent(query: string): RegexIntentDetection {
+    // 修改原因：search_in_files 与 history_search 都会遇到模型写出 `foo|bar`、`ssh.*root`、`38\\.12` 但漏传正则开关的情况。
+    // 修改方式：把疑似正则意图检测提升到共享 utils；只返回诊断信号，不自动重跑正则，也不改变 literal 搜索语义。
+    // 修改目的：让两个搜索工具共享同一套安全边界，避免各自维护一份略有差异的启发式规则。
+    const signals: string[] = [];
+
+    if (query.includes('.*')) signals.push('.*');
+    if (query.includes('.+')) signals.push('.+');
+    if (/\\\./.test(query)) signals.push('\\.');
+    if (/\\[dDwWsSbB]/.test(query)) signals.push('\\d/\\w/\\s');
+    if (/\[[^\]\n]+\]/.test(query)) signals.push('[]');
+    if (/\([^()\n]*\|[^()\n]*\)/.test(query)) signals.push('(...) with |');
+    if (/\{\d+(,\d*)?\}/.test(query)) signals.push('{n,m}');
+    if (query.startsWith('^')) signals.push('^');
+    if (query.endsWith('$')) signals.push('$');
+
+    for (let i = 0; i < query.length; i++) {
+        if (query[i] !== '|') continue;
+        const previous = i > 0 ? query[i - 1] : '';
+        const next = i + 1 < query.length ? query[i + 1] : '';
+        if (previous && next && !/\s/.test(previous) && !/\s/.test(next)) {
+            signals.push('|');
+            break;
+        }
+    }
+
+    return {
+        suspected: signals.length > 0,
+        signals: Array.from(new Set(signals))
+    };
+}
+
+export function createSuspectedRegexSuggestion(signals: string[], regexFlagName: string = 'isRegex'): string {
+    // 修改原因：零命中诊断需要直接解释本次搜索为什么没有按正则 OR、通配符或转义点生效。
+    // 修改方式：按调用工具的参数名生成提示；search_in_files 使用 isRegex，history_search 使用 is_regex。
+    // 修改目的：让模型下一轮显式补传正确正则开关，而不是重复同一个字面量查询。
+    const signalText = signals.length > 0 ? signals.join(', ') : 'regex-like syntax';
+    return `Query contains regex-like syntax (${signalText}), but ${regexFlagName}=false, so these characters were searched literally. Retry with ${regexFlagName}=true if this was intended as regex OR/wildcard/escaped-dot search. The tool does not automatically reinterpret literal queries as regex.`;
+}

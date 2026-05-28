@@ -20,6 +20,9 @@ describe('history_search tool description', () => {
         // 怎么测：只断言关键行为提示，不做完整快照，避免文案微调造成脆弱测试。
         // 目的：防止后续维护时重新引入 startLine/endLine 或“search 等于完整读取”的误导。
         expect(description).toContain('search 只返回匹配行号和少量上下文');
+        expect(description).toContain('"ssh.*root"');
+        expect(description).toContain('必须设置 is_regex=true');
+        expect(description).toContain('工具不会自动切换到正则模式');
         expect(description).toContain('mode="read"');
         expect(description).toContain('start_line 和 end_line');
         expect(description).toContain('不要使用 read_file 的 startLine/endLine');
@@ -35,11 +38,42 @@ describe('history_search tool description', () => {
         // 这里同时锁定多关键词兜底说明，因为模型经常用 “关键词 关键词 关键词” 的查询形态。
         expect(queryDescription).toContain('[search 模式，必填]');
         expect(queryDescription).toContain('空格分隔关键词');
+        expect(queryDescription).toContain('".*"');
+        expect(queryDescription).toContain('"\\."');
         expect(queryDescription).toContain('不是完整历史内容');
+        const isRegexDescription = declaration.parameters.properties.is_regex.description;
+        expect(isRegexDescription).toContain('"foo|bar"');
+        expect(isRegexDescription).toContain('false 表示严格字面量搜索');
     });
 });
 
 describe('history_search keyword fallback', () => {
+    it('returns suspected_regex diagnostics for regex-like literal zero-result queries without auto rerunning regex', async () => {
+        const tool = registerHistorySearch();
+        const context = createConversationContext([
+            {
+                role: 'user',
+                parts: [{ text: 'ssh -i .ssh/id_ed25519 root@38.12.23.18' }]
+            }
+        ]);
+
+        const result = await tool.handler(
+            { mode: 'search', query: 'VPS0|38\\.12\\.23|moeblack\\.top|ssh.*root', is_regex: false },
+            context
+        );
+
+        // 为什么测 history_search：它和 search_in_files 一样支持正则，但参数名是 is_regex，容易漏传后静默字面量零命中。
+        // 怎么测：历史中有正则模式可命中的 ssh/root/IP 内容，但 literal 搜索不能命中，只应返回 suspected_regex 诊断。
+        // 目的：确保工具提示模型显式重试 is_regex=true，而不是在后端自动改变搜索语义。
+        expect(result.success).toBe(true);
+        const output = String(result.data);
+        expect(output).toContain('未找到');
+        expect(output).toContain('[suspected_regex]');
+        expect(output).toContain('is_regex=true');
+        expect(output).toContain('.*');
+        expect(output).toContain('\\.');
+    });
+
     it('falls back to individual whitespace-separated keywords when the exact non-regex phrase has no match', async () => {
         const tool = registerHistorySearch();
         const context = createConversationContext([

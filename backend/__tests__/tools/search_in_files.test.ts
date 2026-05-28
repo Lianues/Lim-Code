@@ -44,13 +44,22 @@ describe('search_in_files tool description', () => {
         // 怎么测：只断言关键行为提示，避免完整快照让自然语言微调变得脆弱。
         // 目的：防止后续维护重新丢失“空格兜底、| 只属正则、没有 read 模式”的边界说明。
         expect(description).toContain('空格分隔的多关键词查询会先尝试完整短语');
-        expect(description).toContain('需要使用 "foo|bar" 这类正则 OR 时，请设置 isRegex=true');
+        expect(description).toContain('"ssh.*root"');
+        expect(description).toContain('"38\\.12"');
+        expect(description).toContain('必须设置 isRegex=true');
+        expect(description).toContain('工具不会自动切换到正则模式');
         expect(description).toContain('非正则模式下 "|" 是普通字面字符');
         expect(description).toContain('本工具没有 read 模式，也没有 start_line/end_line 参数');
         expect(description).toContain('需要读取匹配文件时请使用 read_file');
         expect(description).toContain('path 参数只能填写一个文件或一个目录');
         expect(description).toContain('请分别并行调用多次 search_in_files');
         expect(queryDescription).toContain('自动降级为关键词 OR 搜索');
+        expect(queryDescription).toContain('".*"');
+        expect(queryDescription).toContain('"\\."');
+        const isRegexDescription = tool.declaration.parameters.properties.isRegex.description;
+        expect(isRegexDescription).toContain('"foo|bar"');
+        expect(isRegexDescription).toContain('"ssh.*root"');
+        expect(isRegexDescription).toContain('false 表示严格字面量搜索');
         expect(pathDescription).toContain('只能填写一个文件或一个目录');
         expect(pathDescription).toContain('分别并行调用多次 search_in_files');
         // 为什么要测 pattern 文案：模型常把 *.ts 误当递归匹配，导致路径正确但子目录文件漏搜。
@@ -93,7 +102,8 @@ describe('search_in_files whitespace keyword fallback', () => {
         expect((result.data as any).queryFallback).toEqual({
             applied: true,
             originalQuery: 'alphaValue betaValue',
-            keywords: ['alphaValue', 'betaValue']
+            keywords: ['alphaValue', 'betaValue'],
+            reason: 'whitespace_keyword_or'
         });
     });
 
@@ -124,6 +134,37 @@ describe('search_in_files whitespace keyword fallback', () => {
             candidates: ['backend/modules/settings', 'webview/handlers', 'frontend/src/components/settings']
         });
         expect((result.data as any).pathWarning.message).toContain('Run separate parallel search_in_files calls for each path');
+    });
+
+    it('returns suspected_regex diagnostics for regex-like literal zero-result queries without auto rerunning regex', async () => {
+        setupWorkspace({
+            'server.md': 'ssh -i .ssh/id_ed25519 root@38.12.23.18\n'
+        });
+
+        const tool = registerSearchInFiles();
+        const result = await tool.handler({
+            mode: 'search',
+            query: 'VPS0|38\\.12\\.23|moeblack\\.top|ssh.*root',
+            path: '.',
+            pattern: '**/*.md',
+            maxResults: 10
+        });
+
+        // 这个测试锁定“只诊断、不自动改语义”的兜底边界。
+        // 为什么要测：模型常漏传 isRegex=true，但后端如果自动切正则会破坏 isRegex=false 的字面量契约。
+        // 怎么测：文件中存在正则模式可命中的内容，但缺省 literal 搜索仍应返回 0，并只给 suspected_regex 建议。
+        // 目的：让模型下一轮显式传 isRegex=true，同时避免工具静默返回非用户声明语义下的结果。
+        expect(result.success).toBe(true);
+        expect((result.data as any).count).toBe(0);
+        expect((result.data as any).results).toEqual([]);
+        expect((result.data as any).queryFallback).toMatchObject({
+            applied: false,
+            originalQuery: 'VPS0|38\\.12\\.23|moeblack\\.top|ssh.*root',
+            keywords: [],
+            reason: 'suspected_regex'
+        });
+        expect((result.data as any).queryFallback.signals).toEqual(expect.arrayContaining(['|', '\\.', '.*']));
+        expect((result.data as any).queryFallback.suggestion).toContain('Retry with isRegex=true');
     });
 
     it('does not split pipe characters in non-regex search', async () => {

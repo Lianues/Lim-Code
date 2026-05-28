@@ -1791,10 +1791,10 @@ const ja: LanguageMessages = {
                 appInfo: {
                     title: 'アプリケーション情報',
                     name: 'Lim Code - Vibe Coding アシスタント',
-                    // なぜ同期するか：設定画面の表示バージョンが package.json より古く、インストール済みビルドを誤認しやすかったため。
-                    // どう変えるか：1.2.3 の apply_diff インデント許容リリースに合わせて表示文字列も更新する。
-                    // 目的：package メタデータ、リリースノート、設定 UI のバージョンを一致させる。
-                    version: 'バージョン：1.2.3',
+                    // なぜ変えるか：リリース番号を各 i18n ファイルへ直接書くと、公開時に同期漏れが起きやすいため。
+                    // どう変えるか：ここにはローカライズ済みラベルだけを残し、SettingsPanel が backend appInfo.version を結合する。
+                    // 目的：設定画面のバージョン表示を package.json の単一ソースに追従させる。
+                    version: 'バージョン',
                     repository: 'リポジトリ',
                     developer: '開発者'
                 }
