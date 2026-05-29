@@ -292,6 +292,53 @@ What still needs to be done, listed by priority.
 Constraints, preferences, and technical requirements raised by the user (e.g., "do not use third-party libraries", "use TypeScript", etc.).
 
 Output content directly without any prefix.`
+                },
+                contextCommands: {
+                    labels: {
+                        projection: 'Projection',
+                        ledgerEntry: 'Ledger entry',
+                        lossy: 'Lossy',
+                        reversible: 'Reversible',
+                        yes: 'yes',
+                        no: 'no',
+                        nextActions: 'Next actions:'
+                    },
+                    confirmation: {
+                        title: 'Confirm {command}',
+                        description: '{command} will update the current context projection and write a context ledger entry. Original history will not be deleted. Run the confirmed command to proceed: {confirmedCommand}'
+                    },
+                    compact: {
+                        missingConfigTitle: 'Context compact missing config',
+                        missingConfigDescription: 'A model configuration is required to compact context.',
+                        failedTitle: 'Context compact failed',
+                        configNotFoundDescription: 'Model configuration not found: {configId}',
+                        configDisabledDescription: 'Model configuration is disabled: {configId}',
+                        notNeededTitle: 'Context compact not needed',
+                        notNeededDescription: 'Only {rounds} recent round(s) are available after the current projection boundary. Nothing was trimmed.',
+                        unavailableTitle: 'Context compact unavailable',
+                        unavailableNoBoundaryDescription: 'No safe round boundary is available for manual trim.',
+                        completeTitle: 'Context compact complete',
+                        trimmedDescription: 'Trimmed the working context to the latest {keepRecentRounds} rounds. Original history was not deleted.'
+                    },
+                    summarize: {
+                        missingConfigTitle: 'Context command missing config',
+                        missingConfigDescription: 'A model configuration is required to summarize context.',
+                        compactCompleteTitle: 'Context compact complete',
+                        summarizeCompleteTitle: 'Context summarize complete',
+                        summarizedDescription: 'Summarized {count} messages. The operation is lossy and is recorded in the context ledger.',
+                        compactFailedTitle: 'Context compact failed',
+                        summarizeFailedTitle: 'Context summarize failed',
+                        restoreBoundaryMessage: 'A lossy summary projection was created. Original history remains stored, but the summary text is not a verbatim replacement.'
+                    },
+                    status: {
+                        title: 'Context status',
+                        noProjectionDescription: 'No compressed working projection is active. The conversation currently uses full history with {historyLength} messages. Context ledger entries: {ledgerCount}.',
+                        projectionDescription: 'Current projection {projectionId} is {mode}, starts at message index {startIndex}, {lossiness}, and {reversibility}. Context ledger entries: {ledgerCount}.',
+                        lossySummaryData: 'depends on lossy summary data',
+                        losslessTrimmedHistory: 'keeps lossless trimmed history',
+                        reversibleProjection: 'can be restored through recorded projection history',
+                        irreversibleProjection: 'cannot be fully reversed from the working projection alone'
+                    }
                 }
             }
         }
@@ -394,62 +441,9 @@ Output content directly without any prefix.`
         
         skills: {
             description: 'Toggle skills on or off. Skills are user-defined knowledge modules that provide specialized context and instructions. Each parameter is a skill name - set to true to enable, false to disable.',
-            exampleSkill: {
-                description: 'Read before creating a Skill! Learn the correct format, naming rules, and common mistakes.',
-                content: `# Read Before Creating a Skill
-
-## ⚠️ Common Mistakes
-
-1. **name must exactly match the folder name**
-   - If the folder is \\\`my-tool\\\`, the frontmatter must have \\\`name: my-tool\\\`
-   - A mismatch causes the Skill to be silently skipped
-
-2. **name only allows lowercase letters, digits, and hyphens**
-   - ✅ \\\`my-skill-name\\\`, \\\`tool2\\\`
-   - ❌ \\\`My_Skill\\\`, \\\`工具\\\`, \\\`my--skill\\\` (no consecutive hyphens)
-   - Length: 1-64 characters
-
-3. **Frontmatter is required**
-   - The file must start with \\\`---\\\` and contain both \\\`name\\\` and \\\`description\\\` fields
-   - A SKILL.md without frontmatter will be ignored
-
-## Skill File Format
-
-\\\`\\\`\\\`markdown
----
-name: your-skill-name
-description: "Brief description of what this skill does and when to use it"
----
-
-# Your Skill Name
-
-## Instructions
-[Clear, step-by-step guidance for the AI to follow]
-
-## Examples
-[Specific examples of using this skill]
-\\\`\\\`\\\`
-
-## Steps to Create
-
-1. Create a folder in the skills directory (the folder name is the skill name)
-2. Create a \\\`SKILL.md\\\` file inside the folder
-3. Add frontmatter at the top (\\\`name\\\` + \\\`description\\\`)
-4. Write your skill content after the frontmatter
-
-## Skills Directory Locations
-
-- Project-level: \\\`.limcode/skills/\\\` or \\\`.agents/skills/\\\`
-- User-level: \\\`~/.limcode/skills/\\\` or \\\`~/.agents/skills/\\\`
-
-Project-level takes priority. Duplicate skill names only load the highest-priority one.
-
-## How It Works
-
-1. The AI sees the name and description of all enabled Skills in the tool description
-2. When the AI needs one, it calls the \\\`read_skill\\\` tool to read the full content
-3. This on-demand loading saves tokens and lets the AI dynamically choose the right knowledge module`
-            },
+            // Why change: legacy how-to-create-skill auto-generation has been stopped, so the old template would be unused entry text.
+            // How: remove the old template and keep only the Skills tool setting description and errors.
+            // Purpose: move first-Skill onboarding into the read_skill no-skills description without creating legacy files.
             errors: {
                 managerNotInitialized: 'Skills manager not initialized'
             }

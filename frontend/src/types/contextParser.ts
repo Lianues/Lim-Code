@@ -37,7 +37,7 @@ export function parseMessageToNodes(content: string): ParsedMessageNodes {
   }
 
   // 匹配 <lim-context ...>...</lim-context>
-  // 支持属性：type, path, title, language, binary
+  // 支持属性：type, path, title, language, binary，以及扩展 attributes
   const contextRegex = /<lim-context\s+([^>]*)>([\s\S]*?)<\/lim-context>/gi
 
   let match: RegExpExecArray | null
@@ -54,14 +54,22 @@ export function parseMessageToNodes(content: string): ParsedMessageNodes {
     const innerContent = match[2]
     const attrs = parseAttributes(attrsStr)
 
+    const extraAttrs: Record<string, string> = {}
+    for (const [key, value] of Object.entries(attrs)) {
+      if (!['type', 'path', 'title', 'language', 'binary'].includes(key)) {
+        extraAttrs[key] = value
+      }
+    }
+
     const contextItem: PromptContextItem = {
       id: `parsed-${idCounter++}`,
       type: (attrs.type as PromptContextItem['type']) || 'text',
       title: attrs.title || attrs.path || 'Context',
-      content: attrs.binary === 'true' ? '' : (innerContent || '').trim(),
+      content: attrs.binary === 'true' ? '' : decodeXmlEntities((innerContent || '').trim()),
       filePath: attrs.path,
       language: attrs.language,
       isTextContent: attrs.binary === 'true' ? false : true,
+      attributes: Object.keys(extraAttrs).length > 0 ? extraAttrs : undefined,
       enabled: true,
       addedAt: Date.now()
     }
@@ -107,15 +115,24 @@ export function parseMessageContexts(content: string): ParsedMessageContent {
 function parseAttributes(attrsStr: string): Record<string, string> {
   const attrs: Record<string, string> = {}
 
-  // 匹配 key="value" 或 key='value'
-  const attrRegex = /(\w+)=["']([^"']*)["']/g
+  // 匹配 key="value" 或 key='value'；key 支持 skill-id 这类连字符属性
+  const attrRegex = /([A-Za-z_][A-Za-z0-9_.:-]*)=["']([^"']*)["']/g
   let match: RegExpExecArray | null
 
   while ((match = attrRegex.exec(attrsStr)) !== null) {
-    attrs[match[1]] = match[2]
+    attrs[match[1]] = decodeXmlEntities(match[2])
   }
 
   return attrs
+}
+
+function decodeXmlEntities(value: string): string {
+  return value
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
 }
 
 /**

@@ -292,6 +292,53 @@ const ja: BackendLanguageMessages = {
 ユーザーが提示した制約、好み、技術的要件（例：「サードパーティライブラリを使用しない」、「TypeScriptを使用」など）。
 
 プレフィックスなしで直接内容を出力してください。`
+                },
+                contextCommands: {
+                    labels: {
+                        projection: 'プロジェクション',
+                        ledgerEntry: '台帳エントリ',
+                        lossy: '非可逆',
+                        reversible: '復元可能',
+                        yes: 'はい',
+                        no: 'いいえ',
+                        nextActions: '次の操作:'
+                    },
+                    confirmation: {
+                        title: '{command} を確認',
+                        description: '{command} は現在のコンテキストプロジェクションを更新し、コンテキスト台帳エントリを書き込みます。元の履歴は削除されません。続行するには確認済みコマンドを実行してください: {confirmedCommand}'
+                    },
+                    compact: {
+                        missingConfigTitle: 'コンテキスト圧縮に設定がありません',
+                        missingConfigDescription: 'コンテキストを圧縮するにはモデル設定が必要です。',
+                        failedTitle: 'コンテキスト圧縮に失敗しました',
+                        configNotFoundDescription: 'モデル設定が見つかりません: {configId}',
+                        configDisabledDescription: 'モデル設定が無効です: {configId}',
+                        notNeededTitle: 'コンテキスト圧縮は不要です',
+                        notNeededDescription: '現在のプロジェクション境界の後には最近の {rounds} ラウンドしかありません。トリミングされませんでした。',
+                        unavailableTitle: 'コンテキスト圧縮は利用できません',
+                        unavailableNoBoundaryDescription: '手動トリミングに使える安全なラウンド境界がありません。',
+                        completeTitle: 'コンテキスト圧縮が完了しました',
+                        trimmedDescription: '作業コンテキストを最新 {keepRecentRounds} ラウンドにトリミングしました。元の履歴は削除されていません。'
+                    },
+                    summarize: {
+                        missingConfigTitle: 'コンテキストコマンドに設定がありません',
+                        missingConfigDescription: 'コンテキストを要約するにはモデル設定が必要です。',
+                        compactCompleteTitle: 'コンテキスト圧縮が完了しました',
+                        summarizeCompleteTitle: 'コンテキスト要約が完了しました',
+                        summarizedDescription: '{count} 件のメッセージを要約しました。この操作は非可逆で、コンテキスト台帳に記録されました。',
+                        compactFailedTitle: 'コンテキスト圧縮に失敗しました',
+                        summarizeFailedTitle: 'コンテキスト要約に失敗しました',
+                        restoreBoundaryMessage: '非可逆な要約プロジェクションが作成されました。元の履歴は保持されていますが、要約テキストは原文の完全な置換ではありません。'
+                    },
+                    status: {
+                        title: 'コンテキスト状態',
+                        noProjectionDescription: '圧縮された作業プロジェクションは有効ではありません。この会話は現在、{historyLength} 件のメッセージを含む完全履歴を使用しています。コンテキスト台帳エントリ数: {ledgerCount}。',
+                        projectionDescription: '現在のプロジェクション {projectionId} は {mode} で、メッセージインデックス {startIndex} から開始し、{lossiness}、かつ{reversibility}。コンテキスト台帳エントリ数: {ledgerCount}。',
+                        lossySummaryData: '非可逆な要約データに依存しています',
+                        losslessTrimmedHistory: '可逆なトリミング履歴を保持しています',
+                        reversibleProjection: '記録済みのプロジェクション履歴から復元できます',
+                        irreversibleProjection: '作業プロジェクションだけでは完全には復元できません'
+                    }
                 }
             }
         }
@@ -394,62 +441,9 @@ const ja: BackendLanguageMessages = {
         
         skills: {
             description: 'Skills のオン/オフを切り替えます。Skills はユーザー定義のナレッジモジュールで、専門的なコンテキストと指示を提供します。各パラメータは skill 名です - true で有効、false で無効にします。',
-            exampleSkill: {
-                description: 'Skill 作成前に必読！正しい形式、命名規則、よくある間違いについて。',
-                content: `# Skill 作成前に必読
-
-## ⚠️ よくある間違い
-
-1. **name はフォルダ名と完全に一致する必要があります**
-   - フォルダ名が \\\`my-tool\\\` の場合、frontmatter には \\\`name: my-tool\\\` と書く必要があります
-   - 不一致の場合、Skill はサイレントにスキップされ、パネルに表示されません
-
-2. **name に使用できるのは小文字、数字、ハイフンのみ**
-   - ✅ \\\`my-skill-name\\\`、\\\`tool2\\\`
-   - ❌ \\\`My_Skill\\\`、\\\`ツール\\\`、\\\`my--skill\\\`（連続ハイフン不可）
-   - 長さ：1〜64 文字
-
-3. **frontmatter は必須です**
-   - ファイルは \\\`---\\\` で始まり、\\\`name\\\` と \\\`description\\\` の両フィールドが必要です
-   - frontmatter のない SKILL.md は無視されます
-
-## Skill ファイル形式
-
-\\\`\\\`\\\`markdown
----
-name: your-skill-name
-description: "このスキルの機能と使用場面の簡単な説明"
----
-
-# スキル名
-
-## 手順
-[AI に対する明確なステップバイステップの指示]
-
-## 例
-[このスキルの具体的な使用例]
-\\\`\\\`\\\`
-
-## 作成手順
-
-1. skills ディレクトリにフォルダを作成（フォルダ名がスキル名）
-2. フォルダ内に \\\`SKILL.md\\\` ファイルを作成
-3. ファイル先頭に frontmatter を記述（\\\`name\\\` + \\\`description\\\`）
-4. frontmatter の後にスキル内容を記述
-
-## Skills ディレクトリの場所
-
-- プロジェクトレベル：\\\`.limcode/skills/\\\` または \\\`.agents/skills/\\\`
-- ユーザーレベル：\\\`~/.limcode/skills/\\\` または \\\`~/.agents/skills/\\\`
-
-プロジェクトレベルが優先されます。同名の Skill は優先度が最も高いもののみ読み込まれます。
-
-## 仕組み
-
-1. AI はツール説明で有効な全 Skill の名前と説明を確認できます
-2. AI が必要と判断すると \\\`read_skill\\\` ツールで全文を読み込みます
-3. このオンデマンド読み込みにより token を節約し、タスクに応じて最適なナレッジモジュールを動的に選択できます`
-            },
+            // 変更理由: legacy how-to-create-skill の自動生成を停止したため、旧テンプレートは未使用の入口文言になる。
+            // 変更方法: 旧テンプレートを削除し、Skills ツール自体の設定説明とエラー文言だけを残す。
+            // 目的: 最初の Skill 作成案内を read_skill の no-skills 説明へ移し、legacy ファイルを自動生成しないようにする。
             errors: {
                 managerNotInitialized: 'Skills マネージャーが初期化されていません'
             }

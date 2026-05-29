@@ -251,8 +251,11 @@ export function createChatState(): ChatStoreState {
   /** 重试状态 */
   const retryStatus = ref<RetryStatus | null>(null)
 
-  /** 自动总结状态（用于显示“自动总结中”提示） */
+  /** 自动总结/手动压缩状态（用于显示“自动总结中”提示） */
   const autoSummaryStatus = ref<AutoSummaryStatus | null>(null)
+
+  /** 手动 compact/summarize 后的即时上下文用量覆盖值，用于在下一次 provider usage 返回前刷新环状指示灯 */
+  const contextUsageOverride = ref<{ conversationId: string; usedTokens: number; updatedAt: number } | null>(null)
   
   /** 当前对话的检查点列表 */
   const checkpoints = ref<CheckpointRecord[]>([])
@@ -338,6 +341,7 @@ export function createChatState(): ChatStoreState {
     isWaitingForResponse,
     retryStatus,
     autoSummaryStatus,
+    contextUsageOverride,
     checkpoints,
     mergeUnchangedCheckpoints,
     deletingConversationIds,

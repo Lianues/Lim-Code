@@ -177,8 +177,10 @@ export interface ChatStoreState {
   isWaitingForResponse: Ref<boolean>
   /** 重试状态 */
   retryStatus: Ref<RetryStatus | null>
-  /** 自动总结状态（用于显示“自动总结中”提示） */
+  /** 自动总结/手动压缩状态（用于显示“自动总结中”提示） */
   autoSummaryStatus: Ref<AutoSummaryStatus | null>
+  /** 手动 compact/summarize 后的即时上下文用量覆盖值，用于在下一次 provider usage 返回前刷新环状指示灯 */
+  contextUsageOverride: Ref<{ conversationId: string; usedTokens: number; updatedAt: number } | null>
   /** 当前对话的检查点列表 */
   checkpoints: Ref<CheckpointRecord[]>
   /** 存档点配置：是否合并无变更的存档点 */

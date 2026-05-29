@@ -21,6 +21,7 @@ import {
   handleComplete,
   handleCheckpoints,
   handleAutoSummaryStatus,
+  handleContextCommand,
   handleAutoSummary,
   handleCancelled,
   handleError
@@ -134,6 +135,10 @@ export function handleStreamChunk(
     case 'autoSummary':
       handleAutoSummary(chunk, state)
       break
+
+    case 'contextCommand':
+      handleContextCommand(chunk, state)
+      break
       
     case 'cancelled':
       handleCancelled(chunk, state)
@@ -178,7 +183,7 @@ export function handleStreamChunkBatch(
   // error/cancelled 不在此列，因为它们不携带替代内容，
   // 其处理器依赖消息已有的内容来决定是否删除消息——
   // 如果跳过前面的 chunk，消息会被误判为空并删除，导致内容闪现后消失。
-  const TERMINAL_TYPES = new Set(['complete', 'toolsExecuting', 'toolIteration', 'awaitingConfirmation'])
+  const TERMINAL_TYPES = new Set(['complete', 'toolsExecuting', 'toolIteration', 'awaitingConfirmation', 'contextCommand'])
   let lastTerminalIndex = -1
   for (let k = chunks.length - 1; k >= 0; k--) {
     const candidate = chunks[k]

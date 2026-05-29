@@ -29,6 +29,9 @@ import type { BaseChannelConfig, ModelInfo } from '../../../config/configs/base'
 import type { ConversationRound, ContextTrimInfo } from '../utils';
 import type { TokenEstimationService } from './TokenEstimationService';
 import type { MessageBuilderService } from './MessageBuilderService';
+import { ContextProjectionStore } from './ContextProjectionStore';
+import { ContextLedgerService } from './ContextLedgerService';
+import type { ContextProjection } from '../../../conversation/contextTypes';
 
 import { Logger } from '../../../../core/logger';
 import { validateHistoryIntegrity } from '../../../channel/HistoryIntegrityValidator';
@@ -144,24 +147,89 @@ export class ContextTrimService {
      * 保存裁剪状态到持久化存储
      */
     private async saveTrimState(conversationId: string, state: PersistedTrimState): Promise<void> {
-     await this.conversationManager.setCustomMetadata(conversationId, TRIM_STATE_KEY, state);
+        await this.conversationManager.setCustomMetadata(conversationId, TRIM_STATE_KEY, state);
+        await this.recordAutoTrimProjection(conversationId, state.trimStartIndex);
+    }
+
+    private async getCurrentProjection(conversationId: string): Promise<ContextProjection | undefined> {
+        const getMetadataRepository = (this.conversationManager as any).getMetadataRepository;
+        if (typeof getMetadataRepository !== 'function') return undefined;
+        const repository = getMetadataRepository.call(this.conversationManager);
+        const projectionStore = new ContextProjectionStore(repository);
+        return await projectionStore.getCurrentProjection(conversationId);
+    }
+
+    private resolveProjectionStartIndex(projection: ContextProjection | undefined, fullHistory: Content[]): number | undefined {
+        if (!projection) return undefined;
+        // 修改原因：手动 compact 创建的 current projection 必须成为下一轮 prompt assembly 的优先边界，即使自动上下文管理关闭。
+        // 修改方式：在 ContextTrimService 入口把 current projection 转成 startIndex；full projection 明确回到 0，其他 projection 使用持久化边界。
+        // 修改目的：让 ContextProjection 不只是 UI 状态，而是真正影响发给模型的工作上下文。
+        if (projection.mode === 'full') return 0;
+        if (fullHistory.length === 0) return 0;
+        return Math.min(Math.max(0, Math.floor(projection.startIndex)), Math.max(0, fullHistory.length - 1));
+    }
+
+    private async recordAutoTrimProjection(conversationId: string, trimStartIndex: number): Promise<void> {
+        const getMetadataRepository = (this.conversationManager as any).getMetadataRepository;
+        if (typeof getMetadataRepository !== 'function') return;
+        /**
+         * 修改原因：自动 trim 过去只写 legacy trimState，P1 要求所有自动上下文变化都进入 ledger/projection。
+         * 修改方式：在保存 trimState 的兼容路径旁边，通过 typed metadata repository 写 auto_trim ledger 和 trimmed projection。
+         * 修改目的：旧调用方继续能读 trimState，新上下文状态以 ContextProjection/ContextLedger 为 source of truth。
+         */
+        const repository = getMetadataRepository.call(this.conversationManager);
+        const projectionStore = new ContextProjectionStore(repository);
+        const ledgerService = new ContextLedgerService(repository);
+        const current = await projectionStore.getCurrentProjection(conversationId);
+        const ledger = await ledgerService.beginOperation({
+            conversationId,
+            operation: 'auto_trim',
+            actor: 'system',
+            reason: `Automatic context trim to start index ${trimStartIndex}`,
+            beforeProjectionId: current?.projectionId,
+            range: { startIndex: 0, endIndexExclusive: trimStartIndex },
+            reversible: true,
+            lossy: false
+        });
+        try {
+            const projection = await projectionStore.createProjection({
+                conversationId,
+                mode: 'trimmed',
+                startIndex: trimStartIndex,
+                cause: 'auto_trim',
+                predecessorId: current?.projectionId,
+                sourceLedgerEntryId: ledger.ledgerEntryId,
+                reversible: true,
+                lossy: false,
+                restoreBoundary: {
+                    kind: 'full_history',
+                    message: 'Automatic trim changed only the working projection; immutable history remains available.'
+                }
+            });
+            await ledgerService.markSuccess(conversationId, ledger.ledgerEntryId, { afterProjectionId: projection.projectionId });
+        } catch (error) {
+            await ledgerService.markFailed(
+                conversationId,
+                ledger.ledgerEntryId,
+                { code: 'AUTO_TRIM_LEDGER_FAILED', message: error instanceof Error ? error.message : String(error) },
+                'Legacy trimState was written, but projection/ledger recording failed.'
+            );
+        }
     }
     
     /**
-     * 清除指定会话的裁剪状态
-     * 
-     * 在以下情况下应调用：
-     * - 删除消息
-     * - 回退到检查点
-     * - 编辑消息
-     * 
+     * 仅清除 legacy trimState，不清除 ContextProjection。
+     *
+     * 结构性历史变更（删除、插入、回档、清空）必须走 ConversationManager.invalidateContextManagementState，
+     * 因为那些场景需要同时清理 projection，避免 stale startIndex 影响 prompt assembly。
+     *
      * @param conversationId 会话 ID
      */
     async clearTrimState(conversationId: string): Promise<void> {
-        // 修改原因：裁剪状态失效已经提升为 ConversationManager 的统一派生状态语义，ContextTrimService 不应继续直接写 metadata key。
-        // 修改方式：委托 invalidateContextManagementState，并保留 clearTrimState 作为旧调用方的兼容入口。
-        // 修改目的：让所有上下文状态清理都经过同一抽象，避免后续再次出现多处同义清理实现。
-        await this.conversationManager.invalidateContextManagementState(conversationId, 'context_trim_service_clear');
+        // 修改原因：clearTrimState 也会在“当前 projection 已足够小、不需要继续自动 trim”的热路径中调用；如果它清掉 contextProjection，会让手动 compact 只生效一次。
+        // 修改方式：这里仅清 legacy trimState；只有 ConversationManager 的结构性历史变更入口才清理 projection。
+        // 修改目的：保留手动 compact/summarize 产生的 current projection，同时避免旧 trimState 干扰后续计算。
+        await this.conversationManager.setCustomMetadata(conversationId, TRIM_STATE_KEY, null);
     }
 
     private logDebug(message: string, details?: Record<string, unknown>): void {
@@ -583,36 +651,42 @@ export class ContextTrimService {
             return { history: [], trimStartIndex: 0 };
         }
         
+        // 查找最后一个总结消息，并优先使用 current projection 作为工作上下文边界。
+        const lastSummaryIndex = this.findLastSummaryIndex(fullHistory);
+        const currentProjection = await this.getCurrentProjection(conversationId);
+        const projectionStartIndex = this.resolveProjectionStartIndex(currentProjection, fullHistory);
+        const summaryStartIndex = projectionStartIndex ?? (lastSummaryIndex >= 0 ? lastSummaryIndex : 0);
+
         const policy = this.resolveContextManagementPolicy(config);
         if (!policy.enabled) {
-            // 修改原因：关闭上下文管理时，旧逻辑仍会从最后一个 summary 开始截断历史，并提前读取 trimState / 计算 token。
-            // 修改方式：在任何 summary 边界、trimState、token 计数之前直接从 0 获取 API 历史。
-            // 修改目的：确保 provider 设置显式关闭后不会自动裁剪、自动总结，也不会把历史 summary 当成隐藏裁剪边界。
+            // 修改原因：自动上下文管理关闭时，用户手动 compact 产生的 projection 仍应生效；旧逻辑一律从 0 取完整历史导致“压缩成功但用不上”。
+            // 修改方式：关闭自动管理时不做自动裁剪/总结，但若存在 current projection，就从 projection 边界读取 API 历史。
+            // 修改目的：区分“自动管理关闭”和“手动工作上下文 projection 失效”，让手动压缩不污染主上下文也能生效。
             const history = await this.conversationManager.getHistoryForAPI(conversationId, {
                 ...historyOptions,
-                startIndex: 0
+                startIndex: projectionStartIndex ?? 0
             });
-            this.logDebug('trim.disabled', { conversationId, source: policy.source, fullHistoryLength: fullHistory.length });
+            this.logDebug('trim.disabled', {
+                conversationId,
+                source: policy.source,
+                currentProjectionId: currentProjection?.projectionId ?? null,
+                effectiveStartIndex: projectionStartIndex ?? 0,
+                fullHistoryLength: fullHistory.length
+            });
             return {
                 history,
-                trimStartIndex: 0,
+                trimStartIndex: projectionStartIndex ?? 0,
                 contextManagementDecision: {
                     enabled: false,
                     mode: 'off',
                     source: policy.source,
-                    action: 'disabled'
+                    action: currentProjection ? 'projection_reused' : 'disabled'
                 }
             };
         }
 
         // 获取当前渠道类型（gemini, openai, anthropic, custom）
         const channelType = config.type || 'custom';
-        
-        // 查找最后一个总结消息
-        const lastSummaryIndex = this.findLastSummaryIndex(fullHistory);
-        
-        // 基础起始索引（只考虑 summary）
-        const summaryStartIndex = lastSummaryIndex >= 0 ? lastSummaryIndex : 0;
         
         // 从持久化存储获取裁剪状态
         let savedState = await this.getTrimState(conversationId);
@@ -773,6 +847,8 @@ export class ContextTrimService {
             contextTrimExtraCut: config.contextTrimExtraCut ?? 0,
             summaryStartIndex,
             savedTrimStartIndex: savedState?.trimStartIndex ?? null,
+            currentProjectionId: currentProjection?.projectionId ?? null,
+            projectionStartIndex: projectionStartIndex ?? null,
             fullHistoryLength: fullHistory.length
         });
 

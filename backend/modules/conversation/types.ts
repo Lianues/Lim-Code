@@ -602,6 +602,15 @@ export interface ConversationMetadata {
     createdAt: number;
     /** 最后更新时间 */
     updatedAt: number;
+
+    /**
+     * Metadata schema version.
+     *
+     * 修改原因：P1 中央事实源需要区分 legacy metadata 和已经迁移到 typed metadata repository 的会话。
+     * 修改方式：在 metadata root 增加可选 schemaVersion，新会话写当前版本，旧会话由仓储惰性补齐。
+     * 修改目的：让 context projection、ledger、MonitorWindowState 和 SubAgentRunRecord 的迁移/只读降级判断有统一依据。
+     */
+    schemaVersion?: number;
     
     /**
      * 工作区 URI

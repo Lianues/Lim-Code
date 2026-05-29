@@ -18,6 +18,7 @@ import { PromptManager } from '../../prompt';
 import { StreamAccumulator } from '../../channel/StreamAccumulator';
 import { TokenCountService, type TokenCountResult } from '../../channel/TokenCountService';
 import type { Content, ContentPart, ChannelTokenCounts } from '../../conversation/types';
+import type { UiStatusPayload } from '../../conversation/contextTypes';
 import type { GetHistoryOptions } from '../../conversation/ConversationManager';
 import type { BaseChannelConfig } from '../../config/configs/base';
 import type { StreamChunk, GenerateResponse } from '../../channel/types';
@@ -38,6 +39,7 @@ import type {
     ChatStreamToolStatusData,
     ChatStreamAutoSummaryData,
     ChatStreamAutoSummaryStatusData,
+    ChatStreamContextCommandData,
     ToolConfirmationResponseData,
     PendingToolCall,
     RetryRequestData,
@@ -56,7 +58,7 @@ import {
     type ContextTrimInfo,
     type FunctionCallInfo
 } from './utils';
-import { ToolCallParserService, MessageBuilderService, TokenEstimationService, ContextTrimService, ToolExecutionService, SummarizeService, ToolIterationLoopService, CheckpointService, OrphanedToolCallService, DiffInterruptService, ChatFlowService } from './services';
+import { ToolCallParserService, MessageBuilderService, TokenEstimationService, ContextTrimService, ToolExecutionService, SummarizeService, ToolIterationLoopService, CheckpointService, OrphanedToolCallService, DiffInterruptService, ChatFlowService, ContextProjectionStore, ContextLedgerService, ContextStatusService, ContextOperationService, ContextCommandRegistry } from './services';
 import { StreamResponseProcessor, isAsyncGenerator } from './handlers';
 
 /** 默认最大工具调用循环次数（当设置管理器不可用时使用） */
@@ -91,6 +93,11 @@ export class ChatHandler {
     private checkpointService: CheckpointService;
     private orphanedToolCallService: OrphanedToolCallService;
     private diffInterruptService: DiffInterruptService;
+    private contextProjectionStore: ContextProjectionStore;
+    private contextLedgerService: ContextLedgerService;
+    private contextStatusService: ContextStatusService;
+    private contextOperationService: ContextOperationService;
+    private contextCommandRegistry: ContextCommandRegistry;
     private chatFlowService: ChatFlowService;
     
     constructor(
@@ -130,6 +137,24 @@ export class ChatHandler {
             this.conversationManager,
             this.contextTrimService
         );
+        const metadataRepository = this.conversationManager.getMetadataRepository();
+        this.contextProjectionStore = new ContextProjectionStore(metadataRepository);
+        this.contextLedgerService = new ContextLedgerService(metadataRepository);
+        this.contextStatusService = new ContextStatusService(
+            this.conversationManager,
+            this.contextProjectionStore,
+            this.contextLedgerService
+        );
+        this.contextOperationService = new ContextOperationService(
+            this.conversationManager,
+            this.configManager,
+            this.summarizeService,
+            this.contextTrimService,
+            this.contextProjectionStore,
+            this.contextLedgerService,
+            this.contextStatusService
+        );
+        this.contextCommandRegistry = new ContextCommandRegistry(this.contextOperationService);
         this.toolIterationLoopService = new ToolIterationLoopService(
             this.channelManager,
             this.conversationManager,
@@ -157,7 +182,8 @@ export class ChatHandler {
             this.diffInterruptService,
             this.orphanedToolCallService,
             this.toolExecutionService,
-            this.toolCallParserService
+            this.toolCallParserService,
+            this.contextCommandRegistry
         );
         // 设置 PromptManager 到 ToolIterationLoopService
         this.toolIterationLoopService.setPromptManager(this.promptManager);
@@ -165,6 +191,13 @@ export class ChatHandler {
         this.toolIterationLoopService.setSummarizeService(this.summarizeService);
         // 设置 TokenEstimationService 到 SummarizeService（用于估算待总结消息的 token 数）
         this.summarizeService.setTokenEstimationService(this.tokenEstimationService);
+    }
+    
+    async getContextStatus(conversationId: string) {
+        // 修改原因：`/context-status` 的产品形态应是前端诊断窗口读取后端状态，而不是走 chatStream 或模型对话路径。
+        // 修改方式：ChatHandler 暴露只读状态查询，webview handler 可直接调用 ContextStatusService；不写入历史、不创建 checkpoint、不调用 LLM。
+        // 修改目的：让上下文状态窗口成为纯观察入口，避免影响主对话上下文和流式状态。
+        return await this.contextStatusService.getStatus(conversationId);
     }
     
     /**
@@ -227,7 +260,8 @@ export class ChatHandler {
             this.diffInterruptService,
             this.orphanedToolCallService,
             this.toolExecutionService,
-            this.toolCallParserService
+            this.toolCallParserService,
+            this.contextCommandRegistry
         );
     }
     
@@ -337,6 +371,7 @@ export class ChatHandler {
         | ChatStreamToolStatusData
         | ChatStreamAutoSummaryData
         | ChatStreamAutoSummaryStatusData
+        | ChatStreamContextCommandData
     > {
         try {
             for await (const chunk of this.chatFlowService.handleChatStream(request)) {
@@ -425,8 +460,30 @@ export class ChatHandler {
      */
     async handleSummarizeContext(
         request: SummarizeContextRequestData
-    ): Promise<SummarizeContextSuccessData | SummarizeContextErrorData> {
-        return this.summarizeService.handleSummarizeContext(request);
+    ): Promise<UiStatusPayload> {
+        // 修改原因：旧 summarizeContext webview 入口直连 SummarizeService，只插入 summary 消息而不写 ledger/projection，和 slash /summarize 语义割裂。
+        // 修改方式：保留旧方法名兼容 handler，但内部统一走 ContextOperationService.summarize。
+        // 修改目的：任何用户可见的手动总结入口都产生同一套 ledger/projection，并能被下一轮 prompt assembly 使用。
+        return await this.contextOperationService.summarize({
+            conversationId: request.conversationId,
+            configId: request.configId,
+            actor: 'user',
+            command: '/summarize',
+            abortSignal: request.abortSignal
+        });
+    }
+
+    async handleCompactContext(request: { conversationId: string; configId: string; abortSignal?: AbortSignal }) {
+        // 修改原因：主界面压缩按钮需要与 slash `/compact` 共享同一套 ContextOperationService 语义，而不是绕过 ledger/projection 直接调用 SummarizeService。
+        // 修改方式：ChatHandler 暴露普通 request/response 入口，内部调用 compact by policy。
+        // 修改目的：让主按钮、slash compact 和后续状态刷新都基于同一份 projection/ledger 事实源。
+        return await this.contextOperationService.compact({
+            conversationId: request.conversationId,
+            configId: request.configId,
+            actor: 'user',
+            command: '/compact',
+            abortSignal: request.abortSignal
+        });
     }
     
 /**

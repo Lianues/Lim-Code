@@ -239,6 +239,12 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         await createSkillsManager({
             workspacePath: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
             globalStoragePath: this.storagePathManager.getEffectiveDataPath(),
+            // 为什么要改：using-subagents、write-a-skill 以及未来内置 Skill 都应作为通用 builtin 来源进入现有 Skill 系统。
+            // 怎么改：由 VS Code 宿主把扩展安装目录下的 resources/skills 路径传给 SkillsManager，而不是在 loader 里硬编码插件路径。
+            // 目的：内置 Skill 复用 read_skill、manifest、启停设置和诊断链路，新增内置 Skill 时无需再改业务逻辑。
+            builtinSkillsPath: typeof this.context.asAbsolutePath === 'function'
+                ? this.context.asAbsolutePath(path.join('resources', 'skills'))
+                : path.join(this.context.extensionPath, 'resources', 'skills'),
         });
         
         // 11.1 从 settingsManager 同步 skills 状态到 SkillsManager

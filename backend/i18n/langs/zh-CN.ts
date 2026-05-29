@@ -292,6 +292,53 @@ const zhCN: BackendLanguageMessages = {
 用户提出的限制、偏好、技术约束等（如"不使用第三方库"、"使用 TypeScript"等）。
 
 直接输出内容，不要添加前缀。`
+                },
+                contextCommands: {
+                    labels: {
+                        projection: '投影',
+                        ledgerEntry: '账本记录',
+                        lossy: '有损',
+                        reversible: '可恢复',
+                        yes: '是',
+                        no: '否',
+                        nextActions: '后续操作：'
+                    },
+                    confirmation: {
+                        title: '确认 {command}',
+                        description: '{command} 会更新当前上下文投影，并写入上下文账本记录。原始历史不会被删除。执行确认命令继续：{confirmedCommand}'
+                    },
+                    compact: {
+                        missingConfigTitle: '压缩上下文缺少配置',
+                        missingConfigDescription: '压缩上下文需要一个模型配置。',
+                        failedTitle: '压缩上下文失败',
+                        configNotFoundDescription: '模型配置不存在：{configId}',
+                        configDisabledDescription: '模型配置已禁用：{configId}',
+                        notNeededTitle: '无需压缩上下文',
+                        notNeededDescription: '当前投影边界之后只有 {rounds} 个最近回合，没有可裁剪的旧回合。',
+                        unavailableTitle: '无法压缩上下文',
+                        unavailableNoBoundaryDescription: '没有可用于手动裁剪的安全回合边界。',
+                        completeTitle: '上下文压缩完成',
+                        trimmedDescription: '工作上下文已裁剪为最近 {keepRecentRounds} 轮。原始历史没有被删除。'
+                    },
+                    summarize: {
+                        missingConfigTitle: '上下文命令缺少配置',
+                        missingConfigDescription: '总结上下文需要一个模型配置。',
+                        compactCompleteTitle: '上下文压缩完成',
+                        summarizeCompleteTitle: '上下文总结完成',
+                        summarizedDescription: '已总结 {count} 条消息。此操作是有损操作，并已记录到上下文账本。',
+                        compactFailedTitle: '上下文压缩失败',
+                        summarizeFailedTitle: '上下文总结失败',
+                        restoreBoundaryMessage: '已创建有损总结投影。原始历史仍然保留，但总结文本不是原文替换。'
+                    },
+                    status: {
+                        title: '上下文状态',
+                        noProjectionDescription: '当前没有已压缩的工作投影。此对话正在使用完整历史，共 {historyLength} 条消息。上下文账本记录数：{ledgerCount}。',
+                        projectionDescription: '当前投影 {projectionId} 为 {mode} 模式，从消息索引 {startIndex} 开始，{lossiness}，且{reversibility}。上下文账本记录数：{ledgerCount}。',
+                        lossySummaryData: '依赖有损总结数据',
+                        losslessTrimmedHistory: '保留无损裁剪历史',
+                        reversibleProjection: '可通过已记录的投影历史恢复',
+                        irreversibleProjection: '无法仅从工作投影完整恢复'
+                    }
                 }
             }
         }
@@ -394,62 +441,9 @@ const zhCN: BackendLanguageMessages = {
         
         skills: {
             description: '开启或关闭 Skills。Skills 是用户自定义的知识模块，提供专业的上下文和指令。每个参数是一个 skill 名称 - 设为 true 启用，false 禁用。',
-            exampleSkill: {
-                description: '创建 Skill 前必读！了解 Skill 的正确格式、命名规则和常见错误。',
-                content: `# 创建 Skill 前必读
-
-## ⚠️ 注意事项（常见错误）
-
-1. **name 必须与文件夹名完全一致**
-   - 文件夹名为 \\\`my-tool\\\`，则 frontmatter 中必须写 \\\`name: my-tool\\\`
-   - 不一致时 Skill 会被静默跳过，不会出现在面板中
-
-2. **name 只允许小写字母、数字、连字符**
-   - ✅ \\\`my-skill-name\\\`、\\\`tool2\\\`
-   - ❌ \\\`My_Skill\\\`、\\\`工具\\\`、\\\`my--skill\\\`（不允许连续连字符）
-   - 长度 1-64 个字符
-
-3. **frontmatter 是必需的**
-   - 文件必须以 \\\`---\\\` 开头，包含 \\\`name\\\` 和 \\\`description\\\` 两个字段
-   - 缺少 frontmatter 的 SKILL.md 会被忽略
-
-## Skill 文件格式
-
-\\\`\\\`\\\`markdown
----
-name: your-skill-name
-description: "简要描述该技能的功能及使用场景"
----
-
-# 你的技能名称
-
-## 指令
-[为 AI 提供清晰、逐步的指导]
-
-## 示例
-[使用此技能的具体例子]
-\\\`\\\`\\\`
-
-## 创建步骤
-
-1. 在 skills 目录中创建文件夹（名称即为 skill name）
-2. 在该文件夹中创建 \\\`SKILL.md\\\` 文件
-3. 在文件开头写 frontmatter（\\\`name\\\` + \\\`description\\\`）
-4. 在 frontmatter 之后写技能内容
-
-## Skills 目录位置
-
-- 项目级：\\\`.limcode/skills/\\\` 或 \\\`.agents/skills/\\\`
-- 用户级：\\\`~/.limcode/skills/\\\` 或 \\\`~/.agents/skills/\\\`
-
-项目级优先级高于用户级。同名 Skill 只加载优先级最高的那个。
-
-## 工作原理
-
-1. AI 在工具描述中可以看到所有已启用 Skill 的名称和描述
-2. 当 AI 判断需要时，会调用 \\\`read_skill\\\` 工具读取 Skill 全文
-3. 这种按需加载机制可以节省 token，让 AI 根据任务动态选择知识模块`
-            },
+            // 为什么要改：legacy how-to-create-skill 已停止自动生成，保留旧模板会变成未使用的旧入口文案。
+            // 怎么改：删除旧模板，只保留 Skills 工具本身的设置描述和错误文案。
+            // 目的：让新手引导转移到 read_skill 无 Skill 描述，避免再次产生自动写入的 legacy Skill。
             errors: {
                 managerNotInitialized: 'Skills 管理器未初始化'
             }

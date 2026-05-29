@@ -57,6 +57,54 @@ export type {
     MessageEdit,
     MessageInsert
 } from './types';
+export {
+    // 修改原因：P1 中央事实源的类型和 runtime guards 必须从 conversation 模块统一暴露，调用方不能深路径复制 schema。
+    // 修改方式：集中 re-export contextTypes 的常量、工厂和守卫。
+    // 修改目的：让后端上下文、SubAgent、Monitor 后续扩展都引用同一 schema。
+    CONVERSATION_METADATA_SCHEMA_VERSION,
+    CONVERSATION_CONTEXT_PROJECTION_KEY,
+    CONVERSATION_CONTEXT_LEDGER_KEY,
+    CONVERSATION_ARTIFACT_REFS_KEY,
+    CONVERSATION_MONITOR_WINDOW_STATE_KEY,
+    CONVERSATION_SUBAGENT_RUNS_KEY,
+    CONVERSATION_CUSTOM_METADATA_KEYS,
+    isConversationCustomMetadataKey,
+    createEmptyContextProjectionDocument,
+    createEmptyContextLedgerDocument,
+    createEmptyArtifactRefDocument,
+    createEmptyMonitorWindowStateDocument,
+    isContextProjectionDocument,
+    isContextLedgerDocument,
+    isArtifactRefDocument,
+    isMonitorWindowStateDocument,
+    getContentStableId
+} from './contextTypes';
+export type {
+    ConversationCustomMetadataKey,
+    ContextOperationKind,
+    ContextOperationStatus,
+    ContextProjectionMode,
+    ContextActor,
+    ContextRestoreBoundary,
+    VerbatimMapEntry,
+    VerbatimMap,
+    ContextProjection,
+    ContextProjectionDocument,
+    ContextLedgerEntry,
+    ContextLedgerDocument,
+    ContextStatusSnapshot,
+    UiStatusPayload,
+    CommandConfirmPayload,
+    ArtifactRef,
+    ArtifactRefDocument,
+    SubAgentOutcome,
+    SubAgentStructuredSummary,
+    SubAgentRunRecord,
+    MonitorWindowState,
+    MonitorWindowStateDocument
+} from './contextTypes';
+export { ConversationMetadataRepository } from './ConversationMetadataRepository';
+export type { ConversationMetadataRepositoryDelegate } from './ConversationMetadataRepository';
 
 // 多模态工具
 export {

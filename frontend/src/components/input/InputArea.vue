@@ -7,6 +7,8 @@
 import { ref, computed, onMounted, watch, nextTick, onBeforeUnmount } from 'vue'
 import InputBox from './InputBox.vue'
 import FilePickerPanel from './FilePickerPanel.vue'
+import SlashCommandPanel from './SlashCommandPanel.vue'
+import ContextStatusDialog from './ContextStatusDialog.vue'
 import SendButton from './SendButton.vue'
 import MessageQueue from './MessageQueue.vue'
 import InputAttachments from './InputAttachments.vue'
@@ -27,6 +29,7 @@ import { resolveWorkspaceItems } from '../../utils/resolveWorkspaceItems'
 import { getFileType } from '../../utils/file'
 import type { Attachment } from '../../types'
 import type { PromptContextItem } from '../../types/promptContext'
+import type { SkillItem } from '../../services/skills'
 import type { EditorNode } from '../../types/editorNode'
 import { createTextNode, getPlainText, getContexts, serializeNodes } from '../../types/editorNode'
 import { useI18n } from '../../i18n'
@@ -167,7 +170,28 @@ const canSend = computed(() => {
   return hasContent && !props.uploading
 })
 
+function isPureContextStatusCommand(): boolean {
+  const plainText = getPlainText(editorNodes.value).trim().toLowerCase()
+  const hasContexts = getContexts(editorNodes.value).length > 0
+  const hasAttachments = (props.attachments?.length || 0) > 0
+  return plainText === '/context-status' && !hasContexts && !hasAttachments
+}
+
+function openContextStatusDialog() {
+  // 修改原因：`/context-status` 应打开纯前端诊断窗口，而不是通过 chatStore.sendMessage 进入 ChatFlow 或模型对话路径。
+  // 修改方式：统一由本地状态控制窗口打开，窗口内部通过 `context.getStatus` 只读接口读取后端快照。
+  // 修改目的：按钮和手输命令都不创建聊天消息、不创建 assistant 占位、不影响主上下文。
+  showContextStatusDialog.value = true
+}
+
 function handleSend() {
+  if (isPureContextStatusCommand()) {
+    openContextStatusDialog()
+    editorNodes.value = []
+    chatStore.clearInputValue()
+    return
+  }
+
   if (!canSend.value) return
 
   const content = serializeNodes(editorNodes.value).trim()
@@ -237,6 +261,10 @@ const showFilePicker = ref(false)
 const filePickerQuery = ref('')
 const inputBoxRef = ref<InstanceType<typeof InputBox> | null>(null)
 const filePickerRef = ref<InstanceType<typeof FilePickerPanel> | null>(null)
+const showSlashPicker = ref(false)
+const slashPickerQuery = ref('')
+const slashPickerRef = ref<InstanceType<typeof SlashCommandPanel> | null>(null)
+const showContextStatusDialog = ref(false)
 
 let unsubscribeAddContext: (() => void) | null = null
 
@@ -255,6 +283,21 @@ function handleCloseAtPicker() {
   inputBoxRef.value?.closeAtPicker()
 }
 
+function handleTriggerSlashPicker(query: string, _triggerPosition: number) {
+  slashPickerQuery.value = query
+  showSlashPicker.value = true
+}
+
+function handleSlashQueryChange(query: string) {
+  slashPickerQuery.value = query
+}
+
+function handleCloseSlashPicker() {
+  showSlashPicker.value = false
+  slashPickerQuery.value = ''
+  inputBoxRef.value?.closeSlashPicker()
+}
+
 function normalizeDirectoryPath(path: string): string {
   const normalized = (path || '').trim().replace(/\\/g, '/').replace(/\/+$/g, '')
   if (!normalized) return ''
@@ -265,6 +308,13 @@ function hasContextWithPath(path: string): boolean {
   const key = (path || '').replace(/\/+$/g, '')
   if (!key) return false
   return getContexts(editorNodes.value).some(item => ((item.filePath || '').replace(/\/+$/g, '') === key))
+}
+
+function hasContextWithSkill(skill: SkillItem): boolean {
+  const skillId = skill.id || skill.name
+  return getContexts(editorNodes.value).some(item =>
+    item.type === 'skill' && ((item.attributes?.['skill-id'] || item.attributes?.skill) === skillId || item.attributes?.skill === skill.name)
+  )
 }
 
 function addDirectoryContextByPath(path: string) {
@@ -392,6 +442,66 @@ function handleAtPickerKeydown(key: string) {
   }
 }
 
+function handleSlashPickerKeydown(key: string) {
+  if (!showSlashPicker.value || !slashPickerRef.value) return
+
+  if (key === 'ArrowUp') {
+    slashPickerRef.value.handleKeydown({ key: 'ArrowUp', preventDefault: () => {}, stopPropagation: () => {} } as KeyboardEvent)
+  } else if (key === 'ArrowDown') {
+    slashPickerRef.value.handleKeydown({ key: 'ArrowDown', preventDefault: () => {}, stopPropagation: () => {} } as KeyboardEvent)
+  } else if (key === 'Enter') {
+    slashPickerRef.value.selectCurrent()
+  }
+}
+
+function handleCompleteSlashCommand(replacement: string) {
+  // 为什么要在父层处理补全：只有 InputArea 同时掌握面板状态和 InputBox 的 DOM 替换能力。
+  // 怎么做：只有 `/skill ` 需要 keepOpen 进入 Skill 查询阶段；其他 context command 补全后关闭面板，等待用户发送或继续编辑参数。
+  // 目的：避免 `/context-status` 等一次性命令补全后面板持续拦截 Enter，导致用户无法直接发送命令。
+  const keepOpen = replacement.trim().toLowerCase().startsWith('/skill')
+  showSlashPicker.value = keepOpen
+  inputBoxRef.value?.replaceSlashTriggerWithText(replacement, { keepOpen })
+  nextTick(() => inputBoxRef.value?.focus())
+}
+
+function handleSelectSkill(skill: SkillItem) {
+  showSlashPicker.value = false
+  slashPickerQuery.value = ''
+  if (hasContextWithSkill(skill)) {
+    inputBoxRef.value?.replaceSlashTriggerWithText('')
+    nextTick(() => inputBoxRef.value?.focus())
+    return
+  }
+
+  inputBoxRef.value?.replaceSlashTriggerWithText('')
+  // 修改原因：旧 `/skill` 引用只提示 read_skill，主 Agent 容易漏读 read_skill 返回的 resources manifest，也容易误以为 SubAgent 会继承主会话已读 Skill。
+  // 修改方式：把 chip 正文改为中文渐进披露说明，明确 read_skill -> 按需 read_skill_resource -> SubAgent 显式传递规则的链路。
+  // 修改目的：让 Skill 引用、Skill 附属资源和 SubAgent 派单共享同一套中文提示词模型，避免多轮审查时丢失中央数据库和资源读取要求。
+  const skillReferenceContent = [
+    `已选择 Skill 引用：“${skill.name}”。`,
+    `这只是 Skill 引用，不是 Skill 正文；不要根据标题或名称推断 Skill 内容。`,
+    `如本任务相关，回答前先调用 read_skill，name 必须是 "${skill.name}"。`,
+    `read_skill 返回 resources manifest 后，只在任务需要时，按 manifest 中的 relativePath 使用 read_skill_resource 读取 textReadable=true 的相关资源；不要无条件读取所有资源。`,
+    `如果要把该 Skill 用于 SubAgent，请把已读取的必要规则写进 SubAgent prompt/context，或明确要求 SubAgent 自己调用 read_skill 并按需调用 read_skill_resource；不要假设 SubAgent 会继承主 Agent 已读过的 Skill。`
+  ].join('\n')
+  const contextItem: PromptContextItem = {
+    id: `skill-${skill.id}-${Date.now()}`,
+    type: 'skill',
+    title: skill.name,
+    content: skillReferenceContent,
+    enabled: true,
+    addedAt: Date.now(),
+    attributes: {
+      skill: skill.name,
+      'skill-id': skill.id
+    }
+  }
+  nextTick(() => {
+    inputBoxRef.value?.insertContextAtCaret(contextItem)
+    inputBoxRef.value?.focus()
+  })
+}
+
 // ========== contexts from editor ==========
 
 function handleRemovePromptContextItem(id: string) {
@@ -467,16 +577,19 @@ async function handleSummarize() {
   if (isSummarizing.value || chatStore.isWaitingForResponse) return
 
   try {
-    const result = await chatStore.summarizeContext()
+    const result = await chatStore.compactContext()
 
     if (!result.success && result.errorCode !== 'ABORTED') {
       await showNotification(
         t('components.input.notifications.summarizeFailed', { error: result.error || t('common.unknownError') }),
         'warning'
       )
-    } else if (result.summarizedMessageCount && result.summarizedMessageCount > 0) {
+    } else if (result.success) {
       await showNotification(
-        t('components.input.notifications.summarizeSuccess', { count: result.summarizedMessageCount }),
+        // 修改原因：compact 成功的兜底通知属于用户可见文案，不能在后端 payload 缺失时退回英文。
+        // 修改方式：优先使用后端已本地化 payload，否则使用输入区现有的“压缩上下文”i18n 文案。
+        // 目的：避免手动 compact 的通知在本地化界面中出现中英混排。
+        result.message || result.title || t('components.input.summarizeContext'),
         'info'
       )
     }
@@ -489,11 +602,28 @@ async function handleSummarize() {
   }
 }
 
+const canRunContextStatus = computed(() => !!chatStore.currentConversationId)
+
+function handleOpenContextStatusEvent() {
+  openContextStatusDialog()
+}
+
+function handleContextStatus() {
+  if (!canRunContextStatus.value) return
+  // 修改原因：用户不应该必须记住 `/context-status`，也不应该担心它会被 AI 当普通提示词处理。
+  // 修改方式：按钮只打开 ContextStatusDialog，由 Dialog 自己通过只读后端接口加载状态；只读诊断允许在模型响应期间打开。
+  // 修改目的：让上下文健康状态成为可发现、可点击的 UI 能力，同时完全避开聊天发送链路。
+  openContextStatusDialog()
+}
+
 const tokenRingColor = computed(() => {
+  // 修改原因：旧 token ring 使用硬编码亮色，在 VS Code 浅色主题下对比度不足。
+  // 修改方式：根据风险阈值返回 VS Code 主题变量，并保留 fallback 色。
+  // 修改目的：让上下文用量入口在深色、浅色和高对比主题中都可读。
   const percent = chatStore.tokenUsagePercent
-  if (percent >= 90) return '#f14c4c'
-  if (percent >= 75) return '#cca700'
-  return '#89d185'
+  if (percent >= 90) return 'var(--vscode-errorForeground, #f14c4c)'
+  if (percent >= 75) return 'var(--vscode-editorWarning-foreground, #cca700)'
+  return 'var(--vscode-charts-green, #388a34)'
 })
 
 const ringRadius = 8
@@ -503,6 +633,11 @@ const ringDashOffset = computed(() => ringCircumference * (1 - chatStore.tokenUs
 // ========== lifecycle ==========
 
 onMounted(() => {
+  // 修改原因：旧 context command 卡片可能提供 `/context-status` next action，但该 action 现在也必须打开本地窗口，不能走 chatStore.sendMessage。
+  // 修改方式：通过一个轻量 window event 连接 MessageItem 和输入区窗口状态，避免把诊断窗口状态塞进聊天消息模型。
+  // 修改目的：所有前端入口都收敛到同一个 ContextStatusDialog，不影响主对话上下文。
+  window.addEventListener('limcode:open-context-status', handleOpenContextStatusEvent)
+
   // Receive context chips pushed from the extension (e.g. editor selection hover/lightbulb).
   unsubscribeAddContext = onExtensionCommand('input.addContext', (payload: any) => {
     const contextItem = payload?.contextItem as PromptContextItem | undefined
@@ -523,6 +658,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
+  window.removeEventListener('limcode:open-context-status', handleOpenContextStatusEvent)
   if (unsubscribeAddContext) unsubscribeAddContext()
 })
 
@@ -554,6 +690,11 @@ watch(() => settingsStore.promptModesVersion, () => {
     <!-- 消息候选区（排队队列） -->
     <MessageQueue />
 
+    <ContextStatusDialog
+      v-model="showContextStatusDialog"
+      :conversation-id="chatStore.currentConversationId"
+    />
+
     <div class="input-box-container">
       <FilePickerPanel
         ref="filePickerRef"
@@ -562,6 +703,15 @@ watch(() => settingsStore.promptModesVersion, () => {
         @select="handleSelectFile"
         @close="handleCloseAtPicker"
         @update:query="(q) => filePickerQuery = q"
+      />
+
+      <SlashCommandPanel
+        ref="slashPickerRef"
+        :visible="showSlashPicker"
+        :query="slashPickerQuery"
+        @select-skill="handleSelectSkill"
+        @complete-command="handleCompleteSlashCommand"
+        @close="handleCloseSlashPicker"
       />
 
       <InputBox
@@ -581,6 +731,10 @@ watch(() => settingsStore.promptModesVersion, () => {
         @close-at-picker="handleCloseAtPicker"
         @at-query-change="handleAtQueryChange"
         @at-picker-keydown="handleAtPickerKeydown"
+        @trigger-slash-picker="handleTriggerSlashPicker"
+        @close-slash-picker="handleCloseSlashPicker"
+        @slash-query-change="handleSlashQueryChange"
+        @slash-picker-keydown="handleSlashPickerKeydown"
       />
     </div>
 
@@ -609,6 +763,16 @@ watch(() => settingsStore.promptModesVersion, () => {
             :loading="isSummarizing"
             class="summarize-button"
             @click="handleSummarize"
+          />
+        </Tooltip>
+
+        <Tooltip content="Context status" placement="top">
+          <IconButton
+            icon="codicon-info"
+            size="small"
+            :disabled="!canRunContextStatus"
+            class="context-status-button"
+            @click="handleContextStatus"
           />
         </Tooltip>
 
@@ -705,7 +869,8 @@ watch(() => settingsStore.promptModesVersion, () => {
   font-size: 17px !important;
 }
 
-.summarize-button :deep(i.codicon) {
+.summarize-button :deep(i.codicon),
+.context-status-button :deep(i.codicon) {
   font-size: 15px !important;
 }
 

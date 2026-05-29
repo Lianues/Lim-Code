@@ -635,6 +635,16 @@ export class ChannelManager {
         const { url, method, headers, body, timeout = 120000 } = options;
         const proxyUrl = this.getProxyUrl();
         
+        if (externalSignal?.aborted) {
+            // 修改原因：已经取消的外部信号不会再触发 addEventListener，不能继续启动请求后把取消吞成正常结束。
+            // 修改方式：进入流式请求前直接抛 CANCELLED_ERROR。
+            // 修改目的：保证代理和非代理路径的外部取消都不会解析或 flush 后续尾部数据。
+            throw new ChannelError(
+                ErrorType.CANCELLED_ERROR,
+                t('modules.channel.errors.requestCancelled')
+            );
+        }
+        
         const controller = new AbortController();
         
         // 使用可重置的超时机制
@@ -650,6 +660,24 @@ export class ChannelManager {
                 isTimedOut = true;
                 controller.abort();
             }, timeout);
+        };
+
+        const throwIfStreamStopped = () => {
+            // 修改原因：parseStreamBuffer 一次可能产出多个 chunks，外部取消可能发生在这些 yield 之间。
+            // 修改方式：把取消/超时检查收敛为局部 helper，所有 parsed chunk yield 前和 final parse 前��调用。
+            // 修改目的：保证取消/超时不会 tail yield，也不会被伪装成正常 stream completion。
+            if (externalSignal?.aborted) {
+                throw new ChannelError(
+                    ErrorType.CANCELLED_ERROR,
+                    t('modules.channel.errors.requestCancelled')
+                );
+            }
+            if (isTimedOut) {
+                throw new ChannelError(
+                    ErrorType.TIMEOUT_ERROR,
+                    t('modules.channel.errors.requestTimeoutNoResponse', { timeout })
+                );
+            }
         };
         
         // 初始化超时
@@ -675,10 +703,7 @@ export class ChannelManager {
                     timeout,
                     signal: controller.signal
                 }, proxyUrl)) {
-                    // 检查是否已取消
-                    if (externalSignal?.aborted) {
-                        break;
-                    }
+                    throwIfStreamStopped();
                     
                     // 收到数据，重置超时计时器
                     resetTimeout();
@@ -692,9 +717,12 @@ export class ChannelManager {
 
                     
                     for (const parsed of result.chunks) {
+                        throwIfStreamStopped();
                         yield parsed;
                     }
                 }
+                
+                throwIfStreamStopped();
                 
                 // 处理剩余的 buffer
                 if (buffer.trim()) {
@@ -702,17 +730,12 @@ export class ChannelManager {
                     parsedChunkCount += result.chunks.length;
 
                     for (const chunk of result.chunks) {
+                        throwIfStreamStopped();
                         yield chunk;
                     }
                 }
                 
-                // 检查是否因超时而结束（proxyStreamFetch 在信号中止时会 break 而非 throw）
-                if (isTimedOut) {
-                    throw new ChannelError(
-                        ErrorType.TIMEOUT_ERROR,
-                        t('modules.channel.errors.requestTimeoutNoResponse', { timeout })
-                    );
-                }
+                throwIfStreamStopped();
             } else {
                 // 原生 fetch 流式请求
                 const response = await fetch(url, {
@@ -765,9 +788,17 @@ export class ChannelManager {
 
                         
                         for (const chunk of result.chunks) {
+                            throwIfStreamStopped();
                             yield chunk;
                         }
                     }
+                    
+                    // 修改原因：流式 TextDecoder 在 { stream: true } 模式下可能持有尾部残留字节，结束时不 flush 会丢失合法尾部字符。
+                    // 修改方式：在最终 SSE buffer 解析前调用 decoder.decode()，只把 decoder 内部已完成的尾部文本追加到字符串 buffer。
+                    // 修改目的：补齐非代理 fetch 路径的 UTF-8 decoder 生命周期，与代理路径的 stateful decoder 修复保持一致。
+                    throwIfStreamStopped();
+                    buffer += decoder.decode();
+                    throwIfStreamStopped();
                     
                     // 处理剩余的 buffer
                     if (buffer.trim()) {
@@ -775,17 +806,12 @@ export class ChannelManager {
                         parsedChunkCount += result.chunks.length;
 
                         for (const chunk of result.chunks) {
+                            throwIfStreamStopped();
                             yield chunk;
                         }
                     }
                     
-                    // 检查是否因超时而结束
-                    if (isTimedOut) {
-                        throw new ChannelError(
-                            ErrorType.TIMEOUT_ERROR,
-                            t('modules.channel.errors.requestTimeoutNoResponse', { timeout })
-                        );
-                    }
+                    throwIfStreamStopped();
                 } finally {
                     reader.releaseLock();
                 }

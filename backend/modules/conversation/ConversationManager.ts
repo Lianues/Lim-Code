@@ -29,6 +29,8 @@ import type { ConversationStorageIntegrity, ConversationStorageLocation, IStorag
 import { cleanFunctionResponseForAPI } from './helpers';
 import { ConversationTranscriptRepository, type ITranscriptRepository } from './TranscriptRepository';
 import { deleteLogicalMessage, truncateFrom } from './TranscriptMutation';
+import { CONVERSATION_CONTEXT_PROJECTION_KEY, CONVERSATION_METADATA_SCHEMA_VERSION } from './contextTypes';
+import { ConversationMetadataRepository } from './ConversationMetadataRepository';
 
 /**
  * 多模态能力（用于过滤历史中的多模态数据）
@@ -106,6 +108,13 @@ export interface GetHistoryOptions {
  * - 无内存缓存，每次操作直接读写存储，确保数据一致性
  */
 export class ConversationManager {
+    /**
+     * 修改原因：P1 中央事实源会让 contextProjection、contextLedger、subAgentRuns 和 monitorWindowState 并发写同一 metadata 文件。
+     * 修改方式：在 ConversationManager 内维护按 conversationId 串行的 metadata 更新队列，让 typed repository 的读改写不会互相覆盖。
+     * 修改目的：先用轻量 per-conversation mutex 承载 P1，不为了当前阶段引入 SQLite、CAS 或重型存储接口变更。
+     */
+    private metadataUpdateQueues: Map<string, Promise<unknown>> = new Map();
+
     constructor(private storage: IStorageAdapter) {}
 
     /**
@@ -119,6 +128,10 @@ export class ConversationManager {
         // 修改目的：实现统一失效机制，同时遵守热路径日志收敛规则，避免长会话删除/回档时制造额外输出。
         void reason;
         await this.setCustomMetadata(conversationId, CONVERSATION_CONTEXT_TRIM_STATE_KEY, null);
+        // 修改原因：ContextProjection 现在会参与下一轮 prompt assembly；历史插入、删除、回档后继续复用旧 projection startIndex 会错误截断上下文。
+        // 修改方式：结构性历史变更统一清理 current projection 文档；后续 compact/summarize/reset 会重新创建合法 projection。
+        // 修改目的：避免 stale projection 成为 prompt source-of-truth 后造成不可见上下文缺失。
+        await this.setCustomMetadata(conversationId, CONVERSATION_CONTEXT_PROJECTION_KEY, null);
     }
 
     private shouldInvalidateContextManagementStateForUpdate(updates: Partial<Content>): boolean {
@@ -202,6 +215,10 @@ export class ConversationManager {
             title: t('modules.conversation.defaultTitle', { conversationId }),
             createdAt,
             updatedAt,
+            // 修改原因：旧会话缺少 root schemaVersion 时，P1 typed metadata repository 无法区分已迁移和 legacy 状态。
+            // 修改方式：所有新建或 fallback metadata 统一写入当前 schemaVersion，旧会话在首次写入时惰性补齐。
+            // 修改目的：让 context projection、ledger 和 Monitor state 的兼容判断有统一入口。
+            schemaVersion: CONVERSATION_METADATA_SCHEMA_VERSION,
             custom: {},
         };
     }
@@ -310,6 +327,10 @@ export class ConversationManager {
             createdAt: now,
             updatedAt: now,
             workspaceUri,
+            // 修改原因：P1 中央事实源需要从创建时就带 root schemaVersion，避免新旧会话状态混杂。
+            // 修改方式：创建会话 metadata 时直接写当前版本，而不是等第一次 context 操作再补。
+            // 修改目的：让后续 ContextStatusService 能可靠报告会话是否已经进入 typed metadata 体系。
+            schemaVersion: CONVERSATION_METADATA_SCHEMA_VERSION,
             custom: {}
         };
 
@@ -1384,10 +1405,17 @@ export class ConversationManager {
                 title,
                 createdAt: Date.now(),
                 updatedAt: Date.now(),
+                // 修改原因：setTitle 可能为只有 history、没有 meta 的 legacy 会话创建 fallback metadata。
+                // 修改方式：fallback metadata 同样写入 schemaVersion，保持所有写路径一致。
+                // 修改目的：避免某些旧会话经过标题修改后仍停留在未标记 schema 状态。
+                schemaVersion: CONVERSATION_METADATA_SCHEMA_VERSION,
                 custom: {}
             };
         } else {
             meta.title = title;
+            if (typeof meta.schemaVersion !== 'number') {
+                meta.schemaVersion = CONVERSATION_METADATA_SCHEMA_VERSION;
+            }
             meta.updatedAt = Date.now();
         }
         await this.storage.saveMetadata(meta);
@@ -1405,10 +1433,17 @@ export class ConversationManager {
                 createdAt: Date.now(),
                 updatedAt: Date.now(),
                 workspaceUri,
+                // 修改原因：setWorkspaceUri 也可能补建 metadata，不能遗漏 P1 schemaVersion。
+                // 修改方式：所有补建 metadata 的路径统一写当前 schemaVersion。
+                // 修改目的：让 typed metadata repository 不需要为每个来源补丁式判断。
+                schemaVersion: CONVERSATION_METADATA_SCHEMA_VERSION,
                 custom: {}
             };
         } else {
             meta.workspaceUri = workspaceUri;
+            if (typeof meta.schemaVersion !== 'number') {
+                meta.schemaVersion = CONVERSATION_METADATA_SCHEMA_VERSION;
+            }
             meta.updatedAt = Date.now();
         }
         await this.storage.saveMetadata(meta);
@@ -1458,6 +1493,60 @@ export class ConversationManager {
         return fallback;
     }
 
+    getMetadataRepository(): ConversationMetadataRepository {
+        /**
+         * 修改原因：P1 新服务不能继续直接使用裸 custom 字典，否则 schemaVersion、白名单和并发写策略会分叉。
+         * 修改方式：ConversationManager 暴露 typed repository 工厂，repository 再回调 updateCustomMetadata 串行更新。
+         * 修改目的：让 ContextProjectionStore、ContextLedgerService 和 SubAgent/Monitor 后续扩展复用同一事实源入口。
+         */
+        return new ConversationMetadataRepository(this);
+    }
+
+    async updateCustomMetadata(
+        conversationId: string,
+        updater: (custom: Record<string, unknown>, metadata: ConversationMetadata) => void | Promise<void>
+    ): Promise<ConversationMetadata> {
+        /**
+         * 修改原因：原 setCustomMetadata 是“load -> 改一个 key -> save”，并发调用会丢失其他 P1 域刚写入的 custom key。
+         * 修改方式：把同一 conversationId 的 metadata 更新串成 promise 队列，并在回调内统一补齐 schemaVersion/custom/updatedAt。
+         * 修改目的：不改变 IStorageAdapter 的前提下，给中央事实源提供原子读改写边界。
+         */
+        const previous = this.metadataUpdateQueues.get(conversationId) || Promise.resolve();
+        let nextMetadata!: ConversationMetadata;
+        const next = previous.catch(() => undefined).then(async () => {
+            let meta = await this.loadMetadataForWrite(conversationId);
+            if (!meta) {
+                meta = {
+                    id: conversationId,
+                    title: t('modules.conversation.defaultTitle', { conversationId }),
+                    createdAt: Date.now(),
+                    updatedAt: Date.now(),
+                    schemaVersion: CONVERSATION_METADATA_SCHEMA_VERSION,
+                    custom: {}
+                };
+            }
+            if (typeof meta.schemaVersion !== 'number') {
+                meta.schemaVersion = CONVERSATION_METADATA_SCHEMA_VERSION;
+            }
+            if (!meta.custom) {
+                meta.custom = {};
+            }
+            await updater(meta.custom, meta);
+            meta.updatedAt = Date.now();
+            await this.storage.saveMetadata(meta);
+            nextMetadata = meta;
+        });
+        this.metadataUpdateQueues.set(conversationId, next);
+        try {
+            await next;
+            return nextMetadata;
+        } finally {
+            if (this.metadataUpdateQueues.get(conversationId) === next) {
+                this.metadataUpdateQueues.delete(conversationId);
+            }
+        }
+    }
+
     /**
      * 设置自定义元数据
      */
@@ -1466,24 +1555,9 @@ export class ConversationManager {
         key: string,
         value: unknown
     ): Promise<void> {
-        let meta = await this.loadMetadataForWrite(conversationId);
-        if (!meta) {
-            meta = {
-                id: conversationId,
-                title: t('modules.conversation.defaultTitle', { conversationId }),
-                createdAt: Date.now(),
-                updatedAt: Date.now(),
-                custom: {}
-            };
-        }
-        
-        if (!meta.custom) {
-            meta.custom = {};
-        }
-        meta.custom[key] = value;
-        meta.updatedAt = Date.now();
-        
-        await this.storage.saveMetadata(meta);
+        await this.updateCustomMetadata(conversationId, custom => {
+            custom[key] = value;
+        });
     }
 
     /**

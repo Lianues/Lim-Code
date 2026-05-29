@@ -39,7 +39,7 @@ export interface ContextTrimInfo {
         enabled: boolean;
         mode: 'off' | 'trim' | 'summarize';
         source: 'explicit' | 'legacy';
-        action: 'disabled' | 'not_needed' | 'saved_state_reused' | 'trim_applied' | 'auto_summarize_needed';
+        action: 'disabled' | 'projection_reused' | 'not_needed' | 'saved_state_reused' | 'trim_applied' | 'auto_summarize_needed';
     };
 }
 

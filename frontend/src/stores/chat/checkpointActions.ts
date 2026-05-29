@@ -4,7 +4,7 @@
  * 包含检查点的 CRUD 和恢复操作
  */
 
-import type { Message, Attachment, CheckpointRecord } from '../../types'
+import type { ContextCommandPayload, Message, Attachment, CheckpointRecord } from '../../types'
 import type { ChatStoreState, AttachmentData } from './types'
 import { sendToExtension } from '../../utils/vscode'
 import { generateId } from '../../utils/format'
@@ -430,6 +430,85 @@ export async function restoreAndEdit(
  *
  * @returns 总结结果
  */
+export async function compactContext(
+  state: ChatStoreState,
+  loadHistory: () => Promise<void>
+): Promise<{
+  success: boolean
+  kind?: ContextCommandPayload['kind']
+  title?: string
+  message?: string
+  tokenAfter?: number
+  errorCode?: string
+  error?: string
+}> {
+  const originConversationId = state.currentConversationId.value
+  if (!originConversationId) {
+    return { success: false, errorCode: 'NO_CONVERSATION', error: 'No conversation selected' }
+  }
+  if (!state.configId.value) {
+    return { success: false, errorCode: 'NO_CONFIG', error: 'No config selected' }
+  }
+
+  const setCompactStatusForConversation = (
+    status: { isSummarizing: boolean; mode?: 'auto' | 'manual'; message?: string } | null
+  ) => {
+    // 修改原因：compact 是异步操作，用户可能在执行期间切换会话；直接写全局 autoSummaryStatus 会污染当前 tab 或让原 tab 卡住 loading。
+    // 修改方式：复用 summarize 的对话隔离模式，当前仍是原对话则写全局，否则写回原 tab snapshot。
+    // 修改目的：压缩按钮 loading 状态与触发会话绑定，不影响其他会话。
+    if (!originConversationId || originConversationId === state.currentConversationId.value) {
+      state.autoSummaryStatus.value = status
+      return
+    }
+    const tab = state.openTabs.value.find(t => t.conversationId === originConversationId)
+    if (!tab) return
+    const snapshot = state.sessionSnapshots.value.get(tab.id)
+    if (snapshot) {
+      snapshot.autoSummaryStatus = status ? { ...status } : null
+    }
+  }
+
+  setCompactStatusForConversation({ isSummarizing: true, mode: 'manual' })
+  try {
+    // 修改原因：主界面“压缩上下文”必须与 slash /compact 共享按策略 compact 的后端语义，不能继续直连 summarizeContext。
+    // 修改方式：调用 context.compact 普通 handler，返回 UiStatusPayload 后刷新历史和 contextUsageOverride。
+    // 修改目的：compact 成功后 ledger/projection 生效，右下角环状指示灯立即显示 tokenAfter。
+    const payload = await sendToExtension<ContextCommandPayload>('context.compact', {
+      conversationId: originConversationId,
+      configId: state.configId.value
+    })
+
+    if (typeof payload.tokenAfter === 'number') {
+      state.contextUsageOverride.value = {
+        conversationId: originConversationId,
+        usedTokens: Math.max(0, payload.tokenAfter),
+        updatedAt: Date.now()
+      }
+    }
+
+    if (originConversationId === state.currentConversationId.value) {
+      await loadHistory()
+    }
+
+    return {
+      success: payload.kind !== 'error',
+      kind: payload.kind,
+      title: payload.title,
+      message: payload.description,
+      tokenAfter: payload.tokenAfter,
+      error: payload.kind === 'error' ? payload.description : undefined
+    }
+  } catch (err: any) {
+    return {
+      success: false,
+      errorCode: err?.code,
+      error: err.message || 'Compact failed'
+    }
+  } finally {
+    setCompactStatusForConversation(null)
+  }
+}
+
 export async function summarizeContext(
   state: ChatStoreState,
   loadHistory: () => Promise<void>
@@ -476,19 +555,51 @@ export async function summarizeContext(
   
   try {
     // 只传递必要参数，所有配置项从后端读取
-    const result = await sendToExtension<{
+    const result = await sendToExtension<({
       success: boolean
       summaryContent?: any
       summarizedMessageCount?: number
+      afterTokenCount?: number
       error?: { code: string; message: string }
-    }>('summarizeContext', {
+    } | ContextCommandPayload)>('summarizeContext', {
       conversationId: originConversationId,
       configId: state.configId.value
     })
+
+    if ('kind' in result) {
+      if (typeof result.tokenAfter === 'number') {
+        state.contextUsageOverride.value = {
+          conversationId: originConversationId,
+          usedTokens: Math.max(0, result.tokenAfter),
+          updatedAt: Date.now()
+        }
+      }
+      if (originConversationId === state.currentConversationId.value) {
+        await loadHistory()
+      }
+      return {
+        success: result.kind !== 'error',
+        summarizedMessageCount: undefined,
+        errorCode: result.kind === 'error' ? result.command : undefined,
+        error: result.kind === 'error' ? result.description : undefined
+      }
+    }
     
     if (result.success && result.summaryContent) {
-      // 重新加载历史以获取更新后的消息列表
-      await loadHistory()
+      if (typeof result.afterTokenCount === 'number') {
+        // 修改原因：强制 summarize 也是一次手动压缩操作，成功后不会产生新的 assistant usageMetadata。
+        // 修改方式：用后端返回的 afterTokenCount 暂时覆盖 usedTokens，直到下一轮 provider usage 返回。
+        // 修改目的：让主界面环状指示灯在 summarize 成功后实时刷新。
+        state.contextUsageOverride.value = {
+          conversationId: originConversationId,
+          usedTokens: Math.max(0, result.afterTokenCount),
+          updatedAt: Date.now()
+        }
+      }
+      // 重新加载历史以获取更新后的消息列表；如果用户已切到其他会话，避免刷新错会话。
+      if (originConversationId === state.currentConversationId.value) {
+        await loadHistory()
+      }
       
       return {
         success: true,

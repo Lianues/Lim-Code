@@ -18,6 +18,7 @@ import type { BaseChannelConfig } from '../../../config/configs/base';
 import { ChannelError, ErrorType } from '../../../channel/types';
 import type { ResolvedPromptModeSnapshot } from '../../../settings/types';
 import type { Content, ContentPart } from '../../../conversation/types';
+import type { UiStatusPayload } from '../../../conversation/contextTypes';
 import type { CheckpointRecord } from '../../../checkpoint';
 import type { ToolExecutionResult } from '../utils';
 
@@ -42,6 +43,7 @@ import type {
   ChatStreamToolStatusData,
   ChatStreamAutoSummaryData,
   ChatStreamAutoSummaryStatusData,
+  ChatStreamContextCommandData,
 } from '../types';
 
 import type { MessageBuilderService } from './MessageBuilderService';
@@ -52,6 +54,7 @@ import type { DiffInterruptService } from './DiffInterruptService';
 import type { OrphanedToolCallService } from './OrphanedToolCallService';
 import type { ToolExecutionService, ToolExecutionFullResult, ToolExecutionProgressEvent } from './ToolExecutionService';
 import type { ToolCallParserService } from './ToolCallParserService';
+import type { ContextCommandRegistry } from './ContextCommandRegistry';
 import {
   clearPendingApprovalGate,
   getPendingApprovalGate,
@@ -71,7 +74,8 @@ export type ChatStreamOutput =
   | ChatStreamToolsExecutingData
   | ChatStreamToolStatusData
   | ChatStreamAutoSummaryData
-  | ChatStreamAutoSummaryStatusData;
+  | ChatStreamAutoSummaryStatusData
+  | ChatStreamContextCommandData;
 
 type TodoStatusValue = 'pending' | 'in_progress' | 'completed' | 'cancelled';
 type TodoItemValue = { id: string; content: string; status: TodoStatusValue };
@@ -92,7 +96,28 @@ export class ChatFlowService {
     private orphanedToolCallService: OrphanedToolCallService,
     private toolExecutionService: ToolExecutionService,
     private toolCallParserService: ToolCallParserService,
+    private contextCommandRegistry?: ContextCommandRegistry,
   ) {}
+
+  private formatContextCommandPayload(payload: UiStatusPayload): string {
+    /**
+     * 修改原因：非流式 handleChat 没有 stream chunk 承载结构化 payload，但仍需要返回用户可读、无 emoji 的结果。
+     * 修改方式：把 UiStatusPayload 格式化为 Markdown 状态卡片文本，流式路径仍传结构化 contextCommand chunk。
+     * 修改目的：保持非流式兼容，同时不新增第二套命令语义。
+     */
+    const lines = [`### ${payload.title}`, '', payload.description];
+    // 修改原因：非流式 context command 兼容输出同样会被用户看到，标签不能固定英文。
+    // 修改方式：复用后端 contextCommands.labels，把字段名和值的 yes/no 全部本地化。
+    // 修改目的：让 compact/summarize 在流式与非流式路径中展示一致的语言。
+    if (payload.projectionId) lines.push('', `${t('modules.api.chat.contextCommands.labels.projection')}: \`${payload.projectionId}\``);
+    if (payload.ledgerEntryId) lines.push(`${t('modules.api.chat.contextCommands.labels.ledgerEntry')}: \`${payload.ledgerEntryId}\``);
+    if (typeof payload.lossy === 'boolean') lines.push(`${t('modules.api.chat.contextCommands.labels.lossy')}: ${payload.lossy ? t('modules.api.chat.contextCommands.labels.yes') : t('modules.api.chat.contextCommands.labels.no')}`);
+    if (typeof payload.reversible === 'boolean') lines.push(`${t('modules.api.chat.contextCommands.labels.reversible')}: ${payload.reversible ? t('modules.api.chat.contextCommands.labels.yes') : t('modules.api.chat.contextCommands.labels.no')}`);
+    if (payload.nextActions?.length) {
+      lines.push('', t('modules.api.chat.contextCommands.labels.nextActions'), ...payload.nextActions.map(action => `- \`${action}\``));
+    }
+    return lines.join('\n');
+  }
 
   /**
    * 获取单回合最大工具调用次数
@@ -597,6 +622,26 @@ export class ChatFlowService {
     const promptModeSnapshot = await this.resolvePromptModeSnapshot(conversationId, request.promptModeId);
 
     if (!hiddenFunctionResponse) {
+      const contextCommand = this.contextCommandRegistry?.parse(message);
+      if (contextCommand) {
+        // 修改原因：slash command 是上下文修复协议入口，不应作为普通 user message 写入历史后再交给 LLM 猜测。
+        // 修改方式：在非流式 ChatFlow 中于写入用户消息前拦截，调用 ContextCommandRegistry，并把 payload 包装成一条模型消息返回。
+        // 修改目的：保持命令可调用且不污染主模型上下文。
+        const payload = await this.contextCommandRegistry.execute(contextCommand, {
+          conversationId,
+          configId,
+          actor: 'slash_command',
+          abortSignal: request.abortSignal
+        });
+        return {
+          success: true,
+          content: {
+            role: 'model',
+            parts: [{ text: this.formatContextCommandPayload(payload) }],
+            timestamp: Date.now()
+          }
+        };
+      }
       await this.clearPendingApprovalGateIfPresent(conversationId, 'visible_user_message');
     }
 
@@ -856,6 +901,24 @@ export class ChatFlowService {
     const promptModeSnapshot = await this.resolvePromptModeSnapshot(conversationId, request.promptModeId);
 
     if (!hiddenFunctionResponse) {
+      const contextCommand = this.contextCommandRegistry?.parse(message);
+      if (contextCommand) {
+        // 修改原因：流式输入里的 /context-* 命令必须在进入 LLM/tool loop 前结束，否则会被当成普通提示词并污染上下文。
+        // 修改方式：ChatFlow 在写用户消息和创建 checkpoint 前拦截，yield contextCommand chunk 后 return。
+        // 修改目的：让 /context-status、/compact、/summarize、/context-undo、/context-restore、/context-reset 成为真正的上下文协议入口。
+        const payload = await this.contextCommandRegistry.execute(contextCommand, {
+          conversationId,
+          configId,
+          actor: 'slash_command',
+          abortSignal: request.abortSignal
+        });
+        yield {
+          conversationId,
+          contextCommand: true,
+          payload
+        } satisfies ChatStreamContextCommandData;
+        return;
+      }
       await this.clearPendingApprovalGateIfPresent(conversationId, 'visible_user_message');
     }
 

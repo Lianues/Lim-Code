@@ -127,6 +127,34 @@ function isLocalOnlyAssistant(msg: Message | undefined): boolean {
   return !!msg && msg.role === 'assistant' && msg.localOnly === true
 }
 
+const FRONTEND_CONTEXT_COMMANDS = new Set([
+  '/context-status',
+  '/compact',
+  '/summarize',
+  '/context-undo',
+  '/context-restore',
+  '/context-reset'
+])
+
+function getContextCommandName(messageText: string): string {
+  const [command] = (messageText || '').trim().toLowerCase().split(/\s+/)
+  return command || ''
+}
+
+function isContextCommandMessage(messageText: string): boolean {
+  // 修改原因：/context-* 是本地上下文管理协议，不是用户要交给 AI 推理的自然语言提示词。
+  // 修改方式：前端用与后端 registry 对齐的命令白名单识别首个 token，只改变乐观 UI 投影，不在前端执行具体业务逻辑。
+  // 修改目的：避免用户看到 context mutation command 被当成普通消息发给 AI，同时保持最终语义仍由后端 ContextCommandRegistry 决定。
+  return FRONTEND_CONTEXT_COMMANDS.has(getContextCommandName(messageText))
+}
+
+function isFrontendOnlyContextStatusCommand(messageText: string): boolean {
+  // 修改原因：`/context-status` 已升级为纯前端窗口入口，即使有旧调用误触 chatStore.sendMessage，也不能再进入 chatStream。
+  // 修改方式：在 store 边界增加最后一道守卫；真正打开窗口由 InputArea/MessageItem 负责。
+  // 修改目的：保证 context status 不创建聊天消息、不触发模型、不影响上下文。
+  return getContextCommandName(messageText) === '/context-status'
+}
+
 /**
  * 发送消息
  */
@@ -219,6 +247,11 @@ export async function sendMessage(
 ): Promise<void> {
   const hiddenFunctionResponse = options?.hidden?.functionResponse
   const isHiddenSend = !!hiddenFunctionResponse
+  if (!isHiddenSend && isFrontendOnlyContextStatusCommand(messageText)) {
+    console.warn('[chatStore] Ignored /context-status in sendMessage; open ContextStatusDialog instead.')
+    return
+  }
+  const isContextCommandSend = !isHiddenSend && isContextCommandMessage(messageText)
   if (!isHiddenSend && !messageText.trim() && (!attachments || attachments.length === 0)) return
   
   state.error.value = null
@@ -253,7 +286,7 @@ export async function sendMessage(
     if (hiddenFunctionResponse) {
       // 隐藏模式：不创建可见 user 消息，改为 functionResponse（可用于计划确认等场景）
       upsertHiddenFunctionResponseMessage(state, hiddenFunctionResponse)
-    } else {
+    } else if (!isContextCommandSend) {
       const userMessage: Message = {
         id: generateId(),
         role: 'user',
@@ -265,24 +298,31 @@ export async function sendMessage(
       appendMessage(state, userMessage)
     }
     
-    const assistantMessageId = generateId()
-    const displayModelVersion = effectiveModelOverride || computed.currentModelName.value
-    const assistantMessage: Message = {
-      id: assistantMessageId,
-      role: 'assistant',
-      content: '',
-      timestamp: Date.now(),
-      backendIndex: getNextBackendIndex(state),
-      streaming: true,
-      localOnly: true,
-      metadata: {
-        modelVersion: displayModelVersion
+    if (!isContextCommandSend) {
+      const assistantMessageId = generateId()
+      const displayModelVersion = effectiveModelOverride || computed.currentModelName.value
+      const assistantMessage: Message = {
+        id: assistantMessageId,
+        role: 'assistant',
+        content: '',
+        timestamp: Date.now(),
+        backendIndex: getNextBackendIndex(state),
+        streaming: true,
+        localOnly: true,
+        metadata: {
+          modelVersion: displayModelVersion
+        }
       }
+      appendMessage(state, assistantMessage)
+      state.streamingMessageId.value = assistantMessageId
+      syncTotalMessagesFromWindow(state)
+      trimWindowFromTop(state)
+    } else {
+      // 修改原因：context command 的返回值是结构化状态卡片，不需要也不应该先显示“用户问 AI 的消息”和空 assistant 占位。
+      // 修改方式：仍设置 activeStreamId 等请求状态，但跳过普通 user/assistant 乐观消息，等待 contextCommand chunk 追加本地状态卡。
+      // 修改目的：让用户明确这是本地上下文诊断/恢复协议，而不是模型对 `/context-status` 文本的回答。
+      state.streamingMessageId.value = null
     }
-    appendMessage(state, assistantMessage)
-    state.streamingMessageId.value = assistantMessageId
-    syncTotalMessagesFromWindow(state)
-    trimWindowFromTop(state)
     
     const conv = state.conversations.value.find(c => c.id === state.currentConversationId.value)
     if (conv) {
@@ -291,7 +331,7 @@ export async function sendMessage(
       const knownTotal = Math.max(state.totalMessages.value, state.windowStartIndex.value + state.allMessages.value.length)
       state.totalMessages.value = knownTotal
       conv.messageCount = knownTotal
-      if (!hiddenFunctionResponse) {
+      if (!hiddenFunctionResponse && !isContextCommandSend) {
         conv.preview = messageText.slice(0, 50)
       }
     }

@@ -76,6 +76,7 @@ import {
   restoreAndRetry as restoreAndRetryFn,
   restoreAndDelete as restoreAndDeleteFn,
   restoreAndEdit as restoreAndEditFn,
+  compactContext as compactContextFn,
   summarizeContext as summarizeContextFn,
   cancelSummarizeRequest as cancelSummarizeRequestFn
 } from './chat/checkpointActions'
@@ -439,6 +440,7 @@ export const useChatStore = defineStore('chat', () => {
     restoreAndDeleteFn(state, messageIndex, checkpointId, cancelStream)
   const restoreAndEdit = (messageIndex: number, newContent: string, attachments: Attachment[] | undefined, checkpointId: string) =>
     restoreAndEditFn(state, messageIndex, newContent, attachments, checkpointId, computed.currentModelName.value, cancelStream)
+  const compactContext = () => compactContextFn(state, () => loadHistory(state))
   const summarizeContext = () => summarizeContextFn(state, () => loadHistory(state))
   const cancelSummarizeRequest = () => cancelSummarizeRequestFn(state)
 
@@ -592,6 +594,7 @@ export const useChatStore = defineStore('chat', () => {
     isWaitingForResponse: state.isWaitingForResponse,
     retryStatus: state.retryStatus,
     autoSummaryStatus: state.autoSummaryStatus,
+    contextUsageOverride: state.contextUsageOverride,
     error: state.error,
     
     // 计算属性
@@ -695,7 +698,8 @@ export const useChatStore = defineStore('chat', () => {
     setActiveBuild,
     pendingModelOverride: state.pendingModelOverride,
     
-    // 上下文总结
+    // 上下文压缩/总结
+    compactContext,
     summarizeContext,
     cancelSummarizeRequest,
 

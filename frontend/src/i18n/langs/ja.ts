@@ -253,7 +253,7 @@ const ja: LanguageMessages = {
             attachFile: 'ファイルを添付',
             pinnedFiles: 'ピン留めファイル',
             skills: 'Skills',
-            summarizeContext: 'コンテキストを要約',
+            summarizeContext: 'コンテキストを圧縮',
             selectChannel: 'チャンネルを選択',
             selectModel: 'モデルを選択',
             clickToPreview: 'クリックしてプレビュー',
@@ -286,6 +286,20 @@ const ja: LanguageMessages = {
                 noMatch: '一致するモデルがありません',
                 addInSettings: '設定でモデルを追加してください'
             },
+            slashCommandPanel: {
+                descriptions: {
+                    skill: 'このメッセージに Skill 参照を追加',
+                    contextStatus: '現在のプロジェクション、台帳数、非可逆状態、復旧操作を確認',
+                    compact: '確認付きのコンテキスト圧縮を準備します。元の履歴は保持されます',
+                    summarize: '確認付きの非可逆要約を準備し、台帳に記録します',
+                    contextUndo: '復元可能な操作がある場合、最新のコンテキスト操作を取り消します',
+                    contextRestore: 'context status に表示された指定プロジェクション ID を復元します',
+                    contextReset: '履歴から作業プロジェクションを再構築する確認操作を準備します'
+                },
+                skillDisabled: 'Skill は Skills パネルで無効化されています',
+                noEnabledSkill: '有効な Skill が見つかりません',
+                footer: '完全なコンテキストコマンド: Enter で実行。途中のコマンド: Tab で補完。Esc で閉じる。'
+            },
             pinnedFilesPanel: {
                 title: 'ピン留めファイル',
                 description: 'ピン留めされたファイルの内容は毎回の会話で AI に送信されます',
@@ -304,7 +318,12 @@ const ja: LanguageMessages = {
                 enableTooltip: '現在の会話でこの Skill を有効にする',
                 hint: 'AI はタスクが利用可能な Skill に一致すると判断した場合、read_skill ツールで内容を読み込みます',
                 openDirectory: 'Skills ディレクトリを開く',
-                refresh: 'Skills リストを更新'
+                refresh: 'Skills リストを更新',
+                diagnostics: 'Skills 読み込み診断を表示',
+                diagnosticsCount: '{count} 件の Skills 診断があります。クリックして詳細を表示',
+                copyDiagnostics: 'すべての診断をコピー',
+                source: 'ソース',
+                noDescription: '説明なし'
             },
             promptContext: {
                 title: 'プロンプトコンテキスト',
@@ -464,6 +483,15 @@ const ja: LanguageMessages = {
                 compressed: '{count} 件のメッセージを圧縮しました',
                 deleteTitle: '要約を削除',
                 autoTriggered: '自動トリガー'
+            },
+            contextCommand: {
+                projection: 'プロジェクション',
+                ledger: '台帳',
+                lossy: '非可逆',
+                reversible: '復元可能',
+                yes: 'はい',
+                no: 'いいえ',
+                nextActions: '次の操作'
             },
             checkpoint: {
                 userMessageBefore: 'ユーザーメッセージ前のチェックポイント',
@@ -1672,7 +1700,7 @@ const ja: LanguageMessages = {
                 description: 'コンテキスト要約機能は会話履歴を圧縮してトークン使用量を削減できます。このページでは手動要約と要約モデルを設定します。自動要約は「チャネル設定 > コンテキスト管理」で設定してください。',
                 manualSection: {
                     title: '手動要約',
-                    description: '入力ボックスの右側にある圧縮ボタンをクリックすると、手動でコンテキスト要約をトリガーできます。要約された内容は元の会話履歴を置き換えます。'
+                    description: '入力ボックス右側の圧縮ボタンをクリックすると、手動でコンテキスト圧縮を実行できます。現在のチャンネルが自動要約モードの場合、非可逆の要約プロジェクションが作成されます。元の履歴は保持されます。'
                 },
                 autoSection: {
                     title: '自動要約（移行済み）',
@@ -1896,6 +1924,9 @@ const ja: LanguageMessages = {
                         maxOutputLines: '最大出力行数',
                         maxOutputLinesHint: 'AI に送信されるターミナル出力の最後の N 行、出力過多を避けるため',
                         unlimitedLines: '無制限',
+                        skillAccessBreakGlass: 'execute_command に Skill ディレクトリへの直接アクセスを許可（危険）',
+                        skillAccessBreakGlassDesc: 'デフォルトはオフです。有効にすると、execute_command は Skill ディレクトリと skill:// アクセスをブロックしません。',
+                        skillAccessBreakGlassWarning: 'これは read_skill_resource / execute_skill_script が提供する manifest、hash、staging、argv の安全経路を迂回します。リスクを完全に理解したローカルデバッグ時のみ有効にしてください。',
                         tips: {
                             onlyEnabledUsed: '• 有効で利用可能なシェルのみが AI で使用されます',
                             statusMeaning: '• ✓ は利用可能、✗ は利用不可を意味します',

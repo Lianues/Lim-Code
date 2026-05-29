@@ -333,6 +333,7 @@ export function bufferBackgroundChunk(
       case 'complete':
       case 'error':
       case 'cancelled':
+      case 'contextCommand':
         snapshot.isStreaming = false
         snapshot.isWaitingForResponse = false
         // 注意：不清除 activeStreamId！
@@ -395,6 +396,7 @@ export function updateTabStreamingStatus(
     case 'error':
     case 'cancelled':
     case 'awaitingConfirmation':
+    case 'contextCommand':
       tab.isStreaming = false
       break
 

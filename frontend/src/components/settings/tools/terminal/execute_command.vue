@@ -37,8 +37,18 @@ interface ExecuteCommandConfig {
   maxOutputLines: number
 }
 
+interface ExecuteCommandSecurityConfig {
+  allowSkillDirectoryAccessViaExecuteCommand: boolean
+}
+
 // 配置状态
 const config = ref<ExecuteCommandConfig | null>(null)
+const securityConfig = ref<ExecuteCommandSecurityConfig>({
+  // 为什么要改：Skill 目录 break-glass 必须默认关闭，且不能从可同步 toolsConfig 推断。
+  // 怎么改：前端先以 fail-closed 默认值渲染，再从机器级 security handler 读取真实值。
+  // 目的：设置页加载失败或旧配置缺失时不会误显示为已开启。
+  allowSkillDirectoryAccessViaExecuteCommand: false
+})
 const isLoading = ref(false)
 const isSaving = ref(false)
 const error = ref<string | null>(null)
@@ -69,12 +79,20 @@ async function loadConfig() {
   error.value = null
   
   try {
-    const response = await sendToExtension<{ config: ExecuteCommandConfig }>(
-      'tools.getExecuteCommandConfig',
-      {}
-    )
+    const [response, securityResponse] = await Promise.all([
+      sendToExtension<{ config: ExecuteCommandConfig }>('tools.getExecuteCommandConfig', {}),
+      sendToExtension<{ config: ExecuteCommandSecurityConfig }>('tools.getExecuteCommandSecuritySettings', {})
+    ])
     if (response?.config) {
       config.value = response.config
+    }
+    if (securityResponse?.config) {
+      // 为什么要改：机器级安全开关必须独立于普通 execute_command 配置读取。
+      // 怎么改：只接受后端专用 handler 返回的布尔字段。
+      // 目的：普通 toolsConfig 中的同名字段即使存在，也不会影响 UI 状态或运行时行为。
+      securityConfig.value = {
+        allowSkillDirectoryAccessViaExecuteCommand: securityResponse.config.allowSkillDirectoryAccessViaExecuteCommand === true
+      }
     }
   } catch (err) {
     error.value = err instanceof Error ? err.message : t('components.settings.toolSettings.common.error')
@@ -153,6 +171,29 @@ async function updateMaxOutputLines(lines: number) {
   await saveConfig()
 }
 
+// 更新 Skill 目录 break-glass 安全开关
+async function updateSkillAccessBreakGlass(enabled: boolean) {
+  securityConfig.value.allowSkillDirectoryAccessViaExecuteCommand = enabled === true
+  isSaving.value = true
+  error.value = null
+
+  try {
+    // 为什么要改：该开关是机器级高危设置，不能随普通 execute_command config 保存。
+    // 怎么改：调用专用后端 handler，由 SettingsManager.updateSecuritySettings 严格 boolean 归一化后写入 machine scope。
+    // 目的：避免 Settings Sync、通用工具配置 API 或 truthy 注入打开 Skill 目录 shell 访问。
+    await sendToExtension('tools.updateExecuteCommandSecuritySettings', {
+      config: {
+        allowSkillDirectoryAccessViaExecuteCommand: securityConfig.value.allowSkillDirectoryAccessViaExecuteCommand
+      }
+    })
+  } catch (err) {
+    securityConfig.value.allowSkillDirectoryAccessViaExecuteCommand = !enabled
+    error.value = err instanceof Error ? err.message : t('components.settings.toolSettings.common.error')
+    console.error('Failed to save execute_command security config:', err)
+  } finally {
+    isSaving.value = false
+  }
+}
 
 // 获取 Shell 图标
 function getShellIcon(type: string): string {
@@ -301,6 +342,24 @@ onMounted(() => {
             @update:model-value="(val: string) => updateMaxOutputLines(Number(val))"
           />
           <span class="output-lines-hint">{{ t('components.settings.toolSettings.terminal.executeCommand.maxOutputLinesHint') }}</span>
+        </div>
+      </div>
+      
+      <!-- Skill 目录 break-glass 安全配置 -->
+      <div class="config-section danger-section">
+        <div class="section-header danger-header">
+          <i class="codicon codicon-warning"></i>
+          <span>{{ t('components.settings.toolSettings.terminal.executeCommand.skillAccessBreakGlass') }}</span>
+        </div>
+        <div class="security-option">
+          <div class="security-option-text">
+            <p class="security-desc">{{ t('components.settings.toolSettings.terminal.executeCommand.skillAccessBreakGlassDesc') }}</p>
+            <p class="security-warning">{{ t('components.settings.toolSettings.terminal.executeCommand.skillAccessBreakGlassWarning') }}</p>
+          </div>
+          <CustomCheckbox
+            :modelValue="securityConfig.allowSkillDirectoryAccessViaExecuteCommand"
+            @update:modelValue="(val: boolean) => updateSkillAccessBreakGlass(val)"
+          />
         </div>
       </div>
       
@@ -584,6 +643,46 @@ onMounted(() => {
 .output-lines-hint {
   font-size: 11px;
   color: var(--vscode-descriptionForeground);
+}
+
+/* Skill 目录 break-glass 安全配置 */
+.danger-section {
+  padding: 8px 10px;
+  background: var(--vscode-inputValidation-warningBackground, var(--vscode-textBlockQuote-background));
+  border: 1px solid var(--vscode-inputValidation-warningBorder);
+  border-radius: 4px;
+}
+
+.danger-header {
+  color: var(--vscode-inputValidation-warningForeground, var(--vscode-foreground));
+}
+
+.security-option {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.security-option-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.security-desc,
+.security-warning {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.security-desc {
+  color: var(--vscode-foreground);
+}
+
+.security-warning {
+  color: var(--vscode-inputValidation-warningForeground, var(--vscode-descriptionForeground));
 }
 
 /* 提示信息 */

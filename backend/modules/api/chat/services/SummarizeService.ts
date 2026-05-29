@@ -16,6 +16,8 @@ import type { BaseChannelConfig } from '../../../config/configs/base';
 import { StreamAccumulator } from '../../../channel/StreamAccumulator';
 import type { ContextTrimService } from './ContextTrimService';
 import type { TokenEstimationService } from './TokenEstimationService';
+import { ContextProjectionStore } from './ContextProjectionStore';
+import { ContextLedgerService } from './ContextLedgerService';
 import type {
     SummarizeContextRequestData,
     SummarizeContextSuccessData,
@@ -805,6 +807,12 @@ export class SummarizeService {
             // 修改原因：自动 summary 插入后历史结构与 summary 边界都发生变化，旧 trimState 不能继续复用。
             // 修改方式：清理动作由 ConversationManager.insertContent 的结构性变更入口统一触发，下一轮 continue 会重新获取历史。
             // 修改目的：保证自动总结完成后的上下文基线来自最新 summary，而不是旧裁剪 metadata。
+            await this.recordAutoSummaryProjection(conversationId, {
+                insertIndex,
+                beforeTokenCount,
+                afterTokenCount,
+                summarizedMessageCount: totalSummarizedCount
+            });
 
             this.log.info('auto.completed', {
                 conversationId,
@@ -842,6 +850,63 @@ export class SummarizeService {
      * 用于判断待总结内容是否超出总结模型上下文。
      * 本地估算的安全系数由 TokenEstimationService 统一处理（1.5）。
      */
+    private async recordAutoSummaryProjection(
+        conversationId: string,
+        result: { insertIndex: number; beforeTokenCount?: number; afterTokenCount?: number; summarizedMessageCount: number }
+    ): Promise<void> {
+        const getMetadataRepository = (this.conversationManager as any).getMetadataRepository;
+        if (typeof getMetadataRepository !== 'function') return;
+        /**
+         * 修改原因：自动总结过去只插入 summary 消息并清理 trimState，P1 要求自动压缩也必须进入 ledger/projection。
+         * 修改方式：通过 typed metadata repository 写 auto_summarize ledger 和 summarized projection，失败时写 failed ledger。
+         * 修改目的：用户可通过 /context-status 理解自动压缩何时发生、是否有损、恢复边界在哪里。
+         */
+        const repository = getMetadataRepository.call(this.conversationManager);
+        const projectionStore = new ContextProjectionStore(repository);
+        const ledgerService = new ContextLedgerService(repository);
+        const current = await projectionStore.getCurrentProjection(conversationId);
+        const ledger = await ledgerService.beginOperation({
+            conversationId,
+            operation: 'auto_summarize',
+            actor: 'system',
+            reason: `Automatic summary inserted at index ${result.insertIndex}`,
+            beforeProjectionId: current?.projectionId,
+            range: { startIndex: 0, endIndexExclusive: result.insertIndex },
+            reversible: false,
+            lossy: true,
+            tokenBefore: result.beforeTokenCount
+        });
+        try {
+            const projection = await projectionStore.createProjection({
+                conversationId,
+                mode: 'summarized',
+                startIndex: result.insertIndex,
+                summaryMessageIndex: result.insertIndex,
+                cause: 'auto_summarize',
+                predecessorId: current?.projectionId,
+                sourceLedgerEntryId: ledger.ledgerEntryId,
+                reversible: false,
+                lossy: true,
+                tokenEstimate: { before: result.beforeTokenCount, after: result.afterTokenCount },
+                restoreBoundary: {
+                    kind: 'lossy_summary',
+                    message: 'Automatic summary created a lossy working projection; immutable source history remains stored.'
+                }
+            });
+            await ledgerService.markSuccess(conversationId, ledger.ledgerEntryId, {
+                afterProjectionId: projection.projectionId,
+                tokenAfter: result.afterTokenCount
+            });
+        } catch (error) {
+            await ledgerService.markFailed(
+                conversationId,
+                ledger.ledgerEntryId,
+                { code: 'AUTO_SUMMARY_LEDGER_FAILED', message: error instanceof Error ? error.message : String(error) },
+                'Automatic summary content was inserted, but projection/ledger recording failed.'
+            );
+        }
+    }
+
     private estimateMessagesTokens(messages: Content[]): number {
         let total = 0;
         for (const msg of messages) {

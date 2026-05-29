@@ -964,6 +964,10 @@ export class ToolExecutionService {
             return false;
         }
 
+        if (toolName === 'execute_skill_script') {
+            return true;
+        }
+
         if (!this.settingsManager) {
             return false;
         }
@@ -1038,6 +1042,13 @@ export class ToolExecutionService {
      * - Plan 模式 write_file 仅允许写入 .limcode/plans/**.md（多工作区支持 workspaceName/.limcode/plans/**.md）
      */
     private getToolRejectionReason(toolName: string, args?: Record<string, unknown>, promptModeSnapshot?: ResolvedPromptModeSnapshot): string | null {
+        if (toolName === 'execute_skill_script') {
+            const skillsConfig = this.settingsManager?.getSkillsConfig() as any;
+            if (skillsConfig?.disableSkillShellExecution === true) {
+                return 'Skill shell execution is disabled by settings.';
+            }
+        }
+
         // 1) 全局 toolsEnabled
         if (this.settingsManager && this.settingsManager.isToolEnabled(toolName) === false) {
             return `Tool "${toolName}" is disabled by settings (toolsEnabled).`;

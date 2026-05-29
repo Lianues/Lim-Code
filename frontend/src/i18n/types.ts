@@ -387,6 +387,15 @@ export interface LanguageMessages {
                 deleteTitle: string;
                 autoTriggered: string;
             };
+            contextCommand: {
+                projection: string;
+                ledger: string;
+                lossy: string;
+                reversible: string;
+                yes: string;
+                no: string;
+                nextActions: string;
+            };
             checkpoint: {
                 userMessageBefore: string;
                 userMessageAfter: string;
@@ -741,6 +750,20 @@ export interface LanguageMessages {
                 noMatch: string;
                 addInSettings: string;
             };
+            slashCommandPanel: {
+                descriptions: {
+                    skill: string;
+                    contextStatus: string;
+                    compact: string;
+                    summarize: string;
+                    contextUndo: string;
+                    contextRestore: string;
+                    contextReset: string;
+                };
+                skillDisabled: string;
+                noEnabledSkill: string;
+                footer: string;
+            };
             pinnedFilesPanel: {
                 title: string;
                 description: string;
@@ -760,6 +783,11 @@ export interface LanguageMessages {
                 hint: string;
                 openDirectory: string;
                 refresh: string;
+                diagnostics: string;
+                diagnosticsCount: string;
+                copyDiagnostics: string;
+                source: string;
+                noDescription: string;
             };
             promptContext: {
                 title: string;
@@ -931,6 +959,9 @@ export interface LanguageMessages {
                         maxOutputLines: string;
                         maxOutputLinesHint: string;
                         unlimitedLines: string;
+                        skillAccessBreakGlass: string;
+                        skillAccessBreakGlassDesc: string;
+                        skillAccessBreakGlassWarning: string;
                         tips: {
                             onlyEnabledUsed: string;
                             statusMeaning: string;

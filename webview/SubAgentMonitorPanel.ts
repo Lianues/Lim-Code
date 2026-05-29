@@ -187,6 +187,7 @@ export class SubAgentMonitorPanel {
     private focusConversationId?: string;
     private readonly unsubscribe: () => void;
     private clientRegistration?: vscode.Disposable;
+    private heartbeatTimer?: ReturnType<typeof setInterval>;
 
     constructor(
         private readonly context: vscode.ExtensionContext,
@@ -216,6 +217,7 @@ export class SubAgentMonitorPanel {
             // 修改方式：只推送轻量 manifest，同步焦点后由前端按需请求当前 run window。
             // 修改目的：Monitor 任何首包/重聚焦包都不再携带所有 contents。
             this.postManifest();
+            this.startHeartbeat();
             return;
         }
 
@@ -248,18 +250,64 @@ export class SubAgentMonitorPanel {
         }, undefined, this.context.subscriptions);
 
         this.panel.onDidDispose(() => {
+            this.stopHeartbeat();
             this.clientRegistration?.dispose();
             this.clientRegistration = undefined;
             this.panel = undefined;
         }, undefined, this.context.subscriptions);
+        this.startHeartbeat();
     }
 
     dispose(): void {
         this.unsubscribe();
+        this.stopHeartbeat();
         this.clientRegistration?.dispose();
         this.clientRegistration = undefined;
         this.panel?.dispose();
         this.panel = undefined;
+    }
+
+    private startHeartbeat(): void {
+        if (this.heartbeatTimer || !this.panel) return;
+        /**
+         * 修改原因：Monitor 卡死时前端过去只能停留在旧数据上，用户不知道连接是否还活着。
+         * 修改方式：面板生命周期内定期发送轻量 heartbeat，包含 serverTime、activeRunIds 和 manifest 汇总。
+         * 修改目的：前端可据此显示 live/stale/disconnected，并提供原地重置，而不是要求用户关闭重开。
+         */
+        this.postHeartbeat();
+        this.heartbeatTimer = setInterval(() => this.postHeartbeat(), 5000);
+        // 修改原因：Jest 和部分 Node 宿主会因为 heartbeat interval 保持 open handle，即使面板测试已经完成也不退出。
+        // 修改方式：在支持 unref 的运行时释放定时器对事件循环存活的引用；VS Code 扩展运行时仍会按面板生命周期正常清理。
+        // 修改目的：heartbeat 不能影响测试与扩展进程退出语义。
+        (this.heartbeatTimer as any).unref?.();
+    }
+
+    private stopHeartbeat(): void {
+        if (!this.heartbeatTimer) return;
+        clearInterval(this.heartbeatTimer);
+        this.heartbeatTimer = undefined;
+    }
+
+    private postHeartbeat(): void {
+        const getManifests = (subAgentRunEventBus as any).getManifests;
+        const manifests = typeof getManifests === 'function' ? getManifests.call(subAgentRunEventBus) : [];
+        this.postRoutedMessage({
+            type: 'subagentMonitor.heartbeat',
+            data: {
+                serverTime: Date.now(),
+                activeRunIds: subAgentRunController.getActiveRunIds(),
+                // 修改原因：部分单元测试使用轻量 runEventBus mock，没有实现 getManifests；heartbeat 不能因此让面板打开失败。
+                // 修改方式：运行时检测 getManifests，缺失时降级为空列表；真实产品路径仍发送 manifest freshness 摘要。
+                // 修改目的：heartbeat 是恢复辅助信号，不应成为 Monitor 生命周期的硬依赖。
+                manifests: manifests.map((manifest: any) => ({
+                    runId: manifest.runId,
+                    status: manifest.status,
+                    contentRevision: manifest.contentRevision,
+                    eventSequence: manifest.eventSequence,
+                    updatedAt: manifest.updatedAt
+                }))
+            }
+        });
     }
 
     private async handleMessage(message: any): Promise<void> {
@@ -279,6 +327,7 @@ export class SubAgentMonitorPanel {
                 success: true,
                 data: this.createManifestPayload()
             }, clientId);
+            this.postHeartbeat();
             return;
         }
 

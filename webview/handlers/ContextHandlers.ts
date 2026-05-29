@@ -7,6 +7,85 @@ import { t } from '../../backend/i18n';
 import type { HandlerContext, MessageHandler } from '../types';
 import { shouldIgnorePath } from '../utils/WorkspaceUtils';
 
+function normalizeConversationId(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+/**
+ * 获取上下文状态快照。
+ */
+export const getContextStatus: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    // 修改原因：context status 现在是前端诊断窗口的数据源，不能再通过 chatStream 伪装成一次对话。
+    // 修改方式：新增普通 request/response handler，直接调用 ChatHandler 的只读 getContextStatus。
+    // 修改目的：返回 projection、ledger、legacy/degraded 等状态，同时不写聊天历史、不触发模型、不影响上下文。
+    const conversationId = normalizeConversationId(data?.conversationId);
+    if (!conversationId) {
+      ctx.sendError(requestId, 'CONTEXT_STATUS_CONVERSATION_REQUIRED', 'conversationId is required');
+      return;
+    }
+    if (!ctx.chatHandler?.getContextStatus) {
+      ctx.sendError(requestId, 'CONTEXT_STATUS_UNAVAILABLE', 'Context status service is not available');
+      return;
+    }
+    const status = await ctx.chatHandler.getContextStatus(conversationId);
+    ctx.sendResponse(requestId, { status });
+  } catch (error: any) {
+    ctx.sendError(requestId, 'GET_CONTEXT_STATUS_ERROR', error.message || 'Failed to get context status');
+  }
+};
+
+export const compactContext: MessageHandler = async (data, requestId, ctx) => {
+  const conversationId = normalizeConversationId(data?.conversationId);
+  const configId = typeof data?.configId === 'string' ? data.configId.trim() : '';
+  if (!conversationId) {
+    ctx.sendError(requestId, 'CONTEXT_COMPACT_CONVERSATION_REQUIRED', 'conversationId is required');
+    return;
+  }
+  if (!configId) {
+    ctx.sendError(requestId, 'CONTEXT_COMPACT_CONFIG_REQUIRED', 'configId is required');
+    return;
+  }
+  if (!ctx.chatHandler?.handleCompactContext) {
+    ctx.sendError(requestId, 'CONTEXT_COMPACT_UNAVAILABLE', 'Context compact service is not available');
+    return;
+  }
+
+  const abortManager = ctx.streamAbortControllers as any;
+  const controller = abortManager?.createSummary
+    ? abortManager.createSummary(conversationId)
+    : new AbortController();
+  try {
+    // 修改原因：主界面“压缩上下文”需要普通 request/response，不应走 chatStream 或 SummarizeService 直连。
+    // 修改方式：webview handler 调用 ChatHandler.handleCompactContext，由 ContextOperationService 按 provider 策略执行 trim 或 summarize。
+    // 修改目的：让按钮和 slash /compact 共享 ledger/projection 语义，并在返回 payload 后刷新 UI 状态。
+    const result = await ctx.chatHandler.handleCompactContext({
+      conversationId,
+      configId,
+      abortSignal: controller.signal
+    });
+    ctx.sendResponse(requestId, result);
+  } catch (error: any) {
+    const aborted = controller.signal.aborted || error?.name === 'AbortError';
+    if (aborted) {
+      ctx.sendResponse(requestId, {
+        schemaVersion: 1,
+        kind: 'error',
+        title: 'Context compact cancelled',
+        description: 'Context compact was cancelled.',
+        iconName: 'error',
+        nextActions: ['/context-status']
+      });
+      return;
+    }
+    ctx.sendError(requestId, 'CONTEXT_COMPACT_ERROR', error.message || 'Failed to compact context');
+  } finally {
+    if (abortManager?.deleteSummary) {
+      abortManager.deleteSummary(conversationId);
+    }
+  }
+};
+
 /**
  * 获取上下文感知配置
  */
@@ -228,6 +307,8 @@ export const getWorkspaceDiagnostics: MessageHandler = async (data, requestId, c
  * 注册上下文处理器
  */
 export function registerContextHandlers(registry: Map<string, MessageHandler>): void {
+  registry.set('context.getStatus', getContextStatus);
+  registry.set('context.compact', compactContext);
   registry.set('getContextAwarenessConfig', getContextAwarenessConfig);
   registry.set('updateContextAwarenessConfig', updateContextAwarenessConfig);
   registry.set('getOpenTabs', getOpenTabs);

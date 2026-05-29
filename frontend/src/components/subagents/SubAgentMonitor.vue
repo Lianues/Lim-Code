@@ -113,7 +113,43 @@ const activeRunIds = ref<Set<string>>(new Set())
 // 修改方式：记录用户是否已经在 Monitor 内主动选中过 run，实时 event 只在用户未选择前应用后端焦点。
 // 修改目的：从主窗口打开详情仍能自动定位，但 Monitor 内部切换不会被后续事件拉回旧 run。
 const hasUserSelectedRun = ref(false)
+const lastHeartbeatAt = ref<number>(0)
+const heartbeatTick = ref(Date.now())
+const lastEventSequenceByRunId = new Map<string, number>()
+const gapRunIds = ref<Set<string>>(new Set())
+let heartbeatTimer: ReturnType<typeof setInterval> | undefined
 let disposeMessageListener: (() => void) | undefined
+
+const monitorConnectionState = computed<'syncing' | 'live' | 'stale' | 'gap' | 'degraded' | 'disconnected'>(() => {
+  /**
+   * 修改原因：Monitor 需要告诉用户连接是否新鲜，不能在 postMessage 停止时静默显示旧内容。
+   * 修改方式：用后端 heartbeat 的 lastSeen 时间计算 live/stale/disconnected；首次收到前显示 syncing。
+   * 修改目的：让“卡死不更新”变成可见状态，并给原地重置动作提供依据。
+   */
+  if (focusedRun.value?.runId && gapRunIds.value.has(focusedRun.value.runId)) return 'gap'
+  const lastSeen = lastHeartbeatAt.value
+  if (!lastSeen) return 'syncing'
+  const age = heartbeatTick.value - lastSeen
+  if (age > 15000) return 'disconnected'
+  if (age > 8000) return 'stale'
+  return 'live'
+})
+
+const freshnessLabel = computed(() => {
+  switch (monitorConnectionState.value) {
+    case 'live': return 'Live'
+    case 'stale': return 'Stale'
+    case 'gap': return 'Gap detected'
+    case 'degraded': return 'Degraded'
+    case 'disconnected': return 'Disconnected'
+    default: return 'Syncing'
+  }
+})
+
+const freshnessDescription = computed(() => {
+  if (!lastHeartbeatAt.value) return 'Waiting for monitor heartbeat.'
+  return `Last heartbeat ${Math.max(0, Math.round((heartbeatTick.value - lastHeartbeatAt.value) / 1000))}s ago.`
+})
 
 const orderedRuns = computed(() => {
   // 修改原因：updatedAt 会被每个 llm_delta 和工具事件刷新，并发 run 按 updatedAt 排序会导致 tab 顺序不停跳动。
@@ -158,6 +194,33 @@ function upsertManifest(manifest: SubAgentRunManifest | undefined) {
   } else {
     manifests.value = [manifest, ...manifests.value]
   }
+}
+
+function detectEventGap(event: SubAgentRunEvent) {
+  if (!event.runId || typeof event.eventSequence !== 'number') return
+  const previous = lastEventSequenceByRunId.get(event.runId)
+  if (typeof previous === 'number' && event.eventSequence > previous + 1) {
+    /**
+     * 修改原因：P1 要求 sequence gap 可见，不能只靠窗口刷新静默掩盖事件缺口。
+     * 修改方式：按 runId 记录 gap 状态，同时强制重新拉取权威 window。
+     * 目的：用户能看到当前 Monitor 正在降级恢复，失败时可点击原地重置。
+     */
+    gapRunIds.value = new Set([...gapRunIds.value, event.runId])
+    void requestRunWindow(event.runId, true)
+  }
+  lastEventSequenceByRunId.set(event.runId, Math.max(previous || 0, event.eventSequence))
+}
+
+function clearEventGap(runId: string) {
+  if (!gapRunIds.value.has(runId)) return
+  const next = new Set(gapRunIds.value)
+  next.delete(runId)
+  gapRunIds.value = next
+}
+
+function markHeartbeat(data?: any) {
+  lastHeartbeatAt.value = typeof data?.serverTime === 'number' ? Date.now() : Date.now()
+  if (Array.isArray(data?.activeRunIds)) updateActiveRunIds(data.activeRunIds)
 }
 
 function applyManifestPayload(data: any) {
@@ -259,6 +322,7 @@ async function requestRunWindow(runId: string | undefined, force = false) {
     }
     if (response?.manifest) upsertManifest(response.manifest)
     if (response?.window) {
+      clearEventGap(response.window.runId)
       upsertWindow(response.window)
       // 修改原因：窗口响应可能是 Monitor 打开后第一次可用的 transcript 基线，之前到达的 llm_delta 不能再丢弃。
       // 修改方式：窗口写入缓存后立即尝试回放同 run 的有界 live delta 缓冲。
@@ -277,6 +341,28 @@ async function requestRunWindow(runId: string | undefined, force = false) {
       void requestRunWindow(runId, true)
     }
   }
+}
+
+function resetFocusedView() {
+  const runId = focusedRun.value?.runId || focusedManifest.value?.runId
+  if (!runId) return
+  /**
+   * 修改原因：P1 要求 Monitor 卡死或 gap 后能原地重置，不再要求用户关闭再打开面板。
+   * 修改方式：清理当前 run 的窗口、事件 overlay 与 live delta buffer，然后强制重新拉取权威 window。
+   * 修改目的：在不重建 Webview 的情况下恢复可见状态。
+   */
+  const nextWindows = { ...windowsByRunId.value }
+  delete nextWindows[runId]
+  windowsByRunId.value = nextWindows
+  const nextEvents = { ...eventsByRunId.value }
+  delete nextEvents[runId]
+  eventsByRunId.value = nextEvents
+  const nextOverlays = { ...toolStatusOverlaysByRunId.value }
+  delete nextOverlays[runId]
+  toolStatusOverlaysByRunId.value = nextOverlays
+  liveDeltaBuffersByRunId.delete(runId)
+  clearEventGap(runId)
+  void requestRunWindow(runId, true)
 }
 
 async function loadOlderMessages() {
@@ -706,7 +792,11 @@ onMounted(async () => {
   // 修改方式：挂载后请求轻量 manifests，并订阅后续 manifest/event；聚焦 run 再请求窗口。
   // 修改目的：像主聊天窗口一样展示消息语义，同时避免大输出 Monitor 打开卡顿。
   disposeMessageListener = onMessageFromExtension((message: any) => {
+    if (message.type === 'subagentMonitor.heartbeat') {
+      markHeartbeat(message.data)
+    }
     if (message.type === 'subagentMonitor.event') {
+      markHeartbeat({ serverTime: Date.now(), activeRunIds: message.data?.activeRunIds })
       if (message.data?.manifest) upsertManifest(message.data.manifest)
       if (shouldApplyEventFocus({
         currentFocusRunId: focusedRunId.value,
@@ -719,6 +809,7 @@ onMounted(async () => {
         focusedRunId.value = message.data.focusRunId
       }
       if (message.data?.event) {
+        detectEventGap(message.data.event)
         appendEvent(message.data.event)
         applyLiveDeltaEvent(message.data.event)
         if (message.data.event.type === 'content_snapshot') {
@@ -741,7 +832,12 @@ onMounted(async () => {
     }
   })
 
+  heartbeatTimer = setInterval(() => {
+    heartbeatTick.value = Date.now()
+  }, 1000)
+
   const initial = await sendToExtension<{ manifests: SubAgentRunManifest[]; focusRunId?: string; activeRunIds?: string[] }>('subagents.monitorReady', {})
+  markHeartbeat({ serverTime: Date.now(), activeRunIds: initial?.activeRunIds })
   applyManifestPayload(initial)
   const initialFocus = initial?.focusRunId || focusedManifest.value?.runId
   if (initialFocus) {
@@ -752,6 +848,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => {
   disposeMessageListener?.()
+  if (heartbeatTimer) clearInterval(heartbeatTimer)
 })
 </script>
 
@@ -763,7 +860,18 @@ onBeforeUnmount(() => {
         <h1>SubAgent Monitor</h1>
         <p>以聊天窗口形式展示 SubAgent 的 System、Context、Prompt、AI 输出、思维过程和工具调用。</p>
       </div>
-      <span class="run-count">{{ orderedRuns.length }} runs</span>
+      <div class="monitor-header-actions">
+        <span class="freshness-indicator" :class="`freshness-indicator--${monitorConnectionState}`">
+          <i class="codicon" :class="monitorConnectionState === 'live' ? 'codicon-radio-tower' : monitorConnectionState === 'syncing' ? 'codicon-sync codicon-modifier-spin' : 'codicon-warning'"></i>
+          {{ freshnessLabel }}
+        </span>
+        <span class="freshness-description">{{ freshnessDescription }}</span>
+        <button class="control-btn" type="button" @click="resetFocusedView">
+          <span class="codicon codicon-refresh"></span>
+          原地重置视图
+        </button>
+        <span class="run-count">{{ orderedRuns.length }} runs</span>
+      </div>
     </header>
 
     <div v-if="orderedRuns.length > 1" class="run-tabs">
@@ -892,12 +1000,43 @@ onBeforeUnmount(() => {
   font-size: 12px;
 }
 
-.run-count {
+.monitor-header-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.run-count,
+.freshness-indicator {
   padding: 3px 8px;
   border-radius: 999px;
   background: var(--vscode-badge-background);
   color: var(--vscode-badge-foreground);
   font-size: 11px;
+  white-space: nowrap;
+}
+
+.freshness-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid transparent;
+}
+
+.freshness-indicator--stale,
+.freshness-indicator--gap,
+.freshness-indicator--degraded,
+.freshness-indicator--disconnected {
+  border-color: var(--vscode-editorWarning-foreground);
+  background: color-mix(in srgb, var(--vscode-editorWarning-foreground) 14%, var(--vscode-editorWidget-background));
+  color: var(--vscode-foreground);
+}
+
+.freshness-description {
+  font-size: 11px;
+  color: var(--vscode-descriptionForeground);
   white-space: nowrap;
 }
 

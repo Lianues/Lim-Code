@@ -107,6 +107,15 @@ export class StreamChunkProcessor {
         summaryContent: chunk.summaryContent,
         insertIndex: chunk.insertIndex
       });
+    } else if ('contextCommand' in chunk && chunk.contextCommand) {
+      this.enqueue('contextCommand', {
+        // 修改原因：context slash command 返回的是结构化 UI payload，不能走普通 complete/content 分支。
+        // 修改方式：新增 contextCommand stream chunk，前端按 payload 渲染状态卡片或确认卡片。
+        // 修改目的：保证命令结果不进入 LLM 文本流，也不丢失 iconName/nextActions/ledger 等结构字段。
+        contextCommand: true,
+        payload: chunk.payload
+      });
+      this.flush();
     } else if ('content' in chunk && chunk.content && !('cancelled' in chunk)) {
       this.enqueue('complete', {
         content: chunk.content,

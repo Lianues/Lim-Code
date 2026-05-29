@@ -94,6 +94,21 @@ export interface SubAgentConfig {
     maxRuntime?: number;
 
     /**
+     * 主对话可接收的 SubAgent 摘要最大字符数。
+     *
+     * 修改原因：SubAgent 完整输出不能直接进入主对话上下文，否则会绕过主上下文压缩预算。
+     * 修改方式：在配置类型中加入 output cap，由 resultSerializer 单点执行。
+     * 修改目的：让每个 SubAgent 可以有独立输出预算，完整 transcript 仍留在 Monitor。
+     */
+    maxOutputChars?: number;
+
+    /** 输入 prompt + context 的最大字符预算，作为 P1 token budget 的本地近似防线。 */
+    maxInputChars?: number;
+
+    /** 显式递归深度上限；当前默认 1，并保留 excludeToolNames 作为防御层。 */
+    maxDepth?: number;
+
+    /**
      * Provider 自动重试耗尽后的处理策略。
      *
      * 修改原因：单个 SubAgent 需要能覆盖全局默认策略，决定失败后是否等待 Monitor 操作。

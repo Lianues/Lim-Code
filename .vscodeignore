@@ -12,6 +12,10 @@ tsconfig.json
 # 怎么改：仅在 VS Code 打包层排除，不影响源码仓库里需要提交的代码与配置。
 # 目的：让 1.2.2 上传包只包含运行时所需产物和面向用户的说明文本。
 docs/**
+# 为什么要改：项目级 .limcode/skills 只是开发工作区配置，不能作为 VSIX 运行时内置 Skill 泄漏进安装包。
+# 怎么改：打包时排除整个 .limcode 目录；真正的内置 Skill 只从 resources/skills 发布。
+# 目的：避免同一批 Skill 同时以项目配置和插件内置资产两种来源进入包内，造成来源语义混乱。
+.limcode/**
 2026年5月27日-修复资料/**
 2026年5月28日 修复资料/**
 .tmp/**
@@ -19,7 +23,14 @@ tmp/**
 Junk/**
 ast-grep/**
 sgconfig.yml
+AGENTS.md
 *.vsix
+
+# 内置 Skill 运行时资产必须进入 VSIX。
+# 为什么要改：resources/skills 是 builtin 来源的唯一发布载体，未来可能有人扩大 resources 排除规则。
+# 怎么改：显式保留 resources/skills，确保 vsce 取反规则让内置 Skill 随插件发布。
+# 目的：让新增内置 Skill 只需添加目录，不依赖隐式打包行为。
+!resources/skills/**
 
 # 锁文件
 pnpm-lock.yaml
@@ -65,6 +76,10 @@ node_modules/**
 !node_modules/strnum/**
 !node_modules/tree-kill/**
 !node_modules/ignore/**
+# 为什么要改：Skill frontmatter 解析和 read_skill 摘要序列化在运行时 require('yaml')。
+# 怎么改：.vscodeignore 默认排除 node_modules 后，需要显式把 yaml 依赖放回 VSIX。
+# 目的：避免安装后的扩展激活时报 Cannot find module 'yaml'。
+!node_modules/yaml/**
 !node_modules/node-notifier/**
 !node_modules/growly/**
 !node_modules/is-wsl/**

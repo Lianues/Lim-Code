@@ -34,6 +34,10 @@ function getTypeIcon(ctx: PromptContextItem): { class: string; isFileIcon: boole
   switch (ctx.type) {
     case 'snippet':
       return { class: 'codicon codicon-code', isFileIcon: false }
+    case 'skill':
+      return { class: 'codicon codicon-lightbulb', isFileIcon: false }
+    case 'agent':
+      return { class: 'codicon codicon-hubot', isFileIcon: false }
     case 'text':
     default:
       return { class: 'codicon codicon-note', isFileIcon: false }
@@ -46,6 +50,8 @@ function getTypeLabel(type: string): string {
     case 'file': return t('components.input.promptContext.typeFile')
     case 'text': return t('components.input.promptContext.typeText')
     case 'snippet': return t('components.input.promptContext.typeSnippet')
+    case 'skill': return 'Skill'
+    case 'agent': return 'Agent'
     default: return type
   }
 }
@@ -117,7 +123,7 @@ function truncateContent(content: string, maxLines: number = 10, maxChars: numbe
       v-for="item in contexts"
       :key="item.id"
       class="context-tag"
-      :class="{ 'hovered': hoveredId === item.id }"
+      :class="[`context-tag--${item.type}`, { 'hovered': hoveredId === item.id }]"
       @mouseenter="handleMouseEnter(item)"
       @mouseleave="handleMouseLeave"
       @click="handleClick(item)"

@@ -5,6 +5,8 @@ import { WEBVIEW_CLIENT_IDS, type WebviewClientRegistry } from '../../../webview
 import type { HandlerContext } from '../../../webview/types';
 import { createTestRegistry } from './helpers/createTestRegistry';
 import * as vscode from 'vscode';
+import { createSkillsManager } from '../../../backend/modules/skills';
+import * as path from 'path';
 
 jest.mock('../../../webview/handlers', () => ({
   createMessageHandlerRegistry: () => {
@@ -180,7 +182,11 @@ jest.mock('../../../backend/tools/subagents', () => ({
   },
   subAgentRunEventBus: {
     subscribe: jest.fn(() => jest.fn()),
-    getSnapshots: jest.fn(() => [])
+    getSnapshots: jest.fn(() => []),
+    // 为什么要改：SubAgentMonitorPanel 心跳现在读取 manifests；测试 mock 缺少该方法会让注册表生命周期测试在打开 monitor 时误报 TypeError。
+    // 怎么改：补齐与真实 event bus 兼容的 getManifests 空数组实现。
+    // 目的：让本测试继续聚焦 webview 注册/路由行为，而不是被无关的 subagent manifest mock 缺口打断。
+    getManifests: jest.fn(() => [])
   }
 }));
 
@@ -293,17 +299,26 @@ describe('WP23 runtime registry lifecycle', () => {
     };
   });
 
-  it('constructs dependencies like activation and registers main-chat during resolveWebviewView without TypeError', () => {
+  it('constructs dependencies like activation and registers main-chat during resolveWebviewView without TypeError', async () => {
     const context = createContext();
     const provider = new ChatViewProvider(context);
     const fakeView = createFakeWebviewView();
 
     expect(() => provider.resolveWebviewView(fakeView.view, {} as any, {} as any)).not.toThrow();
+    await (provider as any).initPromise;
 
     const providerInternals = provider as any;
     expect(providerInternals.webviewClientRegistry.has(WEBVIEW_CLIENT_IDS.mainChat)).toBe(true);
     expect(providerInternals.webviewClientRegistry.getWebviewHost(WEBVIEW_CLIENT_IDS.mainChat)?.webview).toBe(fakeView.webview);
     expect(fakeView.webview.html).toContain('LimCode Chat');
+    // 为什么要改：builtin Skill 不能在 SkillsManager 内硬编码路径，必须由 VS Code 宿主把插件资源目录传入。
+    // 怎么改：测试初始化参数包含 resources/skills 路径，防止未来重构遗漏 builtin 扫描根。
+    // 目的：确保安装后的 read_skill 能发现插件随包发布的内置 Skill。
+    expect(createSkillsManager).toHaveBeenCalledWith(expect.objectContaining({
+      workspacePath: undefined,
+      globalStoragePath: 'global-storage',
+      builtinSkillsPath: path.join('extension-root', 'resources', 'skills')
+    }));
   });
 
   it('registers subagent-monitor when SubAgentMonitorPanel opens its webview panel', () => {
@@ -335,6 +350,10 @@ describe('WP23 runtime registry lifecycle', () => {
     expect(registry.has(WEBVIEW_CLIENT_IDS.subagentMonitor)).toBe(true);
     expect(registry.getWebviewHost(WEBVIEW_CLIENT_IDS.subagentMonitor)?.webview).toBe(panelSink.webview);
     expect(panelSink.webview.html).toContain("__LIMCODE_VIEW_MODE = 'subagentMonitor'");
+    // 为什么要改：SubAgentMonitorPanel.open 会启动 heartbeat timer；测试不释放会让 Jest 在用例通过后仍保持 open handle。
+    // 怎么改：断言完成后显式 dispose monitor panel。
+    // 目的：让测试既覆盖注册行为，又不会因为后台心跳定时器导致全量测试超时或被强制 kill。
+    monitorPanel.dispose();
   });
 
   it('keeps main-chat and subagent-monitor registered after sequential resolves and routes envelopes to the correct webview', async () => {

@@ -1212,9 +1212,10 @@ function buildPlanExecutionPrompt(modified: boolean): string {
     'Do not create another plan unless the user explicitly asks to revise it.',
     'Start implementation immediately.',
     'Use todo_update to track progress as you work.',
-    'Use update_progress and record_progress_milestone to keep .limcode/progress.md current at the project level when progress changes in a meaningful way.',
-    "When TODO status changes in a meaningful way, call update_plan with updateMode: 'progress_sync' to sync the latest TODO snapshot back to the plan document.",
-    "When calling update_plan with updateMode: 'progress_sync', never pass sourceArtifact. Only send path, todos, updateMode, and optional changeSummary."
+    // 为什么要改：默认 Code 模式现在不暴露 plan/progress 文档工具，旧续写文案会要求模型调用不可用工具。
+    // 怎么改：执行计划续写只要求更新会话 TODO，不再默认同步 .limcode/progress.md 或 .limcode/plans/**.md。
+    // 目的：让提示词与 Code mode toolPolicy 保持一致，避免执行计划时出现工具不可用的断裂。
+    'Do not update plan or project progress documents from Code mode unless the user explicitly switches to the dedicated workflow for those documents.'
   ].join('\n');
 }
 

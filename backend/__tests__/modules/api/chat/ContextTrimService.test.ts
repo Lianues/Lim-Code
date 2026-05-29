@@ -6,6 +6,7 @@ function createService(overrides: {
     apiHistory?: Content[];
     metadata?: unknown;
     promptTokens?: number[];
+    projectionDocument?: any;
 } = {}) {
     const history = overrides.history ?? [];
     const apiHistory = overrides.apiHistory ?? history;
@@ -14,7 +15,10 @@ function createService(overrides: {
         getHistoryForAPI: jest.fn(async () => apiHistory),
         getCustomMetadata: jest.fn(async () => overrides.metadata),
         setCustomMetadata: jest.fn(async () => undefined),
-        updateMessagesBatch: jest.fn(async () => undefined)
+        updateMessagesBatch: jest.fn(async () => undefined),
+        getMetadataRepository: jest.fn(() => ({
+            getContextProjectionDocument: jest.fn(async () => overrides.projectionDocument ?? { schemaVersion: 2, projections: {} })
+        }))
     };
     const promptManager = {
         getSystemPrompt: jest.fn(() => ''),
@@ -79,6 +83,57 @@ describe('ContextTrimService context management policy', () => {
         expect(conversationManager.setCustomMetadata).not.toHaveBeenCalled();
         expect(promptManager.getSystemPrompt).not.toHaveBeenCalled();
         expect(tokenEstimationService.countTextTokensBatch).not.toHaveBeenCalled();
+    });
+
+    it('explicitly disabled context management still reuses an existing current projection', async () => {
+        const history: Content[] = [
+            { role: 'user', parts: [{ text: 'old user' }], tokenCountByChannel: { custom: 10 } },
+            { role: 'model', parts: [{ text: 'old model' }] },
+            { role: 'user', parts: [{ text: 'kept user' }], tokenCountByChannel: { custom: 10 } }
+        ];
+        const projection = {
+            projectionId: 'ctxproj_manual_compact_test',
+            conversationId: 'conv-disabled-projection',
+            createdAt: Date.now(),
+            mode: 'trimmed',
+            startIndex: 2,
+            reversible: true,
+            lossy: false,
+            cause: 'manual_compact'
+        };
+        const { service, conversationManager } = createService({
+            history,
+            apiHistory: [history[2]],
+            projectionDocument: {
+                schemaVersion: 2,
+                currentProjectionId: projection.projectionId,
+                projections: { [projection.projectionId]: projection }
+            }
+        });
+
+        const result = await service.getHistoryWithContextTrimInfo(
+            'conv-disabled-projection',
+            {
+                type: 'custom',
+                contextManagementEnabled: false,
+                contextManagementMode: 'trim',
+                contextThreshold: 1
+            } as any,
+            { includeThoughts: true } as any
+        );
+
+        expect(result.history).toEqual([history[2]]);
+        expect(result.trimStartIndex).toBe(2);
+        expect(result.contextManagementDecision).toEqual({
+            enabled: false,
+            mode: 'off',
+            source: 'explicit',
+            action: 'projection_reused'
+        });
+        expect(conversationManager.getHistoryForAPI).toHaveBeenCalledWith('conv-disabled-projection', {
+            includeThoughts: true,
+            startIndex: 2
+        });
     });
 
     it('legacy autoSummarizeEnabled still enables summarize mode for old provider configs', async () => {

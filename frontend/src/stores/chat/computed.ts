@@ -55,16 +55,32 @@ export function createChatComputed(state: ChatStoreState): ChatStoreComputed {
   /** 最大上下文 Tokens（从配置获取） */
   const maxContextTokens = computed(() => state.currentConfig.value?.maxContextTokens || 128000)
   
-  /** 当前使用的 Tokens（从最后一条助手消息获取） */
+  /** 当前使用的 Tokens（从最后一条助手消息获取；手动 compact 后优先显示 projection 估算） */
   const usedTokens = computed(() => {
+    let latestAssistantUsage = 0
+    let latestAssistantTimestamp = 0
     // 从后往前找最后一条助手消息
     for (let i = state.allMessages.value.length - 1; i >= 0; i--) {
       const msg = state.allMessages.value[i]
       if (msg.role === 'assistant' && msg.metadata?.usageMetadata) {
-        return msg.metadata.usageMetadata.totalTokenCount || 0
+        latestAssistantUsage = msg.metadata.usageMetadata.totalTokenCount || 0
+        latestAssistantTimestamp = msg.timestamp || 0
+        break
       }
     }
-    return 0
+
+    const override = state.contextUsageOverride.value
+    if (
+      override &&
+      override.conversationId === state.currentConversationId.value &&
+      override.updatedAt >= latestAssistantTimestamp
+    ) {
+      // 修改原因：手动 compact/summarize 不是 provider 响应，不会立刻产生新的 assistant usageMetadata，旧环状指示灯会继续显示压缩前用量。
+      // 修改方式：如果当前会话的 compact 返回 tokenAfter，就在下一次 provider usage 出现前用 override 刷新 usedTokens；必须校验 conversationId 防止跨会话污染。
+      // 修改目的：用户触发压缩后能实时看到右下角上下文用量下降，同时切换会话不会显示别的会话用量。
+      return override.usedTokens
+    }
+    return latestAssistantUsage
   })
   
   /**

@@ -6,7 +6,7 @@
 
 import type { Tool } from './types';
 import { DependencyManager } from '../modules/dependencies';
-import { getReadSkillToolRegistration } from './skills';
+import { getReadSkillToolRegistration, getReadSkillResourceToolRegistration, getExecuteSkillScriptToolRegistration } from './skills';
 
 // 导出设置上下文（从 core 模块重新导出）
 export { setGlobalSettingsManager, getGlobalSettingsManager } from '../core/settingsContext';
@@ -92,8 +92,10 @@ export function getAllTools(): Tool[] {
     
     const tools = registrations.map(reg => reg());
     
-    // 始终添加 read_skill 工具（工具描述中会动态反映当前启用的 Skill 列表）
+    // 始终添加 Skills 工具（read_skill 描述中会动态反映当前启用的 Skill 列表）
     tools.push(getReadSkillToolRegistration()());
+    tools.push(getReadSkillResourceToolRegistration()());
+    tools.push(getExecuteSkillScriptToolRegistration()());
 
     // 始终添加 subagents 工具（工具内部会动态判断是否有可用的子代理）
     const subAgentRegistrations = getSubAgentsToolRegistrations();

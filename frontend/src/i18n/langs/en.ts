@@ -253,7 +253,7 @@ const en: LanguageMessages = {
             attachFile: 'Attach file',
             pinnedFiles: 'Pinned files',
             skills: 'Skills',
-            summarizeContext: 'Summarize context',
+            summarizeContext: 'Compact context',
             selectChannel: 'Select channel',
             selectModel: 'Select model',
             clickToPreview: 'Click to preview',
@@ -286,6 +286,20 @@ const en: LanguageMessages = {
                 noMatch: 'No matching models',
                 addInSettings: 'Please add models in settings'
             },
+            slashCommandPanel: {
+                descriptions: {
+                    skill: 'Add a Skill reference to this message',
+                    contextStatus: 'Inspect active projection, ledger count, lossy state and recovery actions',
+                    compact: 'Prepare a confirmed context compaction; original history stays stored',
+                    summarize: 'Prepare a confirmed lossy summary and record it in the ledger',
+                    contextUndo: 'Undo the latest reversible context operation when one exists',
+                    contextRestore: 'Restore a specific projection id shown by context status',
+                    contextReset: 'Prepare a confirmed rebuild of the working projection from history'
+                },
+                skillDisabled: 'Skill disabled in Skills panel',
+                noEnabledSkill: 'No enabled Skill found',
+                footer: 'Exact context command: Enter runs. Partial command: Tab completes. Esc closes.'
+            },
             pinnedFilesPanel: {
                 title: 'Pinned Files',
                 description: 'Pinned file contents will be sent to AI in every conversation',
@@ -304,7 +318,12 @@ const en: LanguageMessages = {
                 enableTooltip: 'Enable this skill in current conversation',
                 hint: 'AI can load skill content on demand via read_skill tool when it determines the task matches a skill',
                 openDirectory: 'Open Skills Directory',
-                refresh: 'Refresh Skills list'
+                refresh: 'Refresh Skills list',
+                diagnostics: 'View Skills load diagnostics',
+                diagnosticsCount: '{count} Skills diagnostics found. Click to view details',
+                copyDiagnostics: 'Copy all diagnostics',
+                source: 'Source',
+                noDescription: 'No description'
             },
             promptContext: {
                 title: 'Prompt Context',
@@ -464,6 +483,15 @@ const en: LanguageMessages = {
                 compressed: 'Compressed {count} messages',
                 deleteTitle: 'Delete Summary',
                 autoTriggered: 'Auto Triggered'
+            },
+            contextCommand: {
+                projection: 'Projection',
+                ledger: 'Ledger',
+                lossy: 'Lossy',
+                reversible: 'Reversible',
+                yes: 'yes',
+                no: 'no',
+                nextActions: 'Next actions'
             },
             checkpoint: {
                 userMessageBefore: 'Before User Message',
@@ -1672,7 +1700,7 @@ const en: LanguageMessages = {
                 description: 'Context summarization can compress conversation history to reduce Token usage. This page is for manual summary and summary model settings. Auto summarize is configured in "Channel Settings > Context Management".',
                 manualSection: {
                     title: 'Manual Summarization',
-                    description: 'Click the compress button on the right side of the input box to manually trigger context summarization. The summarized content will replace the original conversation history.'
+                    description: 'Click the compact button on the right side of the input box to manually trigger context compaction. If the current channel uses Auto Summarize mode, a lossy summary projection is created; original history remains stored.'
                 },
                 autoSection: {
                     title: 'Auto Summarization (Moved)',
@@ -1896,6 +1924,9 @@ const en: LanguageMessages = {
                         maxOutputLines: 'Max Output Lines',
                         maxOutputLinesHint: 'Last N lines of terminal output sent to AI, to avoid excessive output',
                         unlimitedLines: 'Unlimited',
+                        skillAccessBreakGlass: 'Allow execute_command to access Skill directories directly (dangerous)',
+                        skillAccessBreakGlassDesc: 'Off by default. When enabled, execute_command no longer blocks Skill directories or skill:// access.',
+                        skillAccessBreakGlassWarning: 'This bypasses the manifest, hash, staging, and argv safety path provided by read_skill_resource / execute_skill_script. Enable only for local debugging when you fully understand the risk.',
                         tips: {
                             onlyEnabledUsed: '• Only enabled and available shells will be used by AI',
                             statusMeaning: '• ✓ means available, ✗ means unavailable',

@@ -40,7 +40,8 @@ import type {
     SkillConfigItem,
     SubAgentsConfig,
     SubAgentConfigItem,
-    HistorySearchToolConfig
+    HistorySearchToolConfig,
+    SecuritySettings
 } from './types';
 import {
     DEFAULT_GLOBAL_SETTINGS,
@@ -74,6 +75,7 @@ import {
     DEFAULT_TOKEN_COUNT_CONFIG,
     DEFAULT_SUBAGENTS_CONFIG,
     DEFAULT_HISTORY_SEARCH_CONFIG,
+    DEFAULT_SECURITY_SETTINGS,
     getDefaultExecuteCommandConfig
 } from './types';
 
@@ -177,6 +179,48 @@ export class SettingsManager {
      */
     getSettings(): Readonly<GlobalSettings> {
         return { ...this.settings };
+    }
+
+    /**
+     * 获取安全设置。
+     *
+     * 为什么要改：execute_command 的 Skill 目录绕过开关必须从机器级 security 配置读取，而不是从可同步的 toolsConfig 读取。
+     * 怎么改：这里统一把缺失配置合并到 DEFAULT_SECURITY_SETTINGS。
+     * 目的：旧配置或迁移配置缺失 security 时仍保持 fail-closed 默认值。
+     */
+    getSecuritySettings(): Readonly<SecuritySettings> {
+        return {
+            ...DEFAULT_SECURITY_SETTINGS,
+            ...(this.settings.security || {})
+        };
+    }
+
+    /**
+     * 更新安全设置。
+     *
+     * 为什么要改：高危 break-glass 设置需要一个受控写入口，不能复用普通工具配置的透传保存逻辑。
+     * 怎么改：只接受显式建模的 security 字段，并对 allowSkillDirectoryAccessViaExecuteCommand 做严格 boolean 归一化。
+     * 目的：防止字符串 "true"、数字 1 或 toolsConfig 注入意外打开 Skill 目录 shell 访问。
+     */
+    async updateSecuritySettings(updates: Partial<SecuritySettings>): Promise<void> {
+        const oldValue = this.getSecuritySettings();
+        const newValue: SecuritySettings = {
+            ...oldValue,
+            allowSkillDirectoryAccessViaExecuteCommand: updates.allowSkillDirectoryAccessViaExecuteCommand === true
+        };
+
+        this.settings.security = newValue;
+        this.settings.lastUpdated = Date.now();
+
+        await this.storage.save(this.settings);
+
+        this.notifyChange({
+            type: 'security',
+            path: 'security',
+            oldValue,
+            newValue,
+            settings: this.settings
+        });
     }
     
     /**
@@ -1566,7 +1610,10 @@ export class SettingsManager {
      * 
      * 版本迁移：
      * - 老版本：没有 modes 字段 -> 迁移为代码模式 + 设计模式 + 计划模式 + 询问模式 + 审查模式
-     * - 新版本：已有 modes 但缺少内置模式 -> 补齐缺失的内置模式（design/plan/ask/review）
+     * - 新版本：已有 modes 但缺少内置模式 -> 补齐缺失的内置模式（code/design/plan/ask/review）
+     * - 为什么要改：Code 模式现在也有默认 toolPolicy，旧 settings 不能继续绕过默认工具面。
+     * - 怎么改：将 code 纳入内置模式 toolPolicy 同步，但只同步 toolPolicy 字段，保留用户自定义模板。
+     * - 目的：让默认 Code 模式关闭 plan/progress/review/design 工具，同时避免覆盖用户 prompt 文本。
      */
     getSystemPromptConfig(): Readonly<SystemPromptConfig> {
         const config = this.settings.toolsConfig?.system_prompt || DEFAULT_SYSTEM_PROMPT_CONFIG;
@@ -1618,6 +1665,10 @@ export class SettingsManager {
         }
 
         const builtInModes = [
+            // 为什么要改：Code 模式过去不参与内置 toolPolicy 同步，老配置会继续默认暴露专用文档工具。
+            // 怎么改：把 CODE_PROMPT_MODE 放进同一同步队列，复用下面只更新 toolPolicy 的通用逻辑。
+            // 目的：让已有配置获得新的默认 Code 工具面，同时不触碰用户自定义 template/dynamicTemplate。
+            CODE_PROMPT_MODE,
             DESIGN_PROMPT_MODE,
             PLAN_PROMPT_MODE,
             ASK_PROMPT_MODE,

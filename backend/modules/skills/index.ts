@@ -8,6 +8,8 @@
 export type {
     Skill,
     SkillFrontmatter,
+    SkillDiagnostic,
+    SkillDiagnosticSeverity,
     SkillSource,
     SkillsState,
     SkillsChangeEvent,

@@ -2,7 +2,7 @@
   "name": "limcode",
   "displayName": "Lim Code",
   "description": "Lim Code 是一个 VS Code AI 编程助手插件，支持多渠道模型、工具调用、MCP 和 SubAgent 工作流。",
-  "version": "1.2.5",
+  "version": "1.2.6",
   "publisher": "Lianues",
   "icon": "resources/icon.png",
   "engines": {
@@ -201,6 +201,22 @@
           "default": {},
           "description": "LimCode 工具与提示词等配置（可同步）"
         },
+        "limcode.security": {
+          "type": "object",
+          "scope": "machine",
+          "default": {
+            "allowSkillDirectoryAccessViaExecuteCommand": false
+          },
+          "properties": {
+            "allowSkillDirectoryAccessViaExecuteCommand": {
+              "type": "boolean",
+              "default": false,
+              "markdownDescription": "高危调试开关。开启后，`execute_command` 不再拦截 Skill 目录与 `skill://` 访问，会绕过 `read_skill_resource` / `execute_skill_script` 的 manifest、hash、staging 和 argv 安全路径。仅在你完全理解风险并需要本机调试时开启。"
+            }
+          },
+          "additionalProperties": false,
+          "description": "LimCode 安全相关机器级配置（不参与 Settings Sync）"
+        },
         "limcode.ui": {
           "type": "object",
           "default": {},
@@ -273,7 +289,8 @@
     "node-notifier": "^10.0.1",
     "tree-kill": "^1.2.2",
     "typescript": "^5.9.3",
-    "undici-types": "^6.21.0"
+    "undici-types": "^6.21.0",
+    "yaml": "^2.8.1"
   },
   "devDependencies": {
     "@ast-grep/cli": "^0.43.0",

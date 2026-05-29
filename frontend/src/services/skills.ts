@@ -18,6 +18,21 @@ export interface SkillItem {
   source?: string
 }
 
+export interface SkillDiagnosticItem {
+  severity: 'fatal' | 'warning' | 'info'
+  code: string
+  message: string
+  field?: string
+  skillId?: string
+  filePath?: string
+  source?: string
+}
+
+export interface SkillsLoadReport {
+  loaded: Array<{ skill: SkillItem; diagnostics: SkillDiagnosticItem[] }>
+  skipped: SkillDiagnosticItem[]
+}
+
 export async function listSkills(conversationId?: string | null): Promise<SkillItem[]> {
   const config = await sendToExtension<{ skills: SkillItem[] }>('getSkillsConfig', { conversationId })
   return config?.skills || []
@@ -39,6 +54,13 @@ export async function removeSkillConfig(id: string, conversationId?: string | nu
 
 export async function refreshSkills() {
   return await sendToExtension('refreshSkills', {})
+}
+
+export async function getSkillsLoadReport(): Promise<SkillsLoadReport> {
+  // 为什么要加：面板过去只能看到成功加载的 Skill 列表，无法解释 skipped reason。
+  // 怎么改：通过 webview handler 读取 SkillsManager 的结构化诊断报告。
+  // 目的：让用户在 UI 内直接看到 name mismatch、缺字段、重复 shadow 等问题。
+  return await sendToExtension<SkillsLoadReport>('getSkillsLoadReport', {})
 }
 
 export async function getSkillsDirectory(): Promise<{ path: string | null }> {

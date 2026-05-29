@@ -253,7 +253,7 @@ const zhCN: LanguageMessages = {
             attachFile: '添加附件',
             pinnedFiles: '固定文件',
             skills: 'Skills',
-            summarizeContext: '总结上下文',
+            summarizeContext: '压缩上下文',
             selectChannel: '选择渠道',
             selectModel: '选择模型',
             clickToPreview: '点击预览',
@@ -286,6 +286,20 @@ const zhCN: LanguageMessages = {
                 noMatch: '没有匹配的模型',
                 addInSettings: '请在设置中添加模型'
             },
+            slashCommandPanel: {
+                descriptions: {
+                    skill: '向本次消息添加一个 Skill 引用',
+                    contextStatus: '查看当前投影、账本数量、有损状态和恢复操作',
+                    compact: '准备一次需要确认的上下文压缩；原始历史仍会保留',
+                    summarize: '准备一次需要确认的有损总结，并记录到上下文账本',
+                    contextUndo: '在存在可恢复操作时撤销最近一次上下文操作',
+                    contextRestore: '恢复 /context-status 显示的指定投影 ID',
+                    contextReset: '准备从历史重建工作投影，需要确认后执行'
+                },
+                skillDisabled: 'Skill 已在 Skills 面板中禁用',
+                noEnabledSkill: '未找到已启用的 Skill',
+                footer: '完整上下文命令：Enter 执行。部分命令：Tab 补全。Esc 关闭。'
+            },
             pinnedFilesPanel: {
                 title: '固定文件',
                 description: '固定的文件内容会在每次对话时发送给 AI',
@@ -304,7 +318,12 @@ const zhCN: LanguageMessages = {
                 enableTooltip: '在当前对话中启用此 Skill',
                 hint: 'AI 在判断任务匹配可用 Skill 时，会通过 read_skill 工具按需加载内容',
                 openDirectory: '打开 Skills 存储目录',
-                refresh: '刷新 Skills 列表'
+                refresh: '刷新 Skills 列表',
+                diagnostics: '查看 Skills 加载诊断',
+                diagnosticsCount: '发现 {count} 条 Skills 诊断，点击查看详情',
+                copyDiagnostics: '复制全部诊断',
+                source: '来源',
+                noDescription: '无描述'
             },
             promptContext: {
                 title: '提示词上下文',
@@ -464,6 +483,15 @@ const zhCN: LanguageMessages = {
                 compressed: '已压缩 {count} 条消息',
                 deleteTitle: '删除总结',
                 autoTriggered: '自动触发'
+            },
+            contextCommand: {
+                projection: '投影',
+                ledger: '账本',
+                lossy: '有损',
+                reversible: '可恢复',
+                yes: '是',
+                no: '否',
+                nextActions: '后续操作'
             },
             checkpoint: {
                 userMessageBefore: '用户消息前存档',
@@ -1672,7 +1700,7 @@ const zhCN: LanguageMessages = {
                 description: '上下文总结功能可以压缩对话历史，减少 Token 使用量。此页面用于配置手动总结与总结模型。自动总结请在「渠道设置 > 上下文管理」中配置。',
                 manualSection: {
                     title: '手动总结',
-                    description: '点击输入框右侧的压缩按钮，可以手动触发上下文总结。总结后的内容会替换原有的历史对话。'
+                    description: '点击输入框右侧的压缩按钮，可以手动触发上下文压缩。若当前渠道选择“自动总结”模式，将生成有损总结投影；原始历史仍会保留。'
                 },
                 autoSection: {
                     title: '自动总结（已迁移）',
@@ -1896,6 +1924,9 @@ const zhCN: LanguageMessages = {
                         maxOutputLines: '最大输出行数',
                         maxOutputLinesHint: '发送给 AI 的终端输出的最后 N 行，避免输出过大',
                         unlimitedLines: '无限制',
+                        skillAccessBreakGlass: '允许 execute_command 直接访问 Skill 目录（高危）',
+                        skillAccessBreakGlassDesc: '默认关闭。开启后 execute_command 不再拦截 Skill 目录与 skill:// 访问。',
+                        skillAccessBreakGlassWarning: '这会绕过 read_skill_resource / execute_skill_script 的 manifest、hash、staging 和 argv 安全路径。仅在本机调试且完全理解风险时开启。',
                         tips: {
                             onlyEnabledUsed: '• 只有启用且可用的 Shell 才会被 AI 使用',
                             statusMeaning: '• ✓ 表示可用，✗ 表示不可用',

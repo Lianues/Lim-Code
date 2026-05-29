@@ -285,6 +285,53 @@ export interface BackendLanguageMessages {
                     summaryPrefix: string;
                     autoSummarizePrompt: string;
                 };
+                contextCommands: {
+                    labels: {
+                        projection: string;
+                        ledgerEntry: string;
+                        lossy: string;
+                        reversible: string;
+                        yes: string;
+                        no: string;
+                        nextActions: string;
+                    };
+                    confirmation: {
+                        title: string;
+                        description: string;
+                    };
+                    compact: {
+                        missingConfigTitle: string;
+                        missingConfigDescription: string;
+                        failedTitle: string;
+                        configNotFoundDescription: string;
+                        configDisabledDescription: string;
+                        notNeededTitle: string;
+                        notNeededDescription: string;
+                        unavailableTitle: string;
+                        unavailableNoBoundaryDescription: string;
+                        completeTitle: string;
+                        trimmedDescription: string;
+                    };
+                    summarize: {
+                        missingConfigTitle: string;
+                        missingConfigDescription: string;
+                        compactCompleteTitle: string;
+                        summarizeCompleteTitle: string;
+                        summarizedDescription: string;
+                        compactFailedTitle: string;
+                        summarizeFailedTitle: string;
+                        restoreBoundaryMessage: string;
+                    };
+                    status: {
+                        title: string;
+                        noProjectionDescription: string;
+                        projectionDescription: string;
+                        lossySummaryData: string;
+                        losslessTrimmedHistory: string;
+                        reversibleProjection: string;
+                        irreversibleProjection: string;
+                    };
+                };
             };
         };
     };
@@ -393,10 +440,6 @@ export interface BackendLanguageMessages {
         /** Skills 工具 */
         skills: {
             description: string;
-            exampleSkill: {
-                description: string;
-                content: string;
-            };
             errors: {
                 managerNotInitialized: string;
             };

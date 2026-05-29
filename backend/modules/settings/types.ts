@@ -286,6 +286,22 @@ export interface ExecuteCommandToolConfig {
 }
 
 /**
+ * 安全相关的机器级设置。
+ *
+ * 为什么要改：execute_command 的 Skill 目录 preflight 属于安全边界，不能放进可同步的普通工具配置里，否则 Webview 普通配置通道和 Settings Sync 都可能把高危开关扩散到其它机器。
+ * 怎么改：把 break-glass 开关独立建模为 security 配置，并要求 package.json 以 machine scope 保存。
+ * 目的：让用户仍可在本机显式开启调试逃生口，同时保证模型工具参数和可同步 toolsConfig 都不能打开它。
+ */
+export interface SecuritySettings {
+    /**
+     * 允许 execute_command 直接访问 Skill 目录与 skill:// 引用。
+     *
+     * 默认 false。只有严格等于 true 时才跳过 Skill preflight；字符串 "true"、数字 1 等 truthy 值都不生效。
+     */
+    allowSkillDirectoryAccessViaExecuteCommand: boolean;
+}
+
+/**
  * 消息类型存档点配置
  *
  * 类似工具备份配置，支持在消息前后创建存档点
@@ -612,6 +628,11 @@ export interface SkillsConfig {
      * Skills 配置列表
      */
     skills: SkillConfigItem[];
+
+    /**
+     * 禁止执行 Skill 附带脚本。开启后 execute_skill_script 无条件拒绝。
+     */
+    disableSkillShellExecution?: boolean;
     
     [key: string]: unknown;
 }
@@ -1111,6 +1132,15 @@ export interface SubAgentConfigItem {
      */
     maxRuntime?: number;
 
+    /** 主对话可接收的 SubAgent 摘要最大字符数，完整输出仍留在 Monitor。 */
+    maxOutputChars?: number;
+
+    /** 输入 prompt + context 的最大字符预算，作为 P1 token budget 的本地近似防线。 */
+    maxInputChars?: number;
+
+    /** 显式递归深度上限；当前默认 1，并保留工具声明过滤作为防御层。 */
+    maxDepth?: number;
+
     /**
      * Provider 自动重试耗尽后的处理策略。
      *
@@ -1376,6 +1406,15 @@ export interface GlobalSettings {
     storagePath?: StoragePathConfig;
     
     /**
+     * 安全相关机器级设置。
+     *
+     * 为什么要改：高危 break-glass 选项不能跟 toolsConfig 一样同步到其它设备。
+     * 怎么改：在全局设置里单独保存 security，并由 VSCodeSettingsStorage 映射到 machine scope。
+     * 目的：保证本机显式开启才影响本机 execute_command 行为。
+     */
+    security?: SecuritySettings;
+    
+    /**
      * 当前激活的渠道配置 ID
      *
      * 用于快速切换渠道
@@ -1494,7 +1533,10 @@ export interface GlobalSettings {
  */
 export interface SettingsChangeEvent {
     /** 变更类型 */
-    type: 'channel' | 'tools' | 'toolMode' | 'proxy' | 'storagePath' | 'ui' | 'full';
+    // 为什么要改：新增 security 机器级配置后，监听器需要能区分高危安全设置变更，而不是把它伪装成普通 toolsConfig 变更。
+    // 怎么改：在设置变更事件类型枚举中加入 'security'。
+    // 目的：后续审计、日志或 UI 刷新可以精确订阅安全配置变化。
+    type: 'channel' | 'tools' | 'toolMode' | 'proxy' | 'storagePath' | 'security' | 'ui' | 'full';
     
     /** 变更的字段路径（如 'toolsEnabled.read_file'） */
     path?: string;
@@ -1763,7 +1805,8 @@ export const DEFAULT_CHECKPOINT_CONFIG: CheckpointConfig = {
  */
 export const DEFAULT_TOOL_AUTO_EXEC_CONFIG: ToolAutoExecConfig = {
     delete_file: false,      // 需要确认
-  execute_command: false   // 需要确认
+    execute_command: false,  // 需要确认
+    execute_skill_script: false // Skill 脚本执行始终默认需要确认
 };
 
 /**
@@ -1852,7 +1895,8 @@ export const DEFAULT_PINNED_FILES_CONFIG: PinnedFilesConfig = {
  * 默认 Skills 配置
  */
 export const DEFAULT_SKILLS_CONFIG: SkillsConfig = {
-    skills: []
+    skills: [],
+    disableSkillShellExecution: false
 };
 
 /**
@@ -2101,13 +2145,9 @@ GUIDELINES
 - Treat legacy handoff fields such as planExecutionPrompt, planPath, or planContent as the same kind of approved implementation continuation when unified continuation fields are absent.
 - Do not say that the plan is ready for review, and do not create another plan unless the user explicitly asks to revise it.
 - For complex, multi-step work, use todo_write once to initialize/replace the TODO list, then use todo_update for incremental updates (status/content) as you progress.
-- When TODO status changes in a meaningful way during approved implementation, call update_plan with updateMode: 'progress_sync' to sync the latest TODO snapshot back to the approved plan document.
-- When calling update_plan with updateMode: 'progress_sync', NEVER pass sourceArtifact or any continuation/source-artifact carry-over fields.
-- In progress_sync mode, only send path, todos, updateMode, and optional changeSummary. Do NOT send sourceArtifactType, sourcePath, sourceContent, planPath, planContent, continuationPrompt, planExecutionPrompt, continuationApproved, or continuationIntent.
-- sourceArtifact is only valid for create_plan or update_plan with updateMode: 'revision'. sourceArtifactType/sourcePath/sourceContent are continuation fields, not update_plan arguments.
-
-- If a TODO moves into in_progress, completed, or cancelled, sync the plan promptly.
-- If the plan itself must change, use update_plan with updateMode: 'revision', then stop and wait for the user to confirm the revised plan.
+- Default Code mode intentionally keeps plan, progress, review, and design document tools out of the default tool surface. Track implementation progress with the conversation TODO list unless the user explicitly switches to the dedicated workflow that owns those documents.
+- If a TODO moves into in_progress, completed, or cancelled, update the conversation TODO list promptly.
+- If the approved plan itself must change, stop and ask the user to revise it in Plan mode instead of editing plan documents from Code mode.
 - For parallelizable investigations (or when you need to explore multiple areas quickly), use subagents to delegate focused sub-tasks.
 - If the task is simple and doesn't require tools, just respond directly without calling any tools.
 - Always maintain code readability and maintainability.
@@ -2280,13 +2320,48 @@ REVIEW MODE
 /**
  * 代码模式（默认模式）
  */
+/**
+ * 为什么要改：默认 Code 模式过去没有 toolPolicy，导致 plan/progress/review/design 专用文档工具全部默认暴露。
+ * 怎么改：显式列出 Code 模式的通用编码工具 allowlist，把专用工作流工具留给各自模式。
+ * 目的：满足“旧版默认内置工具不默认开启”，同时不影响显式 Design/Plan/Review 模式。
+ */
+export const CODE_MODE_TOOL_POLICY: string[] = [
+    'read_file',
+    'write_file',
+    'list_files',
+    'delete_file',
+    'create_directory',
+    'apply_diff',
+    'insert_code',
+    'delete_code',
+    'search_in_files',
+    'find_files',
+    'execute_command',
+    'generate_image',
+    'remove_background',
+    'crop_image',
+    'resize_image',
+    'rotate_image',
+    'get_symbols',
+    'goto_definition',
+    'find_references',
+    'todo_write',
+    'todo_update',
+    'history_search',
+    'read_skill',
+    'read_skill_resource',
+    'execute_skill_script',
+    'subagents'
+];
+
 export const CODE_PROMPT_MODE: PromptMode = {
     id: DEFAULT_MODE_ID,
     name: 'Code',
     icon: 'code',
     template: CODE_MODE_TEMPLATE,
     dynamicTemplateEnabled: true,
-    dynamicTemplate: DEFAULT_DYNAMIC_CONTEXT_TEMPLATE
+    dynamicTemplate: DEFAULT_DYNAMIC_CONTEXT_TEMPLATE,
+    toolPolicy: CODE_MODE_TOOL_POLICY
 };
 
 /**
@@ -2440,6 +2515,17 @@ export const DEFAULT_SYSTEM_PROMPT_CONFIG: SystemPromptConfig = {
 export const DEFAULT_MAX_TOOL_ITERATIONS = 50;
 
 /**
+ * 默认安全设置。
+ *
+ * 为什么要改：Skill 目录 shell 访问绕过必须 fail-closed，旧配置缺失字段时也要保持拒绝。
+ * 怎么改：默认显式设为 false，并在运行时仍使用严格布尔判断。
+ * 目的：让安全审计可以直接看到默认不允许 execute_command 访问 Skill 根目录。
+ */
+export const DEFAULT_SECURITY_SETTINGS: SecuritySettings = {
+    allowSkillDirectoryAccessViaExecuteCommand: false
+};
+
+/**
  * 默认上下文感知配置
  *
  * ignorePatterns 使用与 COMMON_IGNORE_PATTERNS 相同的默认规则
@@ -2459,6 +2545,7 @@ export const DEFAULT_CONTEXT_AWARENESS_CONFIG: ContextAwarenessConfig = {
  */
 export const DEFAULT_GLOBAL_SETTINGS: GlobalSettings = {
     maxToolIterations: DEFAULT_MAX_TOOL_ITERATIONS,
+    security: DEFAULT_SECURITY_SETTINGS,
     toolsEnabled: {
         // 默认所有工具启用
     },

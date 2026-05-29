@@ -63,18 +63,50 @@ export function getContexts(nodes: EditorNode[]): PromptContextItem[] {
  * 将节点数组序列化为发送格式
  * 格式：文本部分保持原样，上下文以 <lim-context> 标签包裹并就地插入
  */
+export function escapeXmlAttr(value: string): string {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
+
+export function escapeXmlText(value: string): string {
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
+
+const RESERVED_CONTEXT_ATTRS = new Set(['type', 'path', 'title', 'language', 'binary'])
+const CONTEXT_ATTR_NAME_RE = /^[A-Za-z_][A-Za-z0-9_.:-]*$/
+
+export function buildContextAttributes(ctx: PromptContextItem): Record<string, string> {
+  const attrs: Record<string, string> = { type: ctx.type }
+  if (ctx.filePath) attrs.path = ctx.filePath
+  if (ctx.language) attrs.language = ctx.language
+  if (ctx.isTextContent === false) attrs.binary = 'true'
+
+  for (const [key, value] of Object.entries(ctx.attributes || {})) {
+    if (!CONTEXT_ATTR_NAME_RE.test(key)) continue
+    if (RESERVED_CONTEXT_ATTRS.has(key)) continue
+    attrs[key] = String(value)
+  }
+
+  attrs.title = ctx.title
+  return attrs
+}
+
 export function serializeNodes(nodes: EditorNode[]): string {
   return nodes.map(node => {
     if (node.type === 'text') {
       return node.text
     } else {
       const ctx = node.context
-      const attrs: string[] = [`type="${ctx.type}"`]
-      if (ctx.filePath) attrs.push(`path="${ctx.filePath}"`)
-      if (ctx.language) attrs.push(`language="${ctx.language}"`)
+      const attrs = Object.entries(buildContextAttributes(ctx))
+        .map(([key, value]) => `${key}="${escapeXmlAttr(value)}"`)
       const isBinaryContext = ctx.isTextContent === false
-      if (isBinaryContext) attrs.push('binary="true"')
-      return `<lim-context ${attrs.join(' ')} title="${ctx.title}">\n${isBinaryContext ? '' : ctx.content}\n</lim-context>`
+      return `<lim-context ${attrs.join(' ')}>\n${isBinaryContext ? '' : escapeXmlText(ctx.content)}\n</lim-context>`
     }
   }).join('')
 }

@@ -27,6 +27,10 @@ function getContextIcon(ctx: PromptContextItem): { class: string; isFileIcon: bo
   switch (ctx.type) {
     case 'snippet':
       return { class: 'codicon codicon-code', isFileIcon: false }
+    case 'skill':
+      return { class: 'codicon codicon-lightbulb', isFileIcon: false }
+    case 'agent':
+      return { class: 'codicon codicon-hubot', isFileIcon: false }
     case 'text':
     default:
       return { class: 'codicon codicon-note', isFileIcon: false }
@@ -110,7 +114,7 @@ async function handleContextClick(ctx: PromptContextItem) {
       <span
         v-else
         class="context-chip"
-        :class="{ hovered: hoveredContextId === node.context.id }"
+        :class="[`context-chip--${node.context.type}`, { hovered: hoveredContextId === node.context.id }]"
         @click.stop="handleContextClick(node.context)"
         @mouseenter="handleContextMouseEnter(node.context)"
         @mouseleave="handleContextMouseLeave"

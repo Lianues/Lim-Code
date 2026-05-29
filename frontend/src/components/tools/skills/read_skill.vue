@@ -21,8 +21,24 @@ const isSuccess = computed(() => props.result?.success === true)
 // 获取错误信息
 const errorMessage = computed(() => props.result?.error as string | undefined)
 
-// 获取返回数据
-const resultData = computed(() => props.result?.data as { name?: string; basePath?: string; content?: string } | undefined)
+interface SkillResourceDisplayItem {
+  relativePath: string
+  kind: string
+  textReadable?: boolean
+  maybeExecutable?: boolean
+}
+
+// 获取返回数据。basePath 仅用于兼容旧历史工具结果；新版 schemaVersion=2 不再返回本地绝对路径。
+const resultData = computed(() => props.result?.data as {
+  name?: string
+  skillName?: string
+  skillUri?: string
+  basePath?: string
+  content?: string
+  resources?: SkillResourceDisplayItem[]
+} | undefined)
+
+const resourceCount = computed(() => resultData.value?.resources?.length || 0)
 
 // 内容长度
 const contentLength = computed(() => {
@@ -42,13 +58,21 @@ const contentLength = computed(() => {
           Loaded skill: {{ resultData.name || skillName }}
         </div>
         <div class="skill-details">
-          <div class="detail-item">
-            <span class="detail-label">Base path:</span>
+          <div v-if="resultData.skillUri" class="detail-item">
+            <span class="detail-label">Skill URI:</span>
+            <span class="detail-value">{{ resultData.skillUri }}</span>
+          </div>
+          <div v-else-if="resultData.basePath" class="detail-item legacy-path">
+            <span class="detail-label">Legacy base path:</span>
             <span class="detail-value">{{ resultData.basePath }}</span>
           </div>
           <div class="detail-item">
             <span class="detail-label">Content:</span>
             <span class="detail-value">{{ contentLength.toLocaleString() }} chars</span>
+          </div>
+          <div v-if="resourceCount > 0" class="detail-item">
+            <span class="detail-label">Resources:</span>
+            <span class="detail-value">{{ resourceCount }} manifest item(s)</span>
           </div>
         </div>
       </div>

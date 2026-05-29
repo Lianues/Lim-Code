@@ -285,7 +285,10 @@ export class StoragePathManager {
             let copiedFiles = 0;
             
             // 要迁移的子目录
-            const subDirs = ['conversations', 'snapshots', 'checkpoints', 'mcp', 'dependencies', 'diffs', 'skills'];
+            // 为什么要改：旧 globalStoragePath/skills 已退役，不能在普通数据迁移中被静默复制到新位置。
+            // 怎么改：默认迁移清单只保留当前运行时数据目录，不包含 legacy skills；Skill 迁移必须走单独的显式用户确认流程。
+            // 目的：符合“旧 Skill 只提示迁移，不自动复制、不自动删除”的升级安全边界。
+            const subDirs = ['conversations', 'snapshots', 'checkpoints', 'mcp', 'dependencies', 'diffs'];
             
             for (let i = 0; i < subDirs.length; i++) {
                 const subDir = subDirs[i];

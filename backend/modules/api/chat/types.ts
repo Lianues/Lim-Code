@@ -5,6 +5,7 @@
  */
 
 import type { Content } from '../../conversation/types';
+import type { UiStatusPayload } from '../../conversation/contextTypes';
 import type { StreamChunk } from '../../channel/types';
 import type { CheckpointRecord } from '../../checkpoint';
 
@@ -218,6 +219,18 @@ export interface ChatStreamAutoSummaryStatusData {
     status: 'started' | 'completed' | 'failed';
     /** 可选状态说明 */
     message?: string;
+}
+
+export interface ChatStreamContextCommandData {
+    /** 对话 ID */
+    conversationId: string;
+    /**
+     * 修改原因：slash command 结果需要卡片/确认 payload，不能伪装成普通 LLM 文本 chunk。
+     * 修改方式：新增 contextCommand 流式数据，payload 使用 conversation/contextTypes 中的 UiStatusPayload。
+     * 修改目的：前后端共享同一 context command schema，便于确认、恢复和 no-emoji 静态检查。
+     */
+    contextCommand: true;
+    payload: UiStatusPayload;
 }
 
 // ==================== 重试消息 ====================

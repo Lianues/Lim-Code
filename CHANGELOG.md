@@ -2,6 +2,27 @@
 
 All notable changes to the "Lim Code" extension will be documented in this file.
 
+## [1.2.6] - 2026-05-29
+
+### 新增（Skill 与斜杠入口）
+  - 主输入框新增 `/skill` 斜杠入口，可在任意文本位置通过词边界触发，搜索并插入 Skill 引用 chip；普通 `@text` / `/text` 不会被后端强制转换。
+  - Skill chip 复用现有上下文 chip 体系，序列化为 `<lim-context type="skill" ...>`，并支持扩展 attributes 安全往返。
+
+### 安全（Skill 资源与脚本执行）
+  - `read_skill` 升级为 schemaVersion 2，不再向模型暴露本地绝对 `basePath`，改为返回 `skill://` 引用和有界资源 manifest。
+  - 新增 `read_skill_resource`，仅允许读取 manifest 中 `textReadable=true` 的 Skill 文本资源，并在读取时执行路径规范化、realpath containment 和 sha256 校验。
+  - 新增 `execute_skill_script`，仅允许执行 manifest 中允许的 Skill 脚本；脚本执行默认需要用户确认，支持 `disableSkillShellExecution` 总开关，并通过 staging 副本 + argv 执行降低 shell 注入和 TOCTOU 风险。
+  - `execute_command` 增加 Skill 目录与 `skill://` 访问 preflight，提示使用专用 Skill 资源/脚本工具，避免模型手工拼接 Skill 绝对路径。
+
+### 修复（上下文序列化）
+  - `<lim-context>` 属性和正文统一 XML 转义，解析器支持扩展属性往返，修复标题、路径或正文含 XML 特殊字符时的格式破坏风险。
+
+### 测试
+  - `npm run compile`、`npm run build:frontend`、`npm run test -- --runInBand` 已通过。
+
+### 发布整理
+  - 根扩展包、前端包、lockfile 和发布说明统一更新到 `1.2.6`。
+
 ## [1.2.5] - 2026-05-29
 
 ### 修复（Token 速度）

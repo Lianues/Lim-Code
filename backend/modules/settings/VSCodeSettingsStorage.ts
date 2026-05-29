@@ -47,7 +47,10 @@ const SYNCABLE_KEYS = [
 ] as const;
 
 // 这些 key 应在 package.json 中声明 scope: "machine"
-const MACHINE_KEYS = ['proxy', 'storagePath'] as const;
+// 为什么要改：security 中包含 execute_command 的 Skill 目录 break-glass 开关，不能跟 toolsConfig 一样参与 Settings Sync。
+// 怎么改：把 security 纳入 machine key 集合，并在 package.json 中声明 machine scope。
+// 目的：让高危开关只影响当前机器，避免同步到其它环境。
+const MACHINE_KEYS = ['proxy', 'storagePath', 'security'] as const;
 
 type SyncableKey = typeof SYNCABLE_KEYS[number];
 type MachineKey = typeof MACHINE_KEYS[number];
@@ -108,7 +111,8 @@ export class VSCodeSettingsStorage implements SettingsStorage {
                 
                 // Machine scope
                 config.update('proxy', settings.proxy, vscode.ConfigurationTarget.Global),
-                config.update('storagePath', settings.storagePath, vscode.ConfigurationTarget.Global)
+                config.update('storagePath', settings.storagePath, vscode.ConfigurationTarget.Global),
+                config.update('security', settings.security, vscode.ConfigurationTarget.Global)
             ];
 
             await Promise.all(updates);
@@ -150,6 +154,7 @@ export class VSCodeSettingsStorage implements SettingsStorage {
         if (opts.includeMachine) {
             settings.proxy = config.get('proxy');
             settings.storagePath = config.get('storagePath');
+            settings.security = config.get('security');
         }
 
         // toolsEnabled 在类型上是必填字段（但这里可能为 undefined），兜底给空对象

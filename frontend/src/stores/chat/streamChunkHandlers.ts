@@ -24,6 +24,7 @@ import {
 } from './state'
 import { syncTotalMessagesFromWindow, trimWindowFromTop } from './windowUtils'
 import { getToolApprovalStopKind } from '../../utils/toolContinuations'
+import { t } from '../../i18n'
 
 function getNextBackendIndex(state: ChatStoreState): number {
   return state.windowStartIndex.value + state.allMessages.value.length
@@ -995,6 +996,48 @@ export function handleAutoSummaryStatus(
  * 自动总结是在后端历史中直接 insertContent 的，
  * 前端需要同步插入一条总结消息，避免必须重载历史才能看到。
  */
+export function handleContextCommand(chunk: StreamChunk, state: ChatStoreState): void {
+  if (!chunk.contextCommand || !chunk.payload) return
+  /**
+   * 修改原因：context slash command 是本地协议结果，不应等待后端历史刷新后才可见，也不能当普通 LLM chunk 合并。
+   * 修改方式：把结构化 payload 投影为一条 localOnly assistant 消息，metadata 保留原始 contextCommand payload 供后续卡片组件升级。
+   * 修改目的：用户立即看到状态/确认/恢复边界，同时不把命令文本写入主模型上下文。
+   */
+  const payload = chunk.payload
+  // 修改原因：localOnly 的 context command 内容虽然主要由卡片渲染，但复制、无 metadata 降级或调试时仍会显示 content。
+  // 修改方式：把 Markdown fallback 的字段标签接入前端 i18n，命令文本本身保持原样以便用户执行。
+  // 修改目的：避免 compact/summarize 卡片在中文界面中复制出英文标签。
+  const booleanLabel = (value: boolean) => value
+    ? t('components.message.contextCommand.yes')
+    : t('components.message.contextCommand.no')
+  const lines = [`### ${payload.title}`, '', payload.description]
+  if (payload.projectionId) lines.push('', `${t('components.message.contextCommand.projection')}: \`${payload.projectionId}\``)
+  if (payload.ledgerEntryId) lines.push(`${t('components.message.contextCommand.ledger')}: \`${payload.ledgerEntryId}\``)
+  if (typeof payload.lossy === 'boolean') lines.push(`${t('components.message.contextCommand.lossy')}: ${booleanLabel(payload.lossy)}`)
+  if (typeof payload.reversible === 'boolean') lines.push(`${t('components.message.contextCommand.reversible')}: ${booleanLabel(payload.reversible)}`)
+  if (payload.nextActions?.length) {
+    lines.push('', `${t('components.message.contextCommand.nextActions')}:`, ...payload.nextActions.map(action => `- \`${action}\``))
+  }
+
+  appendMessage(state, {
+    id: generateId(),
+    role: 'assistant',
+    content: lines.join('\n'),
+    timestamp: Date.now(),
+    streaming: false,
+    localOnly: true,
+    metadata: {
+      contextCommand: payload
+    }
+  } as Message)
+
+  state.isWaitingForResponse.value = false
+  state.isStreaming.value = false
+  state.streamingMessageId.value = null
+  state.activeStreamId.value = null
+  state.pendingModelOverride.value = null
+}
+
 export function handleAutoSummary(
   chunk: StreamChunk,
   state: ChatStoreState

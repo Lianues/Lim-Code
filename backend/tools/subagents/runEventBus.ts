@@ -105,6 +105,12 @@ export interface SubAgentRunContentWindowOptions {
 export interface SubAgentRunConversationStore {
     getCustomMetadata(conversationId: string, key: string): Promise<unknown>;
     setCustomMetadata(conversationId: string, key: string, value: unknown): Promise<void>;
+    getMetadataRepository?: () => {
+      updateSubAgentRunsValue?: (
+        conversationId: string,
+        updater: (runs: Record<string, unknown>) => Record<string, unknown> | void | Promise<Record<string, unknown> | void>
+      ) => Promise<Record<string, unknown>>;
+    };
 }
 
 type SubAgentRunListener = (event: SubAgentRunEvent, snapshot: SubAgentRunSnapshot) => void;
@@ -550,8 +556,6 @@ class SubAgentRunEventBus {
         const next = previous
             .catch(() => undefined)
             .then(async () => {
-                const raw = await store.getCustomMetadata(snapshot.conversationId!, SUBAGENT_RUNS_METADATA_KEY);
-                const persistedMap = normalizePersistedMap(raw);
                 ensureSnapshotProtocolFields(snapshot);
                 const record: SubAgentRunPersistedRecord = {
                     runId: snapshot.runId,
@@ -563,6 +567,19 @@ class SubAgentRunEventBus {
                     contentRevision: snapshot.contentRevision,
                     eventSequence: snapshot.eventSequence
                 };
+                const repository = store.getMetadataRepository?.();
+                if (repository?.updateSubAgentRunsValue) {
+                    // 修改原因：P1 中央事实源要求 subAgentRuns 也经过 typed metadata repository，不能继续只有裸 setCustomMetadata 写路径。
+                    // 修改方式：优先使用 updateSubAgentRunsValue 的白名单串行更新；旧 store/mock 缺少 repository 时保留 legacy fallback。
+                    // 修改目的：兼容历史恢复与测试夹层，同时把 SubAgentRunRecord 扩展纳入统一 metadata 更新队列。
+                    await repository.updateSubAgentRunsValue(snapshot.conversationId!, runs => {
+                        runs[runId] = record as unknown as Record<string, unknown>;
+                        return runs;
+                    });
+                    return;
+                }
+                const raw = await store.getCustomMetadata(snapshot.conversationId!, SUBAGENT_RUNS_METADATA_KEY);
+                const persistedMap = normalizePersistedMap(raw);
                 persistedMap[runId] = record;
                 await store.setCustomMetadata(snapshot.conversationId!, SUBAGENT_RUNS_METADATA_KEY, persistedMap);
             })

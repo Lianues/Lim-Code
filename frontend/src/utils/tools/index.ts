@@ -35,6 +35,11 @@ import './lsp/find_references'
 
 // Skills 工具
 import './skills/read_skill'
+// 为什么要加：read_skill_resource / execute_skill_script 已是后端正式 Skill 工具，但前端缺少专用渲染注册。
+// 怎么改：仅通过 toolRegistry 的副作用导入注册前端组件，不改通信协议或 ToolMessage 分发模型。
+// 目的：主聊天和 SubAgent Monitor 复用同一套工具卡片渲染链路，避免为 Skill 工具新增特判。
+import './skills/read_skill_resource'
+import './skills/execute_skill_script'
 
 // SubAgents 工具
 import './subagents/subagents'

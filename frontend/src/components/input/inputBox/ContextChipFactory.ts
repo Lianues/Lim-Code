@@ -17,9 +17,10 @@ export function createContextChipElement(
   handlers: ChipHandlers
 ): HTMLSpanElement {
   const chip = document.createElement('span')
-  chip.className = 'context-chip'
+  chip.className = `context-chip context-chip--${ctx.type}`
   chip.contentEditable = 'false'
   chip.dataset.contextId = ctx.id
+  chip.dataset.contextType = ctx.type
 
   const icon = document.createElement('i')
   icon.className = iconClass

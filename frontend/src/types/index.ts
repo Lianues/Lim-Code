@@ -471,6 +471,8 @@ export type VSCodeRequestType =
   | 'conversation.setMetadata'
   | 'conversation.setTitle'
   | 'conversation.setWorkspaceUri'
+  | 'context.compact'
+  | 'context.getStatus'
   | 'countSystemPromptTokens'
   | 'createMcpServer'
   | 'deleteMcpServer'
@@ -704,6 +706,50 @@ export interface PendingToolCall {
   args: Record<string, unknown>
 }
 
+export interface ContextStatusSnapshot {
+  conversationId: string
+  schemaVersion: number
+  ledgerEntryCount: number
+  readonlyLegacy: boolean
+  historyLength?: number
+  degradedReason?: string
+  nextActions: string[]
+  projection?: {
+    projectionId: string
+    mode: string
+    startIndex: number
+    reversible: boolean
+    lossy: boolean
+    tokenEstimate?: {
+      before?: number
+      after?: number
+    }
+  }
+  lastOperation?: {
+    ledgerEntryId: string
+    operation: string
+    status: string
+  }
+}
+
+export interface ContextCommandPayload {
+  schemaVersion: number
+  kind: 'status' | 'confirmation' | 'success' | 'warning' | 'error'
+  title: string
+  description: string
+  iconName: string
+  command?: string
+  confirmationToken?: string
+  lossy?: boolean
+  reversible?: boolean
+  projectionId?: string
+  ledgerEntryId?: string
+  tokenBefore?: number
+  tokenAfter?: number
+  nextActions?: string[]
+  status?: ContextStatusSnapshot
+}
+
 /**
  * 前端接收的流式消息格式
  */
@@ -720,6 +766,7 @@ export interface StreamChunk {
     | 'toolStatus'
     | 'autoSummaryStatus'
     | 'autoSummary'
+    | 'contextCommand'
   conversationId: string
   /** 前端生成的流请求 ID，用于过滤迟到/过期 chunk */
   /** 事件创建时间戳（毫秒），用于声音提醒过期丢弃等场景 */
@@ -769,6 +816,14 @@ export interface StreamChunk {
   summaryContent?: Content
   /** 总结消息插入位置（完整历史绝对索引） */
   insertIndex?: number
+
+  /**
+   * 修改原因：/context-* 命令返回结构化状态/确认 payload，不能伪装成普通模型 complete 消息。
+   * 修改方式：为 stream chunk 增加 contextCommand 和 payload 字段，chat store 负责投影为本地 UI 消息。
+   * 修改目的：保留 ledger/projection/nextActions/iconName 等结构化信息，满足 P1 可观测和确认要求。
+   */
+  contextCommand?: boolean
+  payload?: ContextCommandPayload
 }
 
 // ============ 错误类型 ============

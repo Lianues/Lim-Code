@@ -29,6 +29,7 @@ import {
   removeLineBreakForward
 } from './inputBox/useEditorDeletion'
 import { useAtTrigger } from './inputBox/useAtTrigger'
+import { useSlashTrigger } from './inputBox/useSlashTrigger'
 
 const { t } = useI18n()
 
@@ -61,12 +62,28 @@ const emit = defineEmits<{
   'close-at-picker': []
   'at-query-change': [query: string]
   'at-picker-keydown': [key: string]
+  'trigger-slash-picker': [query: string, triggerPosition: number]
+  'close-slash-picker': []
+  'slash-query-change': [query: string]
+  'slash-picker-keydown': [key: string]
   /** 点击徽章：交给父层决定如何打开预览 */
   'open-context': [ctx: PromptContextItem]
 }>()
 
 const editorRef = ref<HTMLDivElement>()
 const currentRows = ref(props.minRows || 4)
+
+// 修改原因：这些 context commands 本身就是完整操作，用户按 Enter 时预期执行，而不是只补全输入框文本。
+// 修改方式：维护一份只影响键盘交互的直接执行命令集合；具体业务仍由后端 registry 处理。
+// 修改目的：避免 `/context-status` 首次 Enter 被 slash 面板吞掉，提升命令入口可理解性。
+const DIRECT_SUBMIT_SLASH_COMMANDS = new Set([
+  '/context-status',
+  '/compact',
+  '/summarize',
+  '/context-undo',
+  '/context-restore',
+  '/context-reset'
+])
 
 // 调整高度时的检测状态
 const cachedLineHeight = ref(0)
@@ -89,6 +106,13 @@ const atTrigger = useAtTrigger({
   onClose: () => emit('close-at-picker'),
   onQueryChange: (query) => emit('at-query-change', query),
   onPickerKeydown: (key) => emit('at-picker-keydown', key)
+})
+
+const slashTrigger = useSlashTrigger({
+  onOpen: (query, triggerPosition) => emit('trigger-slash-picker', query, triggerPosition),
+  onClose: () => emit('close-slash-picker'),
+  onQueryChange: (query) => emit('slash-query-change', query),
+  onPickerKeydown: (key) => emit('slash-picker-keydown', key)
 })
 
 // Some contexts may be inserted imperatively (e.g. after async file read).
@@ -275,6 +299,10 @@ function getContextIcon(ctx: PromptContextItem): { class: string; isFileIcon: bo
   switch (ctx.type) {
     case 'snippet':
       return { class: 'codicon codicon-code', isFileIcon: false }
+    case 'skill':
+      return { class: 'codicon codicon-lightbulb', isFileIcon: false }
+    case 'agent':
+      return { class: 'codicon codicon-hubot', isFileIcon: false }
     case 'text':
     default:
       return { class: 'codicon codicon-note', isFileIcon: false }
@@ -357,6 +385,7 @@ function handleInput() {
   const cursorPos = getCaretTextOffset(editor)
 
   atTrigger.onTextChanged(textContent, cursorPos)
+  slashTrigger.onTextChanged(textContent, cursorPos)
 
   emit('update:nodes', newNodes)
 
@@ -371,11 +400,35 @@ function handleInput() {
   })
 }
 
+function shouldSubmitExactContextCommand(): boolean {
+  const [command] = getPlainText(props.nodes).trim().toLowerCase().split(/\s+/)
+  return DIRECT_SUBMIT_SLASH_COMMANDS.has(command)
+}
+
 function handleKeydown(e: KeyboardEvent) {
   const editor = editorRef.value
   if (!editor) return
 
   if (atTrigger.handleKeydown(e)) return
+
+  if (
+    e.key === 'Enter' &&
+    !e.shiftKey &&
+    !e.altKey &&
+    props.submitOnEnter &&
+    slashTrigger.isOpen() &&
+    shouldSubmitExactContextCommand()
+  ) {
+    // 修改原因：用户完整输入 `/context-status` 后按 Enter 期待“执行诊断”，旧逻辑却把 Enter 当作补全键，导致用户误以为命令被发给 AI 或没有反应。
+    // 修改方式：当当前输入正好是可直接执行的 context slash command 时，先关闭斜杠面板，再走普通 send 事件；非完整命令仍由面板处理补全。
+    // 修改目的：让 `/context-status` 成为真正可发现、可执行的上下文协议入口，同时保留 Tab/Enter 补全部分命令的体验。
+    e.preventDefault()
+    slashTrigger.closeAndNotify()
+    emit('send')
+    return
+  }
+
+  if (slashTrigger.handleKeydown(e)) return
 
   const onContextRemoved = (removedId: string) => {
     if (previewContext.value?.id === removedId) previewContext.value = null
@@ -520,6 +573,10 @@ function closeAtPicker() {
   atTrigger.reset()
 }
 
+function closeSlashPicker() {
+  slashTrigger.reset()
+}
+
 function insertFilePath(_path: string) {
   replaceAtTriggerWithText('')
 }
@@ -534,6 +591,22 @@ function replaceAtTriggerWithText(replacement: string = '') {
 
   if (!replaced) return
 
+  handleInput()
+}
+
+function replaceSlashTriggerWithText(replacement: string = '', options: { keepOpen?: boolean } = {}) {
+  if (!editorRef.value) return
+
+  const replaced = slashTrigger.replaceSlashTrigger(editorRef.value, replacement, {
+    getCaretTextOffset,
+    replaceTextRangeByOffsets
+  }, options)
+
+  if (!replaced) return
+
+  // 为什么要把 keepOpen 透传到底层触发器：`/skill` 的补全不是最终选择，而是进入 Skill 查询阶段。
+  // 怎么做：替换 DOM 文本后统一走 handleInput，让节点模型、纯文本和弹层查询保持一致。
+  // 目的：保持 contenteditable、store 与斜杠面板三者同步，避免 Tab/Enter 补全后面板丢失焦点。
   handleInput()
 }
 
@@ -660,8 +733,10 @@ onBeforeUnmount(() => {
 defineExpose({
   focus,
   closeAtPicker,
+  closeSlashPicker,
   insertFilePath,
   replaceAtTriggerWithText,
+  replaceSlashTriggerWithText,
   insertContextAtCaret,
   insertPathsAsAtText,
   getAtTriggerPosition
@@ -805,6 +880,15 @@ defineExpose({
 .input-editor :deep(.context-chip:hover) {
   background: rgba(0, 122, 204, 0.24);
   border-color: rgba(0, 122, 204, 0.4);
+}
+
+.input-editor :deep(.context-chip--skill) {
+  background: rgba(204, 167, 0, 0.16);
+  border-color: rgba(204, 167, 0, 0.34);
+}
+
+.input-editor :deep(.context-chip--skill .codicon) {
+  color: var(--vscode-charts-yellow);
 }
 
 .input-editor :deep(.context-chip .codicon),

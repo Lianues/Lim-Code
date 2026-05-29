@@ -23,6 +23,7 @@ import { getDefaultExecuteCommandConfig } from '../../modules/settings';
 import type { ShellConfig } from '../../modules/settings';
 import { TaskManager, type TaskEvent } from '../taskManager';
 import { getAllWorkspaces, parseWorkspacePath } from '../utils';
+import { getSkillsManager } from '../../modules/skills';
 import { t } from '../../i18n';
 
 /** 终端任务类型常量 */
@@ -579,6 +580,107 @@ function getDefaultShellType(): string {
     return config.defaultShell;
 }
 
+function normalizeForSkillPreflight(input: string): string {
+    let normalized = input.replace(/\\/g, '/').toLowerCase();
+    normalized = normalized.replace(/\/+/g, '/');
+    while (normalized.includes('/./')) {
+        normalized = normalized.replace(/\/\.\//g, '/');
+    }
+    normalized = normalized.replace(/(^|\s)\.\//g, '$1');
+    return normalized;
+}
+
+function collapseRelativeSegmentsForSkillPreflight(input: string): string {
+    // 为什么要加：只做 substring 检查时，`resources/not-here/../skills` 不包含 `resources/skills`，但 shell 会把它解析到受保护目录。
+    // 怎么改：在命令文本层做保守的 `segment/..` 折叠，生成额外检测变体；不把结果用于执行，只用于拒绝风险命令。
+    // 目的：阻断常见 `..` 路径归一化绕过，维持 Skill 资源必须走 manifest/hash 读取的安全边界。
+    let current = input;
+    for (let i = 0; i < 20; i++) {
+        const next = current.replace(/\/(?!\.\.\/)[^\/\s"'`]+\/\.\.(?=\/)/g, '');
+        if (next === current) break;
+        current = next;
+    }
+    return current;
+}
+
+function getSkillPreflightTextVariants(input: string): string[] {
+    // 为什么要加：PowerShell 和 POSIX shell 都能用静态字符串拼接把 `resources/skills` 拆开，从而绕过原始文本 marker。
+    // 怎么改：生成多份只用于检测的文本变体：原文、去引号、去引号并移除简单 `+` 拼接、以及这些变体的 `..` 折叠版本。
+    // 目的：覆盖常见静态拼接绕过，同时不改变真正交给 shell 的命令文本。
+    const variants = new Set<string>();
+    const normalized = normalizeForSkillPreflight(input);
+    variants.add(normalized);
+
+    const quoteStripped = normalizeForSkillPreflight(input.replace(/["'`]/g, ''));
+    variants.add(quoteStripped);
+
+    const simpleConcatStripped = normalizeForSkillPreflight(input.replace(/["'`]/g, '').replace(/\s*\+\s*/g, ''));
+    variants.add(simpleConcatStripped);
+
+    // 为什么要加：PowerShell、CMD 和 POSIX shell 可能把 `resources/skill?/` 或 `resources/skil*/` 展开到 resources/skills/。
+    // 怎么改：为常见 glob 字符生成保守检测变体；这些变体只用于拒绝风险命令，不影响实际执行字符串。
+    // 目的：减少通配符把 Skill 根目录拆开后绕过 manifest/hash 访问路径的机会。
+    const globCandidates = Array.from(variants);
+    for (const variant of globCandidates) {
+        variants.add(variant.replace(/\[s\]/g, 's').replace(/\?/g, 's'));
+        variants.add(variant.replace(/\[s\]/g, 's').replace(/\*/g, 's'));
+        variants.add(variant.replace(/\[s\]/g, 's').replace(/\*/g, 'ls'));
+    }
+
+    for (const variant of Array.from(variants)) {
+        variants.add(collapseRelativeSegmentsForSkillPreflight(variant));
+    }
+
+    return Array.from(variants);
+}
+
+function isSkillDirectoryAccessViaExecuteCommandAllowed(): boolean {
+    const settingsManager = getGlobalSettingsManager();
+    const security = settingsManager?.getSecuritySettings();
+
+    // 为什么要改：用户需要一个本机显式开启的 break-glass 调试开关，但不能让可同步 toolsConfig 或模型工具参数打开。
+    // 怎么改：只读取机器级 security 配置，并且必须严格等于 true 才放行。
+    // 目的：字符串 "true"、数字 1、旧配置缺失字段和 toolsConfig 注入都保持默认拒绝。
+    return security?.allowSkillDirectoryAccessViaExecuteCommand === true;
+}
+
+function getSkillAccessPreflightRejection(command: string, cwd?: string): string | null {
+    if (isSkillDirectoryAccessViaExecuteCommandAllowed()) {
+        // 为什么要改：开启 break-glass 后用户明确要求 execute_command 不再检测 Skill 目录 preflight。
+        // 怎么改：在规范化路径和读取 Skill root 前直接返回 null，避免继续做 Skill 访问探测。
+        // 目的：让开关语义保持为“跳过这类 preflight”，而不是先检测再忽略。
+        return null;
+    }
+
+    const combined = `${command || ''}\n${cwd || ''}`;
+    const normalizedVariants = getSkillPreflightTextVariants(combined);
+
+    if (normalizedVariants.some(variant => variant.includes('skill://'))) {
+        return 'Skill resources cannot be accessed through execute_command. Use read_skill_resource or execute_skill_script instead.';
+    }
+
+    // 为什么要改：builtin Skill 默认发布在插件 resources/skills 下，且被 shadow 时未必出现在已加载 Skill 根目录里。
+    // 怎么改：把 resources/skills 加入通用 Skill 目录 marker；具体安装路径仍由 SkillsManager.getSkillRootPaths 做精确保护。
+    // 目的：阻止相对路径直接读取内置 Skill 资源，强制通过 read_skill_resource / execute_skill_script 的 manifest 与 hash 校验。
+    const knownSkillDirMarkers = ['/.limcode/skills/', '/.agents/skills/', '/.claude/skills/', '/resources/skills/', '.limcode/skills', '.agents/skills', '.claude/skills', 'resources/skills'];
+    if (knownSkillDirMarkers.some(marker => normalizedVariants.some(variant => variant.includes(marker)))) {
+        return 'Direct shell access to Skill directories is blocked. Use read_skill_resource or execute_skill_script instead.';
+    }
+
+    const skillsManager = getSkillsManager();
+    const roots = skillsManager?.getSkillRootPaths?.() || [];
+    for (const root of roots) {
+        if (!root) continue;
+        const rootNorm = normalizeForSkillPreflight(root);
+        if (rootNorm && normalizedVariants.some(variant => variant.includes(rootNorm))) {
+            return 'Direct shell access to a Skill root is blocked. Use read_skill_resource or execute_skill_script instead.';
+        }
+    }
+
+    return null;
+}
+
+
 /**
  * 获取已启用但当前不可用的 Shell 描述
  */
@@ -669,7 +771,13 @@ function getCwdGuidanceDescription(workspaceRoots: WorkspaceRootPromptInfo[], is
         '- 不要把 workspace 根目录拼成绝对路径，例如不要把 `backend` 写成 `C:\\...\\workspace\\backend`。',
         '- 文件就在 workspace 根目录时，`cwd` 不填或填 `.`，并在 `command` 中直接写文件名，例如 `Get-Content package.json`。',
         '- 子目录操作时，`cwd` 写相对目录，例如 `backend`、`frontend/src`，命令内再写相对于该 `cwd` 的路径。',
-        '- 只有操作目标位于 workspace 之外时，才在 `command` 中使用绝对路径，例如系统临时目录、下载目录或其他盘符；`cwd` 仍优先保持在 workspace 内。'
+        '- 只有操作目标位于 workspace 之外时，才在 `command` 中使用绝对路径，例如系统临时目录、下载目录或其他盘符；`cwd` 仍优先保持在 workspace 内。',
+        // 为什么要改：Skill 目录访问现在有本机 break-glass 开关，提示词必须说明默认安全路径与开启后的高危语义。
+        // 怎么改：根据机器级 security 设置生成不同文案，但不把开关加入工具参数 schema。
+        // 目的：默认继续引导 read_skill_resource / execute_skill_script；开启时明确这是用户承担风险的调试模式。
+        isSkillDirectoryAccessViaExecuteCommandAllowed()
+            ? '- 当前宿主已开启高危调试设置：execute_command 不再拦截 Skill 目录与 `skill://` 访问；这会绕过 read_skill_resource / execute_skill_script 的 manifest、hash、staging 和 argv 安全路径，只应在用户明确要求时使用。'
+            : '- Skill 附带资源与脚本不要通过 execute_command 手工访问；读取资源请用 read_skill_resource，执行脚本请用 execute_skill_script。'
     ];
 
     if (workspaceRoots.length === 0) {
@@ -909,6 +1017,11 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
                 return { success: false, error: 'command is required' };
             }
 
+            const skillAccessRejection = getSkillAccessPreflightRejection(command, cwd);
+            if (skillAccessRejection) {
+                return { success: false, error: skillAccessRejection };
+            }
+
             const workspaces = getAllWorkspaces();
             if (workspaces.length === 0) {
                 return { success: false, error: 'No workspace folder open' };
@@ -959,6 +1072,11 @@ ${getExecuteCommandShellGuidanceDescription(workspaceRoots, isMultiRoot)}`,
             } else {
                 // 默认使用第一个工作区
                 workingDir = workspaces[0].fsPath;
+            }
+
+            const resolvedSkillAccessRejection = getSkillAccessPreflightRejection(command, workingDir);
+            if (resolvedSkillAccessRejection) {
+                return { success: false, error: resolvedSkillAccessRejection };
             }
 
             // 获取 shell 配置

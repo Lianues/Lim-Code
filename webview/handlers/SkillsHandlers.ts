@@ -6,6 +6,7 @@ import * as vscode from 'vscode';
 import { t } from '../../backend/i18n';
 import type { HandlerContext, MessageHandler } from '../types';
 import { getSkillsManager } from '../../backend/modules/skills';
+import type { Skill, SkillDiagnostic } from '../../backend/modules/skills';
 import { toolRegistry } from '../../backend/tools/ToolRegistry';
 import type { SkillConfigItem } from '../../backend/modules/settings/types';
 
@@ -28,7 +29,49 @@ export interface SkillsConfigResponse {
     skills: SkillItem[];
 }
 
+export interface SkillDiagnosticItem {
+    severity: SkillDiagnostic['severity'];
+    code: string;
+    message: string;
+    field?: string;
+    skillId?: string;
+    filePath?: string;
+    source?: string;
+}
+
+export interface SkillsLoadReportResponse {
+    loaded: Array<{ skill: SkillItem; diagnostics: SkillDiagnosticItem[] }>;
+    skipped: SkillDiagnosticItem[];
+}
+
 const CONVERSATION_SKILLS_KEY = 'inputSkills';
+
+function toSkillItem(skill: Skill, enabled: boolean, sendContent: boolean, exists = true): SkillItem {
+    // 为什么要加：getSkillsConfig 和 getSkillsLoadReport 都要把后端 Skill 转成前端安全 DTO。
+    // 怎么改：只传 UI 需要的字段，不把 basePath/canonicalBasePath 等内部解析路径暴露给模型侧结构。
+    // 目的：复用同一映射，避免诊断入口与列表显示字段不一致。
+    return {
+        id: skill.id,
+        name: skill.name,
+        description: skill.description,
+        enabled,
+        sendContent,
+        exists,
+        source: skill.source
+    };
+}
+
+function toDiagnosticItem(diagnostic: SkillDiagnostic): SkillDiagnosticItem {
+    return {
+        severity: diagnostic.severity,
+        code: diagnostic.code,
+        message: diagnostic.message,
+        field: diagnostic.field,
+        skillId: diagnostic.skillId,
+        filePath: diagnostic.filePath,
+        source: diagnostic.source
+    };
+}
 
 function normalizeSkillConfigItems(raw: unknown): SkillConfigItem[] {
     if (!Array.isArray(raw)) return [];
@@ -101,15 +144,7 @@ export const getSkillsConfig: MessageHandler = async (data, requestId, ctx) => {
                 }
             }
             
-            return {
-                id: skill.id,
-                name: skill.name,
-                description: skill.description,
-                enabled,
-                sendContent,
-                exists: true,
-                source: skill.source
-            };
+            return toSkillItem(skill, enabled, sendContent);
         });
 
         // 仅全局模式：将最新元数据同步回 SettingsManager
@@ -301,6 +336,40 @@ export const refreshSkills: MessageHandler = async (data, requestId, ctx) => {
     }
 };
 
+export const getSkillsLoadReport: MessageHandler = async (data, requestId, ctx) => {
+    try {
+        const skillsManager = getSkillsManager();
+        if (!skillsManager) {
+            ctx.sendResponse(requestId, { loaded: [], skipped: [] });
+            return;
+        }
+
+        const savedConfig = ctx.settingsManager.getSkillsConfig() || { skills: [] };
+        const savedSkillsMap = new Map<string, { enabled: boolean; sendContent: boolean }>();
+        for (const skill of savedConfig.skills) {
+            savedSkillsMap.set(skill.id, { enabled: skill.enabled, sendContent: skill.sendContent });
+        }
+
+        const report = skillsManager.getLoadReport();
+        // 为什么要加：前端需要看到 loaded skill 的 warning/info 和 skipped skill 的 fatal/warning。
+        // 怎么改：webview handler 只做 DTO 映射，诊断事实仍来自 SkillsManager 公共接口。
+        // 目的：避免 UI 再解析 console 或重新实现 loader 校验逻辑。
+        const response: SkillsLoadReportResponse = {
+            loaded: report.loaded.map(({ skill, diagnostics }) => {
+                const saved = savedSkillsMap.get(skill.id);
+                return {
+                    skill: toSkillItem(skill, saved?.enabled ?? skill.enabled, saved?.sendContent ?? true),
+                    diagnostics: diagnostics.map(toDiagnosticItem)
+                };
+            }),
+            skipped: report.skipped.map(toDiagnosticItem)
+        };
+        ctx.sendResponse(requestId, response);
+    } catch (error: any) {
+        ctx.sendError(requestId, 'GET_SKILLS_LOAD_REPORT_ERROR', error.message || 'Failed to get skills load report');
+    }
+};
+
 /**
  * 获取 skills 目录路径
  */
@@ -352,6 +421,7 @@ export function registerSkillsHandlers(registry: Map<string, MessageHandler>): v
     registry.set('setSkillEnabled', setSkillEnabled);
     registry.set('removeSkillConfig', removeSkillConfig);
     registry.set('refreshSkills', refreshSkills);
+    registry.set('getSkillsLoadReport', getSkillsLoadReport);
     registry.set('getSkillsDirectory', getSkillsDirectory);
     registry.set('openDirectory', openDirectory);
 }

@@ -218,6 +218,32 @@ export const updateExecuteCommandConfig: MessageHandler = async (data, requestId
   }
 };
 
+export const getExecuteCommandSecuritySettings: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    // 为什么要改：Skill 目录 break-glass 不能随普通 execute_command toolsConfig 保存或同步。
+    // 怎么改：前端单独读取机器级 security 设置。
+    // 目的：让设置页可以展示本机高危开关，同时普通工具配置 API 注入同名字段不会生效。
+    ctx.sendResponse(requestId, { config: ctx.settingsManager.getSecuritySettings() });
+  } catch (error: any) {
+    ctx.sendError(requestId, 'GET_EXECUTE_COMMAND_SECURITY_SETTINGS_ERROR', error.message || 'Failed to get execute_command security settings');
+  }
+};
+
+export const updateExecuteCommandSecuritySettings: MessageHandler = async (data, requestId, ctx) => {
+  try {
+    const requested = data?.config?.allowSkillDirectoryAccessViaExecuteCommand === true;
+    // 为什么要改：webview 消息是普通对象，不能信任 truthy 值来打开高危权限。
+    // 怎么改：只把严格布尔 true 写入机器级 security 设置，其它值都归一化为 false。
+    // 目的：阻断字符串 "true"、数字 1 或对象注入导致的意外放行。
+    await ctx.settingsManager.updateSecuritySettings({
+      allowSkillDirectoryAccessViaExecuteCommand: requested
+    });
+    ctx.sendResponse(requestId, { success: true });
+  } catch (error: any) {
+    ctx.sendError(requestId, 'UPDATE_EXECUTE_COMMAND_SECURITY_SETTINGS_ERROR', error.message || 'Failed to update execute_command security settings');
+  }
+};
+
 export const checkShellAvailability: MessageHandler = async (data, requestId, ctx) => {
   try {
     const { shellType, path } = data;
@@ -357,6 +383,8 @@ export function registerToolHandlers(registry: Map<string, MessageHandler>): voi
   registry.set('tools.updateApplyDiffConfig', updateApplyDiffConfig);
   registry.set('tools.getExecuteCommandConfig', getExecuteCommandConfig);
   registry.set('tools.updateExecuteCommandConfig', updateExecuteCommandConfig);
+  registry.set('tools.getExecuteCommandSecuritySettings', getExecuteCommandSecuritySettings);
+  registry.set('tools.updateExecuteCommandSecuritySettings', updateExecuteCommandSecuritySettings);
   registry.set('tools.checkShellAvailability', checkShellAvailability);
   registry.set('tools.getHistorySearchConfig', getHistorySearchConfig);
   registry.set('tools.updateHistorySearchConfig', updateHistorySearchConfig);
