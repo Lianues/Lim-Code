@@ -754,20 +754,13 @@ export class StreamAccumulator {
             content.firstChunkTime = this.firstChunkTime;
         }
         
-        // 计算响应持续时间（从请求开始到最后一个块）
-        if (this.requestStartTime !== undefined && this.lastChunkTime !== undefined) {
-            content.responseDuration = this.lastChunkTime - this.requestStartTime;
-        } else if (this.requestStartTime !== undefined) {
-            // 如果还没收到任何块，使用当前时间
-            content.responseDuration = Date.now() - this.requestStartTime;
-        }
-        
-        // 计算流式持续时间（从第一个块到最后一个块）
-        if (this.firstChunkTime !== undefined && this.lastChunkTime !== undefined) {
-            content.streamDuration = this.lastChunkTime - this.firstChunkTime;
-        } else if (this.firstChunkTime !== undefined) {
-            // 如果只收到第一个块，使用当前时间
-            content.streamDuration = Date.now() - this.firstChunkTime;
+        // 修改原因：旧 streamDuration 只覆盖首块到末块窗口，上游攒包后会让 token 速度分母过小。
+        // 修改方式：用同一个 requestStartTime -> lastChunkTime / Date.now() 局部值同时写入 responseDuration 与 streamDuration。
+        // 修改目的：字面修复 streamDuration 为完整请求到流结束耗时，并避免两个字段因重复采样产生毫秒级抖动。
+        if (this.requestStartTime !== undefined) {
+            const completeResponseDuration = (this.lastChunkTime ?? Date.now()) - this.requestStartTime;
+            content.responseDuration = completeResponseDuration;
+            content.streamDuration = completeResponseDuration;
         }
         
         return content;
@@ -904,7 +897,9 @@ export class StreamAccumulator {
     
     /**
      * 设置请求开始时间
-     * 用于计算 responseDuration
+     * 修改原因：token 速度需要完整请求耗时，而不是首块到末块的短流出窗口。
+     * 修改方式：同一个 requestStartTime 同时驱动 responseDuration 与 streamDuration 的完整耗时计算。
+     * 修改目的：保证后续构造 Content 时两个耗时字段同源，避免 SSE 攒包导致畸高速率。
      */
     setRequestStartTime(time: number): void {
         this.requestStartTime = time;

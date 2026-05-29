@@ -15,6 +15,7 @@ import MessageRenderBlock from './MessageRenderBlock.vue'
 import { buildResponseViewerData } from './responseViewer/buildResponseViewerData'
 import { MarkdownRenderer, RetryDialog, EditDialog } from '../common'
 import type { Message, ToolUsage, CheckpointRecord, Attachment } from '../../types'
+import { calculateTokenRate, formatTokenRate } from '../../utils/tokenRate'
 import { hasContextBlocks } from '../../types/contextParser'
 import { formatTime } from '../../utils/format'
 import { isPerfEnabled } from '../../utils/perf'
@@ -425,38 +426,12 @@ const responseDuration = computed(() => {
 })
 
 // Token 速率计算
-// 如果模型返回了思考内容，则计算 (输出token + 思考token) / 流式持续时间
-// 如果没有思考内容，则只计算 输出token / 流式持续时间
-// 只有多于一个流式块时才显示速率
+// 修改原因：主聊天和 SubAgent Monitor 都复用 MessageItem，内联公式会让两个入口一起继承旧的首块到末块分母问题。
+// 修改方式：调用公共 tokenRate 工具，统一使用完整响应耗时并保留 chunk/token 守卫。
+// 修改目的：避免上游攒包后出现畸高速度，同时保证 Monitor 与主界面不分叉。
 const tokenRate = computed(() => {
-  const metadata = props.message.metadata
-  if (!metadata) return null
-  
-  const streamDuration = metadata.streamDuration
-  const chunkCount = metadata.chunkCount
-  
-  // 只有多于一个流式块时才计算速率
-  if (!streamDuration || streamDuration <= 0 || !chunkCount || chunkCount <= 1) {
-    return null
-  }
-  
-  const usage = metadata.usageMetadata
-  if (!usage) return null
-  
-  // 获取输出 token 数
-  const outputTokens = usage.candidatesTokenCount || 0
-  const thoughtTokens = usage.thoughtsTokenCount || 0
-  
-  // 如果有思考 token，则计算总的（输出 + 思考）；否则只计算输出
-  const totalTokens = thoughtTokens > 0 ? (outputTokens + thoughtTokens) : outputTokens
-  
-  if (totalTokens <= 0) return null
-  
-  // 计算速率（tokens/s）
-  const durationSeconds = streamDuration / 1000
-  const rate = totalTokens / durationSeconds
-  
-  return rate.toFixed(1)
+  const rate = calculateTokenRate(props.message.metadata)
+  return typeof rate === 'number' ? formatTokenRate(rate) : null
 })
 
 // 消息类名

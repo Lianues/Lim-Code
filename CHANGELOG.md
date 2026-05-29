@@ -2,6 +2,19 @@
 
 All notable changes to the "Lim Code" extension will be documented in this file.
 
+## [1.2.5] - 2026-05-29
+
+### 修复（Token 速度）
+  - 统一主聊天、SubAgent Monitor 和响应详情的 token 速度计算入口，避免多个 UI 位置复制公式后语义分叉。
+  - 修复流式 `streamDuration` 语义：token 速度使用请求开始到最后一个流式块的完整耗时，不再使用首块到末块的短窗口，降低上游一次性吐出多段 SSE 时的畸高速率。
+  - 响应详情在 `responseDuration` 与 `streamDuration` 近似相等时隐藏重复耗时展示，保留旧记录或异常记录的差异诊断信息。
+
+### 测试
+  - 增加 token 速度公共工具测试和 `StreamAccumulator` duration 语义回归测试，覆盖完整耗时优先、旧记录回退、思考 token 合并和非流式不显示速度等边界。
+
+### 发布整理
+  - 根扩展包、前端包、lockfile、README 展示版本和发布说明统一更新到 `1.2.5`。
+
 ## [1.2.4] - 2026-05-28
 
 ### 修复（search 工具）

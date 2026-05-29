@@ -5,6 +5,7 @@ import ReviewTaskCard from './ReviewTaskCard.vue'
 import ProgressTaskCard from './ProgressTaskCard.vue'
 import { useI18n } from '../../i18n'
 import { copyToClipboard, formatTime } from '../../utils/format'
+import { formatTokenRate, shouldShowStreamDuration } from '../../utils/tokenRate'
 import { showNotification } from '../../utils/vscode'
 import type {
   ResponseViewerData,
@@ -122,10 +123,13 @@ const responseInfoItems = computed(() => {
     })
   }
 
-  if (typeof timing.streamDuration === 'number' && timing.streamDuration > 0) {
+  // 修改原因：新记录中 streamDuration 与 responseDuration 同源，详情页并列展示两个近似相同值会造成噪音。
+  // 修改方式：通过公共判断函数在容差内隐藏重复 streamDuration，差异较大的旧记录仍展示。
+  // 修改目的：让修复后的详情页保持简洁，同时保留异常或历史数据的诊断信息。
+  if (shouldShowStreamDuration(timing.responseDuration, timing.streamDuration)) {
     items.push({
       label: t('components.message.responseViewer.streamDuration'),
-      value: formatDuration(timing.streamDuration)
+      value: formatDuration(timing.streamDuration!)
     })
   }
 
@@ -139,7 +143,10 @@ const responseInfoItems = computed(() => {
   if (typeof timing.tokenRate === 'number' && timing.tokenRate > 0) {
     items.push({
       label: t('components.message.responseViewer.tokenRate'),
-      value: `${timing.tokenRate.toFixed(1)} t/s`
+      // 修改原因：详情页与消息列表需要一致的小数位，不能继续各自手写 toFixed。
+      // 修改方式：复用公共格式化函数，单位仍由当前 UI 拼接。
+      // 修改目的：保持展示口径统一，同时不把文案耦合进工具函数。
+      value: `${formatTokenRate(timing.tokenRate)} t/s`
     })
   }
 

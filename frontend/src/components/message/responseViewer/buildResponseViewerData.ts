@@ -19,6 +19,7 @@ import {
   type ProgressCardData
 } from '../../../utils/progressCards'
 import { isAwaitingToolUserConfirmation } from '../../../utils/toolContinuations'
+import { calculateTokenRate } from '../../../utils/tokenRate'
 
 export type ResponseViewerMode = 'common' | 'advanced'
 export type ResponseViewerPartType =
@@ -192,7 +193,10 @@ export function buildResponseViewerData(
         responseDuration: metadata?.responseDuration,
         streamDuration: metadata?.streamDuration,
         chunkCount: metadata?.chunkCount,
-        tokenRate: getTokenRate(metadata, usage)
+        // 修改原因：响应详情过去复制了 MessageItem 的 token 速度公式，导致修复主界面时容易漏掉详情页。
+        // 修改方式：传入详情页已归一化的 usage，让公共函数统一处理分母、分子和守卫。
+        // 修改目的：保持主界面、SubAgent Monitor 和详情页的 token 速度口径一致。
+        tokenRate: calculateTokenRate(metadata, usage)
       }
     },
     advanced: {
@@ -686,29 +690,6 @@ function hasUsageValues(usage?: UsageMetadata): boolean {
     usage.totalTokenCount,
     usage.thoughtsTokenCount
   ].some(value => typeof value === 'number' && value > 0)
-}
-
-function getTokenRate(metadata?: MessageMetadata, usage?: UsageMetadata): number | undefined {
-  if (!metadata || !usage) {
-    return undefined
-  }
-
-  const streamDuration = metadata.streamDuration
-  const chunkCount = metadata.chunkCount
-
-  if (!streamDuration || streamDuration <= 0 || !chunkCount || chunkCount <= 1) {
-    return undefined
-  }
-
-  const outputTokens = usage.candidatesTokenCount || 0
-  const thoughtTokens = usage.thoughtsTokenCount || 0
-  const totalTokens = thoughtTokens > 0 ? outputTokens + thoughtTokens : outputTokens
-
-  if (totalTokens <= 0) {
-    return undefined
-  }
-
-  return totalTokens / (streamDuration / 1000)
 }
 
 function summarizeResult(result: unknown, error?: string): string | undefined {
