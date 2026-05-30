@@ -53,7 +53,7 @@ describe('review mode config', () => {
     expect(REVIEW_PROMPT_MODE.template).toContain('Do not batch many completed modules into one delayed update.')
   })
 
-  it('SettingsManager fills missing review mode and synchronizes toolPolicy', async () => {
+  it('SettingsManager preserves an existing review toolPolicy while still keeping the mode available', async () => {
     const storage = new MemorySettingsStorage({
       toolsConfig: {
         system_prompt: {
@@ -76,8 +76,11 @@ describe('review mode config', () => {
     await manager.initialize()
 
     const config = manager.getSystemPromptConfig()
+    // 修改原因：SettingsManager 读取现有配置时不再强制同步 toolPolicy，否则会覆盖用户主动收窄的审查模式工具面。
+    // 修改方式：保留“review mode 必须存在”的断言，但将已有 toolPolicy 的期望改为保持用户配置。
+    // 目的：把“补齐缺失内置模式”和“覆盖已有用户策略”这两个行为分开测试。
     expect(config.modes.review).toBeDefined()
-    expect(config.modes.review.toolPolicy).toEqual(REVIEW_PROMPT_MODE.toolPolicy)
+    expect(config.modes.review.toolPolicy).toEqual(['read_file'])
   })
 
   it('SettingsManager migrates old configs by adding review mode', async () => {

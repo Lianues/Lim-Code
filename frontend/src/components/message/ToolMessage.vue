@@ -19,7 +19,7 @@ import { sendToExtension, onExtensionCommand, showNotification } from '../../uti
 import { useI18n } from '../../i18n'
 import { generateId } from '../../utils/format'
 import { isPerfEnabled } from '../../utils/perf'
-import { shouldShowToolArgumentPreview } from './toolPreviewPolicy'
+import { buildToolCardDisplayModel, type ToolCardDisplayModel } from '../../utils/toolCallDisplayModel'
 
 const { t } = useI18n()
 
@@ -608,6 +608,25 @@ const enhancedTools = computed<ToolUsage[]>(() => {
   })
 })
 
+const toolDisplayModels = computed<Map<string, ToolCardDisplayModel>>(() => {
+  /**
+   * 修改原因：Bug 2/5/7 说明 ToolMessage 直接读取 raw args/partialArgs/status 会产生 ?、参数状态矛盾和流式重挂载。
+   * 修改方式：为 enhancedTools 统一派生 ToolCardDisplayModel，并用 tool.id 与 stableKey 双索引供模板和 action 复用。
+   * 修改目的：主窗口与 SubAgent Monitor 共用同一套展示语义，后续迁移到 CanonicalEvent reducer 时不再改 UI 分支。
+   */
+  const map = new Map<string, ToolCardDisplayModel>()
+  for (const tool of enhancedTools.value) {
+    const model = buildToolCardDisplayModel(tool, getToolConfig(tool.name))
+    map.set(tool.id, model)
+    map.set(model.stableKey, model)
+  }
+  return map
+})
+
+function getToolDisplayModel(tool: ToolUsage): ToolCardDisplayModel {
+  return toolDisplayModels.value.get(tool.id) || buildToolCardDisplayModel(tool, getToolConfig(tool.name))
+}
+
 // 正在处理确认的工具 ID 集合
 // eslint-disable-next-line no-undef
 const processingToolIds = ref<Set<string>>(new Set())
@@ -792,12 +811,10 @@ function isExpanded(toolId: string): boolean {
 
 // 获取工具显示名称
 function getToolLabel(tool: ToolUsage): string {
-  const config = getToolConfig(tool.name)
-  // 优先使用动态 labelFormatter
-  if (config?.labelFormatter) {
-    return config.labelFormatter(tool.args)
-  }
-  return config?.label || tool.name
+  // 修改原因：工具标题也必须从 DisplayModel 读取，否则 labelFormatter 在参数未归一时仍可能读 raw args。
+  // 修改方式：ToolCardDisplayModel 只在 displayArgs 可用时调用 labelFormatter。
+  // 修改目的：避免 read_file / subagents 在参数 streaming 阶段把空参数或 raw prompt 当标题来源。
+  return getToolDisplayModel(tool).title
 }
 
 // 获取工具图标
@@ -808,32 +825,10 @@ function getToolIcon(tool: ToolUsage): string {
 
 // 获取工具描述
 function getToolDescription(tool: ToolUsage): string {
-  const config = getToolConfig(tool.name)
-
-  // 流式状态：如果 args 有数据（partialArgs 已成功解析），仍尝试用 formatter
-  // 否则显示 "正在生成参数..."
-  if (tool.status === 'streaming') {
-    const hasArgs = tool.args && Object.keys(tool.args).length > 0
-    if (hasArgs && config?.descriptionFormatter) {
-      try {
-        return config.descriptionFormatter(tool.args)
-      } catch {
-        // formatter 崩溃时降级显示，避免整个工具块渲染失败
-      }
-    }
-    return t('components.message.tool.streamingArgs')
-  }
-
-  if (config?.descriptionFormatter) {
-    try {
-      return config.descriptionFormatter(tool.args)
-    } catch {
-      // formatter 崩溃时降级到默认描述
-    }
-  }
-  // 默认描述：显示参数数量
-  const argCount = Object.keys(tool.args || {}).length
-  return t('components.message.tool.paramCount', { count: argCount })
+  // 修改原因：旧逻辑只看 ToolUsage.status，导致参数 JSON 已经可解析时仍显示“正在生成参数”，或 success 时把空 args 喂给 read_file formatter 得到 ?。
+  // 修改方式：描述完全来自 ToolCardDisplayModel，formatter 只接收 displayArgs。
+  // 修改目的：拆开工具输入态和执行态，所有工具共享同一套缺参/解析/执行文案。
+  return getToolDisplayModel(tool).description
 }
 
 // 检查工具是否可展开
@@ -917,22 +912,18 @@ function getDiffGuardWarning(tool: ToolUsage): { warning: string; deletePercent:
 }
 
 // 获取状态图标
-function getStatusIcon(status?: string, awaitingConfirmation?: boolean): string {
-  // 向后兼容：awaitingConfirmation 逐步迁移到 status = awaiting_approval
-  if (awaitingConfirmation || status === 'awaiting_approval') {
-    return 'codicon-shield'
-  }
-
-  switch (status) {
-    case 'streaming':
+function getStatusIcon(tool: ToolUsage): string {
+  const icon = getToolDisplayModel(tool).statusIcon
+  switch (icon) {
+    case 'spinner':
       return 'codicon-loading'
-    case 'queued':
+    case 'clock':
       return 'codicon-clock'
-    case 'executing':
-      return 'codicon-loading'
-    case 'awaiting_apply':
+    case 'shield':
+      return 'codicon-shield'
+    case 'diff':
       return 'codicon-diff'
-    case 'success':
+    case 'check':
       return 'codicon-check'
     case 'warning':
       return 'codicon-warning'
@@ -944,7 +935,11 @@ function getStatusIcon(status?: string, awaitingConfirmation?: boolean): string 
 }
 
 // 获取状态类名
-function getStatusClass(status?: string, awaitingConfirmation?: boolean): string {
+function getStatusClass(tool: ToolUsage): string {
+  return getToolDisplayModel(tool).statusClass
+}
+
+function getLegacyStatusClass(status?: string, awaitingConfirmation?: boolean): string {
   if (awaitingConfirmation || status === 'awaiting_approval') {
     return 'status-warning'
   }
@@ -971,10 +966,18 @@ function getStatusClass(status?: string, awaitingConfirmation?: boolean): string
 
 // 判断是否应显示流式参数预览
 function shouldShowStreamingPreview(tool: ToolUsage): boolean {
-  // 修改原因：流式提前执行会把工具执行态推进到 executing，但参数输入快照可能仍以 partialArgs 形式存在。
-  // 修改方式：委托 toolPreviewPolicy 按“仍处于非终态且存在 partialArgs”判断，而不是只接受 streaming。
-  // 修改目的：工具开始执行后仍能保留参数预览，直到最终 args 快照替换 partialArgs。
-  return shouldShowToolArgumentPreview(tool)
+  // 修改原因：Bug 7 中 raw partialArgs 高频变化会驱动大块 <pre> 重绘并可能让 hover/spinner 抖动。
+  // 修改方式：只展示 DisplayModel 生成的轻量稳定预览，不把 raw partial JSON 作为主卡片内容。
+  // 修改目的：参数 streaming 阶段保持稳定卡片壳和稳定 spinner，同时仍给用户可理解进度。
+  return !!getToolDisplayModel(tool).partialArgsPreview
+}
+
+function getStreamingPreviewText(tool: ToolUsage): string {
+  return getToolDisplayModel(tool).partialArgsPreview?.text || ''
+}
+
+function getStreamingPreviewKey(tool: ToolUsage): string {
+  return getToolDisplayModel(tool).partialArgsPreview?.stableContainerKey || `${getToolDisplayModel(tool).stableKey}:preview`
 }
 
 // 流式预览元素引用（用于自动滚动到底部）
@@ -990,20 +993,33 @@ function setStreamingPreviewRef(toolId: string) {
   }
 }
 
+let streamingPreviewScrollFrame: number | undefined
+
 // 监听 partialArgs 变化，自动滚动流式预览到底部
 watch(
-  () => props.tools.map(t => t.partialArgs?.length ?? 0),
+  () => enhancedTools.value.map(t => getToolDisplayModel(t).partialArgsPreview?.text.length ?? 0),
   () => {
-    nextTick(() => {
+    // 修改原因：每个参数 delta 都 nextTick 滚动会制造高频布局任务，放大 Bug 7 的闪烁和 spinner 重置风险。
+    // 修改方式：同一帧内只安排一次滚动，且引用稳定 preview key。
+    // 修改目的：保持流式参数卡片稳定，避免 hover 时被重复刷新。
+    const scroll = () => {
       for (const tool of enhancedTools.value) {
         if (shouldShowStreamingPreview(tool)) {
-          const el = streamingPreviewRefs.get(tool.id)
+          const key = getStreamingPreviewKey(tool)
+          const el = streamingPreviewRefs.get(key)
           if (el) {
             el.scrollTop = el.scrollHeight
           }
         }
       }
-    })
+      streamingPreviewScrollFrame = undefined
+    }
+    if (typeof requestAnimationFrame === 'function') {
+      if (streamingPreviewScrollFrame !== undefined) return
+      streamingPreviewScrollFrame = requestAnimationFrame(scroll)
+    } else {
+      nextTick(scroll)
+    }
   },
   { deep: true }
 )
@@ -1015,7 +1031,7 @@ function renderToolContent(tool: ToolUsage) {
   // 如果有自定义组件，使用自定义组件
   if (config?.contentComponent) {
     return h(config.contentComponent as Component, {
-      args: tool.args,
+      args: getToolDisplayModel(tool).displayArgs || tool.args,
       result: tool.result,
       error: tool.error,
       status: tool.status,
@@ -1082,7 +1098,7 @@ function renderToolContent(tool: ToolUsage) {
   <div class="tool-message">
     <div
       v-for="tool in enhancedTools"
-      :key="tool.id"
+      :key="getToolDisplayModel(tool).stableKey"
       class="tool-item"
     >
       <!-- 工具头部 - 可点击展开/收起（如果可展开） -->
@@ -1113,8 +1129,8 @@ function renderToolContent(tool: ToolUsage) {
               :class="[
                 'status-icon',
                 'codicon',
-                getStatusIcon(tool.status, tool.awaitingConfirmation),
-                getStatusClass(tool.status, tool.awaitingConfirmation)
+                getStatusIcon(tool),
+                getStatusClass(tool) || getLegacyStatusClass(tool.status, tool.awaitingConfirmation)
               ]"
             ></span>
           </div>
@@ -1178,9 +1194,10 @@ function renderToolContent(tool: ToolUsage) {
       <div
         v-if="shouldShowStreamingPreview(tool)"
         class="streaming-preview"
-        :ref="setStreamingPreviewRef(tool.id)"
+        :key="getStreamingPreviewKey(tool)"
+        :ref="setStreamingPreviewRef(getStreamingPreviewKey(tool))"
       >
-        <pre class="streaming-preview-content">{{ tool.partialArgs }}</pre>
+        <pre class="streaming-preview-content">{{ getStreamingPreviewText(tool) }}</pre>
       </div>
 
       <!-- 工具详细内容 - 展开时显示（仅当可展开时） -->

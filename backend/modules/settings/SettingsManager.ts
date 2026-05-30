@@ -1611,9 +1611,9 @@ export class SettingsManager {
      * 版本迁移：
      * - 老版本：没有 modes 字段 -> 迁移为代码模式 + 设计模式 + 计划模式 + 询问模式 + 审查模式
      * - 新版本：已有 modes 但缺少内置模式 -> 补齐缺失的内置模式（code/design/plan/ask/review）
-     * - 为什么要改：Code 模式现在也有默认 toolPolicy，旧 settings 不能继续绕过默认工具面。
-     * - 怎么改：将 code 纳入内置模式 toolPolicy 同步，但只同步 toolPolicy 字段，保留用户自定义模板。
-     * - 目的：让默认 Code 模式关闭 plan/progress/review/design 工具，同时避免覆盖用户 prompt 文本。
+     * - 修改原因：2025-07 后 Code 模式被重新定义为“全能力模式”，但用户保存过的 toolPolicy 仍可能是有意自定义配置。
+     * - 修改方式：读取设置时只补齐缺失内置模式，不再强制覆盖已有模式的 toolPolicy；新增默认能力由常量和一次性迁移承接。
+     * - 修改目的：既让新安装默认拥有完整工具面，也避免老用户手工关闭的工具被静默重新打开。
      */
     getSystemPromptConfig(): Readonly<SystemPromptConfig> {
         const config = this.settings.toolsConfig?.system_prompt || DEFAULT_SYSTEM_PROMPT_CONFIG;
