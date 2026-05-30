@@ -1633,18 +1633,16 @@ const ja: LanguageMessages = {
                 },
                 toolPolicy: {
                     title: 'ツールポリシー',
-                    description: 'このモードで利用可能なツールを制限します。未設定の場合は Code モードのツールセットを継承します（全体のツールスイッチも適用されます）。',
-                    inherit: '継承（デフォルト）',
-                    custom: 'カスタム（許可リスト）',
-                    inheritHint: 'このモードは Code モードのツールセットを継承します。',
+                    description: '現在のモードで利用できるツールを選択します。デフォルトではすべての組み込みツールが選択されます。全体のツールスイッチも適用されます。',
                     searchPlaceholder: 'ツールを検索…',
                     selectAll: 'すべて選択',
                     clear: 'クリア',
+                    selectAllInCategory: 'このカテゴリをすべて選択',
+                    deselectAllInCategory: 'このカテゴリの選択を解除',
                     loadingTools: 'ツール一覧を読み込み中...',
                     noTools: '利用可能なツールがありません',
                     disabledBadge: '無効',
-                    emptyWarning: 'カスタムツールリストが有効ですが、ツールが選択されていません。',
-                    emptyCannotSave: 'カスタムツールリストには少なくとも 1 つのツールを選択してください'
+                    emptyWarning: 'ツールが選択されていません。AI はツールを呼び出せません。'
                 },
                 saveButton: '設定を保存',
                 saveSuccess: '保存しました',

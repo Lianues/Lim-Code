@@ -1038,7 +1038,7 @@ export class ToolExecutionService {
      *
      * 强制策略：
      * - 全局 toolsEnabled（SettingsManager.isToolEnabled）
-     * - 当前模式 allowlist（mode.toolPolicy 仅当为非空数组时启用过滤）
+     * - 当前模式 allowlist（mode.toolPolicy 为数组时启用过滤，空数组 = 用户显式关闭所有内置工具）
      * - Plan 模式 write_file 仅允许写入 .limcode/plans/**.md（多工作区支持 workspaceName/.limcode/plans/**.md）
      */
     private getToolRejectionReason(toolName: string, args?: Record<string, unknown>, promptModeSnapshot?: ResolvedPromptModeSnapshot): string | null {
@@ -1054,12 +1054,19 @@ export class ToolExecutionService {
             return `Tool "${toolName}" is disabled by settings (toolsEnabled).`;
         }
 
-        // 2) 当前请求模式 allowlist（仅当 toolPolicy 为非空数组时启用过滤）
-        const allowlist = Array.isArray(promptModeSnapshot?.toolPolicy) && promptModeSnapshot.toolPolicy.length > 0
+        // 2) 当前请求模式 allowlist（2025-07 修订：只要 toolPolicy 是数组就启用过滤，
+        //     空数组 [] = 用户显式关闭了所有内置工具，区别于 undefined = 未设置/全部可用。
+        //     MCP 工具不参与此 allowlist 匹配，由 MCP 配置独立控制。）
+        const allowlist = Array.isArray(promptModeSnapshot?.toolPolicy)
             ? promptModeSnapshot.toolPolicy
             : undefined;
         if (allowlist && !allowlist.includes(toolName)) {
-            return `Tool "${toolName}" is not allowed in mode "${promptModeSnapshot?.id ?? 'unknown'}".`;
+            // MCP 工具名以 mcp__ 开头，由 MCP 配置独立控制，不经过此静态 allowlist
+            if (isMcpToolName(toolName)) {
+                // no rejection — MCP tools governed by MCP server config
+            } else {
+                return `Tool "${toolName}" is not allowed in mode "${promptModeSnapshot?.id ?? 'unknown'}".`;
+            }
         }
 
         // 3) Plan 模式 write_file 受控例外：只允许写入 .limcode/plans/**.md

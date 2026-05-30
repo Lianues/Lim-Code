@@ -235,7 +235,7 @@ export class AgentStopNotificationController {
     }
 
     const conversationId = this.chatStore.currentConversationId || undefined
-    const latestFunctionResponse = findLatestMessage(this.chatStore.allMessages, (message) => message.isFunctionResponse)
+    const latestFunctionResponse = findLatestMessage(this.chatStore.allMessages, (message) => message.isFunctionResponse === true)
     const latestMessage = latestFunctionResponse || findLatestMessage(this.chatStore.allMessages)
     const dedupeSource = latestFunctionResponse?.id || String(latestFunctionResponse?.backendIndex || latestMessage?.id || '')
 

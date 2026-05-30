@@ -1664,28 +1664,12 @@ export class SettingsManager {
             needsUpdate = true;
         }
 
-        const builtInModes = [
-            // 为什么要改：Code 模式过去不参与内置 toolPolicy 同步，老配置会继续默认暴露专用文档工具。
-            // 怎么改：把 CODE_PROMPT_MODE 放进同一同步队列，复用下面只更新 toolPolicy 的通用逻辑。
-            // 目的：让已有配置获得新的默认 Code 工具面，同时不触碰用户自定义 template/dynamicTemplate。
-            CODE_PROMPT_MODE,
-            DESIGN_PROMPT_MODE,
-            PLAN_PROMPT_MODE,
-            ASK_PROMPT_MODE,
-            REVIEW_PROMPT_MODE,
-        ];
-
-        for (const builtInMode of builtInModes) {
-            const currentMode = modes[builtInMode.id];
-            if (!currentMode) continue;
-            if (!this.arraysEqual(currentMode.toolPolicy, builtInMode.toolPolicy)) {
-                modes[builtInMode.id] = {
-                    ...currentMode,
-                    toolPolicy: builtInMode.toolPolicy ? [...builtInMode.toolPolicy] : undefined,
-                };
-                needsUpdate = true;
-            }
-        }
+        // 2025-07 修订：移除强制 toolPolicy 同步。
+        // 旧逻辑在每次读取设置时强制覆盖所有内置模式的 toolPolicy，
+        // 导致用户对 Code 模式工具策略的修改被静默丢弃。
+        // 新策略：每个模式默认全部工具（见 CODE_MODE_TOOL_POLICY），
+        // 用户自行关闭不想要的工具，后端不再干预。
+        // 版本升级时通过一次性迁移脚本处理新增工具。
         
         if (needsUpdate) {
             return {

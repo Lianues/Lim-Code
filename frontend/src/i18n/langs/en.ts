@@ -1633,18 +1633,16 @@ const en: LanguageMessages = {
                 },
                 toolPolicy: {
                     title: 'Tool Policy',
-                    description: 'Restrict which tools are available in this mode. When not set, it inherits the Code mode toolset (and still respects global tool toggles).',
-                    inherit: 'Inherit (default)',
-                    custom: 'Custom (allowlist)',
-                    inheritHint: 'This mode will inherit the Code mode toolset.',
+                    description: 'Select the tools available in the current mode. All built-in tools are selected by default. Global tool toggles still apply.',
                     searchPlaceholder: 'Search tools…',
                     selectAll: 'Select all',
                     clear: 'Clear',
+                    selectAllInCategory: 'Select all in category',
+                    deselectAllInCategory: 'Deselect all in category',
                     loadingTools: 'Loading tools list...',
                     noTools: 'No tools available',
                     disabledBadge: 'Disabled',
-                    emptyWarning: 'Custom tool list is enabled, but no tools are selected.',
-                    emptyCannotSave: 'Please select at least 1 tool for a custom tool list'
+                    emptyWarning: 'No tools are selected. AI will not be able to call tools.'
                 },
                 saveButton: 'Save Configuration',
                 saveSuccess: 'Saved successfully',

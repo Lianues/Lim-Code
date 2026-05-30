@@ -18,7 +18,6 @@ import type { Content, ContentPart } from '../../types'
 // 目的：Monitor 实时工具卡合并行为与主聊天完全一致。
 import {
   type StreamFunctionCall,
-  normalizeNonEmptyString,
   hasNonEmptyArgs,
   getFunctionCallMergeReason,
   mergeFunctionCall as unifiedMergeFunctionCall

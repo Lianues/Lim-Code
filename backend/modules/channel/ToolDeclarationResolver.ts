@@ -215,10 +215,12 @@ export class ToolDeclarationResolver {
             filtered = filtered.filter(tool => !denylistSet.has(tool.name));
         }
 
-        const promptAllowlist = Array.isArray(options.promptModeSnapshot?.toolPolicy) && options.promptModeSnapshot.toolPolicy.length > 0
+        // 2025-07 修订：只要 toolPolicy 是数组就启用过滤（空数组 = 用户显式关闭了所有内置工具）。
+        // MCP 工具通过 isMcpToolName 跳过此过滤器，由 MCP 配置独立控制。
+        const promptAllowlist = Array.isArray(options.promptModeSnapshot?.toolPolicy)
             ? options.promptModeSnapshot.toolPolicy
             : undefined;
-        if (promptAllowlist && promptAllowlist.length > 0) {
+        if (promptAllowlist) {
             const promptAllowlistSet = new Set(promptAllowlist);
             // 为什么要改：MCP 工具名是运行时动态发现的（mcp__<serverId>__<toolName>），不可预知，
             // 因此无法被静态 toolPolicy allowlist（如 CODE_MODE_TOOL_POLICY）包含。

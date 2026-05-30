@@ -62,6 +62,12 @@ interface SubAgentRunManifest {
   lastMessageRole?: Content['role']
 }
 
+interface SubAgentContentFreshness {
+  contentCount: number
+  contentRevision?: number
+  eventSequence?: number
+}
+
 type SubAgentRunContentWindow = SubAgentRunContentWindowState
 
 interface SubAgentRunSnapshot {
@@ -437,19 +443,19 @@ function clearSupersededLiveDeltaBuffer(runId: string, revision: number | undefi
 function applyLiveDeltaToWindow(
   event: MonitorLiveDeltaEvent,
   contentWindow: SubAgentRunContentWindow,
-  manifest?: SubAgentRunManifest
+  freshness?: SubAgentContentFreshness
 ): SubAgentRunContentWindow | undefined {
   if (!event.runId || !hasRenderableMonitorLiveDelta(event)) return contentWindow
   const eventRevision = getMonitorLiveDeltaRevision(event)
   const windowRevision = typeof contentWindow.contentRevision === 'number' ? contentWindow.contentRevision : 0
   if (eventRevision < windowRevision) return contentWindow
 
-  const freshness = {
-    contentCount: manifest?.contentCount ?? contentWindow.totalCount,
+  const effectiveFreshness = {
+    contentCount: freshness?.contentCount ?? contentWindow.totalCount,
     contentRevision: eventRevision,
-    eventSequence: getMonitorLiveDeltaSequence(event) ?? manifest?.eventSequence ?? contentWindow.eventSequence
+    eventSequence: getMonitorLiveDeltaSequence(event) ?? freshness?.eventSequence ?? contentWindow.eventSequence
   }
-  if (!isRunWindowTailAuthoritative(contentWindow, freshness)) return undefined
+  if (!isRunWindowTailAuthoritative(contentWindow, effectiveFreshness)) return undefined
 
   // 修改原因：后端不再为每个 SubAgent llm_delta 附带完整 snapshot，否则大输出会造成 postMessage 与事件数组 O(n²) 膨胀。
   // 修改方式：当事件仍携带轻量可渲染 delta 且窗口已确认是同 revision 尾部时，Monitor 前端用共享 Content[] delta reducer 本地更新已加载 run。
@@ -463,7 +469,7 @@ function applyLiveDeltaToWindow(
     endIndex: Math.max(contentWindow.endIndex, contentWindow.startIndex + nextContents.length),
     totalCount: Math.max(contentWindow.totalCount, contentWindow.startIndex + nextContents.length),
     contentRevision: eventRevision,
-    eventSequence: Math.max(contentWindow.eventSequence || 0, sequence ?? manifest?.eventSequence ?? 0)
+    eventSequence: Math.max(contentWindow.eventSequence || 0, sequence ?? freshness?.eventSequence ?? 0)
   }
 }
 

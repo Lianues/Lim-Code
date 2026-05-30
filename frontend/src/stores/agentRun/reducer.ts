@@ -451,12 +451,25 @@ function areToolExecutionStatesEqual(
   )
 }
 
+function cloneFunctionCall(functionCall: NonNullable<ContentPart['functionCall']>): ContentPart['functionCall'] {
+  return {
+    name: functionCall.name,
+    args: { ...functionCall.args },
+    id: functionCall.id,
+    rejected: functionCall.rejected,
+    index: functionCall.index,
+    itemId: functionCall.itemId,
+    finalArgs: functionCall.finalArgs,
+    partialArgs: functionCall.partialArgs
+  }
+}
+
 function cloneMessage(message: Message): Message {
   return {
     ...message,
     parts: message.parts?.map((part): ContentPart => {
       const clonedPart: ContentPart = { ...part }
-      if (part.functionCall) clonedPart.functionCall = { ...(part.functionCall as ContentPart['functionCall']) }
+      if (part.functionCall) clonedPart.functionCall = cloneFunctionCall(part.functionCall)
       if (part.functionResponse) clonedPart.functionResponse = { ...part.functionResponse }
       if (part.inlineData) clonedPart.inlineData = { ...part.inlineData }
       if (part.fileData) clonedPart.fileData = { ...part.fileData }

@@ -12,7 +12,7 @@
 import { toolRegistry, type ToolConfig } from '../../toolRegistry'
 import McpToolComponent from '../../../components/tools/mcp/mcp_tool.vue'
 // WP12：统一使用 codec 编解码 MCP 工具名
-import { isMcpToolName, decodeMcpToolName, MCP_TOOL_PREFIX } from './mcpToolNameCodec'
+import { isMcpToolName, decodeMcpToolName } from './mcpToolNameCodec'
 
 /**
  * 解析 MCP 工具名称

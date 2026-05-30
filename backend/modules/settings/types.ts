@@ -2321,11 +2321,16 @@ REVIEW MODE
  * 代码模式（默认模式）
  */
 /**
- * 为什么要改：默认 Code 模式过去没有 toolPolicy，导致 plan/progress/review/design 专用文档工具全部默认暴露。
- * 怎么改：显式列出 Code 模式的通用编码工具 allowlist，把专用工作流工具留给各自模式。
- * 目的：满足“旧版默认内置工具不默认开启”，同时不影响显式 Design/Plan/Review 模式。
+ * 为什么要改（2025-07 修订）：旧设计为了"把专用工作流工具留给各自模式"，
+ * 从 Code 模式排除了 create_design/create_plan/create_review 等 14 个工具。
+ * 但 Code 模式作为全能力默认模式，用户预期"所有工具都能用"。
+ * 专用工作流工具暴露给 Code 模式并无害处——用户在其他模式中自然会受到更严格的限制。
+ * 怎么改：把所有内置工具加入 Code 模式 allowlist。MCP 工具不再参与静态 allowlist
+ * 匹配（见 ToolDeclarationResolver.applyFinalFilters），因此即使不在列表中也会可用。
+ * 目的：Code 模式 = 全部工具，用户按需关闭不想要的。
  */
 export const CODE_MODE_TOOL_POLICY: string[] = [
+    // 文件操作
     'read_file',
     'write_file',
     'list_files',
@@ -2334,25 +2339,49 @@ export const CODE_MODE_TOOL_POLICY: string[] = [
     'apply_diff',
     'insert_code',
     'delete_code',
+    // 搜索
     'search_in_files',
     'find_files',
+    // 终端
     'execute_command',
+    // 图片
     'generate_image',
     'remove_background',
     'crop_image',
     'resize_image',
     'rotate_image',
+    // LSP
     'get_symbols',
     'goto_definition',
     'find_references',
+    // TODO
     'todo_write',
     'todo_update',
+    // 历史
     'history_search',
+    // Skills
     'read_skill',
     'read_skill_resource',
     'execute_skill_script',
-    'subagents'
+    // SubAgents
+    'subagents',
+    // 工作流工具 — 2025-07 加入：Code 模式作为全能力模式应默认全部可用
+    'create_design',
+    'update_design',
+    'create_plan',
+    'update_plan',
+    'create_progress',
+    'update_progress',
+    'record_progress_milestone',
+    'validate_progress_document',
+    'create_review',
+    'validate_review_document',
+    'record_review_milestone',
+    'finalize_review',
+    'reopen_review',
+    'compare_review_documents',
 ];
+
 
 export const CODE_PROMPT_MODE: PromptMode = {
     id: DEFAULT_MODE_ID,

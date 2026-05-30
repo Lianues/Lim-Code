@@ -1633,18 +1633,16 @@ const zhCN: LanguageMessages = {
                 },
                 toolPolicy: {
                     title: '工具策略',
-                    description: '限制当前模式可用的工具。未设置时继承 Code 模式的工具集（同时仍受全局工具开关影响）。',
-                    inherit: '继承（默认）',
-                    custom: '自定义（Allowlist）',
-                    inheritHint: '当前模式将继承 Code 模式的工具集。',
+                    description: '勾选当前模式可用的工具。默认为全部内置工具。同时受全局工具开关影响。',
                     searchPlaceholder: '搜索工具…',
                     selectAll: '全选',
                     clear: '清空',
+                    selectAllInCategory: '全选此类',
+                    deselectAllInCategory: '取消全选',
                     loadingTools: '加载工具列表...',
                     noTools: '暂无可用工具',
                     disabledBadge: '已禁用',
-                    emptyWarning: '当前为自定义工具列表，但未选择任何工具。',
-                    emptyCannotSave: '自定义工具列表至少需要选择 1 个工具'
+                    emptyWarning: '当前未选择任何工具，AI 将无法调用工具。'
                 },
                 saveButton: '保存配置',
                 saveSuccess: '保存成功',

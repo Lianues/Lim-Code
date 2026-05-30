@@ -21,7 +21,6 @@ import { clearCheckpointsFromIndex } from './checkpointActions'
 import { contentToMessageEnhanced } from './parsers'
 import {
   appendMessage,
-  rebuildMessageIndexById,
   replaceAllMessages,
   replaceMessageAt
 } from './state'

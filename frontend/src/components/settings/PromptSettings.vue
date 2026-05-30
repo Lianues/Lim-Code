@@ -41,8 +41,6 @@ interface ToolInfo {
   [key: string]: any
 }
 
-type ToolPolicyMode = 'inherit' | 'custom'
-
 // 系统提示词配置（支持多模式）
 interface SystemPromptConfig {
   currentModeId: string
@@ -440,9 +438,7 @@ const availableTools = ref<ToolInfo[]>([])
 const isLoadingTools = ref(false)
 const toolSearchQuery = ref('')
 
-const toolPolicyMode = ref<ToolPolicyMode>('inherit')
 const toolPolicy = ref<string[]>([])
-const originalToolPolicyMode = ref<ToolPolicyMode>('inherit')
 const originalToolPolicy = ref<string[]>([])
 
 function normalizeToolList(list: string[] | undefined): string[] {
@@ -519,6 +515,26 @@ function clearAllTools() {
   toolPolicy.value = []
 }
 
+// 2025-07 修订：默认全部工具（内置 + MCP），用户自行关闭不想要的。
+// MCP 工具虽然在 toolPolicy 中列出，但后端声明和执行层会跳过静态 allowlist 对其的匹配。
+function getDefaultToolPolicy(): string[] {
+  return availableTools.value.map(t => t.name)
+}
+
+function selectAllInCategory(category: string) {
+  const categoryTools = (groupedTools.value[category] || []).map(t => t.name)
+  for (const name of categoryTools) {
+    if (!toolPolicy.value.includes(name)) {
+      toolPolicy.value.push(name)
+    }
+  }
+}
+
+function deselectAllInCategory(category: string) {
+  const categoryNames = new Set((groupedTools.value[category] || []).map(t => t.name))
+  toolPolicy.value = toolPolicy.value.filter(t => !categoryNames.has(t))
+}
+
 async function loadAvailableTools() {
   isLoadingTools.value = true
   try {
@@ -560,9 +576,7 @@ const hasChanges = computed(() => {
     config.dynamicTemplateEnabled !== originalConfig.value.dynamicTemplateEnabled ||
     config.dynamicTemplate !== originalConfig.value.dynamicTemplate
 
-  const policyChanged =
-    toolPolicyMode.value !== originalToolPolicyMode.value ||
-    !isSameToolList(toolPolicy.value, originalToolPolicy.value)
+  const policyChanged = !isSameToolList(toolPolicy.value, originalToolPolicy.value)
 
   return basicChanged || policyChanged
 })
@@ -627,16 +641,14 @@ function loadModeConfig(modeId: string) {
     originalConfig.value = { ...config }
 
     // 加载模式工具策略
+    // 2025-07 修订：undefined/null = 未设置 → 回填默认全部工具；[] = 用户显式关闭了所有工具 → 保留空数组
     const policy = mode.toolPolicy
-    if (Array.isArray(policy) && policy.length > 0) {
-      toolPolicyMode.value = 'custom'
+    if (Array.isArray(policy)) {
       toolPolicy.value = [...policy]
     } else {
-      toolPolicyMode.value = 'inherit'
-      toolPolicy.value = []
+      toolPolicy.value = getDefaultToolPolicy()
     }
     toolSearchQuery.value = ''
-    originalToolPolicyMode.value = toolPolicyMode.value
     originalToolPolicy.value = [...toolPolicy.value]
   }
 }
@@ -665,12 +677,6 @@ async function saveConfig() {
   isSaving.value = true
   saveMessage.value = ''
   try {
-    // 工具策略校验：custom 模式必须至少选择一个工具
-    if (toolPolicyMode.value === 'custom' && toolPolicy.value.length === 0) {
-      saveMessage.value = t('components.settings.promptSettings.toolPolicy.emptyCannotSave')
-      return
-    }
-
     // 保存前清理多余空行
     const cleanedTemplate = cleanupEmptyLines(config.template)
     const cleanedDynamicTemplate = cleanupEmptyLines(config.dynamicTemplate)
@@ -686,9 +692,7 @@ async function saveConfig() {
       dynamicTemplate: DEFAULT_DYNAMIC_TEMPLATE
     }
 
-    const nextToolPolicy = toolPolicyMode.value === 'custom'
-      ? Array.from(new Set(toolPolicy.value))
-      : undefined
+    const nextToolPolicy = Array.from(new Set(toolPolicy.value))
 
     const updatedMode: PromptMode = {
       ...baseMode,
@@ -697,9 +701,6 @@ async function saveConfig() {
       dynamicTemplate: cleanedDynamicTemplate,
       toolPolicy: nextToolPolicy
     }
-    if (toolPolicyMode.value !== 'custom') {
-      delete (updatedMode as any).toolPolicy
-    }
     
     await sendToExtension('savePromptMode', { mode: updatedMode })
     
@@ -707,7 +708,6 @@ async function saveConfig() {
     config.template = cleanedTemplate
     config.dynamicTemplate = cleanedDynamicTemplate
     originalConfig.value = { ...config }
-    originalToolPolicyMode.value = toolPolicyMode.value
     originalToolPolicy.value = [...toolPolicy.value]
     
     // 更新模式列表中的配置
@@ -840,13 +840,15 @@ function openAddModeDialog() {
 // 确认添加新模式
 async function confirmAddMode(name: string) {
   const id = `mode_${Date.now()}`
+  // 2025-07 修订：新建模式默认全部工具可用，用户自行关闭不想要的
   const newMode: PromptMode = {
     id,
     name,
     icon: 'symbol-method',
     template: DEFAULT_TEMPLATE,
     dynamicTemplateEnabled: true,
-    dynamicTemplate: DEFAULT_DYNAMIC_TEMPLATE
+    dynamicTemplate: DEFAULT_DYNAMIC_TEMPLATE,
+    toolPolicy: getDefaultToolPolicy()
   }
   
   try {
@@ -921,9 +923,10 @@ async function confirmDeleteMode() {
 }
 
 // 初始化
+// 2025-07 修订：先加载工具列表再加载配置，确保 loadModeConfig 可以使用默认工具集回填缺失字段
 onMounted(async () => {
-  await loadConfig()
   await loadAvailableTools()
+  await loadConfig()
   // 加载配置后自动计算 token 数量
   await countTokens()
 })
@@ -1063,23 +1066,7 @@ watch(selectedChannel, () => {
           {{ t('components.settings.promptSettings.toolPolicy.description') }}
         </p>
 
-        <div class="tool-policy-mode-row">
-          <label class="radio-option">
-            <input type="radio" value="inherit" v-model="toolPolicyMode" />
-            <span class="radio-text">{{ t('components.settings.promptSettings.toolPolicy.inherit') }}</span>
-          </label>
-          <label class="radio-option">
-            <input type="radio" value="custom" v-model="toolPolicyMode" />
-            <span class="radio-text">{{ t('components.settings.promptSettings.toolPolicy.custom') }}</span>
-          </label>
-        </div>
-
-        <div v-if="toolPolicyMode === 'inherit'" class="tool-policy-notice">
-          <i class="codicon codicon-info"></i>
-          <span>{{ t('components.settings.promptSettings.toolPolicy.inheritHint') }}</span>
-        </div>
-
-        <div v-else class="tool-policy-custom">
+        <div class="tool-policy-custom">
           <div class="tool-policy-toolbar">
             <div class="tool-search">
               <i class="codicon codicon-search"></i>
@@ -1123,6 +1110,22 @@ watch(selectedChannel, () => {
                 <div class="tool-category-header">
                   <span class="tool-category-name">{{ getCategoryDisplayName(category) }}</span>
                   <span class="tool-category-count">{{ tools.length }}</span>
+                  <div class="tool-category-actions">
+                    <button
+                      class="category-action-btn"
+                      @click="selectAllInCategory(category)"
+                      :title="t('components.settings.promptSettings.toolPolicy.selectAllInCategory')"
+                    >
+                      <i class="codicon codicon-check-all"></i>
+                    </button>
+                    <button
+                      class="category-action-btn"
+                      @click="deselectAllInCategory(category)"
+                      :title="t('components.settings.promptSettings.toolPolicy.deselectAllInCategory')"
+                    >
+                      <i class="codicon codicon-close-all"></i>
+                    </button>
+                  </div>
                 </div>
                 <div class="tool-items">
                   <label v-for="tool in tools" :key="tool.name" class="tool-item">
@@ -2121,62 +2124,42 @@ watch(selectedChannel, () => {
 }
 
 /* 工具策略 */
-.tool-policy-mode-row {
+/* 修改原因：工具策略区域原先混用了零碎间距、侧边栏背景、浏览器默认复选框和过大的圆角，和全局主题不一致。
+   修改方式：只重写本区域视觉样式，统一使用 style.css 中的 spacing/radius/transition token，并对齐 PromptSettings 现有 section、reset-btn、badge 规范。
+   修改目的：让“设置 - 提示词 - 工具策略”在不改变业务行为的前提下融入全局 VSCode 主题。 */
+.tool-policy-custom {
   display: flex;
-  flex-wrap: wrap;
-  gap: 14px;
-  margin-top: 2px;
-}
-
-.radio-option {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: var(--vscode-foreground);
-}
-
-.radio-option input {
-  margin: 0;
-}
-
-.tool-policy-notice {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-  background: var(--vscode-inputValidation-infoBackground);
-  border: 1px solid var(--vscode-inputValidation-infoBorder);
-  border-radius: 4px;
-  font-size: 12px;
-  color: var(--vscode-foreground);
-}
-
-.tool-policy-notice .codicon {
-  color: var(--vscode-notificationsInfoIcon-foreground);
+  flex-direction: column;
+  gap: var(--spacing-sm);
 }
 
 .tool-policy-toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: var(--spacing-sm);
   flex-wrap: wrap;
 }
 
 .tool-search {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--spacing-sm);
   flex: 1;
   min-width: 220px;
-  padding: 6px 10px;
+  padding: 4px 8px;
   background: var(--vscode-input-background);
   border: 1px solid var(--vscode-input-border);
-  border-radius: 6px;
+  border-radius: var(--radius-lg);
+  transition: border-color var(--transition-normal);
+}
+
+.tool-search:focus-within {
+  border-color: var(--vscode-focusBorder);
 }
 
 .tool-search .codicon {
+  flex-shrink: 0;
   font-size: 14px;
   color: var(--vscode-descriptionForeground);
 }
@@ -2191,28 +2174,32 @@ watch(selectedChannel, () => {
   font-size: 12px;
 }
 
+.tool-search-input::placeholder {
+  color: var(--vscode-input-placeholderForeground);
+}
+
 .tool-policy-buttons {
   display: flex;
-  gap: 8px;
+  gap: var(--spacing-sm);
 }
 
 .small-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 5px 10px;
-  font-size: 11px;
+  padding: 4px 8px;
+  font-size: 12px;
   background: transparent;
   color: var(--vscode-foreground);
   border: 1px solid var(--vscode-panel-border);
-  border-radius: 6px;
+  border-radius: var(--radius-lg);
   cursor: pointer;
-  transition: background-color 0.15s, border-color 0.15s;
+  transition: background-color var(--transition-normal);
+  white-space: nowrap;
 }
 
 .small-btn:hover:not(:disabled) {
   background: var(--vscode-list-hoverBackground);
-  border-color: var(--vscode-focusBorder);
 }
 
 .small-btn:disabled {
@@ -2224,18 +2211,17 @@ watch(selectedChannel, () => {
 .tool-policy-empty {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) 12px;
   font-size: 12px;
   color: var(--vscode-descriptionForeground);
 }
 
 .tool-policy-list {
-  margin-top: 8px;
   border: 1px solid var(--vscode-panel-border);
   border-radius: 6px;
-  background: var(--vscode-sideBar-background);
-  overflow: auto;
+  background: var(--vscode-editor-background);
+  overflow-y: auto;
   max-height: 260px;
 }
 
@@ -2247,9 +2233,9 @@ watch(selectedChannel, () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  padding: 8px 10px;
-  background: var(--vscode-editor-background);
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) 12px;
+  background: var(--vscode-sideBar-background);
 }
 
 .tool-category-name {
@@ -2259,11 +2245,39 @@ watch(selectedChannel, () => {
 }
 
 .tool-category-count {
+  flex-shrink: 0;
   font-size: 10px;
-  padding: 1px 8px;
-  border-radius: 999px;
+  padding: 2px 6px;
+  border-radius: 10px;
   background: var(--vscode-badge-background);
   color: var(--vscode-badge-foreground);
+}
+
+.tool-category-actions {
+  display: flex;
+  gap: var(--spacing-xs);
+  margin-left: auto;
+}
+
+.category-action-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  color: var(--vscode-foreground);
+  background: transparent;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  opacity: 0.75;
+  transition: background-color var(--transition-normal), opacity var(--transition-normal);
+}
+
+.category-action-btn:hover:not(:disabled) {
+  opacity: 1;
+  background: var(--vscode-list-hoverBackground);
 }
 
 .tool-items {
@@ -2274,10 +2288,11 @@ watch(selectedChannel, () => {
 .tool-item {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-  padding: 8px 10px;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) 12px;
   cursor: pointer;
   border-top: 1px solid var(--vscode-panel-border);
+  transition: background-color var(--transition-fast);
 }
 
 .tool-item:first-child {
@@ -2289,13 +2304,18 @@ watch(selectedChannel, () => {
 }
 
 .tool-item input[type="checkbox"] {
-  margin-top: 2px;
+  flex-shrink: 0;
+  width: 14px;
+  height: 14px;
+  margin-top: 3px;
+  accent-color: var(--vscode-focusBorder);
+  cursor: pointer;
 }
 
 .tool-item-main {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--spacing-xs);
   flex: 1;
   min-width: 0;
 }
@@ -2303,6 +2323,7 @@ watch(selectedChannel, () => {
 .tool-name {
   font-size: 12px;
   font-family: var(--vscode-editor-font-family), monospace;
+  line-height: 1.4;
   color: var(--vscode-foreground);
   word-break: break-word;
 }
@@ -2316,9 +2337,10 @@ watch(selectedChannel, () => {
 
 .tool-disabled-badge {
   flex-shrink: 0;
+  margin-top: 1px;
   font-size: 10px;
-  padding: 2px 8px;
-  border-radius: 999px;
+  padding: 2px 6px;
+  border-radius: 10px;
   background: var(--vscode-inputValidation-warningBackground);
   border: 1px solid var(--vscode-inputValidation-warningBorder);
   color: var(--vscode-foreground);
@@ -2328,17 +2350,17 @@ watch(selectedChannel, () => {
 .tool-policy-warning {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-  margin-top: 8px;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) 12px;
   background: var(--vscode-inputValidation-warningBackground);
   border: 1px solid var(--vscode-inputValidation-warningBorder);
-  border-radius: 4px;
+  border-radius: var(--radius-lg);
   font-size: 12px;
   color: var(--vscode-foreground);
 }
 
 .tool-policy-warning .codicon {
+  flex-shrink: 0;
   color: var(--vscode-notificationsWarningIcon-foreground);
 }
 </style>

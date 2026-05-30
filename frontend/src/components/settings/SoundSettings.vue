@@ -380,19 +380,6 @@ async function resetToDefault() {
   await saveConfig()
 }
 
-function getTestCueLabel(cue: SoundCue): string {
-  switch (cue) {
-    case 'warning':
-      return t('components.settings.soundSettings.test.warning')
-    case 'error':
-      return t('components.settings.soundSettings.test.error')
-    case 'taskComplete':
-      return t('components.settings.soundSettings.test.taskComplete')
-    case 'taskError':
-      return t('components.settings.soundSettings.test.taskError')
-  }
-}
-
 async function triggerWindowsNotificationPreview(reason: WindowsAgentStopPreviewReason): Promise<void> {
   try {
     const payload = {

@@ -13,7 +13,7 @@ import { MarkdownRenderer } from '../common'
 
 const { t } = useI18n()
 
-const props = defineProps<{
+defineProps<{
   block: RenderBlock
   /** 消息角色，决定 Markdown 是否仅渲染 LaTeX */
   messageRole: 'user' | 'assistant' | 'tool'

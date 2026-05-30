@@ -1821,17 +1821,15 @@ export interface LanguageMessages {
                 toolPolicy: {
                     title: string;
                     description: string;
-                    inherit: string;
-                    custom: string;
-                    inheritHint: string;
                     searchPlaceholder: string;
                     selectAll: string;
                     clear: string;
+                    selectAllInCategory: string;
+                    deselectAllInCategory: string;
                     loadingTools: string;
                     noTools: string;
                     disabledBadge: string;
                     emptyWarning: string;
-                    emptyCannotSave: string;
                 };
                 saveButton: string;
                 saveSuccess: string;

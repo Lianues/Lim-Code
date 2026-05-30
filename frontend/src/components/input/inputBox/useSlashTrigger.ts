@@ -103,11 +103,10 @@ export function useSlashTrigger(callbacks: UseSlashTriggerCallbacks = {}) {
     deps.replaceTextRangeByOffsets(editor, triggerPos, endPos, replacement)
 
     // 为什么要保留打开状态：Tab/Enter 补全 `/skill` 后，用户还需要继续输入 Skill 名称。
-    // 怎么做：只更新查询末端位置，不触发关闭回调，让下一次 handleInput 按新的文本刷新面板。
-    // 目的：把“命令补全”和“选择后关闭”统一在同一个斜杠触发状态机里，避免另建特判状态。
+    // 怎么做：这里只更新查询末端位置，不主动发布 query；DOM 替换后由 InputBox.handleInput 统一调用 onTextChanged 发布唯一一次 query。
+    // 目的：避免补全阶段先同步发布 query、随后输入同步再次发布 query，导致 slash 面板在 command/skill 两个内容分支间出现一次多余重绘。
     if (options.keepOpen) {
       slashQueryEndPosition.value = triggerPos + replacement.length
-      callbacks.onQueryChange?.(replacement.startsWith('/') ? replacement.slice(1) : replacement)
       return true
     }
 
