@@ -307,6 +307,29 @@ const ja: BackendLanguageMessages = {
                         title: '{command} を確認',
                         description: '{command} は現在のコンテキストプロジェクションを更新し、コンテキスト台帳エントリを書き込みます。元の履歴は削除されません。続行するには確認済みコマンドを実行してください: {confirmedCommand}'
                     },
+                    undo: {
+                        unavailableTitle: 'コンテキスト操作を取り消せません',
+                        unavailableDescription: '現在復元可能なコンテキスト操作はありません。',
+                        completeTitle: 'コンテキスト取り消し完了',
+                        completeDescription: '最新の復元可能なコンテキストプロジェクションが復元されました。',
+                        failedTitle: 'コンテキスト取り消しに失敗しました',
+                        recoveryHint: '/context-status を実行して現在のコンテキスト状態を確認してください。'
+                    },
+                    restore: {
+                        missingProjectionIdTitle: '復元にはプロジェクション ID が必要です',
+                        missingProjectionIdDescription: '使用法: /context-restore <projectionId>',
+                        completeTitle: 'コンテキスト復元完了',
+                        completeDescription: 'プロジェクションが復元されました。',
+                        failedTitle: 'コンテキスト復元に失敗しました',
+                        recoveryHint: '/context-status からプロジェクション ID を取得してください。'
+                    },
+                    reset: {
+                        completeTitle: 'コンテキストリセット完了',
+                        completeDescription: '作業コンテキストプロジェクションが不変の履歴から再構築されました。元のメッセージは削除されていません。',
+                        failedTitle: 'コンテキストリセットに失敗しました',
+                        recoveryHint: '再試行する前に /context-status を実行してください。',
+                        restoreBoundaryMessage: 'プロジェクションが不変の会話履歴から再構築されました。'
+                    },
                     compact: {
                         missingConfigTitle: 'コンテキスト圧縮に設定がありません',
                         missingConfigDescription: 'コンテキストを圧縮するにはモデル設定が必要です。',
@@ -318,7 +341,10 @@ const ja: BackendLanguageMessages = {
                         unavailableTitle: 'コンテキスト圧縮は利用できません',
                         unavailableNoBoundaryDescription: '手動トリミングに使える安全なラウンド境界がありません。',
                         completeTitle: 'コンテキスト圧縮が完了しました',
-                        trimmedDescription: '作業コンテキストを最新 {keepRecentRounds} ラウンドにトリミングしました。元の履歴は削除されていません。'
+                        trimmedDescription: '作業コンテキストを最新 {keepRecentRounds} ラウンドにトリミングしました。元の履歴は削除されていません。',
+                        restoreBoundaryMessage: '手動トリミングは作業プロジェクションのみを変更しました。不変のソース履歴は引き続き保持されています。',
+                        autoTrimRestoreBoundaryMessage: '自動トリミングは作業プロジェクションのみを変更しました。不変の履歴は引き続き利用可能です。',
+                        recoveryHint: '/context-status を実行して現在のコンテキストプロジェクションを確認してください。'
                     },
                     summarize: {
                         missingConfigTitle: 'コンテキストコマンドに設定がありません',
@@ -328,7 +354,8 @@ const ja: BackendLanguageMessages = {
                         summarizedDescription: '{count} 件のメッセージを要約しました。この操作は非可逆で、コンテキスト台帳に記録されました。',
                         compactFailedTitle: 'コンテキスト圧縮に失敗しました',
                         summarizeFailedTitle: 'コンテキスト要約に失敗しました',
-                        restoreBoundaryMessage: '非可逆な要約プロジェクションが作成されました。元の履歴は保持されていますが、要約テキストは原文の完全な置換ではありません。'
+                        restoreBoundaryMessage: '非可逆な要約プロジェクションが作成されました。元の履歴は保持されていますが、要約テキストは原文の完全な置換ではありません。',
+                        recoveryHint: 'モデル設定とコンテキスト状態を確認してから再試行してください。'
                     },
                     status: {
                         title: 'コンテキスト状態',
@@ -337,7 +364,10 @@ const ja: BackendLanguageMessages = {
                         lossySummaryData: '非可逆な要約データに依存しています',
                         losslessTrimmedHistory: '可逆なトリミング履歴を保持しています',
                         reversibleProjection: '記録済みのプロジェクション履歴から復元できます',
-                        irreversibleProjection: '作業プロジェクションだけでは完全には復元できません'
+                        irreversibleProjection: '作業プロジェクションだけでは完全には復元できません',
+                        degradedDescription: 'コンテキスト状態に注意が必要です: {reason}。履歴メッセージ数: {count}。利用可能な復旧操作は以下にリストされています。',
+                        integrityDegradedReason: '会話ストレージの整合性状態: {status}',
+                        legacyMigrationMessage: 'プロジェクションは旧 trimState から移行されたため、正確な元操作情報を取得できません。'
                     }
                 }
             }
@@ -445,7 +475,38 @@ const ja: BackendLanguageMessages = {
             // 変更方法: 旧テンプレートを削除し、Skills ツール自体の設定説明とエラー文言だけを残す。
             // 目的: 最初の Skill 作成案内を read_skill の no-skills 説明へ移し、legacy ファイルを自動生成しないようにする。
             errors: {
-                managerNotInitialized: 'Skills マネージャーが初期化されていません'
+                managerNotInitialized: 'Skills マネージャーが初期化されていません',
+                unsupportedScriptType: 'cmd.exe スクリプトは execute_skill_script でサポートされていません。cmd.exe はシェル解析が必要なためです。代わりに PowerShell または sh スクリプトを使用してください。',
+                unsupportedExtension: 'サポートされていない Skill スクリプト拡張子: {ext}',
+                outputTruncated: '（出力は切り詰められました）',
+                cwdNotRelative: 'execute_skill_script.cwd は絶対パスではなく、ワークスペース相対パスである必要があります。',
+                cwdInvalid: '無効なワークスペース相対パス cwd: {cwd}',
+                cwdOutsideWorkspace: 'execute_skill_script.cwd は選択されたワークスペース内にある必要があります。',
+                shellExecutionDisabled: '設定で Skill Shell 実行が無効になっています。',
+                stageFailed: 'Skill スクリプトのステージングに失敗しました',
+                scriptTimeout: 'Skill スクリプトが {timeout}ms 後にタイムアウトしました',
+                scriptExitCode: 'Skill スクリプトがコード {code} で終了しました',
+                resourceChanged: '読み取り前に Skill リソースが変更されました。Skills を更新して再度確認してください。'
+            }
+        },
+        /** 子代理工具 */
+        subagents: {
+            errors: {
+                inputBudgetExceededCode: 'SUBAGENT_INPUT_BUDGET_EXCEEDED',
+                inputBudgetExceeded: 'SubAgent 入力予算を超過しました：{chars}/{max} 文字。',
+                depthExceededCode: 'SUBAGENT_DEPTH_EXCEEDED',
+                depthExceeded: 'SubAgent 深度を超過しました：{depth}/{max}。',
+                concurrencyExceededCode: 'SUBAGENT_CONCURRENCY_EXCEEDED',
+                concurrencyExceeded: 'アクティブな SubAgent の制限 ({max}) を超過しました。この実行は拒否されました。',
+                outputTruncated: '[SubAgent 出力はメインコンテキストに合わせて切り詰められました。完全な出力は SubAgent モニターで確認できます。元の文字数: {length}。]',
+                requiredParam: '{param} は必須です',
+                agentNotFound: 'SubAgent "{name}" が見つかりません。利用可能な Agent: {list}',
+                noExecutor: 'SubAgent "{name}" に利用可能なエグゼキューターがありません',
+                noRuntimeExecutor: 'SubAgent "{name}" にランタイムエグゼキューターコンテキストがありません。',
+                cancelled: 'ユーザーが SubAgent の実行をキャンセルしました。ユーザーの次の指示をお待ちください。',
+                governanceRejected: 'SubAgent ガバナンスポリシーがこの実行を拒否しました。',
+                executionFailed: 'SubAgent の実行に失敗しました',
+                executionError: 'SubAgent 実行エラー: {error}'
             }
         },
         

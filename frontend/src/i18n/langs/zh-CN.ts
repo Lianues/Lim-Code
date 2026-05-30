@@ -261,6 +261,36 @@ const zhCN: LanguageMessages = {
             tokenUsage: '使用量',
             context: '上下文',
             fileNotExists: '文件不存在',
+            contextStatus: {
+                title: '上下文状态',
+                healthWarning: '需要关注',
+                healthOk: '正常',
+                noData: '尚未加载上下文状态。',
+                degradedReason: '上下文状态已降级：{reason}',
+                noProjection: '没有活跃的压缩工作投影。当前对话使用完整历史，共 {count} 条消息。',
+                projectionSummary: '工作投影 {mode} 从消息索引 {index} 开始。',
+                noConversation: '请先打开或创建对话再查看上下文状态。',
+                loadFailed: '加载上下文状态失败。',
+                loading: '正在加载上下文状态...',
+                cardConversation: '对话',
+                cardHistoryMessages: '历史消息',
+                cardLedgerEntries: '账本条目',
+                cardReadonlyLegacy: '只读旧版',
+                cardProjection: '投影',
+                projectionMode: '模式',
+                projectionId: '投影 ID',
+                projectionStartIndex: '起始索引',
+                projectionLossy: '有损',
+                projectionReversible: '可恢复',
+                projectionEstimatedTokens: '预估 Token',
+                emptyProjection: '当前没有活跃的工作投影，使用完整历史。',
+                cardLastLedgerOp: '最近账本操作',
+                ledgerOperation: '操作',
+                ledgerId: '账本 ID',
+                emptyLedgerOp: '尚未记录任何账本操作。',
+                cardSuggestedActions: '建议操作',
+                actionsDisclaimer: '此窗口仅用于诊断查看。执行变更操作请通过聊天命令流程。'
+            },
             queue: {
                 title: '排队消息',
                 sendNow: '立即发送',
@@ -287,6 +317,10 @@ const zhCN: LanguageMessages = {
                 addInSettings: '请在设置中添加模型'
             },
             slashCommandPanel: {
+                headerSelectSkill: '选择 Skill',
+                headerCommands: '斜杠命令',
+                loadingSkills: '正在加载 Skills...',
+                noCommand: '无匹配命令',
                 descriptions: {
                     skill: '向本次消息添加一个 Skill 引用',
                     contextStatus: '查看当前投影、账本数量、有损状态和恢复操作',
@@ -2829,6 +2863,42 @@ const zhCN: LanguageMessages = {
                     waitingOutput: '等待输出...',
                     noOutput: '没有输出',
                     executing: '命令执行中...'
+                }
+            },
+            skills: {
+                executeScript: {
+                    statusKilled: '已终止',
+                    statusFailed: '失败',
+                    statusExitCode: '退出 {code}',
+                    statusSuccess: '成功',
+                    statusAwaitingApproval: '等待审批',
+                    statusRunning: '运行中',
+                    statusPending: '等待中',
+                    labelSkill: 'Skill',
+                    labelArgs: '参数',
+                    labelResult: '结果',
+                    resultExitCode: 'exitCode={code}',
+                    resultKilled: 'killed=true',
+                    awaitingApprovalHint: '等待审批。请使用工具卡片的审批控件继续。',
+                    executing: '正在执行 staged skill 脚本…',
+                    noOutput: '暂无脚本输出。',
+                    copyOutput: '复制输出'
+                },
+                readResource: {
+                    badgeTruncated: '已截断',
+                    reading: '正在读取 Skill 资源…',
+                    noContent: '未返回文本内容。'
+                },
+                readSkill: {
+                    loaded: '已加载 Skill: {name}',
+                    failed: '加载 Skill 失败: {name}',
+                    loading: '正在加载 Skill: {name}',
+                    labelSkillUri: 'Skill URI:',
+                    labelLegacyBasePath: '旧版 basePath:',
+                    labelContent: '内容:',
+                    contentChars: ' 字符',
+                    labelResources: '资源:',
+                    manifestItems: ' 个清单项'
                 }
             },
             subagents: {

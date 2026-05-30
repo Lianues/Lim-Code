@@ -766,7 +766,7 @@ watch(() => settingsStore.promptModesVersion, () => {
           />
         </Tooltip>
 
-        <Tooltip content="Context status" placement="top">
+        <Tooltip :content="t('components.input.contextStatus.title')" placement="top">
           <IconButton
             icon="codicon-info"
             size="small"

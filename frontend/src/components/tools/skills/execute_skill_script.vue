@@ -9,6 +9,7 @@
  * staging 目录或 Skill 本地真实路径。
  */
 import { computed, ref } from 'vue'
+import { useI18n } from '../../../i18n'
 import type { ToolUsage } from '../../../types'
 import {
   asBoolean,
@@ -30,6 +31,8 @@ const props = defineProps<{
   toolId?: string
   toolName?: string
 }>()
+
+const { t } = useI18n()
 
 const expanded = ref(false)
 const copied = ref(false)
@@ -58,12 +61,12 @@ const statusClass = computed(() => {
 })
 
 const statusLabel = computed(() => {
-  if (killed.value) return 'killed'
-  if (errorMessage.value) return 'failed'
-  if (exitCode.value !== undefined) return exitCode.value === 0 ? 'success' : `exit ${exitCode.value}`
-  if (isAwaitingApproval.value) return 'awaiting approval'
-  if (isPending.value) return 'running'
-  return 'pending'
+  if (killed.value) return t('components.tools.skills.executeScript.statusKilled')
+  if (errorMessage.value) return t('components.tools.skills.executeScript.statusFailed')
+  if (exitCode.value !== undefined) return exitCode.value === 0 ? t('components.tools.skills.executeScript.statusSuccess') : t('components.tools.skills.executeScript.statusExitCode', { code: exitCode.value })
+  if (isAwaitingApproval.value) return t('components.tools.skills.executeScript.statusAwaitingApproval')
+  if (isPending.value) return t('components.tools.skills.executeScript.statusRunning')
+  return t('components.tools.skills.executeScript.statusPending')
 })
 
 async function copyOutput() {
@@ -96,30 +99,30 @@ async function copyOutput() {
 
     <div class="script-summary">
       <div class="summary-row">
-        <span class="summary-label">Skill</span>
+        <span class="summary-label">{{ t('components.tools.skills.executeScript.labelSkill') }}</span>
         <span class="summary-value" :title="skillName">{{ skillName }}</span>
       </div>
       <div v-if="scriptArgs.length > 0" class="summary-row">
-        <span class="summary-label">Args</span>
+        <span class="summary-label">{{ t('components.tools.skills.executeScript.labelArgs') }}</span>
         <span class="summary-value args-value" :title="scriptArgs.join(' ')">{{ scriptArgs.join(' ') }}</span>
       </div>
       <div v-if="exitCode !== undefined || killed" class="summary-row">
-        <span class="summary-label">Result</span>
+        <span class="summary-label">{{ t('components.tools.skills.executeScript.labelResult') }}</span>
         <span class="summary-value">
-          <span v-if="exitCode !== undefined">exitCode={{ exitCode }}</span>
-          <span v-if="killed"> killed=true</span>
+          <span v-if="exitCode !== undefined">{{ t('components.tools.skills.executeScript.statusExitCode', { code: exitCode }) }}</span>
+          <span v-if="killed"> {{ t('components.tools.skills.executeScript.statusKilled') }}</span>
         </span>
       </div>
     </div>
 
     <div v-if="isAwaitingApproval" class="state-panel awaiting-panel">
       <i class="codicon codicon-shield"></i>
-      <span>Waiting for approval. Use the tool card approval controls to continue.</span>
+      <span>{{ t('components.tools.skills.executeScript.awaitingApprovalHint') }}</span>
     </div>
 
     <div v-else-if="isPending" class="state-panel running-panel">
       <i class="codicon codicon-loading codicon-modifier-spin"></i>
-      <span>Executing staged skill script…</span>
+      <span>{{ t('components.tools.skills.executeScript.executing') }}</span>
     </div>
 
     <div v-if="errorMessage" class="state-panel error-panel">
@@ -129,18 +132,18 @@ async function copyOutput() {
 
     <div class="script-output" :class="{ expanded }">
       <pre v-if="output" class="output-content">{{ output }}</pre>
-      <div v-else class="empty-output">No script output yet.</div>
+      <div v-else class="empty-output">{{ t('components.tools.skills.executeScript.noOutput') }}</div>
       <div v-if="!expanded && outputPreview.clipped" class="fade-overlay"></div>
     </div>
 
     <div class="script-actions">
       <button class="action-button" type="button" @click.stop="expanded = !expanded">
         <i class="codicon" :class="expanded ? 'codicon-chevron-up' : 'codicon-chevron-down'"></i>
-        {{ expanded ? 'Collapse' : 'Expand' }}
+        {{ expanded ? t('common.collapse') : t('common.expand') }}
       </button>
       <button class="action-button" type="button" :class="{ copied }" @click.stop="copyOutput">
         <i class="codicon" :class="copied ? 'codicon-check' : 'codicon-copy'"></i>
-        {{ copied ? 'Copied' : 'Copy output' }}
+        {{ copied ? t('common.copied') : t('components.tools.skills.executeScript.copyOutput') }}
       </button>
     </div>
   </div>

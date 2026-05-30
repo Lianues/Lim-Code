@@ -261,6 +261,36 @@ const en: LanguageMessages = {
             tokenUsage: 'Usage',
             context: 'Context',
             fileNotExists: 'File does not exist',
+            contextStatus: {
+                title: 'Context Status',
+                healthWarning: 'Needs Attention',
+                healthOk: 'Healthy',
+                noData: 'No context status has been loaded yet.',
+                degradedReason: 'The context state is degraded: {reason}',
+                noProjection: 'No compressed working projection is active. The conversation currently uses full history with {count} messages.',
+                projectionSummary: 'Working projection {mode} starts at message {index}.',
+                noConversation: 'Open or create a conversation before checking context status.',
+                loadFailed: 'Failed to load context status.',
+                loading: 'Loading context status...',
+                cardConversation: 'Conversation',
+                cardHistoryMessages: 'History Messages',
+                cardLedgerEntries: 'Ledger Entries',
+                cardReadonlyLegacy: 'Readonly Legacy',
+                cardProjection: 'Projection',
+                projectionMode: 'Mode',
+                projectionId: 'Projection ID',
+                projectionStartIndex: 'Start Index',
+                projectionLossy: 'Lossy',
+                projectionReversible: 'Reversible',
+                projectionEstimatedTokens: 'Estimated Tokens',
+                emptyProjection: 'No active working projection. Full history is currently used.',
+                cardLastLedgerOp: 'Last Ledger Operation',
+                ledgerOperation: 'Operation',
+                ledgerId: 'Ledger ID',
+                emptyLedgerOp: 'No ledger operation has been recorded yet.',
+                cardSuggestedActions: 'Suggested Actions',
+                actionsDisclaimer: 'Actions are shown for diagnosis only in this window. Run mutating operations deliberately from the chat command flow.'
+            },
             queue: {
                 title: 'Queued Messages',
                 sendNow: 'Send now',
@@ -287,6 +317,10 @@ const en: LanguageMessages = {
                 addInSettings: 'Please add models in settings'
             },
             slashCommandPanel: {
+                headerSelectSkill: 'Select Skill',
+                headerCommands: 'Slash Commands',
+                loadingSkills: 'Loading skills...',
+                noCommand: 'No matching command',
                 descriptions: {
                     skill: 'Add a Skill reference to this message',
                     contextStatus: 'Inspect active projection, ledger count, lossy state and recovery actions',
@@ -2641,6 +2675,42 @@ const en: LanguageMessages = {
                     responseResult: 'Response Result',
                     imagePreview: 'Image Preview',
                     waitingResponse: 'Waiting for response...'
+                }
+            },
+            skills: {
+                executeScript: {
+                    statusKilled: 'Killed',
+                    statusFailed: 'Failed',
+                    statusExitCode: 'Exit {code}',
+                    statusSuccess: 'Success',
+                    statusAwaitingApproval: 'Awaiting Approval',
+                    statusRunning: 'Running',
+                    statusPending: 'Pending',
+                    labelSkill: 'Skill',
+                    labelArgs: 'Args',
+                    labelResult: 'Result',
+                    resultExitCode: 'exitCode={code}',
+                    resultKilled: 'killed=true',
+                    awaitingApprovalHint: 'Waiting for approval. Use the tool card approval controls to continue.',
+                    executing: 'Executing staged skill script…',
+                    noOutput: 'No script output yet.',
+                    copyOutput: 'Copy Output'
+                },
+                readResource: {
+                    badgeTruncated: 'Truncated',
+                    reading: 'Reading skill resource…',
+                    noContent: 'No text content returned.'
+                },
+                readSkill: {
+                    loaded: 'Loaded skill: {name}',
+                    failed: 'Failed to load skill: {name}',
+                    loading: 'Loading skill: {name}',
+                    labelSkillUri: 'Skill URI:',
+                    labelLegacyBasePath: 'Legacy base path:',
+                    labelContent: 'Content:',
+                    contentChars: ' chars',
+                    labelResources: 'Resources:',
+                    manifestItems: ' manifest item(s)'
                 }
             },
             subagents: {

@@ -725,6 +725,36 @@ export interface LanguageMessages {
             tokenUsage: string;
             context: string;
             fileNotExists: string;
+            contextStatus: {
+                title: string;
+                healthWarning: string;
+                healthOk: string;
+                noData: string;
+                degradedReason: string;
+                noProjection: string;
+                projectionSummary: string;
+                noConversation: string;
+                loadFailed: string;
+                loading: string;
+                cardConversation: string;
+                cardHistoryMessages: string;
+                cardLedgerEntries: string;
+                cardReadonlyLegacy: string;
+                cardProjection: string;
+                projectionMode: string;
+                projectionId: string;
+                projectionStartIndex: string;
+                projectionLossy: string;
+                projectionReversible: string;
+                projectionEstimatedTokens: string;
+                emptyProjection: string;
+                cardLastLedgerOp: string;
+                ledgerOperation: string;
+                ledgerId: string;
+                emptyLedgerOp: string;
+                cardSuggestedActions: string;
+                actionsDisclaimer: string;
+            };
             queue: {
                 title: string;
                 sendNow: string;
@@ -751,6 +781,10 @@ export interface LanguageMessages {
                 addInSettings: string;
             };
             slashCommandPanel: {
+                headerSelectSkill: string;
+                headerCommands: string;
+                loadingSkills: string;
+                noCommand: string;
                 descriptions: {
                     skill: string;
                     contextStatus: string;
@@ -2918,6 +2952,43 @@ export interface LanguageMessages {
                     responseResult: string;
                     imagePreview: string;
                     waitingResponse: string;
+                };
+            };
+            /** Skills 工具 */
+            skills: {
+                executeScript: {
+                    statusKilled: string;
+                    statusFailed: string;
+                    statusExitCode: string;
+                    statusSuccess: string;
+                    statusAwaitingApproval: string;
+                    statusRunning: string;
+                    statusPending: string;
+                    labelSkill: string;
+                    labelArgs: string;
+                    labelResult: string;
+                    resultExitCode: string;
+                    resultKilled: string;
+                    awaitingApprovalHint: string;
+                    executing: string;
+                    noOutput: string;
+                    copyOutput: string;
+                };
+                readResource: {
+                    badgeTruncated: string;
+                    reading: string;
+                    noContent: string;
+                };
+                readSkill: {
+                    loaded: string;
+                    failed: string;
+                    loading: string;
+                    labelSkillUri: string;
+                    labelLegacyBasePath: string;
+                    labelContent: string;
+                    contentChars: string;
+                    labelResources: string;
+                    manifestItems: string;
                 };
             };
             /** 子代理工具 */

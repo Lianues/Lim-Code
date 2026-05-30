@@ -96,7 +96,7 @@ export class ContextOperationService {
     async undo(request: ContextOperationRequest): Promise<UiStatusPayload> {
         const latest = await this.ledgerService.findLatestReversibleSuccess(request.conversationId);
         if (!latest?.beforeProjectionId) {
-            return this.errorPayload('Context undo unavailable', 'No reversible context operation is available.', 'context-undo');
+            return this.errorPayload(t('modules.api.chat.contextCommands.undo.unavailableTitle'), t('modules.api.chat.contextCommands.undo.unavailableDescription'), 'context-undo');
         }
         const ledger = await this.ledgerService.beginOperation({
             conversationId: request.conversationId,
@@ -112,17 +112,17 @@ export class ContextOperationService {
             const updated = await this.ledgerService.markSuccess(request.conversationId, ledger.ledgerEntryId, {
                 afterProjectionId: projection.projectionId
             });
-            return this.successPayload('Context undo complete', 'The latest reversible context projection was restored.', projection.projectionId, updated);
+            return this.successPayload(t('modules.api.chat.contextCommands.undo.completeTitle'), t('modules.api.chat.contextCommands.undo.completeDescription'), projection.projectionId, updated);
         } catch (error) {
-            await this.ledgerService.markFailed(request.conversationId, ledger.ledgerEntryId, this.toError(error), 'Run /context-status to inspect the current context state.');
-            return this.errorPayload('Context undo failed', error instanceof Error ? error.message : String(error), 'context-undo');
+            await this.ledgerService.markFailed(request.conversationId, ledger.ledgerEntryId, this.toError(error), t('modules.api.chat.contextCommands.undo.recoveryHint'));
+            return this.errorPayload(t('modules.api.chat.contextCommands.undo.failedTitle'), error instanceof Error ? error.message : String(error), 'context-undo');
         }
     }
 
     async restore(request: ContextOperationRequest): Promise<UiStatusPayload> {
         const projectionId = request.args?.[0];
         if (!projectionId) {
-            return this.errorPayload('Context restore needs a projection id', 'Usage: /context-restore <projectionId>', 'context-restore');
+            return this.errorPayload(t('modules.api.chat.contextCommands.restore.missingProjectionIdTitle'), t('modules.api.chat.contextCommands.restore.missingProjectionIdDescription'), 'context-restore');
         }
         const current = await this.projectionStore.getCurrentProjection(request.conversationId);
         const ledger = await this.ledgerService.beginOperation({
@@ -139,10 +139,10 @@ export class ContextOperationService {
             const updated = await this.ledgerService.markSuccess(request.conversationId, ledger.ledgerEntryId, {
                 afterProjectionId: projection.projectionId
             });
-            return this.successPayload('Context restore complete', projection.restoreBoundary?.message || 'Projection restored.', projection.projectionId, updated);
+            return this.successPayload(t('modules.api.chat.contextCommands.restore.completeTitle'), projection.restoreBoundary?.message || t('modules.api.chat.contextCommands.restore.completeDescription'), projection.projectionId, updated);
         } catch (error) {
-            await this.ledgerService.markFailed(request.conversationId, ledger.ledgerEntryId, this.toError(error), 'Check the projection id from /context-status.');
-            return this.errorPayload('Context restore failed', error instanceof Error ? error.message : String(error), 'context-restore');
+            await this.ledgerService.markFailed(request.conversationId, ledger.ledgerEntryId, this.toError(error), t('modules.api.chat.contextCommands.restore.recoveryHint'));
+            return this.errorPayload(t('modules.api.chat.contextCommands.restore.failedTitle'), error instanceof Error ? error.message : String(error), 'context-restore');
         }
     }
 
@@ -162,10 +162,10 @@ export class ContextOperationService {
             const updated = await this.ledgerService.markSuccess(request.conversationId, ledger.ledgerEntryId, {
                 afterProjectionId: projection.projectionId
             });
-            return this.successPayload('Context reset complete', 'The working context projection was rebuilt from the immutable history. No original messages were deleted.', projection.projectionId, updated);
+            return this.successPayload(t('modules.api.chat.contextCommands.reset.completeTitle'), t('modules.api.chat.contextCommands.reset.completeDescription'), projection.projectionId, updated);
         } catch (error) {
-            await this.ledgerService.markFailed(request.conversationId, ledger.ledgerEntryId, this.toError(error), 'Run /context-status before retrying.');
-            return this.errorPayload('Context reset failed', error instanceof Error ? error.message : String(error), 'context-reset');
+            await this.ledgerService.markFailed(request.conversationId, ledger.ledgerEntryId, this.toError(error), t('modules.api.chat.contextCommands.reset.recoveryHint'));
+            return this.errorPayload(t('modules.api.chat.contextCommands.reset.failedTitle'), error instanceof Error ? error.message : String(error), 'context-reset');
         }
     }
 
@@ -227,7 +227,7 @@ export class ContextOperationService {
                 tokenEstimate: { before: tokenBefore, after: tokenAfter },
                 restoreBoundary: {
                     kind: 'full_history',
-                    message: 'Manual compact trimmed only the working projection. Immutable source history remains stored.'
+                    message: t('modules.api.chat.contextCommands.compact.restoreBoundaryMessage')
                 }
             });
             const updated = await this.ledgerService.markSuccess(request.conversationId, ledger.ledgerEntryId, {
@@ -245,7 +245,7 @@ export class ContextOperationService {
                 true
             );
         } catch (error) {
-            await this.ledgerService.markFailed(request.conversationId, ledger.ledgerEntryId, this.toError(error), 'Run /context-status to inspect the current context projection.');
+            await this.ledgerService.markFailed(request.conversationId, ledger.ledgerEntryId, this.toError(error), t('modules.api.chat.contextCommands.compact.recoveryHint'));
             return this.errorPayload(t('modules.api.chat.contextCommands.compact.failedTitle'), error instanceof Error ? error.message : String(error), 'manual_compact');
         }
     }
@@ -344,7 +344,7 @@ export class ContextOperationService {
                 false
             );
         } catch (error) {
-            await this.ledgerService.markFailed(request.conversationId, ledger.ledgerEntryId, this.toError(error), 'Retry after checking model configuration and context status.');
+            await this.ledgerService.markFailed(request.conversationId, ledger.ledgerEntryId, this.toError(error), t('modules.api.chat.contextCommands.summarize.recoveryHint'));
             return this.errorPayload(
                 operation === 'manual_compact'
                     ? t('modules.api.chat.contextCommands.summarize.compactFailedTitle')
@@ -361,7 +361,7 @@ export class ContextOperationService {
             // 修改原因：/context-status 是用户诊断入口，降级状态不能只暴露内部字段名或让用户猜下一步。
             // 修改方式：优先把 degradedReason 写成面向用户的状态说明，并提示可用 nextActions。
             // 修改目的：让用户看到命令结果时能理解“哪里不可信”和“下一步可以做什么”。
-            return `Context state needs attention: ${status.degradedReason}. History messages: ${status.historyLength ?? 0}. Recovery actions are listed below.`;
+            return t('modules.api.chat.contextCommands.status.degradedDescription', { reason: status.degradedReason, count: status.historyLength ?? 0 });
         }
         if (!projection) {
             // 修改原因：/context-status 的描述也会出现在 compact/summarize 的后续操作中，不能保留硬编码英文。

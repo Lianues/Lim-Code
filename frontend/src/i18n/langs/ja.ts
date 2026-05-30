@@ -261,6 +261,36 @@ const ja: LanguageMessages = {
             tokenUsage: '使用量',
             context: 'コンテキスト',
             fileNotExists: 'ファイルが存在しません',
+            contextStatus: {
+                title: 'コンテキスト状態',
+                healthWarning: '注意が必要',
+                healthOk: '正常',
+                noData: 'コンテキスト状態がまだ読み込まれていません。',
+                degradedReason: 'コンテキスト状態が低下しています: {reason}',
+                noProjection: 'アクティブな圧縮作業投影はありません。現在の会話は {count} 件のメッセージを含む完全な履歴を使用しています。',
+                projectionSummary: '作業投影 {mode} はメッセージ {index} から開始されます。',
+                noConversation: 'コンテキスト状態を確認する前に会話を開くか作成してください。',
+                loadFailed: 'コンテキスト状態の読み込みに失敗しました。',
+                loading: 'コンテキスト状態を読み込み中...',
+                cardConversation: '会話',
+                cardHistoryMessages: '履歴メッセージ',
+                cardLedgerEntries: '台帳エントリ',
+                cardReadonlyLegacy: '読み取り専用レガシー',
+                cardProjection: '投影',
+                projectionMode: 'モード',
+                projectionId: '投影 ID',
+                projectionStartIndex: '開始インデックス',
+                projectionLossy: '非可逆',
+                projectionReversible: '可逆',
+                projectionEstimatedTokens: '推定トークン',
+                emptyProjection: 'アクティブな作業投影はありません。完全な履歴が現在使用されています。',
+                cardLastLedgerOp: '最後の台帳操作',
+                ledgerOperation: '操作',
+                ledgerId: '台帳 ID',
+                emptyLedgerOp: 'まだ台帳操作が記録されていません。',
+                cardSuggestedActions: '推奨アクション',
+                actionsDisclaimer: 'このウィンドウは診断表示専用です。変更操作はチャットコマンドフローから実行してください。'
+            },
             queue: {
                 title: 'キューメッセージ',
                 sendNow: '今すぐ送信',
@@ -287,6 +317,10 @@ const ja: LanguageMessages = {
                 addInSettings: '設定でモデルを追加してください'
             },
             slashCommandPanel: {
+                headerSelectSkill: 'スキルを選択',
+                headerCommands: 'スラッシュコマンド',
+                loadingSkills: 'スキルを読み込み中...',
+                noCommand: '一致するコマンドなし',
                 descriptions: {
                     skill: 'このメッセージに Skill 参照を追加',
                     contextStatus: '現在のプロジェクション、台帳数、非可逆状態、復旧操作を確認',
@@ -2641,6 +2675,42 @@ const ja: LanguageMessages = {
                     responseResult: 'レスポンス結果',
                     imagePreview: '画像プレビュー',
                     waitingResponse: 'レスポンスを待機中...'
+                }
+            },
+            skills: {
+                executeScript: {
+                    statusKilled: '強制終了',
+                    statusFailed: '失敗',
+                    statusExitCode: '終了 {code}',
+                    statusSuccess: '成功',
+                    statusAwaitingApproval: '承認待ち',
+                    statusRunning: '実行中',
+                    statusPending: '保留中',
+                    labelSkill: 'スキル',
+                    labelArgs: '引数',
+                    labelResult: '結果',
+                    resultExitCode: 'exitCode={code}',
+                    resultKilled: 'killed=true',
+                    awaitingApprovalHint: '承認待ちです。ツールカードの承認コントロールを使用して続行してください。',
+                    executing: 'ステージングされたスキルスクリプトを実行中…',
+                    noOutput: 'スクリプト出力はまだありません。',
+                    copyOutput: '出力をコピー'
+                },
+                readResource: {
+                    badgeTruncated: '切り詰め',
+                    reading: 'スキルリソースを読み込み中…',
+                    noContent: 'テキストコンテンツが返されませんでした。'
+                },
+                readSkill: {
+                    loaded: 'スキルを読み込みました: {name}',
+                    failed: 'スキルの読み込みに失敗しました: {name}',
+                    loading: 'スキルを読み込み中: {name}',
+                    labelSkillUri: 'スキル URI:',
+                    labelLegacyBasePath: 'レガシー basePath:',
+                    labelContent: '内容:',
+                    contentChars: ' 文字',
+                    labelResources: 'リソース:',
+                    manifestItems: ' マニフェスト項目'
                 }
             },
             subagents: {

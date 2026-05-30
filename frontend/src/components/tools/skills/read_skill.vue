@@ -6,14 +6,17 @@
  * 替代原有的 toggle_skills.vue。
  */
 import { computed } from 'vue'
+import { useI18n } from '../../../i18n'
 
 const props = defineProps<{
   args: Record<string, unknown>
   result?: Record<string, unknown>
 }>()
 
+const { t } = useI18n()
+
 // 请求的 skill 名称
-const skillName = computed(() => props.args?.name as string || 'unknown')
+const skillName = computed(() => props.args?.name as string || t('common.unknown'))
 
 // 检查是否成功
 const isSuccess = computed(() => props.result?.success === true)
@@ -55,24 +58,24 @@ const contentLength = computed(() => {
       <div v-if="isSuccess && resultData" class="section success">
         <div class="section-title">
           <i class="codicon codicon-book"></i>
-          Loaded skill: {{ resultData.name || skillName }}
+          {{ t('components.tools.skills.readSkill.loaded', { name: resultData.name || skillName }) }}
         </div>
         <div class="skill-details">
           <div v-if="resultData.skillUri" class="detail-item">
-            <span class="detail-label">Skill URI:</span>
+            <span class="detail-label">{{ t('components.tools.skills.readSkill.labelSkillUri') }}</span>
             <span class="detail-value">{{ resultData.skillUri }}</span>
           </div>
           <div v-else-if="resultData.basePath" class="detail-item legacy-path">
-            <span class="detail-label">Legacy base path:</span>
+            <span class="detail-label">{{ t('components.tools.skills.readSkill.labelLegacyBasePath') }}</span>
             <span class="detail-value">{{ resultData.basePath }}</span>
           </div>
           <div class="detail-item">
-            <span class="detail-label">Content:</span>
-            <span class="detail-value">{{ contentLength.toLocaleString() }} chars</span>
+            <span class="detail-label">{{ t('components.tools.skills.readSkill.labelContent') }}</span>
+            <span class="detail-value">{{ contentLength.toLocaleString() }}{{ t('components.tools.skills.readSkill.contentChars') }}</span>
           </div>
           <div v-if="resourceCount > 0" class="detail-item">
-            <span class="detail-label">Resources:</span>
-            <span class="detail-value">{{ resourceCount }} manifest item(s)</span>
+            <span class="detail-label">{{ t('components.tools.skills.readSkill.labelResources') }}</span>
+            <span class="detail-value">{{ resourceCount }}{{ t('components.tools.skills.readSkill.manifestItems') }}</span>
           </div>
         </div>
       </div>
@@ -81,7 +84,7 @@ const contentLength = computed(() => {
       <div v-else class="section error">
         <div class="section-title">
           <i class="codicon codicon-error"></i>
-          Failed to load skill: {{ skillName }}
+          {{ t('components.tools.skills.readSkill.failed', { name: skillName }) }}
         </div>
         <div v-if="errorMessage" class="error-detail">{{ errorMessage }}</div>
       </div>
@@ -91,7 +94,7 @@ const contentLength = computed(() => {
     <div v-else class="section pending">
       <div class="section-title">
         <i class="codicon codicon-loading codicon-modifier-spin"></i>
-        Loading skill: {{ skillName }}
+        {{ t('components.tools.skills.readSkill.loading', { name: skillName }) }}
       </div>
     </div>
   </div>

@@ -32,6 +32,7 @@ import type { MessageBuilderService } from './MessageBuilderService';
 import { ContextProjectionStore } from './ContextProjectionStore';
 import { ContextLedgerService } from './ContextLedgerService';
 import type { ContextProjection } from '../../../conversation/contextTypes';
+import { t } from '../../../../i18n';
 
 import { Logger } from '../../../../core/logger';
 import { validateHistoryIntegrity } from '../../../channel/HistoryIntegrityValidator';
@@ -203,7 +204,7 @@ export class ContextTrimService {
                 lossy: false,
                 restoreBoundary: {
                     kind: 'full_history',
-                    message: 'Automatic trim changed only the working projection; immutable history remains available.'
+                    message: t('modules.api.chat.contextCommands.compact.autoTrimRestoreBoundaryMessage')
                 }
             });
             await ledgerService.markSuccess(conversationId, ledger.ledgerEntryId, { afterProjectionId: projection.projectionId });

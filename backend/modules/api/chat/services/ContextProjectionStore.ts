@@ -16,6 +16,7 @@ import {
     type ContextRestoreBoundary,
     type VerbatimMap
 } from '../../../conversation/contextTypes';
+import { t } from '../../../../i18n';
 
 export interface CreateContextProjectionInput {
     conversationId: string;
@@ -120,7 +121,7 @@ export class ContextProjectionStore {
             lossy: false,
             restoreBoundary: {
                 kind: 'full_history',
-                message: 'Projection has been rebuilt from the immutable conversation history.'
+                message: t('modules.api.chat.contextCommands.reset.restoreBoundaryMessage')
             }
         });
     }
@@ -142,7 +143,7 @@ export class ContextProjectionStore {
             lossy: false,
             restoreBoundary: {
                 kind: 'legacy_unknown',
-                message: 'Projection was migrated from legacy trimState; exact operation provenance is unavailable.'
+                message: t('modules.api.chat.contextCommands.status.legacyMigrationMessage')
             }
         });
         await this.metadataRepository.updateContextProjectionDocument(conversationId, document => ({

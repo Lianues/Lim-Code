@@ -7,6 +7,7 @@
  */
 
 import type { SubAgentConfig } from './types';
+import { t } from '../../i18n';
 
 export interface SubAgentGovernancePolicy {
     maxOutputChars: number;
@@ -42,8 +43,8 @@ export class SubAgentBudgetGovernor {
         if (chars > this.policy.maxInputChars) {
             return {
                 allowed: false,
-                code: 'SUBAGENT_INPUT_BUDGET_EXCEEDED',
-                message: `SubAgent input budget exceeded: ${chars}/${this.policy.maxInputChars} characters.`
+                code: t('tools.subagents.errors.inputBudgetExceededCode'),
+                message: t('tools.subagents.errors.inputBudgetExceeded', { chars, max: this.policy.maxInputChars })
             };
         }
         return { allowed: true };
@@ -66,8 +67,8 @@ export class SubAgentDepthGuard {
         if (depth > this.policy.maxDepth) {
             return {
                 allowed: false,
-                code: 'SUBAGENT_DEPTH_EXCEEDED',
-                message: `SubAgent depth exceeded: ${depth}/${this.policy.maxDepth}.`
+                code: t('tools.subagents.errors.depthExceededCode'),
+                message: t('tools.subagents.errors.depthExceeded', { depth, max: this.policy.maxDepth })
             };
         }
         return { allowed: true };
@@ -81,8 +82,8 @@ export class SubAgentConcurrencyGuard {
         if (policy.maxConcurrentAgents !== -1 && this.activeRunIds.size >= policy.maxConcurrentAgents) {
             return {
                 allowed: false,
-                code: 'SUBAGENT_CONCURRENCY_EXCEEDED',
-                message: `Exceeded active SubAgent limit (${policy.maxConcurrentAgents}). This run was rejected before execution.`
+                code: t('tools.subagents.errors.concurrencyExceededCode'),
+                message: t('tools.subagents.errors.concurrencyExceeded', { max: policy.maxConcurrentAgents })
             };
         }
         this.activeRunIds.add(runId);

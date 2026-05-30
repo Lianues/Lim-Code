@@ -7,6 +7,7 @@ import { getSkillsManager } from '../../modules/skills';
 import { getGlobalSettingsManager } from '../../core/settingsContext';
 import { hashFile } from '../../modules/skills/resourceManifest';
 import { getAllWorkspaces, parseWorkspacePath } from '../utils';
+import { t } from '../../i18n';
 
 interface ExecuteSkillScriptArgs {
     name: string;
@@ -45,9 +46,9 @@ function resolveRunner(stagedPath: string, relativePath: string): { command: str
         return { command: ext === '.zsh' ? 'zsh' : 'sh', args: [stagedPath] };
     }
     if (ext === '.cmd' || ext === '.bat') {
-        return { error: `${ext} scripts are not supported by execute_skill_script because cmd.exe requires shell parsing. Use PowerShell, Python, Node, or sh scripts instead.` };
+        return { error: t('tools.skills.errors.unsupportedScriptType') };
     }
-    return { error: `Unsupported skill script extension: ${ext || '(none)'}` };
+    return { error: t('tools.skills.errors.unsupportedExtension', { ext: ext || '(none)' }) };
 }
 
 export function generateExecuteSkillScriptDeclaration(): ToolDeclaration {
@@ -107,18 +108,18 @@ function resolveWorkspaceCwd(cwd?: string): { ok: true; cwd: string } | { ok: fa
         return { ok: true, cwd: workspaces[0].fsPath };
     }
     if (path.isAbsolute(cwd) || /^[a-zA-Z]:/.test(cwd) || cwd.startsWith('\\\\')) {
-        return { ok: false, error: 'execute_skill_script.cwd must be workspace-relative, not an absolute path.' };
+        return { ok: false, error: t('tools.skills.errors.cwdNotRelative') };
     }
 
     const parsed = parseWorkspacePath(cwd);
     if (!parsed.workspace) {
-        return { ok: false, error: parsed.error || `Invalid workspace-relative cwd: ${cwd}` };
+        return { ok: false, error: parsed.error || t('tools.skills.errors.cwdInvalid', { cwd }) };
     }
     const workspaceRoot = path.resolve(parsed.workspace.fsPath);
     const resolvedCwd = path.resolve(path.join(workspaceRoot, parsed.relativePath));
     const rel = path.relative(workspaceRoot, resolvedCwd);
     if (rel.startsWith('..') || path.isAbsolute(rel)) {
-        return { ok: false, error: 'execute_skill_script.cwd must stay inside the selected workspace.' };
+        return { ok: false, error: t('tools.skills.errors.cwdOutsideWorkspace') };
     }
     return { ok: true, cwd: resolvedCwd };
 }
@@ -127,11 +128,11 @@ async function handleExecuteSkillScript(args: ExecuteSkillScriptArgs, context?: 
     const settingsManager = getGlobalSettingsManager();
     const skillsConfig = settingsManager?.getSkillsConfig() as any;
     if (skillsConfig?.disableSkillShellExecution === true) {
-        return { success: false, error: 'Skill shell execution is disabled by settings.' };
+        return { success: false, error: t('tools.skills.errors.shellExecutionDisabled') };
     }
 
     const skillsManager = getSkillsManager();
-    if (!skillsManager) return { success: false, error: 'Skills manager not initialized' };
+    if (!skillsManager) return { success: false, error: t('tools.skills.errors.managerNotInitialized') };
 
     const resolved = await skillsManager.resolveManifestResource(args.name, args.relativePath, { requireScript: true });
     if (resolved.ok === false) return { success: false, error: resolved.error };
@@ -144,7 +145,7 @@ async function handleExecuteSkillScript(args: ExecuteSkillScriptArgs, context?: 
     try {
         staged = await stageScript(resolved.realPath, resolved.item.relativePath, resolved.item.sha256);
     } catch (error: any) {
-        return { success: false, error: error?.message || 'Failed to stage skill script' };
+        return { success: false, error: error?.message || t('tools.skills.errors.stageFailed') };
     }
     const runner = resolveRunner(staged.file, resolved.item.relativePath);
     if ('error' in runner) {
@@ -192,9 +193,9 @@ async function handleExecuteSkillScript(args: ExecuteSkillScriptArgs, context?: 
                     args: scriptArgs,
                     exitCode: code,
                     killed,
-                    output: joined.length > 20000 ? `${joined.slice(-20000)}\n(Output truncated)` : joined
+                    output: joined.length > 20000 ? `${joined.slice(-20000)}\n${t('tools.skills.errors.outputTruncated')}` : joined
                 },
-                error: killed ? `Skill script timed out after ${timeout}ms` : (code === 0 ? undefined : `Skill script exited with code ${code}`)
+                error: killed ? t('tools.skills.errors.scriptTimeout', { timeout }) : (code === 0 ? undefined : t('tools.skills.errors.scriptExitCode', { code }))
             });
         });
 

@@ -11,7 +11,7 @@ import type { ToolRegistry } from '../../tools/ToolRegistry';
 import type { SettingsManager } from '../settings/SettingsManager';
 import type { ResolvedPromptModeSnapshot } from '../settings/types';
 import type { McpManager } from '../mcp/McpManager';
-import { encodeMcpToolName } from '../mcp/mcpToolNameCodec';
+import { encodeMcpToolName, isMcpToolName } from '../mcp/mcpToolNameCodec';
 import { createReadFileTool } from '../../tools/file/read_file';
 import { createGenerateImageTool, createRemoveBackgroundTool, createCropImageTool, createResizeImageTool, createRotateImageTool } from '../../tools/media';
 import { subAgentRegistry } from '../../tools/subagents';
@@ -220,7 +220,15 @@ export class ToolDeclarationResolver {
             : undefined;
         if (promptAllowlist && promptAllowlist.length > 0) {
             const promptAllowlistSet = new Set(promptAllowlist);
-            filtered = filtered.filter(tool => promptAllowlistSet.has(tool.name));
+            // 为什么要改：MCP 工具名是运行时动态发现的（mcp__<serverId>__<toolName>），不可预知，
+            // 因此无法被静态 toolPolicy allowlist（如 CODE_MODE_TOOL_POLICY）包含。
+            // 旧逻辑把 MCP 工具和内置工具放在同一个 Set 中做 has() 匹配，导致所有 MCP 工具被静默过滤。
+            // 怎么改：MCP 工具跳过 prompt allowlist 过滤器，通过 includeMcp 选项和 MCP 服务器配置独立控制。
+            // 目的：让 Code 模式（以及所有有 toolPolicy 的模式）默认能调用 MCP 工具。
+            filtered = filtered.filter(tool => {
+                if (isMcpToolName(tool.name)) return true;
+                return promptAllowlistSet.has(tool.name);
+            });
         }
 
         return filtered;

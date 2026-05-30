@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { useI18n } from '../../i18n'
 import Modal from '../common/Modal.vue'
 import type { ContextStatusSnapshot } from '../../types'
 import { getContextStatus } from '../../services/context'
@@ -13,6 +14,8 @@ const emit = defineEmits<{
   'update:modelValue': [value: boolean]
 }>()
 
+const { t } = useI18n()
+
 const visible = computed({
   get: () => props.modelValue,
   set: (value: boolean) => emit('update:modelValue', value)
@@ -24,29 +27,29 @@ const status = ref<ContextStatusSnapshot | null>(null)
 let refreshSequence = 0
 
 const healthTone = computed<'ok' | 'warning'>(() => status.value?.degradedReason || status.value?.readonlyLegacy ? 'warning' : 'ok')
-const healthLabel = computed(() => healthTone.value === 'warning' ? 'Needs attention' : 'Healthy')
+const healthLabel = computed(() => healthTone.value === 'warning' ? t('components.input.contextStatus.healthWarning') : t('components.input.contextStatus.healthOk'))
 
 function boolLabel(value?: boolean): string {
-  if (typeof value !== 'boolean') return 'Unknown'
-  return value ? 'Yes' : 'No'
+  if (typeof value !== 'boolean') return t('common.unknown')
+  return value ? t('common.yes') : t('common.no')
 }
 
 function statusDescription(snapshot: ContextStatusSnapshot | null): string {
-  if (!snapshot) return 'No context status has been loaded yet.'
+  if (!snapshot) return t('components.input.contextStatus.noStatusLoaded')
   if (snapshot.degradedReason) {
-    return `The context state is degraded: ${snapshot.degradedReason}`
+    return t('components.input.contextStatus.degradedStatus', { reason: snapshot.degradedReason })
   }
   if (!snapshot.projection) {
-    return `No compressed working projection is active. The conversation currently uses full history with ${snapshot.historyLength ?? 0} messages.`
+    return t('components.input.contextStatus.noProjectionStatus', { count: snapshot.historyLength ?? 0 })
   }
-  return `Working projection ${snapshot.projection.mode} starts at message ${snapshot.projection.startIndex}.`
+  return t('components.input.contextStatus.projectionStatus', { mode: snapshot.projection.mode, startIndex: snapshot.projection.startIndex })
 }
 
 async function refresh() {
   const sequence = ++refreshSequence
   if (!props.conversationId) {
     loading.value = false
-    error.value = 'Open or create a conversation before checking context status.'
+    error.value = t('components.input.contextStatus.errorNoConversation')
     status.value = null
     return
   }
@@ -64,7 +67,7 @@ async function refresh() {
   } catch (err: any) {
     if (sequence !== refreshSequence || props.conversationId !== conversationId) return
     status.value = null
-    error.value = err?.message || 'Failed to load context status.'
+    error.value = err?.message || t('components.input.contextStatus.errorLoadFailed')
   } finally {
     if (sequence === refreshSequence && props.conversationId === conversationId) {
       loading.value = false
@@ -86,7 +89,7 @@ watch(
 </script>
 
 <template>
-  <Modal v-model="visible" title="Context status" width="640px">
+  <Modal v-model="visible" :title="t('components.input.contextStatus.title')" width="640px">
     <div class="context-status-dialog">
       <div class="status-toolbar">
         <div class="status-heading">
@@ -100,7 +103,7 @@ watch(
         </div>
         <button type="button" class="refresh-button" :disabled="loading" @click="refresh">
           <i class="codicon" :class="loading ? 'codicon-loading codicon-modifier-spin' : 'codicon-refresh'" />
-          <span>{{ loading ? 'Loading' : 'Refresh' }}</span>
+          <span>{{ loading ? t('common.loading') : t('common.refresh') }}</span>
         </button>
       </div>
 
@@ -111,87 +114,87 @@ watch(
 
       <div v-else-if="status" class="status-grid">
         <section class="status-card">
-          <div class="card-label">Conversation</div>
+          <div class="card-label">{{ t('components.input.contextStatus.cardConversation') }}</div>
           <code>{{ status.conversationId }}</code>
         </section>
 
         <section class="status-card">
-          <div class="card-label">History messages</div>
-          <strong>{{ status.historyLength ?? 'Unknown' }}</strong>
+          <div class="card-label">{{ t('components.input.contextStatus.cardHistoryMessages') }}</div>
+          <strong>{{ status.historyLength ?? t('common.unknown') }}</strong>
         </section>
 
         <section class="status-card">
-          <div class="card-label">Ledger entries</div>
+          <div class="card-label">{{ t('components.input.contextStatus.cardLedgerEntries') }}</div>
           <strong>{{ status.ledgerEntryCount }}</strong>
         </section>
 
         <section class="status-card">
-          <div class="card-label">Readonly legacy</div>
+          <div class="card-label">{{ t('components.input.contextStatus.cardReadonlyLegacy') }}</div>
           <strong>{{ boolLabel(status.readonlyLegacy) }}</strong>
         </section>
 
         <section class="status-card status-card--wide">
-          <div class="card-label">Projection</div>
+          <div class="card-label">{{ t('components.input.contextStatus.cardProjection') }}</div>
           <template v-if="status.projection">
             <div class="projection-row">
-              <span>Mode</span>
+              <span>{{ t('components.input.contextStatus.projectionMode') }}</span>
               <strong>{{ status.projection.mode }}</strong>
             </div>
             <div class="projection-row">
-              <span>Projection id</span>
+              <span>{{ t('components.input.contextStatus.projectionId') }}</span>
               <code>{{ status.projection.projectionId }}</code>
             </div>
             <div class="projection-row">
-              <span>Start index</span>
+              <span>{{ t('components.input.contextStatus.projectionStartIndex') }}</span>
               <strong>{{ status.projection.startIndex }}</strong>
             </div>
             <div class="projection-row">
-              <span>Lossy</span>
+              <span>{{ t('components.input.contextStatus.projectionLossy') }}</span>
               <strong>{{ boolLabel(status.projection.lossy) }}</strong>
             </div>
             <div class="projection-row">
-              <span>Reversible</span>
+              <span>{{ t('components.input.contextStatus.projectionReversible') }}</span>
               <strong>{{ boolLabel(status.projection.reversible) }}</strong>
             </div>
             <div v-if="status.projection.tokenEstimate?.after" class="projection-row">
-              <span>Estimated tokens</span>
+              <span>{{ t('components.input.contextStatus.projectionEstimatedTokens') }}</span>
               <strong>{{ status.projection.tokenEstimate.after }}</strong>
             </div>
           </template>
-          <p v-else class="empty-note">No active working projection. Full history is currently used.</p>
+          <p v-else class="empty-note">{{ t('components.input.contextStatus.emptyProjection') }}</p>
         </section>
 
         <section class="status-card status-card--wide">
-          <div class="card-label">Last ledger operation</div>
+          <div class="card-label">{{ t('components.input.contextStatus.cardLastLedgerOp') }}</div>
           <template v-if="status.lastOperation">
             <div class="projection-row">
-              <span>Operation</span>
+              <span>{{ t('components.input.contextStatus.ledgerOperation') }}</span>
               <strong>{{ status.lastOperation.operation }}</strong>
             </div>
             <div class="projection-row">
-              <span>Status</span>
+              <span>{{ t('common.status') }}</span>
               <strong>{{ status.lastOperation.status }}</strong>
             </div>
             <div class="projection-row">
-              <span>Ledger id</span>
+              <span>{{ t('components.input.contextStatus.ledgerId') }}</span>
               <code>{{ status.lastOperation.ledgerEntryId }}</code>
             </div>
           </template>
-          <p v-else class="empty-note">No ledger operation has been recorded yet.</p>
+          <p v-else class="empty-note">{{ t('components.input.contextStatus.emptyLedgerOp') }}</p>
         </section>
 
         <section v-if="status.nextActions?.length" class="status-card status-card--wide">
-          <div class="card-label">Suggested actions</div>
+          <div class="card-label">{{ t('components.input.contextStatus.cardSuggestedActions') }}</div>
           <div class="action-list">
             <code v-for="action in status.nextActions" :key="action">{{ action }}</code>
           </div>
-          <p class="empty-note">Actions are shown for diagnosis only in this window. Run mutating operations deliberately from the chat command flow.</p>
+          <p class="empty-note">{{ t('components.input.contextStatus.actionsDisclaimer') }}</p>
         </section>
       </div>
 
       <div v-else class="status-empty">
         <i class="codicon codicon-loading codicon-modifier-spin" />
-        <span>Loading context status...</span>
+        <span>{{ t('components.input.contextStatus.loading') }}</span>
       </div>
     </div>
   </Modal>

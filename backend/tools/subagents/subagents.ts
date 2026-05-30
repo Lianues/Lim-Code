@@ -14,6 +14,7 @@ import { SubAgentBudgetGovernor, SubAgentDepthGuard, resolveSubAgentGovernancePo
 import { getGlobalToolRegistry, getGlobalMcpManager, getGlobalSettingsManager, getGlobalConfigManager } from '../../core/settingsContext';
 // WP12：统一使用 codec 编码 MCP 工具名，禁止手拼 mcp__ 字符串
 import { encodeMcpToolName } from '../../modules/mcp/mcpToolNameCodec';
+import { t } from '../../i18n';
 
 /**
  * 获取可用的子代理名称列表
@@ -239,17 +240,17 @@ async function subAgentsHandler(args: Record<string, any>, context?: ToolContext
     const runId = getPreallocatedRunId(context);
     
     if (!agentName || !prompt) {
-        return { success: false, error: `${!agentName ? 'agentName' : 'prompt'} is required` };
+        return { success: false, error: t('tools.subagents.errors.requiredParam', { param: !agentName ? 'agentName' : 'prompt' }) };
     }
     
     const agentEntry = subAgentRegistry.getByName(agentName);
     if (!agentEntry) {
         const availableNames = getAvailableAgentNames();
-        return { success: false, error: `SubAgent "${agentName}" not found. Available agents: ${availableNames.length > 0 ? availableNames.join(', ') : 'none'}` };
+        return { success: false, error: t('tools.subagents.errors.agentNotFound', { name: agentName, list: availableNames.length > 0 ? availableNames.join(', ') : 'none' }) };
     }
     
     if (!agentEntry.executor) {
-        return { success: false, error: `SubAgent "${agentName}" has no executor. Please ensure the executor context is initialized.` };
+        return { success: false, error: t('tools.subagents.errors.noExecutor', { name: agentName }) };
     }
 
     const promptModeSnapshot = context?.promptModeSnapshot as any;
@@ -267,12 +268,12 @@ async function subAgentsHandler(args: Record<string, any>, context?: ToolContext
         : agentEntry.executor;
 
     if (!runtimeExecutor) {
-        return { success: false, error: `SubAgent "${agentName}" has no runtime executor context.` };
+        return { success: false, error: t('tools.subagents.errors.noRuntimeExecutor', { name: agentName }) };
     }
     
     const abortSignal = context?.abortSignal;
     if (abortSignal?.aborted) {
-        return { success: false, error: 'User cancelled the sub-agent execution. Please wait for user\'s next instruction.', cancelled: true };
+        return { success: false, error: t('tools.subagents.errors.cancelled'), cancelled: true };
     }
     
     try {
@@ -290,7 +291,7 @@ async function subAgentsHandler(args: Record<string, any>, context?: ToolContext
             }
             return {
                 success: false,
-                error: rejection.message || 'SubAgent governance rejected this run.',
+                error: rejection.message || t('tools.subagents.errors.governanceRejected'),
                 data: {
                     agentName,
                     runId,
@@ -352,7 +353,7 @@ async function subAgentsHandler(args: Record<string, any>, context?: ToolContext
             // 修改目的：保持主对话隔离，同时让失败/取消态也能定位完整 SubAgent run。
             return {
                 success: false,
-                error: result.error || 'User cancelled the sub-agent execution. Please wait for user\'s next instruction.',
+                error: result.error || t('tools.subagents.errors.cancelled'),
                 cancelled: true,
                 data
             };
@@ -360,9 +361,9 @@ async function subAgentsHandler(args: Record<string, any>, context?: ToolContext
         
         return result.success
             ? { success: true, data }
-            : { success: false, error: result.error || 'SubAgent execution failed', data };
+            : { success: false, error: result.error || t('tools.subagents.errors.executionFailed'), data };
     } catch (error) {
-        return { success: false, error: `SubAgent execution error: ${error instanceof Error ? error.message : String(error)}` };
+        return { success: false, error: t('tools.subagents.errors.executionError', { error: error instanceof Error ? error.message : String(error) }) };
     }
 }
 

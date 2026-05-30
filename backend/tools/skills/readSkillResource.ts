@@ -2,6 +2,7 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import type { Tool, ToolDeclaration, ToolResult, ToolRegistration } from '../types';
 import { getSkillsManager } from '../../modules/skills';
+import { t } from '../../i18n';
 
 const MAX_RESOURCE_TEXT_CHARS = 300_000;
 
@@ -32,7 +33,7 @@ Use this only after read_skill returns a resources manifest. The path must exact
 async function handleReadSkillResource(args: { name: string; relativePath: string }): Promise<ToolResult> {
     const skillsManager = getSkillsManager();
     if (!skillsManager) {
-        return { success: false, error: 'Skills manager not initialized' };
+        return { success: false, error: t('tools.skills.errors.managerNotInitialized') };
     }
 
     const resolved = await skillsManager.resolveManifestResource(args.name, args.relativePath, { requireTextReadable: true });
@@ -43,7 +44,7 @@ async function handleReadSkillResource(args: { name: string; relativePath: strin
     const buffer = await fs.promises.readFile(resolved.realPath);
     const contentSha256 = crypto.createHash('sha256').update(buffer).digest('hex');
     if (contentSha256 !== resolved.item.sha256) {
-        return { success: false, error: 'Skill resource changed before read. Refresh skills and ask for confirmation again.' };
+        return { success: false, error: t('tools.skills.errors.resourceChanged') };
     }
     const content = buffer.toString('utf-8');
     const truncated = content.length > MAX_RESOURCE_TEXT_CHARS;

@@ -307,6 +307,29 @@ const zhCN: BackendLanguageMessages = {
                         title: '确认 {command}',
                         description: '{command} 会更新当前上下文投影，并写入上下文账本记录。原始历史不会被删除。执行确认命令继续：{confirmedCommand}'
                     },
+                    undo: {
+                        unavailableTitle: '无法撤销上下文操作',
+                        unavailableDescription: '当前没有可恢复的上下文操作。',
+                        completeTitle: '上下文撤销完成',
+                        completeDescription: '最近的可恢复上下文投影已恢复。',
+                        failedTitle: '上下文撤销失败',
+                        recoveryHint: '运行 /context-status 检查当前上下文状态。'
+                    },
+                    restore: {
+                        missingProjectionIdTitle: '恢复上下文需要投影 ID',
+                        missingProjectionIdDescription: '用法: /context-restore <投影ID>',
+                        completeTitle: '上下文恢复完成',
+                        completeDescription: '投影已恢复。',
+                        failedTitle: '上下文恢复失败',
+                        recoveryHint: '从 /context-status 获取投影 ID。'
+                    },
+                    reset: {
+                        completeTitle: '上下文重置完成',
+                        completeDescription: '工作上下文投影已从不可变历史中重建，原始消息未被删除。',
+                        failedTitle: '上下文重置失败',
+                        recoveryHint: '重试前先运行 /context-status。',
+                        restoreBoundaryMessage: '投影已从不可变对话历史中重建。'
+                    },
                     compact: {
                         missingConfigTitle: '压缩上下文缺少配置',
                         missingConfigDescription: '压缩上下文需要一个模型配置。',
@@ -318,7 +341,10 @@ const zhCN: BackendLanguageMessages = {
                         unavailableTitle: '无法压缩上下文',
                         unavailableNoBoundaryDescription: '没有可用于手动裁剪的安全回合边界。',
                         completeTitle: '上下文压缩完成',
-                        trimmedDescription: '工作上下文已裁剪为最近 {keepRecentRounds} 轮。原始历史没有被删除。'
+                        trimmedDescription: '工作上下文已裁剪为最近 {keepRecentRounds} 轮。原始历史没有被删除。',
+                        restoreBoundaryMessage: '手动裁剪仅改变了工作投影，不可变源历史仍然保留。',
+                        autoTrimRestoreBoundaryMessage: '自动裁剪仅改变了工作投影，不可变历史仍然可用。',
+                        recoveryHint: '运行 /context-status 检查当前上下文投影。'
                     },
                     summarize: {
                         missingConfigTitle: '上下文命令缺少配置',
@@ -328,7 +354,8 @@ const zhCN: BackendLanguageMessages = {
                         summarizedDescription: '已总结 {count} 条消息。此操作是有损操作，并已记录到上下文账本。',
                         compactFailedTitle: '上下文压缩失败',
                         summarizeFailedTitle: '上下文总结失败',
-                        restoreBoundaryMessage: '已创建有损总结投影。原始历史仍然保留，但总结文本不是原文替换。'
+                        restoreBoundaryMessage: '已创建有损总结投影。原始历史仍然保留，但总结文本不是原文替换。',
+                        recoveryHint: '检查模型配置和上下文状态后重试。'
                     },
                     status: {
                         title: '上下文状态',
@@ -337,7 +364,10 @@ const zhCN: BackendLanguageMessages = {
                         lossySummaryData: '依赖有损总结数据',
                         losslessTrimmedHistory: '保留无损裁剪历史',
                         reversibleProjection: '可通过已记录的投影历史恢复',
-                        irreversibleProjection: '无法仅从工作投影完整恢复'
+                        irreversibleProjection: '无法仅从工作投影完整恢复',
+                        degradedDescription: '上下文状态需要关注：{reason}。历史消息数：{count}。可用的恢复操作已列在下方。',
+                        integrityDegradedReason: '对话存储完整性状态：{status}',
+                        legacyMigrationMessage: '投影从旧版 trimState 迁移而来，无法获取准确的来源操作信息。'
                     }
                 }
             }
@@ -441,11 +471,42 @@ const zhCN: BackendLanguageMessages = {
         
         skills: {
             description: '开启或关闭 Skills。Skills 是用户自定义的知识模块，提供专业的上下文和指令。每个参数是一个 skill 名称 - 设为 true 启用，false 禁用。',
-            // 为什么要改：legacy how-to-create-skill 已停止自动生成，保留旧模板会变成未使用的旧入口文案。
+            // 为什么要改：legacy-to-create-skill 已停止自动生成，保留旧模板会变成未使用的旧入口文案。
             // 怎么改：删除旧模板，只保留 Skills 工具本身的设置描述和错误文案。
             // 目的：让新手引导转移到 read_skill 无 Skill 描述，避免再次产生自动写入的 legacy Skill。
             errors: {
-                managerNotInitialized: 'Skills 管理器未初始化'
+                managerNotInitialized: 'Skills 管理器未初始化',
+                unsupportedScriptType: 'cmd.exe 脚本不受 execute_skill_script 支持，因为 cmd.exe 需要 shell 解析。请改用 PowerShell 或 sh 脚本。',
+                unsupportedExtension: '不支持的 Skill 脚本扩展名: {ext}',
+                outputTruncated: '（输出已截断）',
+                cwdNotRelative: 'execute_skill_script.cwd 必须是工作区相对路径，不能是绝对路径。',
+                cwdInvalid: '无效的工作区相对路径 cwd: {cwd}',
+                cwdOutsideWorkspace: 'execute_skill_script.cwd 必须位于所选工作区内。',
+                shellExecutionDisabled: '设置中已禁用 Skill Shell 执行。',
+                stageFailed: '暂存 Skill 脚本失败',
+                scriptTimeout: 'Skill 脚本在 {timeout}ms 后超时',
+                scriptExitCode: 'Skill 脚本以代码 {code} 退出',
+                resourceChanged: 'Skill 资源在读取前已变更。请刷新 Skills 并重新请求确认。'
+            }
+        },
+        /** 子代理工具 */
+        subagents: {
+            errors: {
+                inputBudgetExceededCode: 'SUBAGENT_INPUT_BUDGET_EXCEEDED',
+                inputBudgetExceeded: 'SubAgent 输入预算超出：{chars}/{max} 字符。',
+                depthExceededCode: 'SUBAGENT_DEPTH_EXCEEDED',
+                depthExceeded: 'SubAgent 深度超出：{depth}/{max}。',
+                concurrencyExceededCode: 'SUBAGENT_CONCURRENCY_EXCEEDED',
+                concurrencyExceeded: '超出活跃 SubAgent 数量限制 ({max})。此运行已被拒绝。',
+                outputTruncated: '[SubAgent 输出已截断以适配主上下文。完整输出可在 SubAgent Monitor 中查看。原始字符数：{length}。]',
+                requiredParam: '{param} 是必需的',
+                agentNotFound: '未找到 SubAgent "{name}"。可用的 Agent：{list}',
+                noExecutor: 'SubAgent "{name}" 没有可用的执行器',
+                noRuntimeExecutor: 'SubAgent "{name}" 没有运行时执行器上下文。',
+                cancelled: '用户取消了 SubAgent 执行。请等待用户的下一步指示。',
+                governanceRejected: 'SubAgent 治理策略拒绝了此运行。',
+                executionFailed: 'SubAgent 执行失败',
+                executionError: 'SubAgent 执行错误：{error}'
             }
         },
         

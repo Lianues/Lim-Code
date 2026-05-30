@@ -8,6 +8,7 @@
 
 import type { SubAgentResult } from './types';
 import type { SubAgentOutcome, SubAgentStructuredSummary } from '../../modules/conversation/contextTypes';
+import { t } from '../../i18n';
 
 const DEFAULT_MAIN_SUMMARY_MAX_CHARS = 4000;
 const DEFAULT_KEY_FINDING_MAX_COUNT = 8;
@@ -107,7 +108,7 @@ function buildBoundedSummary(raw: string, maxChars: number): string {
     return [
         head,
         '',
-        `[SubAgent output truncated for main context. Full output remains available in the SubAgent Monitor. Original characters: ${raw.length}.]`,
+        t('tools.subagents.errors.outputTruncated', { length: raw.length }),
         '',
         tail
     ].join('\n');

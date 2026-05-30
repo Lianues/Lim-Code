@@ -8,6 +8,7 @@
  * 目的：保持 Skill 资源访问的渐进式披露体验，同时不展示任何绝对路径或 staging 信息。
  */
 import { computed, ref } from 'vue'
+import { useI18n } from '../../../i18n'
 import type { ToolUsage } from '../../../types'
 import {
   asBoolean,
@@ -28,6 +29,8 @@ const props = defineProps<{
   toolId?: string
   toolName?: string
 }>()
+
+const { t } = useI18n()
 
 const expanded = ref(false)
 const copied = ref(false)
@@ -65,13 +68,13 @@ async function copyContent() {
       <div class="resource-badges">
         <span class="skill-badge" :title="skillName">{{ skillName }}</span>
         <span v-if="sha" class="meta-badge" :title="asString(data?.sha256)">{{ sha }}</span>
-        <span v-if="truncated" class="meta-badge warning">truncated</span>
+        <span v-if="truncated" class="meta-badge warning">{{ t('components.tools.skills.readResource.badgeTruncated') }}</span>
       </div>
     </div>
 
     <div v-if="isPending" class="resource-state pending-state">
       <i class="codicon codicon-loading codicon-modifier-spin"></i>
-      <span>Reading skill resource…</span>
+      <span>{{ t('components.tools.skills.readResource.reading') }}</span>
     </div>
 
     <div v-else-if="errorMessage" class="resource-state error-state">
@@ -82,18 +85,18 @@ async function copyContent() {
     <template v-else>
       <div class="resource-preview" :class="{ expanded }">
         <pre v-if="content" class="resource-content">{{ content }}</pre>
-        <div v-else class="empty-content">No text content returned.</div>
+        <div v-else class="empty-content">{{ t('components.tools.skills.readResource.noContent') }}</div>
         <div v-if="!expanded && (contentPreview.clipped || truncated)" class="fade-overlay"></div>
       </div>
 
       <div class="resource-actions">
         <button class="action-button" type="button" @click.stop="expanded = !expanded">
           <i class="codicon" :class="expanded ? 'codicon-chevron-up' : 'codicon-chevron-down'"></i>
-          {{ expanded ? 'Collapse' : 'Expand' }}
+          {{ expanded ? t('common.collapse') : t('common.expand') }}
         </button>
         <button class="action-button" type="button" :class="{ copied }" @click.stop="copyContent">
           <i class="codicon" :class="copied ? 'codicon-check' : 'codicon-copy'"></i>
-          {{ copied ? 'Copied' : 'Copy' }}
+          {{ copied ? t('common.copied') : t('common.copy') }}
         </button>
       </div>
     </template>

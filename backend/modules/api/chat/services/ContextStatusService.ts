@@ -11,6 +11,7 @@ import type { ContextStatusSnapshot } from '../../../conversation/contextTypes';
 import { CONVERSATION_METADATA_SCHEMA_VERSION } from '../../../conversation/contextTypes';
 import type { ContextProjectionStore } from './ContextProjectionStore';
 import type { ContextLedgerService } from './ContextLedgerService';
+import { t } from '../../../../i18n';
 
 export class ContextStatusService {
     constructor(
@@ -40,7 +41,7 @@ export class ContextStatusService {
             historyLength: history.length,
             readonlyLegacy,
             degradedReason: metadata?.integrityStatus && metadata.integrityStatus !== 'ok'
-                ? `Conversation storage integrity status: ${metadata.integrityStatus}`
+                ? t('modules.api.chat.contextCommands.status.integrityDegradedReason', { status: metadata.integrityStatus })
                 : undefined,
             nextActions
         };

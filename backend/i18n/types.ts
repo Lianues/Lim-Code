@@ -299,6 +299,29 @@ export interface BackendLanguageMessages {
                         title: string;
                         description: string;
                     };
+                    undo: {
+                        unavailableTitle: string;
+                        unavailableDescription: string;
+                        completeTitle: string;
+                        completeDescription: string;
+                        failedTitle: string;
+                        recoveryHint: string;
+                    };
+                    restore: {
+                        missingProjectionIdTitle: string;
+                        missingProjectionIdDescription: string;
+                        completeTitle: string;
+                        completeDescription: string;
+                        failedTitle: string;
+                        recoveryHint: string;
+                    };
+                    reset: {
+                        completeTitle: string;
+                        completeDescription: string;
+                        failedTitle: string;
+                        recoveryHint: string;
+                        restoreBoundaryMessage: string;
+                    };
                     compact: {
                         missingConfigTitle: string;
                         missingConfigDescription: string;
@@ -311,6 +334,9 @@ export interface BackendLanguageMessages {
                         unavailableNoBoundaryDescription: string;
                         completeTitle: string;
                         trimmedDescription: string;
+                        restoreBoundaryMessage: string;
+                        autoTrimRestoreBoundaryMessage: string;
+                        recoveryHint: string;
                     };
                     summarize: {
                         missingConfigTitle: string;
@@ -321,6 +347,7 @@ export interface BackendLanguageMessages {
                         compactFailedTitle: string;
                         summarizeFailedTitle: string;
                         restoreBoundaryMessage: string;
+                        recoveryHint: string;
                     };
                     status: {
                         title: string;
@@ -330,6 +357,9 @@ export interface BackendLanguageMessages {
                         losslessTrimmedHistory: string;
                         reversibleProjection: string;
                         irreversibleProjection: string;
+                        degradedDescription: string;
+                        integrityDegradedReason: string;
+                        legacyMigrationMessage: string;
                     };
                 };
             };
@@ -442,6 +472,37 @@ export interface BackendLanguageMessages {
             description: string;
             errors: {
                 managerNotInitialized: string;
+                unsupportedScriptType: string;
+                unsupportedExtension: string;
+                outputTruncated: string;
+                cwdNotRelative: string;
+                cwdInvalid: string;
+                cwdOutsideWorkspace: string;
+                shellExecutionDisabled: string;
+                stageFailed: string;
+                scriptTimeout: string;
+                scriptExitCode: string;
+                resourceChanged: string;
+            };
+        };
+        /** 子代理工具 */
+        subagents: {
+            errors: {
+                inputBudgetExceededCode: string;
+                inputBudgetExceeded: string;
+                depthExceededCode: string;
+                depthExceeded: string;
+                concurrencyExceededCode: string;
+                concurrencyExceeded: string;
+                outputTruncated: string;
+                requiredParam: string;
+                agentNotFound: string;
+                noExecutor: string;
+                noRuntimeExecutor: string;
+                cancelled: string;
+                governanceRejected: string;
+                executionFailed: string;
+                executionError: string;
             };
         };
         /** 历史检索工具 */

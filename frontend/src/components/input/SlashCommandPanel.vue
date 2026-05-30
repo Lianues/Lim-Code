@@ -195,12 +195,12 @@ defineExpose({ handleKeydown, selectCurrent })
   <div v-if="visible" class="slash-panel">
     <div class="slash-header">
       <i class="codicon codicon-terminal"></i>
-      <span>{{ mode === 'skills' ? 'Select Skill' : 'Slash Commands' }}</span>
+      <span>{{ mode === 'skills' ? t('components.input.slashCommandPanel.headerSelectSkill') : t('components.input.slashCommandPanel.headerCommands') }}</span>
     </div>
     <CustomScrollbar ref="scrollbarRef" class="slash-content" :maxHeight="220">
       <div v-if="loading && mode === 'skills'" class="slash-empty">
         <i class="codicon codicon-loading codicon-modifier-spin"></i>
-        <span>Loading skills...</span>
+        <span>{{ t('components.input.slashCommandPanel.loadingSkills') }}</span>
       </div>
       <template v-else-if="mode === 'commands'">
         <div
@@ -216,7 +216,7 @@ defineExpose({ handleKeydown, selectCurrent })
             <span class="slash-description">{{ item.description }}</span>
           </div>
         </div>
-        <div v-if="commandItems.length === 0" class="slash-empty">No command</div>
+        <div v-if="commandItems.length === 0" class="slash-empty">{{ t('components.input.slashCommandPanel.noCommand') }}</div>
       </template>
       <template v-else>
         <div

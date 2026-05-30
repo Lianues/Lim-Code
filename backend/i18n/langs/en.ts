@@ -307,6 +307,29 @@ Output content directly without any prefix.`
                         title: 'Confirm {command}',
                         description: '{command} will update the current context projection and write a context ledger entry. Original history will not be deleted. Run the confirmed command to proceed: {confirmedCommand}'
                     },
+                    undo: {
+                        unavailableTitle: 'Cannot undo context operation',
+                        unavailableDescription: 'No reversible context operation is available.',
+                        completeTitle: 'Context undo complete',
+                        completeDescription: 'The most recent reversible context projection has been restored.',
+                        failedTitle: 'Context undo failed',
+                        recoveryHint: 'Run /context-status to inspect the current context state.'
+                    },
+                    restore: {
+                        missingProjectionIdTitle: 'Projection ID required for restore',
+                        missingProjectionIdDescription: 'Usage: /context-restore <projectionId>',
+                        completeTitle: 'Context restore complete',
+                        completeDescription: 'The projection has been restored.',
+                        failedTitle: 'Context restore failed',
+                        recoveryHint: 'Get a projection ID from /context-status.'
+                    },
+                    reset: {
+                        completeTitle: 'Context reset complete',
+                        completeDescription: 'The working context projection has been rebuilt from immutable history. Original messages were not deleted.',
+                        failedTitle: 'Context reset failed',
+                        recoveryHint: 'Run /context-status before retrying.',
+                        restoreBoundaryMessage: 'Projection rebuilt from immutable conversation history.'
+                    },
                     compact: {
                         missingConfigTitle: 'Context compact missing config',
                         missingConfigDescription: 'A model configuration is required to compact context.',
@@ -318,7 +341,10 @@ Output content directly without any prefix.`
                         unavailableTitle: 'Context compact unavailable',
                         unavailableNoBoundaryDescription: 'No safe round boundary is available for manual trim.',
                         completeTitle: 'Context compact complete',
-                        trimmedDescription: 'Trimmed the working context to the latest {keepRecentRounds} rounds. Original history was not deleted.'
+                        trimmedDescription: 'Trimmed the working context to the latest {keepRecentRounds} rounds. Original history was not deleted.',
+                        restoreBoundaryMessage: 'Manual trim only changed the working projection. The immutable source history is still preserved.',
+                        autoTrimRestoreBoundaryMessage: 'Auto-trim only changed the working projection. The immutable history is still available.',
+                        recoveryHint: 'Run /context-status to inspect the current context projection.'
                     },
                     summarize: {
                         missingConfigTitle: 'Context command missing config',
@@ -328,7 +354,8 @@ Output content directly without any prefix.`
                         summarizedDescription: 'Summarized {count} messages. The operation is lossy and is recorded in the context ledger.',
                         compactFailedTitle: 'Context compact failed',
                         summarizeFailedTitle: 'Context summarize failed',
-                        restoreBoundaryMessage: 'A lossy summary projection was created. Original history remains stored, but the summary text is not a verbatim replacement.'
+                        restoreBoundaryMessage: 'A lossy summary projection was created. Original history remains stored, but the summary text is not a verbatim replacement.',
+                        recoveryHint: 'Check model configuration and context status before retrying.'
                     },
                     status: {
                         title: 'Context status',
@@ -337,7 +364,10 @@ Output content directly without any prefix.`
                         lossySummaryData: 'depends on lossy summary data',
                         losslessTrimmedHistory: 'keeps lossless trimmed history',
                         reversibleProjection: 'can be restored through recorded projection history',
-                        irreversibleProjection: 'cannot be fully reversed from the working projection alone'
+                        irreversibleProjection: 'cannot be fully reversed from the working projection alone',
+                        degradedDescription: 'Context state needs attention: {reason}. History messages: {count}. Available recovery operations are listed below.',
+                        integrityDegradedReason: 'Conversation storage integrity status: {status}',
+                        legacyMigrationMessage: 'Projection migrated from legacy trimState; exact source operation information is unavailable.'
                     }
                 }
             }
@@ -445,7 +475,38 @@ Output content directly without any prefix.`
             // How: remove the old template and keep only the Skills tool setting description and errors.
             // Purpose: move first-Skill onboarding into the read_skill no-skills description without creating legacy files.
             errors: {
-                managerNotInitialized: 'Skills manager not initialized'
+                managerNotInitialized: 'Skills manager not initialized',
+                unsupportedScriptType: 'cmd.exe scripts are not supported by execute_skill_script because cmd.exe requires shell parsing. Use PowerShell or sh scripts instead.',
+                unsupportedExtension: 'Unsupported skill script extension: {ext}',
+                outputTruncated: '(Output truncated)',
+                cwdNotRelative: 'execute_skill_script.cwd must be a workspace-relative path, not an absolute path.',
+                cwdInvalid: 'Invalid workspace-relative cwd: {cwd}',
+                cwdOutsideWorkspace: 'execute_skill_script.cwd must be inside the selected workspace.',
+                shellExecutionDisabled: 'Skill Shell execution is disabled in settings.',
+                stageFailed: 'Failed to stage skill script',
+                scriptTimeout: 'Skill script timed out after {timeout}ms',
+                scriptExitCode: 'Skill script exited with code {code}',
+                resourceChanged: 'Skill resource changed before read. Refresh Skills and request confirmation again.'
+            }
+        },
+        /** 子代理工具 */
+        subagents: {
+            errors: {
+                inputBudgetExceededCode: 'SUBAGENT_INPUT_BUDGET_EXCEEDED',
+                inputBudgetExceeded: 'SubAgent input budget exceeded: {chars}/{max} characters.',
+                depthExceededCode: 'SUBAGENT_DEPTH_EXCEEDED',
+                depthExceeded: 'SubAgent depth exceeded: {depth}/{max}.',
+                concurrencyExceededCode: 'SUBAGENT_CONCURRENCY_EXCEEDED',
+                concurrencyExceeded: 'Exceeded active SubAgent limit ({max}). This run has been rejected.',
+                outputTruncated: '[SubAgent output truncated to fit the main context. Full output is available in the SubAgent Monitor. Original characters: {length}.]',
+                requiredParam: '{param} is required',
+                agentNotFound: 'SubAgent "{name}" not found. Available agents: {list}',
+                noExecutor: 'SubAgent "{name}" has no available executor',
+                noRuntimeExecutor: 'SubAgent "{name}" has no runtime executor context.',
+                cancelled: 'User cancelled the SubAgent execution. Please wait for the user\'s next instructions.',
+                governanceRejected: 'SubAgent governance policy rejected this run.',
+                executionFailed: 'SubAgent execution failed',
+                executionError: 'SubAgent execution error: {error}'
             }
         },
         
