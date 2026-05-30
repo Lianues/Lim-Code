@@ -28,6 +28,7 @@ import {
   selectReplayableMonitorLiveDeltas,
   type MonitorLiveDeltaEvent
 } from './monitorLiveDeltaBuffer'
+import { deriveMonitorSyncState } from './monitorSyncState'
 import type { Content, ContentPart, Message, ToolUsage } from '@/types'
 
 // 修改原因：Monitor 需要区分暂停、等待用户处理和扩展重载中断，不能把它们都展示成失败。
@@ -123,39 +124,10 @@ const lastHeartbeatAt = ref<number>(0)
 const heartbeatTick = ref(Date.now())
 const lastEventSequenceByRunId = new Map<string, number>()
 const gapRunIds = ref<Set<string>>(new Set())
+const resyncingRunIds = ref<Set<string>>(new Set())
+const runWindowErrors = ref<Record<string, string>>({})
 let heartbeatTimer: ReturnType<typeof setInterval> | undefined
 let disposeMessageListener: (() => void) | undefined
-
-const monitorConnectionState = computed<'syncing' | 'live' | 'stale' | 'gap' | 'degraded' | 'disconnected'>(() => {
-  /**
-   * 修改原因：Monitor 需要告诉用户连接是否新鲜，不能在 postMessage 停止时静默显示旧内容。
-   * 修改方式：用后端 heartbeat 的 lastSeen 时间计算 live/stale/disconnected；首次收到前显示 syncing。
-   * 修改目的：让“卡死不更新”变成可见状态，并给原地重置动作提供依据。
-   */
-  if (focusedRun.value?.runId && gapRunIds.value.has(focusedRun.value.runId)) return 'gap'
-  const lastSeen = lastHeartbeatAt.value
-  if (!lastSeen) return 'syncing'
-  const age = heartbeatTick.value - lastSeen
-  if (age > 15000) return 'disconnected'
-  if (age > 8000) return 'stale'
-  return 'live'
-})
-
-const freshnessLabel = computed(() => {
-  switch (monitorConnectionState.value) {
-    case 'live': return 'Live'
-    case 'stale': return 'Stale'
-    case 'gap': return 'Gap detected'
-    case 'degraded': return 'Degraded'
-    case 'disconnected': return 'Disconnected'
-    default: return 'Syncing'
-  }
-})
-
-const freshnessDescription = computed(() => {
-  if (!lastHeartbeatAt.value) return 'Waiting for monitor heartbeat.'
-  return `Last heartbeat ${Math.max(0, Math.round((heartbeatTick.value - lastHeartbeatAt.value) / 1000))}s ago.`
-})
 
 const orderedRuns = computed(() => {
   // 修改原因：updatedAt 会被每个 llm_delta 和工具事件刷新，并发 run 按 updatedAt 排序会导致 tab 顺序不停跳动。
@@ -288,14 +260,53 @@ function appendEvent(event: SubAgentRunEvent) {
   applyToolStatusEvent(event)
 }
 
+function setRunResyncing(runId: string, value: boolean) {
+  const next = new Set(resyncingRunIds.value)
+  if (value) next.add(runId)
+  else next.delete(runId)
+  resyncingRunIds.value = next
+}
+
+function setRunWindowError(runId: string, message: string | undefined) {
+  const next = { ...runWindowErrors.value }
+  if (message) next[runId] = message
+  else delete next[runId]
+  runWindowErrors.value = next
+}
+
+function withRunWindowTimeout<T>(promise: Promise<T>, runId: string, timeoutMs = 10000): Promise<T> {
+  /**
+   * 修改原因：Bug 3 中 reset 可被悬挂的 getRunWindow 请求卡住，用户只看到空白或旧 Live。
+   * 修改方式：Monitor 窗口请求在调用层加入超时，不改通用 sendToExtension 的后端超时策略。
+   * 修改目的：resync 失败时能进入 degraded 状态并保留旧内容，而不是永久等待。
+   */
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => reject(new Error(`getRunWindow timed out for ${runId}`)), timeoutMs)
+    promise.then(
+      value => {
+        window.clearTimeout(timer)
+        resolve(value)
+      },
+      error => {
+        window.clearTimeout(timer)
+        reject(error)
+      }
+    )
+  })
+}
+
 async function requestRunWindow(runId: string | undefined, force = false) {
   if (!runId) return
   if (!force && windowsByRunId.value[runId]) return
+  if (force) {
+    setRunResyncing(runId, true)
+    setRunWindowError(runId, undefined)
+  }
   if (loadingRunWindows.value.has(runId)) {
     if (force) {
       // 修改原因：强制校准通常由 content_snapshot/run_completed 触发，不能因为已有请求在飞就丢弃。
-      // 修改方式：把 run 标记为 dirty，当前请求结束后再自动补发一次 force refresh。
-      // 修改目的：保证窗口最终追上后端 transcript 真源，避免旧窗口继续接收下一轮 delta。
+      // 修改方式：把 run 标记为 dirty，当前请求结束后再自动补发一次 force refresh，同时让 UI 进入 resyncing。
+      // 修改目的：保证窗口最终追上后端 transcript 真源，且重置期间旧内容保持可见。
       pendingForcedRunWindowRefreshes.add(runId)
     }
     return
@@ -311,7 +322,7 @@ async function requestRunWindow(runId: string | undefined, force = false) {
     // 修改原因：聚焦 run 才需要 Content[]，请求窗口时携带 conversationId 允许后端先从 metadata 恢复历史 run。
     // 修改方式：调用 Monitor 专属 getRunWindow 协议，默认尾部 20 条；返回 manifest 用于同步 contentCount/status。
     // 修改目的：20k token 完成报告不会在 monitorReady 阶段一次性进入前端。
-    const response = await sendToExtension<{
+    const response = await withRunWindowTimeout(sendToExtension<{
       window?: SubAgentRunContentWindow
       manifest?: SubAgentRunManifest
       activeRunIds?: string[]
@@ -319,7 +330,7 @@ async function requestRunWindow(runId: string | undefined, force = false) {
       runId,
       conversationId: manifest?.conversationId,
       options: { limit: DEFAULT_RUN_WINDOW_LIMIT, fromTail: true }
-    })
+    }), runId)
     if (latestRunWindowRequestSeq.get(runId) !== requestSeq) {
       // 修改原因：Webview request/response 没有业务顺序保证，旧响应可能晚于后续强制刷新返回。
       // 修改方式：每个 tail window 请求带本地递增 seq，只有当前最新请求允许写入窗口缓存。
@@ -329,13 +340,21 @@ async function requestRunWindow(runId: string | undefined, force = false) {
     if (response?.manifest) upsertManifest(response.manifest)
     if (response?.window) {
       clearEventGap(response.window.runId)
+      setRunWindowError(response.window.runId, undefined)
+      setRunResyncing(response.window.runId, false)
       upsertWindow(response.window)
       // 修改原因：窗口响应可能是 Monitor 打开后第一次可用的 transcript 基线，之前到达的 llm_delta 不能再丢弃。
       // 修改方式：窗口写入缓存后立即尝试回放同 run 的有界 live delta 缓冲。
       // 修改目的：解决流式过程中打开 Monitor 时正文或工具调用只在结束后才恢复的问题。
       replayBufferedLiveDeltas(response.window.runId)
+    } else if (force) {
+      setRunResyncing(runId, false)
+      setRunWindowError(runId, 'Monitor 没有返回可渲染窗口，旧内容已保留。')
     }
     updateActiveRunIds(response?.activeRunIds)
+  } catch (error: any) {
+    setRunResyncing(runId, false)
+    setRunWindowError(runId, error?.message || 'Monitor 窗口同步失败，旧内容已保留。')
   } finally {
     const nextLoading = new Set(loadingRunWindows.value)
     nextLoading.delete(runId)
@@ -353,21 +372,12 @@ function resetFocusedView() {
   const runId = focusedRun.value?.runId || focusedManifest.value?.runId
   if (!runId) return
   /**
-   * 修改原因：P1 要求 Monitor 卡死或 gap 后能原地重置，不再要求用户关闭再打开面板。
-   * 修改方式：清理当前 run 的窗口、事件 overlay 与 live delta buffer，然后强制重新拉取权威 window。
-   * 修改目的：在不重建 Webview 的情况下恢复可见状态。
+   * 修改原因：Bug 3 中旧 reset 先删除 window/events/overlay/buffer，再等待 getRunWindow，失败时内容区必然空白。
+   * 修改方式：把 reset 改为事务式 resync：保留旧窗口和 overlay，只标记 resyncing 并强制拉取权威 window。
+   * 修改目的：原地重置失败也不会清空内容区，成功后再用新 window 原子校准。
    */
-  const nextWindows = { ...windowsByRunId.value }
-  delete nextWindows[runId]
-  windowsByRunId.value = nextWindows
-  const nextEvents = { ...eventsByRunId.value }
-  delete nextEvents[runId]
-  eventsByRunId.value = nextEvents
-  const nextOverlays = { ...toolStatusOverlaysByRunId.value }
-  delete nextOverlays[runId]
-  toolStatusOverlaysByRunId.value = nextOverlays
-  liveDeltaBuffersByRunId.delete(runId)
-  clearEventGap(runId)
+  setRunResyncing(runId, true)
+  setRunWindowError(runId, undefined)
   void requestRunWindow(runId, true)
 }
 
@@ -638,6 +648,23 @@ const renderMessages = computed(() => toRenderableMessages(focusedRun.value))
 const focusedRunIsActive = computed(() => !!focusedRun.value && activeRunIds.value.has(focusedRun.value.runId))
 const focusedWindow = computed(() => focusedRun.value ? windowsByRunId.value[focusedRun.value.runId] : undefined)
 const focusedOlderLoading = computed(() => !!focusedRun.value && loadingOlderRunWindows.value.has(focusedRun.value.runId))
+const focusedSyncState = computed(() => deriveMonitorSyncState({
+  // 修改原因：Header、空态和 reset 状态必须消费同一 MonitorSyncState，不能各自从 heartbeat/window/loading 猜测。
+  // 修改方式：把当前 focused run 的 transport、window、loading、resync、gap、error 一次性投影成 DisplayModel。
+  // 修改目的：Live/Syncing/Degraded 与内容区等待提示保持一致，修复 Bug 3 和 Bug 6 的状态语义分裂。
+  hasFocusedRun: !!focusedRun.value,
+  hasWindow: !!focusedWindow.value,
+  isLoadingWindow: !!focusedRun.value && loadingRunWindows.value.has(focusedRun.value.runId),
+  isResyncing: !!focusedRun.value && resyncingRunIds.value.has(focusedRun.value.runId),
+  hasRenderableMessages: renderMessages.value.length > 0,
+  hasGap: !!focusedRun.value && gapRunIds.value.has(focusedRun.value.runId),
+  error: focusedRun.value ? runWindowErrors.value[focusedRun.value.runId] : undefined,
+  lastHeartbeatAt: lastHeartbeatAt.value,
+  now: heartbeatTick.value
+}))
+const monitorConnectionState = computed(() => focusedSyncState.value.headerState)
+const freshnessLabel = computed(() => focusedSyncState.value.label)
+const freshnessDescription = computed(() => focusedSyncState.value.description)
 const latestRetryEvent = computed(() => {
   const events = focusedRun.value?.events || []
   // 修改原因：SubAgent 自动重试状态已通过 runEventBus 路由到 Monitor，需要在聊天视图顶部给用户可见反馈。
@@ -900,7 +927,7 @@ onBeforeUnmount(() => {
         <span>暂无 SubAgent 子对话记录。</span>
       </div>
 
-      <div v-else class="message-shell">
+      <div v-else class="message-shell" :class="{ 'message-shell--resyncing': focusedSyncState.contentHealth === 'resyncing' }">
         <div class="run-title-row">
           <div>
             <div class="run-title">{{ focusedRun.agentName || 'Sub-Agent' }}</div>
@@ -943,6 +970,16 @@ onBeforeUnmount(() => {
               退出并让主工具失败
             </button>
           </div>
+        </div>
+
+        <div v-if="focusedSyncState.waitingMessage" class="monitor-waiting-state" :class="`monitor-waiting-state--${focusedSyncState.contentHealth}`">
+          <!--
+            修改原因：Monitor 有 manifest 但无 window、正在 resync 或 replay pending 时旧模板会显示空白 shell。
+            修改方式：内容区直接消费 focusedSyncState.waitingMessage，在同一 run shell 位置展示等待/降级状态。
+            修改目的：等待上游 LLM、等待窗口同步和 reset 恢复都使用统一 WaitingState 位置，不再与主窗口语义分裂。
+          -->
+          <span class="codicon" :class="focusedSyncState.contentHealth === 'degraded' ? 'codicon-warning' : 'codicon-sync codicon-modifier-spin'"></span>
+          <span>{{ focusedSyncState.waitingMessage }}</span>
         </div>
 
         <div v-if="focusedWindow?.hasMoreBefore" class="load-older-row">
@@ -1213,4 +1250,28 @@ onBeforeUnmount(() => {
   min-height: 260px;
   color: var(--vscode-descriptionForeground);
 }
+.monitor-waiting-state {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--vscode-sideBar-background) 82%, transparent);
+  color: var(--vscode-descriptionForeground);
+  font-size: 12px;
+}
+
+.monitor-waiting-state--degraded {
+  border-color: var(--vscode-inputValidation-warningBorder);
+  background: var(--vscode-inputValidation-warningBackground);
+  color: var(--vscode-foreground);
+}
+
+.message-shell--resyncing :deep(.message-item) {
+  opacity: 0.72;
+}
+
+
 </style>

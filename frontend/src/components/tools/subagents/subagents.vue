@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { useI18n } from '@/composables'
 import { TaskCard, MarkdownRenderer, CustomScrollbar } from '../../common'
 import { extractPreviewText, formatSubAgentRuntimeBadge } from '../../../utils/taskCards'
+import { buildSubAgentRunDisplayModel } from '../../../utils/subAgentDisplayModel'
 
 const { t } = useI18n()
 
@@ -11,23 +12,9 @@ const props = defineProps<{
   result?: Record<string, unknown>
 }>()
 
-const agentName = computed(() => (props.args.agentName as string) || ((props.result as any)?.data?.agentName as string) || 'Sub-Agent')
-const prompt = computed(() => (props.args.prompt as string) || '')
-const context = computed(() => (props.args.context as string) || '')
-
 const resultData = computed(() => ((props.result as any)?.data || {}) as any)
 const responseText = computed(() => (resultData.value.response || resultData.value.partialResponse || '') as string)
 const errorMessage = computed(() => (props.result as any)?.error as string | undefined)
-// 修改原因：展开区不再提供独立“打开详情”按钮，runId 只作为完成后的诊断信息展示。
-// 修改方式：按钮能力已合并到 ToolMessage 的通用 Open details action，这里保留 runId 文本辅助定位。
-// 修改目的：避免同一功能出现两个入口，同时让 pending 阶段也能通过顶部按钮打开 Monitor。
-const runId = computed(() => resultData.value.runId as string | undefined)
-
-const cardStatus = computed<'pending' | 'running' | 'success' | 'error'>(() => {
-  const r = props.result as any
-  if (!r) return 'running'
-  return r.success === true ? 'success' : 'error'
-})
 
 const runtimeBadge = computed(() => {
   const channelName = resultData.value.channelName as string | undefined
@@ -36,45 +23,63 @@ const runtimeBadge = computed(() => {
   return formatSubAgentRuntimeBadge({ channelName, modelId })
 })
 
-const chips = computed(() => {
-  const list: string[] = []
-  const steps = resultData.value.steps
-  if (typeof steps === 'number') list.push(`Steps: ${steps}`)
-  return list
+const displayModel = computed(() => buildSubAgentRunDisplayModel({
+  args: props.args,
+  result: props.result,
+  runtimeBadge: runtimeBadge.value
+}))
+
+const cardStatus = computed<'pending' | 'running' | 'success' | 'error'>(() => {
+  /**
+   * 修改原因：SubAgent 卡片的视觉状态应来自 SubAgentRunDisplayModel，而不是直接在模板里根据 raw result 分叉。
+   * 修改方式：保留 TaskCard 需要的状态枚举，但由 displayModel.status 映射。
+   * 修改目的：运行中与完成后使用同一组展示字段，只改变状态标记。
+   */
+  if (displayModel.value.status === 'running') return 'running'
+  return displayModel.value.status === 'success' ? 'success' : 'error'
 })
 
 const preview = computed(() => {
-  const src = responseText.value || prompt.value
-  return extractPreviewText(src, { maxLines: 10, maxChars: 1200 })
+  // 修改原因：运行中 preview 不能再 fallback 完整 prompt，否则 Bug 4 会继续在主卡片泄漏内部任务文本。
+  // 修改方式：只使用 displayModel.preview 的用户可读摘要，再交给现有 extractPreviewText 控制长度。
+  // 修改目的：长 prompt/context 只进入调试折叠区，主卡片保持紧凑一致。
+  return extractPreviewText(displayModel.value.preview, { maxLines: 4, maxChars: 360 })
 })
+
+const runId = computed(() => displayModel.value.runId)
 </script>
 
 <template>
   <TaskCard
-    :title="`Sub-Agent · ${agentName}`"
+    :title="displayModel.title"
     icon="codicon-hubot"
     :status="cardStatus"
-    :subtitle="prompt ? prompt : undefined"
+    :subtitle="displayModel.taskSummary"
     :preview="preview"
     :preview-is-markdown="true"
-    :meta-chips="chips"
-    :footer-right="runtimeBadge"
+    :meta-chips="displayModel.chips"
+    :footer-right="displayModel.footerRight"
   >
     <template #expanded>
       <div class="expanded">
         <div class="block">
           <div class="label">{{ t('components.tools.subagents.task') }}</div>
-          <CustomScrollbar :max-height="200">
-            <pre class="pre">{{ prompt }}</pre>
-          </CustomScrollbar>
+          <div class="summary-box">{{ displayModel.taskSummary }}</div>
         </div>
 
-        <div v-if="context" class="block">
-          <div class="label">{{ t('components.tools.subagents.context') }}</div>
+        <details v-if="displayModel.promptDebug" class="debug-details">
+          <summary>原始任务输入（调试）</summary>
           <CustomScrollbar :max-height="200">
-            <pre class="pre">{{ context }}</pre>
+            <pre class="pre">{{ displayModel.promptDebug }}</pre>
           </CustomScrollbar>
-        </div>
+        </details>
+
+        <details v-if="displayModel.contextDebug" class="debug-details">
+          <summary>{{ t('components.tools.subagents.context') }}（调试）</summary>
+          <CustomScrollbar :max-height="200">
+            <pre class="pre">{{ displayModel.contextDebug }}</pre>
+          </CustomScrollbar>
+        </details>
 
         <!-- 修改原因：详情入口已合并到工具头部 Open details，展开区不能再保留重复的“打开详情”按钮。
              修改方式：这里只在最终结果返回 runId 后展示文本，pending 阶段由顶部 action 负责打开 Monitor。
@@ -114,12 +119,36 @@ const preview = computed(() => {
   color: var(--vscode-descriptionForeground);
 }
 
-.pre {
-  margin: 0;
+.summary-box {
   padding: 8px 10px;
   background: var(--vscode-sideBar-background);
   border: 1px solid var(--vscode-panel-border);
   border-radius: 8px;
+  font-size: 12px;
+  color: var(--vscode-foreground);
+  line-height: 1.5;
+}
+
+.debug-details {
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--vscode-sideBar-background) 78%, transparent);
+  overflow: hidden;
+}
+
+.debug-details > summary {
+  padding: 8px 10px;
+  cursor: pointer;
+  color: var(--vscode-descriptionForeground);
+  font-size: 11px;
+  user-select: none;
+}
+
+.pre {
+  margin: 0;
+  padding: 8px 10px;
+  background: var(--vscode-sideBar-background);
+  border-top: 1px solid var(--vscode-panel-border);
   font-size: 12px;
   color: var(--vscode-foreground);
   white-space: pre-wrap;

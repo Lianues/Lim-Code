@@ -32,27 +32,27 @@ const REVIEW_TOOLS = [
 ]
 
 describe('progress tool mode config', () => {
-  it('keeps progress tools in explicit workflow modes but not default Code or Ask mode', () => {
-    // 为什么要改：用户要求 progress 等项目 ledger 工具默认不暴露，但显式 workflow 模式仍要能维护项目状态。
-    // 怎么改：同时断言 Code/Ask 不含 progress，Design/Plan/Review 仍含 progress。
-    // 目的：防止以后把默认工具面和显式模式能力再次混在一起。
+  it('keeps progress tools in workflow modes and in the full-capability Code mode, but not Ask mode', () => {
+    // 修改原因：2025-07 后 Code 模式被重新定义为全能力模式，旧测试仍按“专用工作流工具默认隐藏”判断，已经和产品决策相反。
+    // 修改方式：断言 Code/Design/Plan/Review 均包含 progress 工具，而 Ask 仍保持轻量只读工具面。
+    // 目的：让测试锁定当前真实策略，避免后续又把 Code 模式误收窄成半能力模式。
+    expect(CODE_PROMPT_MODE.toolPolicy).toEqual(expect.arrayContaining(PROGRESS_TOOLS))
     expect(DESIGN_PROMPT_MODE.toolPolicy).toEqual(expect.arrayContaining(PROGRESS_TOOLS))
     expect(PLAN_PROMPT_MODE.toolPolicy).toEqual(expect.arrayContaining(PROGRESS_TOOLS))
     expect(REVIEW_PROMPT_MODE.toolPolicy).toEqual(expect.arrayContaining(PROGRESS_TOOLS))
 
     for (const toolName of PROGRESS_TOOLS) {
-      expect(CODE_PROMPT_MODE.toolPolicy).not.toContain(toolName)
       expect(ASK_PROMPT_MODE.toolPolicy).not.toContain(toolName)
     }
   })
 
-  it('keeps plan, design, and review document tools out of default Code mode', () => {
-    // 为什么要改：Code 模式过去没有 toolPolicy，导致专用文档工具默认开启。
-    // 怎么改：验证 Code toolPolicy 显式排除 plan/design/review 工具族。
-    // 目的：锁定默认工具面，确保这些旧版默认内置工具只能通过专用模式使用。
+  it('keeps plan, design, and review document tools available in full Code mode and their explicit workflow modes', () => {
+    // 修改原因：当前 Code 模式是全能力默认模式，专用文档工具暴露给 Code 是有意行为，不再是泄漏。
+    // 修改方式：验证 Code 包含 workflow 工具族，同时专用模式仍包含自己的核心工具。
+    // 目的：防止测试继续惩罚已采纳的全能力 Code 模式策略。
     const codePolicy = CODE_PROMPT_MODE.toolPolicy || []
     for (const toolName of [...PLAN_TOOLS, ...DESIGN_TOOLS, ...REVIEW_TOOLS]) {
-      expect(codePolicy).not.toContain(toolName)
+      expect(codePolicy).toContain(toolName)
     }
     expect(PLAN_PROMPT_MODE.toolPolicy).toEqual(expect.arrayContaining(PLAN_TOOLS))
     expect(DESIGN_PROMPT_MODE.toolPolicy).toEqual(expect.arrayContaining(DESIGN_TOOLS))
@@ -95,14 +95,14 @@ describe('progress tool mode config', () => {
     await manager.initialize()
 
     const config = manager.getSystemPromptConfig()
-    // 为什么要改：Code mode 现在也需要迁移旧 toolPolicy，否则已有 settings 会继续默认暴露专用工具。
-    // 怎么改：断言 SettingsManager 与其他内置模式一样同步 Code toolPolicy，但保留用户自定义模板。
-    // 目的：验证迁移既收紧默认工具面，又不覆盖用户 prompt 文本。
-    expect(config.modes.code.toolPolicy).toEqual(CODE_PROMPT_MODE.toolPolicy)
+    // 修改原因：SettingsManager 当前策略是“补齐缺失内置模式，但不覆盖用户已有 toolPolicy”。旧断言仍要求每次读取都强制同步，和代码注释及用户可配置性相冲突。
+    // 修改方式：验证用户保存过的 toolPolicy 保持不变，默认常量仍承担新安装时的完整工具面。
+    // 目的：防止读取设置时静默重开用户曾经关闭的工具。
+    expect(config.modes.code.toolPolicy).toEqual(['read_file'])
     expect(config.modes.code.template).toBe('custom code template')
-    expect(config.modes.design.toolPolicy).toEqual(DESIGN_PROMPT_MODE.toolPolicy)
-    expect(config.modes.plan.toolPolicy).toEqual(PLAN_PROMPT_MODE.toolPolicy)
-    expect(config.modes.review.toolPolicy).toEqual(REVIEW_PROMPT_MODE.toolPolicy)
-    expect(config.modes.ask.toolPolicy).toEqual(ASK_PROMPT_MODE.toolPolicy)
+    expect(config.modes.design.toolPolicy).toEqual(['read_file'])
+    expect(config.modes.plan.toolPolicy).toEqual(['read_file'])
+    expect(config.modes.review.toolPolicy).toEqual(['read_file'])
+    expect(config.modes.ask.toolPolicy).toEqual(['read_file', 'create_progress'])
   })
 })

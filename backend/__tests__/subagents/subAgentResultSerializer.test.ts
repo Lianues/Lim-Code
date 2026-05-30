@@ -31,7 +31,11 @@ describe('SubAgentResultSerializer', () => {
         expect(data.summary.length).toBeLessThan(raw.length);
         expect(data.truncated).toBe(true);
         expect(data.fullResponseChars).toBe(raw.length);
-        expect(data.summary).toContain('Full output remains available in the SubAgent Monitor');
+        // 修改原因：SubAgent serializer 的截断提示已接入 i18n，测试不能再硬编码英文提示，否则中文环境会误判失败。
+        // 修改方式：只断言语言无关的 Monitor 定位信息和原始长度元数据仍在 summary 中。
+        // 目的：既保留“完整输出在 Monitor 中查看”的契约，又允许用户语言环境决定最终文案。
+        expect(data.summary).toContain('SubAgent Monitor');
+        expect(data.summary).toContain(String(raw.length));
         expect(JSON.stringify(data)).not.toContain('A'.repeat(6000));
     });
 

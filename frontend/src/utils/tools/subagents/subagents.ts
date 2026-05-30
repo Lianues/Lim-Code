@@ -6,6 +6,7 @@ import { registerTool } from '../../toolRegistry'
 import type { ToolUsage } from '../../../types'
 import { t } from '../../../i18n'
 import { sendToExtension } from '../../../utils/vscode'
+import { summarizeSubAgentTask } from '../../subAgentDisplayModel'
 import SubAgentsComponent from '../../../components/tools/subagents/subagents.vue'
 
 function normalizeToolIdForRunId(toolId: string): string {
@@ -53,10 +54,15 @@ registerTool('subagents', {
     return agentName ? `Sub-Agent: ${agentName}` : 'Sub-Agent'
   },
   
-  // 描述生成器 - 显示任务提示
+  // 描述生成器 - 显示任务摘要
   descriptionFormatter: (args) => {
+    /**
+     * 修改原因：最终对抗审查发现 Bug 4 仍可通过工具注册层的 descriptionFormatter 把 raw prompt 截断后显示到主卡片描述行。
+     * 修改方式：复用 SubAgentRunDisplayModel 的摘要规则，只返回短任务摘要；完整 prompt/context 只允许进入调试折叠区。
+     * 目的：确保 ToolMessage 通过 DisplayModel 调 formatter 时也不会绕过 SubAgent 卡片组件泄漏 raw prompt。
+     */
     const prompt = args.prompt as string || ''
-    return prompt.length > 60 ? prompt.substring(0, 60) + '...' : prompt
+    return summarizeSubAgentTask(prompt, 120)
   },
   
   // 使用自定义组件显示内容

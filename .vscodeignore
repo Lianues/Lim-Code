@@ -76,6 +76,10 @@ node_modules/**
 !node_modules/strnum/**
 !node_modules/tree-kill/**
 !node_modules/ignore/**
+# 修改原因：Phase A 引入 unified-llm-provider 作为隔离 ProtocolAdapter PoC，VSIX 运行时 dynamic import 需要包文件真实存在。
+# 修改方式：在排除 node_modules 后显式放回该 exact-pinned 依赖；UI/Monitor 仍不得直接 import 第三方类型。
+# 目的：让 VSIX packaging / Extension Host smoke 覆盖真实依赖，而不是只在开发 node_modules 中通过。
+!node_modules/unified-llm-provider/**
 # 为什么要改：Skill frontmatter 解析和 read_skill 摘要序列化在运行时 require('yaml')。
 # 怎么改：.vscodeignore 默认排除 node_modules 后，需要显式把 yaml 依赖放回 VSIX。
 # 目的：避免安装后的扩展激活时报 Cannot find module 'yaml'。
