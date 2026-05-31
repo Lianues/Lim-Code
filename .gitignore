@@ -41,3 +41,4 @@ docs/
 .tmp/
 tmp/
 .kagent/
+.tmp-limcode-dataflow-server.pid

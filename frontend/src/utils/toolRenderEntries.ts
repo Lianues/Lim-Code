@@ -75,12 +75,16 @@ export function buildFunctionCallToolRenderEntry(options: {
   const existingTool = findMatchingToolForFunctionCall(functionCall, messageTools, functionCallOrdinal)
   const toolIdFromPart = normalizeNonEmptyString(functionCall.id)
   const stableToolId = existingTool?.id || toolIdFromPart || `${messageId}:tool:${functionCallOrdinal}`
+  const existingHasArgs = hasNonEmptyArgs(existingTool?.args)
+  const partHasArgs = hasNonEmptyArgs(functionCall.args)
+  const args = existingHasArgs ? existingTool!.args : functionCall.args
+  const partialArgs = existingHasArgs || partHasArgs ? undefined : functionCall.partialArgs
 
   return {
     id: stableToolId,
     name: functionCall.name,
-    args: functionCall.args,
-    partialArgs: functionCall.partialArgs,
+    args,
+    partialArgs,
     status: existingTool?.status,
     result: existingTool?.result,
     error: existingTool?.error,

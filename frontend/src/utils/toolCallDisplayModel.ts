@@ -201,13 +201,6 @@ export function buildToolCardDisplayModel(tool: ToolUsage, config?: ToolConfig):
       appendOnly: true,
       stableContainerKey: `${state.stableKey}:partial-preview`
     }
-  } else if (state.input.status === 'input_unknown' || state.input.status === 'input_incomplete') {
-    displayState = 'input_unknown'
-    statusIcon = state.execution.status === 'error' ? 'error' : 'warning'
-    statusClass = state.execution.status === 'error' ? 'status-error' : 'status-warning'
-    description = state.input.status === 'input_unknown'
-      ? '参数快照未归一化，等待权威快照校准。'
-      : '参数片段未能解析，等待快照校准。'
   } else if (state.execution.status === 'awaiting_approval') {
     displayState = 'awaiting_approval'
     statusIcon = 'shield'
@@ -238,6 +231,13 @@ export function buildToolCardDisplayModel(tool: ToolUsage, config?: ToolConfig):
     statusIcon = 'error'
     statusClass = 'status-error'
     description = displayArgs ? formatDescriptionFromArgs(tool, displayArgs, config) : '执行失败，输入参数快照不可用。'
+  } else if (state.input.status === 'input_unknown' || state.input.status === 'input_incomplete') {
+    displayState = 'input_unknown'
+    statusIcon = 'warning'
+    statusClass = 'status-warning'
+    description = state.input.status === 'input_unknown'
+      ? '参数快照未归一化，等待权威快照校准。'
+      : '参数片段未能解析，等待快照校准。'
   } else if (state.execution.status === 'queued') {
     displayState = displayArgs ? 'queued' : 'input_streaming'
     statusIcon = displayArgs ? 'clock' : 'spinner'

@@ -200,6 +200,39 @@ describe('frontend streaming function call merging', () => {
     expect(renderBlock[0].status).toBe('executing');
   });
 
+  it('uses the canonical tool args when a stale part still has unparseable partial args', () => {
+    // 为什么覆盖这个场景：最终 toolStatus/contentSnapshot 已经让 message.tools 拿到完整 args/result，
+    // 但 MessageItem 仍会从历史 parts 重建渲染块；旧逻辑把 stale partialArgs 放回 ToolMessage，
+    // 导致成功写入的 write_file 显示“参数片段未能解析”。
+    // 怎么改：渲染条目优先采用匹配到的 canonical ToolUsage.args，并清理 stale partialArgs。
+    // 目的：已成功或已执行的工具不被早期流式参数片段降级成黄色参数告警。
+    const canonicalArgs = { path: 'vscode-panel-agent-shadow/resources/extension.js', content: 'ok' };
+    const messageTools: ToolUsage[] = [{
+      id: 'call_write_done',
+      name: 'write_file',
+      args: canonicalArgs,
+      status: 'success',
+      result: { success: true, path: canonicalArgs.path }
+    }];
+
+    const entry = buildFunctionCallToolRenderEntry({
+      messageId: 'done-message',
+      functionCall: {
+        name: 'write_file',
+        args: {},
+        id: 'call_write_done',
+        partialArgs: '{"path"'
+      },
+      messageTools,
+      functionCallOrdinal: 0
+    });
+
+    expect(entry.args).toEqual(canonicalArgs);
+    expect(entry.partialArgs).toBeUndefined();
+    expect(entry.status).toBe('success');
+    expect(entry.result).toEqual({ success: true, path: canonicalArgs.path });
+  });
+
   it('hydrates executing tool args from a single toolStatus update', () => {
     // 修改原因：流式提前执行会先把工具推到 executing，但前端此时可能只有未解析完的 partialArgs，旧逻辑只更新 status/result 导致卡片显示不完整。
     // 修改方式：模拟 toolStatus 携带完整 args，断言 handleToolStatus 覆盖 ToolUsage.args 并清理 partialArgs。

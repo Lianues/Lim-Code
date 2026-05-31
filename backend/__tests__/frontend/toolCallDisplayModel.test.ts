@@ -12,17 +12,43 @@ const readFileConfig: ToolConfig = {
 };
 
 describe('ToolCallState and ToolCardDisplayModel', () => {
-  it('does not show read_file formatter question mark when execution succeeded before args were normalized', () => {
+  it('shows terminal success instead of an argument warning when execution succeeded before args were normalized', () => {
     // 修改原因：Bug 2 的直接症状是 read_file formatter 在空 args 下返回 ?，但执行态 success 不代表输入参数已完成。
-    // 修改方式：DisplayModel 在 input_unknown 时不调用工具私有 formatter，而是显示结构化校准状态。
-    // 修改目的：主窗口和 Monitor 都不再把缺失参数伪装成真实路径值。
+    // 修改方式：DisplayModel 不调用工具私有 formatter，同时让终态 success 优先于参数校准提示。
+    // 修改目的：主窗口和 Monitor 都不再把成功工具误显示成黄色参数告警。
     const tool: ToolUsage = { id: 'call_read_file_unknown', name: 'read_file', args: {}, status: 'success' };
     const model = buildToolCardDisplayModel(tool, readFileConfig);
 
     expect(model.inputState).toBe('input_unknown');
-    expect(model.displayState).toBe('input_unknown');
+    expect(model.displayState).toBe('success');
+    expect(model.statusIcon).toBe('check');
     expect(model.description).not.toBe('?');
-    expect(model.description).toContain('参数快照');
+    expect(model.description).toContain('执行成功');
+  });
+
+  it('does not let stale unparseable partial args override terminal success', () => {
+    const tool: ToolUsage = {
+      id: 'call_write_file_done',
+      name: 'write_file',
+      args: {},
+      partialArgs: '{"path"',
+      status: 'success',
+      result: { success: true, path: 'notes.md' }
+    };
+    const model = buildToolCardDisplayModel(tool, {
+      name: 'write_file',
+      label: '写入文件',
+      icon: 'codicon-save',
+      descriptionFormatter(args) {
+        return String(args.path || '无文件');
+      }
+    });
+
+    expect(model.inputState).toBe('input_incomplete');
+    expect(model.displayState).toBe('success');
+    expect(model.statusIcon).toBe('check');
+    expect(model.description).toContain('执行成功');
+    expect(model.description).not.toContain('参数片段未能解析');
   });
 
   it('promotes parseable partial args into display args so apply_diff no longer stays in generating text', () => {

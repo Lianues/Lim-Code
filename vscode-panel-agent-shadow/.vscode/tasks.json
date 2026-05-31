@@ -1,0 +1,15 @@
+{
+  // 为什么要改：launch.json 的 preLaunchTask 需要一个稳定的编译任务，避免每次调试前手动运行命令。
+  // 怎么改：声明 VSCode npm compile 任务，并把 TypeScript 输出接入 VSCode 的问题匹配器。
+  // 目的是什么：让 Hello World 扩展的启动路径可重复验证，同时保持实现仍然是最小 Extension Host 入口。
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "type": "npm",
+      "script": "compile",
+      "group": "build",
+      "problemMatcher": "$tsc",
+      "label": "npm: compile"
+    }
+  ]
+}
