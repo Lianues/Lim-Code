@@ -9,6 +9,7 @@ import type { StreamChunk } from '../../types'
 import type { StreamHandlerContext } from './streamHandler'
 import { handleStreamChunk } from './streamHandler'
 import { replaceAllMessages } from './state'
+import { frontendCacheLifecycleGovernor } from '../../utils/cacheLifecycleGovernor'
 
 /** 最大标签页数量 */
 const MAX_TABS = 100
@@ -296,6 +297,7 @@ export function bufferBackgroundChunk(
   const tab = state.openTabs.value.find(t => t.conversationId === convId)
   if (!tab) {
     buffers.get(convId)!.push(chunk)
+    frontendCacheLifecycleGovernor.enforceBudgets('chat.backgroundStreamBuffers.push')
     return
   }
 
@@ -327,6 +329,7 @@ export function bufferBackgroundChunk(
   }
 
   buffers.get(convId)!.push(chunk)
+  frontendCacheLifecycleGovernor.enforceBudgets('chat.backgroundStreamBuffers.push')
 
   if (snapshot) {
     switch (chunk.type) {

@@ -13,12 +13,21 @@ export const WEBVIEW_CLIENT_IDS = {
 export type KnownWebviewClientId = typeof WEBVIEW_CLIENT_IDS[keyof typeof WEBVIEW_CLIENT_IDS];
 export type WebviewClientId = KnownWebviewClientId | (string & {});
 
+export interface WebviewClientVisibility {
+  visible: boolean;
+  source: 'register' | 'vscode' | 'frontend' | 'dispose';
+  updatedAt: number;
+  sequence: number;
+  reason?: string;
+}
+
 export interface WebviewClientRegistration {
   clientId: WebviewClientId;
   /** 可选 RunScope 投影。registry 只保存元数据，不基于 scope/type 写分支。 */
   runScope?: RunScope;
   webviewHost?: { webview: vscode.Webview };
   postMessage(message: Record<string, unknown>): Thenable<boolean> | Promise<boolean> | boolean;
+  visibility?: WebviewClientVisibility;
 }
 
 /**
@@ -27,12 +36,14 @@ export interface WebviewClientRegistration {
  */
 export class WebviewClientRegistry {
   private readonly clients = new Map<WebviewClientId, WebviewClientRegistration>();
+  private visibilitySequence = 0;
 
   register(client: WebviewClientRegistration): vscode.Disposable {
     const normalizedClientId = this.normalizeClientId(client.clientId);
     const registration: WebviewClientRegistration = {
       ...client,
-      clientId: normalizedClientId
+      clientId: normalizedClientId,
+      visibility: client.visibility ?? this.createVisibility(true, 'register')
     };
 
     this.clients.set(normalizedClientId, registration);
@@ -61,6 +72,30 @@ export class WebviewClientRegistry {
 
   getWebviewHost(clientId: unknown): { webview: vscode.Webview } | undefined {
     return this.get(clientId)?.webviewHost;
+  }
+
+  setVisibility(
+    clientId: unknown,
+    visible: boolean,
+    source: WebviewClientVisibility['source'] = 'frontend',
+    reason?: string
+  ): boolean {
+    const client = this.get(clientId);
+    if (!client) {
+      return false;
+    }
+
+    client.visibility = this.createVisibility(visible, source, reason);
+    return true;
+  }
+
+  getVisibility(clientId: unknown): WebviewClientVisibility | undefined {
+    const visibility = this.get(clientId)?.visibility;
+    return visibility ? { ...visibility } : undefined;
+  }
+
+  isVisible(clientId: unknown): boolean {
+    return this.get(clientId)?.visibility?.visible !== false;
   }
 
   resolveClientId(requestedClientId?: unknown, fallbackClientId?: unknown): WebviewClientId | undefined {
@@ -137,5 +172,19 @@ export class WebviewClientRegistry {
     }
     const normalized = clientId.trim();
     return normalized ? normalized as WebviewClientId : undefined;
+  }
+
+  private createVisibility(
+    visible: boolean,
+    source: WebviewClientVisibility['source'],
+    reason?: string
+  ): WebviewClientVisibility {
+    return {
+      visible,
+      source,
+      reason,
+      updatedAt: Date.now(),
+      sequence: ++this.visibilitySequence
+    };
   }
 }

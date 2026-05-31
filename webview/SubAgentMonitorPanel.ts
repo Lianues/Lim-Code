@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { subAgentRunController, subAgentRunEventBus, type SubAgentRunEvent, type SubAgentRunSnapshot } from '../backend/tools/subagents';
+import { subAgentRuntimeLedgerBridge } from '../backend/tools/subagents/runtimeLedgerBridge';
 import type { SubAgentRunConversationStore } from '../backend/tools/subagents/runEventBus';
 import { WEBVIEW_CLIENT_IDS } from './runtime/WebviewClientRegistry';
 import type { RunScope } from '../backend/core/RunController';
@@ -158,13 +159,16 @@ export class SubAgentMonitorPanel {
     private readonly unsubscribe: () => void;
     private clientRegistration?: vscode.Disposable;
     private heartbeatTimer?: ReturnType<typeof setInterval>;
+    private viewStateDisposable?: vscode.Disposable;
+    private hiddenEventCount = 0;
 
     constructor(
         private readonly context: vscode.ExtensionContext,
         private readonly devServerUrl?: string,
         private readonly routeMessage?: (message: any, webview: vscode.Webview) => Promise<boolean>,
         private readonly registerClient?: (clientId: string, webview: vscode.Webview, runScope?: RunScope) => vscode.Disposable,
-        private readonly conversationStore?: SubAgentRunConversationStore
+        private readonly conversationStore?: SubAgentRunConversationStore,
+        private readonly setClientVisibility?: (clientId: string, visible: boolean, source: 'vscode', reason?: string) => void
     ) {
         this.unsubscribe = subAgentRunEventBus.subscribe((event, snapshot) => {
             this.postEvent(event, snapshot);
@@ -177,6 +181,7 @@ export class SubAgentMonitorPanel {
 
         if (this.panel) {
             this.panel.reveal(vscode.ViewColumn.Beside);
+            this.updateVisibilityFromPanel('reveal');
             this.clientRegistration?.dispose();
             this.clientRegistration = this.registerClient?.(
                 WEBVIEW_CLIENT_IDS.subagentMonitor,
@@ -213,6 +218,14 @@ export class SubAgentMonitorPanel {
         );
 
         this.panel.webview.html = this.getHtmlForWebview(this.panel.webview);
+        this.updateVisibilityFromPanel('open');
+        this.viewStateDisposable?.dispose();
+        this.viewStateDisposable = this.panel.onDidChangeViewState?.(() => {
+            this.updateVisibilityFromPanel('onDidChangeViewState');
+            if (this.isPanelVisible()) {
+                this.flushHiddenStateRefresh();
+            }
+        });
         this.panel.webview.onDidReceiveMessage(message => {
             this.handleMessage(message).catch(error => {
                 console.error('[SubAgentMonitorPanel] Failed to handle webview message:', error);
@@ -221,6 +234,9 @@ export class SubAgentMonitorPanel {
 
         this.panel.onDidDispose(() => {
             this.stopHeartbeat();
+            this.viewStateDisposable?.dispose();
+            this.viewStateDisposable = undefined;
+            this.setClientVisibility?.(WEBVIEW_CLIENT_IDS.subagentMonitor, false, 'vscode', 'dispose');
             this.clientRegistration?.dispose();
             this.clientRegistration = undefined;
             this.panel = undefined;
@@ -231,6 +247,9 @@ export class SubAgentMonitorPanel {
     dispose(): void {
         this.unsubscribe();
         this.stopHeartbeat();
+        this.viewStateDisposable?.dispose();
+        this.viewStateDisposable = undefined;
+        this.setClientVisibility?.(WEBVIEW_CLIENT_IDS.subagentMonitor, false, 'vscode', 'dispose');
         this.clientRegistration?.dispose();
         this.clientRegistration = undefined;
         this.panel?.dispose();
@@ -259,6 +278,7 @@ export class SubAgentMonitorPanel {
     }
 
     private postHeartbeat(): void {
+        if (!this.isPanelVisible()) return;
         const getManifests = (subAgentRunEventBus as any).getManifests;
         const manifests = typeof getManifests === 'function' ? getManifests.call(subAgentRunEventBus) : [];
         this.postRoutedMessage({
@@ -343,6 +363,40 @@ export class SubAgentMonitorPanel {
             return;
         }
 
+        if (message.type === 'subagents.monitor.getContentTextWindow') {
+            const refId = typeof message.data?.refId === 'string' ? message.data.refId.trim() : '';
+            if (!refId) {
+                this.postRoutedMessage({
+                    type: 'error',
+                    requestId: message.requestId,
+                    success: false,
+                    error: { code: 'SUBAGENT_CONTENT_TEXT_REF_INVALID_INPUT', message: 'refId is required' }
+                }, clientId);
+                return;
+            }
+            const window = await subAgentRuntimeLedgerBridge.getContentTextWindow(refId, {
+                startBytes: typeof message.data?.startBytes === 'number' ? message.data.startBytes : undefined,
+                maxBytes: typeof message.data?.maxBytes === 'number' ? message.data.maxBytes : undefined,
+                includePayload: typeof message.data?.includePayload === 'boolean' ? message.data.includePayload : undefined
+            });
+            if (!window) {
+                this.postRoutedMessage({
+                    type: 'error',
+                    requestId: message.requestId,
+                    success: false,
+                    error: { code: 'SUBAGENT_CONTENT_TEXT_REF_NOT_FOUND', message: `SubAgent content text ref not found: ${refId}` }
+                }, clientId);
+                return;
+            }
+            this.postRoutedMessage({
+                type: 'response',
+                requestId: message.requestId,
+                success: true,
+                data: window
+            }, clientId);
+            return;
+        }
+
         if (this.routeMessage && this.panel) {
             // 非 lifecycle 消息委托给主聊天统一 MessageRouter，避免 Monitor 复制 handler 或让 diff/tool 操作 pending。
             const handled = await this.routeMessage(message, this.panel.webview);
@@ -367,11 +421,38 @@ export class SubAgentMonitorPanel {
         });
     }
 
+    private isPanelVisible(): boolean {
+        return this.panel?.visible !== false;
+    }
+
+    private updateVisibilityFromPanel(reason: string): void {
+        this.setClientVisibility?.(WEBVIEW_CLIENT_IDS.subagentMonitor, this.isPanelVisible(), 'vscode', reason);
+    }
+
+    private flushHiddenStateRefresh(): void {
+        if (this.hiddenEventCount > 0) {
+            this.postRoutedMessage({
+                type: 'subagentMonitor.visibilityRefresh',
+                data: {
+                    hiddenEventCount: this.hiddenEventCount,
+                    manifest: this.createManifestPayload()
+                }
+            });
+            this.hiddenEventCount = 0;
+        }
+        this.postManifest();
+        this.postHeartbeat();
+    }
+
     private postEvent(event: SubAgentRunEvent, snapshot: SubAgentRunSnapshot): void {
         void this.postEventWithRuntimeLedger(event, snapshot);
     }
 
     private async postEventWithRuntimeLedger(event: SubAgentRunEvent, snapshot: SubAgentRunSnapshot): Promise<void> {
+        if (!this.isPanelVisible()) {
+            this.hiddenEventCount += 1;
+            return;
+        }
         await new Promise(resolve => setImmediate(resolve));
         const runtimeLedger = await subAgentRunEventBus.getRuntimeLedgerMonitorProjection(snapshot.runId, {
             includeContentWindow: false

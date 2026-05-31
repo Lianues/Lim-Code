@@ -2,8 +2,15 @@ import { SubAgentMonitorPanel, createMonitorEventPayload } from '../../../webvie
 import { WEBVIEW_CLIENT_IDS } from '../../../webview/runtime/WebviewClientRegistry';
 import { subAgentRunEventBus, subAgentRunController } from '../../../backend/tools/subagents';
 import { subAgentRuntimeLedgerBridge } from '../../../backend/tools/subagents/runtimeLedgerBridge';
+import { estimateJsonBytes } from '../../../frontend/src/utils/cacheLifecycleGovernor';
 import * as vscode from 'vscode';
 import type { Content } from '../../../backend/modules/conversation/types';
+
+const WEBVIEW_ENVELOPE_BUDGET_BYTES = 16 * 1024;
+
+function expectWithinWebviewBudget(message: unknown): void {
+  expect(estimateJsonBytes(message)).toBeLessThanOrEqual(WEBVIEW_ENVELOPE_BUDGET_BYTES);
+}
 
 function createThenable<T>(value: T): Thenable<T> {
   return {
@@ -171,6 +178,57 @@ describe('SubAgentMonitorPanel manifest/window protocol', () => {
     expect(pushed.data.runtimeLedger.ledger.contentWindow).toBeUndefined();
     expect(pushed.data.event.payload.response).toBeUndefined();
     expect(pushed.data.event.payload).toMatchObject({ steps: 1, modelVersion: 'test-model' });
+    expectWithinWebviewBudget(pushed);
+    panel.dispose();
+  });
+
+  it('keeps monitor ready, manifest, heartbeat, and window envelopes under payload budgets', async () => {
+    for (let index = 0; index < 24; index++) {
+      createRun(`budget-run-${index}`, [
+        createContent(0, `首条 ${index}`),
+        createContent(1, `尾条 ${index}`)
+      ]);
+    }
+    createRun('protocol-run-1', Array.from({ length: 30 }, (_, index) => createContent(index, `窗口内容 ${index}`)));
+    const { panel, sink } = openPanel();
+    await flushRuntimeLedger();
+
+    const heartbeat = sink.messages.find(message => message.type === 'subagentMonitor.heartbeat');
+    expect(heartbeat).toBeDefined();
+    expectWithinWebviewBudget(heartbeat);
+
+    sink.messages.length = 0;
+    panel.open('protocol-run-1', 'conversation-1');
+    const manifest = sink.messages.find(message => message.type === 'subagentMonitor.manifest');
+    expect(manifest).toBeDefined();
+    expect(JSON.stringify(manifest)).not.toContain('"contents"');
+    expectWithinWebviewBudget(manifest);
+
+    await sink.receiveHandlers[0]({
+      type: 'subagents.monitorReady',
+      clientId: WEBVIEW_CLIENT_IDS.subagentMonitor,
+      requestId: 'ready-budget-1',
+      data: {}
+    });
+    const readyResponse = sink.messages.find(message => message.requestId === 'ready-budget-1');
+    expect(readyResponse).toBeDefined();
+    expect(JSON.stringify(readyResponse)).not.toContain('"contents"');
+    expectWithinWebviewBudget(readyResponse);
+
+    await sink.receiveHandlers[0]({
+      type: 'subagents.monitor.getRunWindow',
+      clientId: WEBVIEW_CLIENT_IDS.subagentMonitor,
+      requestId: 'window-budget-1',
+      data: {
+        runId: 'protocol-run-1',
+        options: { limit: 20, fromTail: true }
+      }
+    });
+    await flushRuntimeLedger();
+    const windowResponse = sink.messages.find(message => message.requestId === 'window-budget-1');
+    expect(windowResponse).toBeDefined();
+    expect(windowResponse.data.runtimeLedger.ledger.contentWindow.contents).toHaveLength(20);
+    expectWithinWebviewBudget(windowResponse);
     panel.dispose();
   });
 
@@ -278,8 +336,8 @@ describe('SubAgentMonitorPanel manifest/window protocol', () => {
     });
     expect(response.data.window).toBeUndefined();
     expect(response.data.runtimeLedger).toMatchObject({
-      status: 'ok',
-      mismatches: [],
+      status: 'degraded',
+      mismatches: ['runtimeLedgerContentWindow:pending'],
       ledger: {
         projectionStatus: 'ok',
         eventSequence: 1,
@@ -294,12 +352,11 @@ describe('SubAgentMonitorPanel manifest/window protocol', () => {
           eventSequence: 1,
           hasMoreBefore: true,
           hasMoreAfter: false,
-          source: 'runtime-ledger'
+          source: 'source-window'
         },
         truncated: false,
         eventCountsByType: {
-          'runtime.subagent.run_event': 1,
-          'runtime.subagent.content_snapshot': 1
+          'runtime.subagent.run_event': 1
         },
         toolStatesByInvocationId: {}
       }
@@ -342,6 +399,71 @@ describe('SubAgentMonitorPanel manifest/window protocol', () => {
       }
     });
     expect(response.data.runtimeLedger.ledger.contentWindow.contents[0].parts[0].text).toBe('ledger window text');
+    panel.dispose();
+  });
+
+  it('bounds oversized Monitor content text behind Runtime Ledger refs and serves explicit byte windows', async () => {
+    const longText = `MONITOR-START-${'abcdef0123456789'.repeat(1000)}-MONITOR-END`;
+    createRun('protocol-run-1', [createContent(0, longText)]);
+    const { panel, sink } = openPanel();
+
+    await flushRuntimeLedger();
+    await sink.receiveHandlers[0]({
+      type: 'subagents.monitor.getRunWindow',
+      clientId: WEBVIEW_CLIENT_IDS.subagentMonitor,
+      requestId: 'window-long-text-1',
+      data: {
+        runId: 'protocol-run-1',
+        options: { limit: 1, fromTail: true }
+      }
+    });
+
+    await flushRuntimeLedger();
+    const response = sink.messages.find(message => message.requestId === 'window-long-text-1');
+    const part = response.data.runtimeLedger.ledger.contentWindow.contents[0].parts[0];
+    expect(JSON.stringify(response)).not.toContain(longText);
+    expect(part.text).toContain('MONITOR-START-');
+    expect(part.textTruncated).toBe(true);
+    expect(part.runtimeLedgerTextRef).toMatchObject({
+      runId: 'protocol-run-1',
+      contentIndex: 0,
+      partIndex: 0,
+      truncated: true
+    });
+    expectWithinWebviewBudget(response);
+
+    await sink.receiveHandlers[0]({
+      type: 'subagents.monitor.getContentTextWindow',
+      clientId: WEBVIEW_CLIENT_IDS.subagentMonitor,
+      requestId: 'content-text-window-1',
+      data: {
+        refId: part.runtimeLedgerTextRef.refId,
+        includePayload: true
+      }
+    });
+    await flushRuntimeLedger();
+    const fullResponse = sink.messages.find(message => message.requestId === 'content-text-window-1');
+    expect(fullResponse.data.text).toBe(longText);
+
+    await sink.receiveHandlers[0]({
+      type: 'subagents.monitor.getContentTextWindow',
+      clientId: WEBVIEW_CLIENT_IDS.subagentMonitor,
+      requestId: 'content-text-window-2',
+      data: {
+        refId: part.runtimeLedgerTextRef.refId,
+        startBytes: 0,
+        maxBytes: 64,
+        includePayload: false
+      }
+    });
+    await flushRuntimeLedger();
+    const rangeResponse = sink.messages.find(message => message.requestId === 'content-text-window-2');
+    expect(rangeResponse.data.text).toContain('MONITOR-START-');
+    expect(rangeResponse.data.window).toMatchObject({
+      startBytes: 0,
+      hasMoreBefore: false,
+      hasMoreAfter: true
+    });
     panel.dispose();
   });
 

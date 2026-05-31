@@ -2616,6 +2616,7 @@ const ja: LanguageMessages = {
                     terminate: '終了',
                     terminateTooltip: 'プロセスを終了',
                     copyOutput: '出力をコピー',
+                    loadFullOutput: '完全な出力を読み込む',
                     copied: 'コピーしました',
                     output: '出力',
                     truncatedInfo: '最後の {outputLines} 行を表示（合計 {totalLines} 行）',

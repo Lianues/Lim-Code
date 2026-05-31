@@ -21,6 +21,11 @@ import hljs from 'highlight.js'
 import katex from 'katex'
 import mermaid from 'mermaid'
 import { sendToExtension, showNotification } from '@/utils/vscode'
+import {
+  estimateMapJsonBytes,
+  frontendCacheLifecycleGovernor,
+  pruneMapToMaxEntries
+} from '@/utils/cacheLifecycleGovernor'
 import { useI18n } from '@/i18n'
 
 // 初始化 Mermaid
@@ -938,13 +943,11 @@ function renderContent(content: string, latexOnly: boolean, renderProfile: Rende
   return html
 }
 
-// ===================== 渲染节流（流式性能优化） =====================
+// ===================== 渲染状态 =====================
 
-// 渲染结果（用 shallowRef 而不是 computed，便于在流式阶段节流，且保持已完成消息的 HTML 引用稳定）
+// 渲染结果（用 shallowRef 而不是 computed，便于保持已完成消息的 HTML 引用稳定）
 const renderedContent = shallowRef('')
 
-const STREAM_RENDER_DEBOUNCE_MS = 120
-const STREAM_RENDER_MAX_WAIT_MS = 180
 /**
  * 为什么要加完成态渲染缓存：消息列表在 store 变化时会重新走父级渲染流程，
  * 已完成消息即使内容不变，也可能再次进入 MarkdownRenderer。
@@ -965,8 +968,6 @@ let lastRenderedLatexOnly = false
 let lastRenderedLanguage = ''
 let lastRenderedMode: 'streaming' | 'completed' | '' = ''
 let lastCompletedRenderCacheKey = ''
-/** 上一次流式阶段实际 render 的时间，用于把纯 debounce 升级为 leading + max-wait 节流。 */
-let lastStreamingRenderAt = 0
 /** 后处理（图片/Mermaid/链接校验）是否已对当前内容完成 */
 let postProcessedSource = ''
 let postProcessedProfile: RenderProfile = 'default'
@@ -1082,9 +1083,6 @@ async function applyPostRenderDomState(rendered: boolean, needsPostProcess = fal
 
 async function renderStreamingNow(): Promise<void> {
   const rendered = renderCurrentContent()
-  if (rendered) {
-    lastStreamingRenderAt = Date.now()
-  }
   await applyPostRenderDomState(rendered)
 }
 
@@ -1092,24 +1090,12 @@ function scheduleRender() {
   clearRenderTimer()
 
   if (props.isStreaming) {
-    const now = Date.now()
-    const shouldRenderLeading = !!props.content && renderedContent.value === ''
-    const shouldRenderByMaxWait = !!props.content && now - lastStreamingRenderAt >= STREAM_RENDER_MAX_WAIT_MS
-
-    // 修改原因：纯 debounce 在流式高频更新时会一直推迟渲染；若组件新实例初始 HTML 为空，还会造成正文闪白。
-    // 修改方式：流式阶段采用 leading + trailing + max-wait：首个非空内容立即渲染，持续输出最多等待固定窗口，尾部再补一次。
-    // 修改目的：保留 50ms chunk 批处理的性能收益，同时让旧 HTML 在新 HTML 准备好前持续可见，不再闪烁或长时间滞后。
-    if (shouldRenderLeading || shouldRenderByMaxWait) {
-      void renderStreamingNow()
-    }
-
-    renderTimer = window.setTimeout(() => {
-      void renderStreamingNow()
-    }, STREAM_RENDER_DEBOUNCE_MS)
+    // 修改原因：主聊天 stream transport 已取消时间节流；Markdown 层继续 debounce 会形成新的“慢吐字”视觉瓶颈。
+    // 修改方式：流式内容变更时立即渲染当前 HTML，非流式路径仍保留异步后处理。
+    // 修改目的：让上游 chunk 到达、store 应用和可见 Markdown 更新保持同一即时语义。
+    void renderStreamingNow()
     return
   }
-
-  lastStreamingRenderAt = 0
 
   // 非流式 + 首次渲染：同步执行 render，让组件挂载瞬间就有内容（消除切换对话闪白）
   if (renderedContent.value === '') {
@@ -1259,6 +1245,34 @@ function handleCodeToolbarClick(event: Event) {
 
 /** 路径 → 是否存在 */
 const fileExistenceCache = new Map<string, boolean>()
+
+const MARKDOWN_CACHE_LIMITS = {
+  completedRenderMaxEntries: COMPLETED_RENDER_CACHE_LIMIT,
+  imageMaxEntries: 256,
+  fileExistenceMaxEntries: 2048
+}
+
+frontendCacheLifecycleGovernor.register({
+  id: 'markdown.renderCaches',
+  owner: 'MarkdownRenderer',
+  scope: 'render-window',
+  maxEntries:
+    MARKDOWN_CACHE_LIMITS.completedRenderMaxEntries +
+    MARKDOWN_CACHE_LIMITS.imageMaxEntries +
+    MARKDOWN_CACHE_LIMITS.fileExistenceMaxEntries,
+  getEntryCount: () => completedRenderCache.size + imageCache.size + fileExistenceCache.size,
+  estimateBytes: () =>
+    estimateMapJsonBytes(completedRenderCache) +
+    estimateMapJsonBytes(imageCache) +
+    estimateMapJsonBytes(fileExistenceCache),
+  prune: () => {
+    const removed =
+      pruneMapToMaxEntries(completedRenderCache, MARKDOWN_CACHE_LIMITS.completedRenderMaxEntries) +
+      pruneMapToMaxEntries(imageCache, MARKDOWN_CACHE_LIMITS.imageMaxEntries) +
+      pruneMapToMaxEntries(fileExistenceCache, MARKDOWN_CACHE_LIMITS.fileExistenceMaxEntries)
+    return removed
+  }
+})
 
 /**
  * 从原始 Markdown 内容中提取所有可能的工作区文件路径

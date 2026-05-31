@@ -238,7 +238,7 @@ export function handleStreamChunkBatch(
       if (skippedChunks.length > 0) {
         const terminalType = chunks[lastTerminalIndex]?.type
         const hasFunctionCall = skippedChunks.some(c =>
-          c.chunk?.delta?.some((p: any) => p.functionCall)
+          c.runtimeLedger?.ledger?.liveDelta?.payload?.delta?.some((p: any) => p.functionCall)
         )
         console.debug(`[streamHandler] batch skip: ${skippedChunks.length} chunk(s) before terminal '${terminalType}'${hasFunctionCall ? ' (contains functionCall delta!)' : ''}`)
       }

@@ -321,6 +321,12 @@ function rebuildToolResponseCacheFromMessages(state: ChatStoreState): void {
   triggerRef(state.toolResponseCache)
 }
 
+function isRuntimeTerminalContentPreview(
+  terminalContent: NonNullable<NonNullable<NonNullable<StreamChunk['runtimeLedger']>['ledger']>['terminalContent']>
+): boolean {
+  return terminalContent.contentTruncated === true || terminalContent.contentRef?.truncated === true
+}
+
 export function applyRuntimeLedgerMutationProjection(
   runtimeLedger: RuntimeLedgerMutationProjection | undefined,
   state: ChatStoreState
@@ -382,6 +388,27 @@ function applyRuntimeTerminalContentSnapshot(
   }
   if (options.transformTools) {
     tools = options.transformTools(tools)
+  }
+
+  if (isRuntimeTerminalContentPreview(terminalContent)) {
+    const updatedMessage: Message = {
+      ...message,
+      streaming: false,
+      localOnly: false,
+      content: message.content || finalMessage.content,
+      tools: tools && tools.length > 0 ? tools : undefined,
+      parts: message.parts && message.parts.length > 0 ? message.parts : finalMessage.parts
+    }
+
+    updatedMessage.metadata = {
+      ...(message.metadata || {}),
+      ...(finalMessage.metadata || {})
+    }
+    if (existingModelVersion) updatedMessage.metadata.modelVersion = existingModelVersion
+    delete updatedMessage.metadata.thinkingStartTime
+
+    replaceMessageAt(state, messageIndex, updatedMessage)
+    return { applied: true, messageIndex, tools: updatedMessage.tools }
   }
 
   const updatedMessage: Message = {

@@ -14,6 +14,7 @@ import { computed, ref, watch, onMounted, nextTick } from 'vue'
 import { useTerminalStore } from '../../../stores/terminalStore'
 import CustomScrollbar from '../../common/CustomScrollbar.vue'
 import { useI18n } from '../../../composables/useI18n'
+import { loadTerminalOutputWindow } from '../../../utils/vscode'
 
 const { t } = useI18n()
 
@@ -34,6 +35,8 @@ const terminalStore = useTerminalStore()
 
 // 杀掉终端的加载状态
 const killing = ref(false)
+const loadingFullOutput = ref(false)
+const expandedOutput = ref<string | null>(null)
 
 // 滚动容器引用
 const outputContainer = ref<HTMLElement | null>(null)
@@ -81,6 +84,10 @@ const output = computed(() => {
   // 否则使用结果中的静态输出（历史记录）
   return resultData.value.output as string || ''
 })
+
+const outputRefs = computed(() => terminalState.value?.outputRefs || [])
+const canLoadFullOutput = computed(() => outputRefs.value.length > 0 && !expandedOutput.value)
+const displayedOutput = computed(() => expandedOutput.value ?? output.value)
 
 // 执行状态
 const exitCode = computed(() => {
@@ -236,16 +243,39 @@ async function handleKillTerminal() {
 // 复制输出
 const copied = ref(false)
 async function copyOutput() {
-  if (!output.value) return
+  if (!displayedOutput.value) return
   
   try {
-    await navigator.clipboard.writeText(output.value)
+    await navigator.clipboard.writeText(displayedOutput.value)
     copied.value = true
     setTimeout(() => {
       copied.value = false
     }, 1000)
   } catch (err) {
     console.error('复制失败:', err)
+  }
+}
+
+async function loadFullOutput() {
+  if (!canLoadFullOutput.value || loadingFullOutput.value) return
+
+  loadingFullOutput.value = true
+  try {
+    let nextOutput = output.value
+    const previews = terminalState.value?.outputRefPreviews || {}
+    for (const refId of outputRefs.value) {
+      const full = await loadTerminalOutputWindow(refId, { includePayload: true })
+      if (!full?.data) continue
+      const preview = previews[refId]
+      if (preview && nextOutput.includes(preview)) {
+        nextOutput = nextOutput.replace(preview, full.data)
+      } else if (!nextOutput.includes(full.data)) {
+        nextOutput += `\n${full.data}`
+      }
+    }
+    expandedOutput.value = nextOutput
+  } finally {
+    loadingFullOutput.value = false
   }
 }
 
@@ -262,7 +292,7 @@ function scrollToBottom() {
 }
 
 // 监听输出变化，自动滚动
-watch(output, () => {
+watch(displayedOutput, () => {
   scrollToBottom()
 })
 
@@ -353,6 +383,15 @@ watch(isRunning, (running) => {
           <span v-if="truncated && !isRunning" class="truncated-info">
             {{ t('components.tools.terminal.executeCommandPanel.truncatedInfo', { outputLines, totalLines }) }}
           </span>
+          <button
+            v-if="canLoadFullOutput"
+            class="action-btn icon-only"
+            :disabled="loadingFullOutput"
+            :title="t('components.tools.terminal.executeCommandPanel.loadFullOutput')"
+            @click="loadFullOutput"
+          >
+            <span :class="['codicon', loadingFullOutput ? 'codicon-loading codicon-modifier-spin' : 'codicon-unfold']"></span>
+          </button>
           <label v-if="isRunning" class="auto-scroll-toggle">
             <input
               type="checkbox"
@@ -366,7 +405,7 @@ watch(isRunning, (running) => {
       <div class="output-content">
         <div class="content-wrapper" ref="outputContainer">
           <CustomScrollbar :horizontal="true">
-            <pre class="output-code"><code>{{ output || t('components.tools.terminal.executeCommandPanel.waitingOutput') }}</code></pre>
+            <pre class="output-code"><code>{{ displayedOutput || t('components.tools.terminal.executeCommandPanel.waitingOutput') }}</code></pre>
           </CustomScrollbar>
         </div>
       </div>

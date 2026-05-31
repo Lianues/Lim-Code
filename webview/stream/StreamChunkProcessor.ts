@@ -2,11 +2,11 @@
  * 流式响应 Chunk 处理器
  * 
  * 统一处理流式响应的 chunk 并发送到前端。
- * 使用消息缓冲 + 节流机制，将高频 chunk 合并为批量 postMessage（streamChunkBatch），
- * 减少序列化开销和前端响应式更新次数。
+ * 使用即时 transport projection 将流式 chunk 发送到前端。
  * 
  * 设计要点：
- * - chunk 类型消息使用节流（throttle）而非立即 flush，避免高速模型产生数百次 postMessage
+ * - chunk 类型消息不做时间节流，到达后立即 flush，优先保证主界面响应速度
+ * - Runtime Ledger 写入是后台观察者，不阻塞 transport projection
  * - complete/toolsExecuting/toolIteration/awaitingConfirmation 等终结事件立即 flush，
  *   确保前端能及时收到最终状态，消除前后端不一致
  * - error/cancelled 等状态变更也立即 flush
@@ -15,19 +15,27 @@
 import type * as vscode from 'vscode';
 import { chatStreamRuntimeLedgerBridge, type ChatRuntimeLedgerAppendResult } from './runtimeLedgerBridge';
 
-/** chunk 类型消息的节流间隔（毫秒） */
-const CHUNK_THROTTLE_MS = 50;
+const STREAM_TRANSPORT_MAX_ENVELOPE_BYTES = 16 * 1024;
+const STREAM_TRANSPORT_BATCH_TARGET_BYTES = 14 * 1024;
+const HIDDEN_STREAM_DELTA_PREVIEW_BYTES = 4096;
+
+interface HiddenTransportState {
+  count: number;
+  firstHiddenAt: number;
+  lastHiddenAt: number;
+  accumulatedChunk?: Record<string, any>;
+  truncatedChunkCount?: number;
+  latestByType: Map<string, Record<string, any>>;
+}
 
 interface EnqueueOptions {
-  /**
-   * 修改原因：流式 chunk 已有 50ms 节流器，若 enqueue 再安排 setTimeout(0)，节流会被下一轮事件循环抢先冲掉。
-   * 修改方式：允许调用方关闭 0ms 兜底刷新，让高频 chunk 只由 scheduleThrottledFlush 控制。
-   * 修改目的：减少 VS Code webview.postMessage 次数和 payload 反序列化成本，缓解 trace 中 HostMessaging.onmessage 长任务。
-   */
   scheduleImmediateFlush?: boolean;
-  scheduleThrottledFlush?: boolean;
   flushBeforeAppend?: boolean;
   flushAfterAppend?: boolean;
+}
+
+export interface StreamChunkProcessorOptions {
+  isVisible?: () => boolean;
 }
 
 /**
@@ -38,17 +46,14 @@ export class StreamChunkProcessor {
   private messageBuffer: Record<string, any>[] = [];
   /** 自动刷新计时器句柄（setTimeout(0) 兜底） */
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
-  /** chunk 节流计时器句柄 */
-  private throttleTimer: ReturnType<typeof setTimeout> | null = null;
-  /** 上次 chunk flush 的时间戳 */
-  private lastChunkFlushTime: number = 0;
-  /** Serializes Runtime Ledger writes before transport projections are sent. */
+  /** Serializes Runtime Ledger observer writes without blocking transport projections. */
   private appendQueue: Promise<void> = Promise.resolve();
 
   constructor(
     private view: vscode.WebviewView | undefined,
     private conversationId: string,
-    private streamId: string
+    private streamId: string,
+    private readonly options: StreamChunkProcessorOptions = {}
   ) {}
 
   /**
@@ -62,12 +67,11 @@ export class StreamChunkProcessor {
       this.enqueue('checkpoints', { checkpoints: chunk.checkpoints });
     } else if ('chunk' in chunk && chunk.chunk) {
       this.enqueue('chunk', { chunk: chunk.chunk }, {
-        scheduleImmediateFlush: false,
-        scheduleThrottledFlush: true
+        flushAfterAppend: true
       });
-      // 修改原因：trace 显示 webview 侧卡顿集中在 postMessage / HandlePostMessage；chunk 热路径必须真正按 50ms 合并。
-      // 修改方式：chunk 入队时关闭 setTimeout(0) 兜底，只使用节流 flush 发送 streamChunkBatch。
-      // 修改目的：把高频 token 增量从“每轮事件循环一次消息”收敛为“每个节流窗口一次消息”。
+      // 修改原因：主聊天响应速度优先，用户明确要求取消 throttle；Runtime Ledger 写入不能让 UI 慢吐字。
+      // 修改方式：chunk 到达后直接生成 projection 并 flush，ledger append 仅后台串行记录。
+      // 修改目的：上游 SSE 已结束时，主界面不再继续播放后端积压的 chunk 队列。
     } else if ('toolsExecuting' in chunk && chunk.toolsExecuting) {
       this.enqueue('toolsExecuting', {
         content: chunk.content,
@@ -176,66 +180,287 @@ export class StreamChunkProcessor {
       clearTimeout(this.flushTimer);
       this.flushTimer = null;
     }
-    if (this.throttleTimer !== null) {
-      clearTimeout(this.throttleTimer);
-      this.throttleTimer = null;
-    }
     if (this.messageBuffer.length === 0 || !this.view) return;
 
     const messages = this.messageBuffer;
     this.messageBuffer = [];
-    this.lastChunkFlushTime = Date.now();
 
-    if (messages.length === 1) {
-      // 单条消息：保持轻量 streamChunk envelope，Runtime Ledger projection 仍在 data 内。
-      this.view.webview.postMessage({
-        type: 'streamChunk',
-        data: messages[0]
-      });
-    } else {
-      // 多条消息：批量发送，前端一次性同步处理以利用 Vue 响应式批量更新
-      this.view.webview.postMessage({
-        type: 'streamChunkBatch',
-        data: messages
-      });
+    for (const outgoing of this.createOutgoingStreamMessages(messages)) {
+      this.postOrCoalesce(outgoing);
     }
   }
 
   async drain(): Promise<void> {
-    await this.appendQueue;
     this.flush();
   }
 
-  /**
-   * 为 chunk 类型消息调度节流 flush。
-   * 
-   * 策略：
-   * - 如果距离上次 flush 已经超过 CHUNK_THROTTLE_MS，立即 flush（保证首个 chunk 低延迟）
-   * - 否则设定一个定时器在 CHUNK_THROTTLE_MS 后 flush（合并高频 chunk）
-   * - 同一时间只有一个节流定时器
-   */
-  private scheduleThrottledFlush(): void {
-    const now = Date.now();
-    const elapsed = now - this.lastChunkFlushTime;
+  async drainRuntimeLedgerForTests(): Promise<void> {
+    await this.appendQueue;
+  }
 
-    if (elapsed >= CHUNK_THROTTLE_MS) {
-      // 距上次 flush 已足够久，立即发送（保证首个 chunk 低延迟）
-      this.flush();
-    } else if (this.throttleTimer === null) {
-      // 设定节流定时器，合并后续高频 chunk
-      const delay = CHUNK_THROTTLE_MS - elapsed;
-      this.throttleTimer = setTimeout(() => {
-        this.throttleTimer = null;
-        this.flush();
-      }, delay);
+  hasHiddenTransportMessages(): boolean {
+    return Boolean(this.hiddenTransport?.count);
+  }
+
+  flushHiddenTransportMessages(): void {
+    if (!this.view || !this.hiddenTransport || !this.isTransportVisible()) {
+      return;
     }
-    // 如果 throttleTimer 已存在，说明已有待执行的 flush，新 chunk 会被合并
+
+    const hidden = this.hiddenTransport;
+    this.hiddenTransport = undefined;
+    const payloads: Record<string, any>[] = [];
+    if (hidden.accumulatedChunk) {
+      payloads.push(hidden.accumulatedChunk);
+    }
+    payloads.push(...hidden.latestByType.values());
+    const truncatedChunkCount = hidden.truncatedChunkCount
+      || payloads.filter(payload => payload?.runtimeLedger?.ledger?.liveDelta?.payload?.runtimeLedgerHiddenTruncated === true).length;
+
+    this.view.webview.postMessage({
+      type: 'webview.hiddenDeliverySummary',
+      data: {
+        originalType: 'streamChunk',
+        coalescedCount: hidden.count,
+        deliveredCount: payloads.length,
+        truncatedChunkCount,
+        firstHiddenAt: hidden.firstHiddenAt,
+        lastHiddenAt: hidden.lastHiddenAt
+      }
+    });
+
+    if (payloads.length === 0) {
+      return;
+    }
+
+    for (const outgoing of this.createOutgoingStreamMessages(payloads)) {
+      this.view.webview.postMessage(outgoing);
+    }
+  }
+
+  private hiddenTransport?: HiddenTransportState;
+
+  private isTransportVisible(): boolean {
+    return this.options.isVisible?.() !== false;
+  }
+
+  private postOrCoalesce(message: Record<string, any>): void {
+    if (!this.view) return;
+    if (!this.isTransportVisible()) {
+      this.coalesceHiddenTransportMessage(message);
+      return;
+    }
+
+    this.flushHiddenTransportMessages();
+    this.view.webview.postMessage(message);
+  }
+
+  private coalesceHiddenTransportMessage(message: Record<string, any>): void {
+    const now = Date.now();
+    if (!this.hiddenTransport) {
+      this.hiddenTransport = {
+        count: 0,
+        firstHiddenAt: now,
+        lastHiddenAt: now,
+        latestByType: new Map()
+      };
+    }
+
+    const hidden = this.hiddenTransport;
+    const payloads = message.type === 'streamChunkBatch' && Array.isArray(message.data)
+      ? message.data
+      : message.type === 'streamChunk'
+        ? [message.data]
+        : [];
+
+    for (const payload of payloads) {
+      if (!payload || typeof payload !== 'object') continue;
+      hidden.count += 1;
+      hidden.lastHiddenAt = now;
+      this.coalesceHiddenTransportPayload(hidden, payload as Record<string, any>);
+    }
+  }
+
+  private coalesceHiddenTransportPayload(hidden: HiddenTransportState, payload: Record<string, any>): void {
+    if (payload.type === 'chunk' && payload.runtimeLedger?.ledger?.liveDelta?.payload) {
+      hidden.accumulatedChunk = this.mergeHiddenChunkProjection(hidden, hidden.accumulatedChunk, payload);
+      return;
+    }
+
+    hidden.latestByType.set(
+      typeof payload.type === 'string' && payload.type ? payload.type : '__unknown__',
+      payload
+    );
+
+    if (payload.type === 'complete' || payload.type === 'cancelled' || payload.type === 'error') {
+      hidden.accumulatedChunk = undefined;
+    }
+  }
+
+  private mergeHiddenChunkProjection(
+    hidden: HiddenTransportState,
+    existing: Record<string, any> | undefined,
+    incoming: Record<string, any>
+  ): Record<string, any> {
+    const next = existing
+      ? this.cloneTransportPayload(existing)
+      : this.cloneTransportPayload(incoming);
+    const targetPayload = next.runtimeLedger?.ledger?.liveDelta?.payload;
+    const incomingPayload = incoming.runtimeLedger?.ledger?.liveDelta?.payload;
+    if (!targetPayload || !incomingPayload) {
+      return incoming;
+    }
+
+    if (!existing) {
+      targetPayload.delta = [];
+    }
+
+    if (targetPayload.runtimeLedgerHiddenTruncated === true) {
+      hidden.truncatedChunkCount = (hidden.truncatedChunkCount || 0) + 1;
+      for (const key of ['done', 'usage', 'modelVersion', 'thinkingStartTime']) {
+        if (Object.prototype.hasOwnProperty.call(incomingPayload, key)) {
+          targetPayload[key] = incomingPayload[key];
+        }
+      }
+      next.createdAt = incoming.createdAt ?? next.createdAt;
+      return next;
+    }
+
+    const incomingDelta = Array.isArray(incomingPayload.delta) ? incomingPayload.delta : [];
+    const targetDelta = Array.isArray(targetPayload.delta) ? targetPayload.delta : [];
+    for (const part of incomingDelta) {
+      this.mergeHiddenDeltaPart(targetDelta, part);
+    }
+    targetPayload.delta = targetDelta;
+
+    for (const key of ['contentSnapshot', 'done', 'usage', 'modelVersion', 'thinkingStartTime']) {
+      if (Object.prototype.hasOwnProperty.call(incomingPayload, key)) {
+        targetPayload[key] = incomingPayload[key];
+      }
+    }
+    next.createdAt = incoming.createdAt ?? next.createdAt;
+    this.enforceHiddenChunkPreviewBudget(hidden, targetPayload);
+    return next;
+  }
+
+  private createOutgoingStreamMessages(messages: Record<string, any>[]): Record<string, any>[] {
+    if (messages.length <= 1) {
+      return messages.map(message => ({
+        type: 'streamChunk',
+        data: message
+      }));
+    }
+
+    const outgoing: Record<string, any>[] = [];
+    let current: Record<string, any>[] = [];
+    for (const message of messages) {
+      const candidate = [...current, message];
+      const candidateEnvelope = {
+        type: 'streamChunkBatch',
+        data: candidate
+      };
+      if (
+        current.length > 0
+        && this.utf8EnvelopeBytes(candidateEnvelope) > STREAM_TRANSPORT_BATCH_TARGET_BYTES
+      ) {
+        outgoing.push(current.length === 1
+          ? { type: 'streamChunk', data: current[0] }
+          : { type: 'streamChunkBatch', data: current }
+        );
+        current = [message];
+        continue;
+      }
+      current = candidate;
+    }
+
+    if (current.length > 0) {
+      outgoing.push(current.length === 1
+        ? { type: 'streamChunk', data: current[0] }
+        : { type: 'streamChunkBatch', data: current }
+      );
+    }
+
+    return outgoing.map(message => {
+      if (message.type !== 'streamChunkBatch') return message;
+      if (this.utf8EnvelopeBytes(message) <= STREAM_TRANSPORT_MAX_ENVELOPE_BYTES) return message;
+      return {
+        type: 'streamChunkBatch',
+        data: Array.isArray(message.data) ? message.data.slice(0, 1) : []
+      };
+    });
+  }
+
+  private enforceHiddenChunkPreviewBudget(hidden: HiddenTransportState, liveDeltaPayload: Record<string, any>): void {
+    if (liveDeltaPayload.runtimeLedgerHiddenTruncated === true) {
+      hidden.truncatedChunkCount = (hidden.truncatedChunkCount || 0) + 1;
+      return;
+    }
+
+    const byteLength = this.utf8EnvelopeBytes(liveDeltaPayload.delta || []);
+    if (byteLength <= HIDDEN_STREAM_DELTA_PREVIEW_BYTES) return;
+
+    liveDeltaPayload.runtimeLedgerHiddenTruncated = true;
+    liveDeltaPayload.runtimeLedgerHiddenByteLength = byteLength;
+    hidden.truncatedChunkCount = (hidden.truncatedChunkCount || 0) + 1;
+    liveDeltaPayload.delta = [{
+      text: '[Runtime Ledger hidden stream preview truncated; visible refresh will continue from ledger projection.]',
+      textTruncated: true,
+      textByteLength: byteLength
+    }];
+    delete liveDeltaPayload.contentSnapshot;
+  }
+
+  private mergeHiddenDeltaPart(targetDelta: any[], part: any): void {
+    if (!part || typeof part !== 'object') return;
+
+    if (typeof part.text === 'string') {
+      const last = targetDelta[targetDelta.length - 1];
+      if (
+        last &&
+        typeof last.text === 'string' &&
+        !last.functionCall &&
+        Boolean(last.thought) === Boolean(part.thought)
+      ) {
+        last.text += part.text;
+        return;
+      }
+      targetDelta.push({ ...part });
+      return;
+    }
+
+    if (part.functionCall && typeof part.functionCall === 'object') {
+      const incomingCall = part.functionCall;
+      const incomingId = typeof incomingCall.id === 'string' ? incomingCall.id : undefined;
+      const existing = incomingId
+        ? targetDelta.find(candidate => candidate?.functionCall?.id === incomingId)
+        : undefined;
+      if (existing?.functionCall) {
+        existing.functionCall = { ...existing.functionCall, ...incomingCall };
+        return;
+      }
+      targetDelta.push({ functionCall: { ...incomingCall } });
+    }
+  }
+
+  private cloneTransportPayload(payload: Record<string, any>): Record<string, any> {
+    try {
+      return JSON.parse(JSON.stringify(payload));
+    } catch {
+      return { ...payload };
+    }
+  }
+
+  private utf8EnvelopeBytes(value: unknown): number {
+    try {
+      return Buffer.byteLength(JSON.stringify(value), 'utf8');
+    } catch {
+      return Buffer.byteLength(String(value), 'utf8');
+    }
   }
 
   /**
-   * 将消息放入缓冲区并调度自动刷新。
-   * 使用 setTimeout(0)：在当前 event loop tick 的所有微任务完成后刷新，
-   * 从而将同一 tick 内 for-await 循环产生的多条消息自动合并。
+   * 将消息放入缓冲区并调度刷新。
+   * chunk/终结事件可立即 flush；非热路径事件仍可用 setTimeout(0) 合并同 tick 更新。
    */
   private enqueue(
     type: string,
@@ -252,61 +477,92 @@ export class StreamChunkProcessor {
       createdAt
     };
 
-    // 修改原因：并非所有事件都应该走 0ms 兜底刷新；chunk 热路径需要由 50ms 节流窗口统一合并。
-    // 修改方式：默认保留非 chunk 事件的既有下一轮刷新语义，但允许 chunk 关闭该兜底。
-    // 修改目的：不牺牲错误、完成、状态类事件的及时性，同时让高频文本增量真正批量化。
-    const appendTask = this.appendQueue.then(async () => {
-      if (options.flushBeforeAppend) {
+    if (options.flushBeforeAppend) {
+      this.flush();
+    }
+
+    const runtimeLedger = chatStreamRuntimeLedgerBridge.createTransportProjection(input, { accepted: true });
+    this.messageBuffer.push(this.createTransportMessage(type, data, runtime, runtimeLedger, createdAt));
+
+    if (options.flushAfterAppend) {
+      this.flush();
+    } else if (options.scheduleImmediateFlush !== false && this.flushTimer === null) {
+      this.flushTimer = setTimeout(() => {
+        this.flushTimer = null;
         this.flush();
-      }
+      }, 0);
+    }
 
-      let appendResult: ChatRuntimeLedgerAppendResult;
-      try {
-        appendResult = await chatStreamRuntimeLedgerBridge.appendStreamEvent(input);
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        appendResult = {
-          accepted: false,
-          diagnostics: [`append_failed:${type}:${message}`]
-        };
-        console.error('[StreamChunkProcessor] Runtime Ledger append failed:', error);
-      }
+    this.enqueueRuntimeLedgerAppend(input, type);
+  }
 
-      const runtimeLedger = chatStreamRuntimeLedgerBridge.createTransportProjection(input, appendResult);
-      this.messageBuffer.push({
-        conversationId: this.conversationId,
-        streamId: this.streamId,
-        type,
-        runtime,
-        runtimeLedger,
-        ...data,
-        createdAt
+  private enqueueRuntimeLedgerAppend(input: {
+    conversationId: string;
+    streamId: string;
+    type: string;
+    data: Record<string, any>;
+    createdAt: number;
+  }, type: string): void {
+    const appendTask = this.appendQueue
+      .catch(() => undefined)
+      .then(async () => {
+        let appendResult: ChatRuntimeLedgerAppendResult;
+        try {
+          appendResult = await chatStreamRuntimeLedgerBridge.appendStreamEvent(input);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          appendResult = {
+            accepted: false,
+            diagnostics: [`append_failed:${type}:${message}`]
+          };
+          console.error('[StreamChunkProcessor] Runtime Ledger append failed:', error);
+        }
+        if (!appendResult.accepted) {
+          console.warn('[StreamChunkProcessor] Runtime Ledger append rejected:', appendResult.diagnostics);
+        }
       });
-
-      if (options.flushAfterAppend) {
-        this.flush();
-        return;
-      }
-
-      if (options.scheduleThrottledFlush) {
-        this.scheduleThrottledFlush();
-        return;
-      }
-
-      if (options.scheduleImmediateFlush === false) {
-        return;
-      }
-
-      if (this.flushTimer === null) {
-        this.flushTimer = setTimeout(() => {
-          this.flushTimer = null;
-          this.flush();
-        }, 0);
-      }
-    });
 
     this.appendQueue = appendTask.catch(error => {
       console.error('[StreamChunkProcessor] Runtime Ledger append queue failed:', error);
     });
+  }
+
+  private createTransportMessage(
+    type: string,
+    data: Record<string, any>,
+    runtime: ReturnType<typeof chatStreamRuntimeLedgerBridge.getRuntimeIdentity>,
+    runtimeLedger: ReturnType<typeof chatStreamRuntimeLedgerBridge.createTransportProjection>,
+    createdAt: number
+  ): Record<string, any> {
+    const message: Record<string, any> = {
+      conversationId: this.conversationId,
+      streamId: this.streamId,
+      type,
+      runtime,
+      runtimeLedger,
+      createdAt
+    };
+
+    // Keep only small non-content auxiliary fields on the transport envelope.
+    // Large content/tool/terminal payloads must be read from Runtime Ledger projection.
+    if (Array.isArray(data.checkpoints)) {
+      message.checkpoints = data.checkpoints;
+    }
+    if (type === 'autoSummaryStatus') {
+      message.autoSummaryStatus = true;
+      message.status = data.status;
+      message.message = data.message;
+    }
+    if (type === 'autoSummary') {
+      message.autoSummary = true;
+      message.summaryContent = data.summaryContent;
+      message.insertIndex = data.insertIndex;
+    }
+    if (type === 'contextCommand') {
+      message.contextCommand = true;
+      message.payload = data.payload;
+    }
+
+    return message;
   }
 }

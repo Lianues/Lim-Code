@@ -2693,6 +2693,7 @@ export interface LanguageMessages {
                     terminate: string;
                     terminateTooltip: string;
                     copyOutput: string;
+                    loadFullOutput: string;
                     copied: string;
                     output: string;
                     truncatedInfo: string;

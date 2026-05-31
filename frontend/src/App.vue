@@ -18,7 +18,7 @@ import { useChatStore, useSettingsStore, useTerminalStore } from './stores'
 import { useAttachments } from './composables'
 import { useI18n, setLanguage } from './i18n'
 import { copyToClipboard } from './utils'
-import { sendToExtension, onMessageFromExtension } from './utils/vscode'
+import { registerWebviewVisibilityReporter, sendToExtension, onExtensionMessageType } from './utils/vscode'
 import type { Attachment, Message, StreamChunk } from './types'
 import { configureSoundSettings } from './services/soundCues'
 import { handleSoundEvent, registerGlobalAudioUnlockHooks, registerVisibilityChangeHooks } from './services/soundEventController'
@@ -73,6 +73,7 @@ const lastRetryAttempt = ref(-1)
 let disposeMessageListener: (() => void) | null = null
 let disposeAudioUnlockHooks: (() => void) | null = null
 let disposeVisibilityHooks: (() => void) | null = null
+let disposeBackendVisibilityHooks: (() => void) | null = null
 let agentStopNotificationController: AgentStopNotificationController | null = null
 
 /**
@@ -95,8 +96,11 @@ function dispatchConversationCue(
 }
 
 function handleSoundForToolStatus(chunk: StreamChunk): void {
-  if (!chunk.toolStatus || !chunk.tool) return
-  const tool = chunk.tool
+  if (chunk.type !== 'toolStatus') return
+  const toolSnapshots = chunk.runtimeLedger?.ledger?.toolSnapshotsByInvocationId
+  if (!toolSnapshots) return
+  const tool = Object.values(toolSnapshots).find(snapshot => snapshot.status === 'success')
+  if (!tool) return
   if (tool.status !== 'success') return
 
   // 去重：同一个 tool id 只播放一次
@@ -397,6 +401,7 @@ onMounted(async () => {
   
   // Notify the extension that the webview is ready to receive command messages.
   sendToExtension('webviewReady', {}).catch(() => {})
+  disposeBackendVisibilityHooks = registerWebviewVisibilityReporter('main-chat')
   
   // 初始化终端 store（监听终端输出事件）
   terminalStore.initialize()
@@ -413,8 +418,8 @@ onMounted(async () => {
   })
   
   // 立即注册命令监听器，确保在初始化期间也能响应用户操作
-  disposeMessageListener = onMessageFromExtension((message: any) => {
-    if (message.type === 'command') {
+  const disposers = [
+    onExtensionMessageType('command', (message: any) => {
       switch (message.command) {
         case 'newChat':
           handleNewChat()
@@ -426,25 +431,24 @@ onMounted(async () => {
           handleShowSettings()
           break
       }
-    }
-
+    }, 'App.command'),
     // 任务事件声音提醒（TaskManager 异步任务：终端执行、图片生成等）
-    if (message.type === 'taskEvent') {
+    onExtensionMessageType('taskEvent', (message: any) => {
       const event = message.data
       if (event?.type === 'complete') {
         dispatchConversationCue('taskComplete', 'taskEvent', undefined, event?.createdAt)
       } else if (event?.type === 'error') {
         dispatchConversationCue('taskError', 'taskEvent', undefined, event?.createdAt)
       }
-    }
-
+    }, 'App.taskSound'),
     // 流式 chunk 声音提醒（LLM 完成、工具完成等）
-    if (message.type === 'streamChunk') {
+    onExtensionMessageType('streamChunk', (message: any) => {
       const chunk = message.data as StreamChunk
       if (chunk && shouldHandleSoundForStreamChunk(chunk)) {
         handleSoundForStreamChunk(chunk)
       }
-    } else if (message.type === 'streamChunkBatch') {
+    }, 'App.streamSound'),
+    onExtensionMessageType('streamChunkBatch', (message: any) => {
       const chunks = message.data as StreamChunk[]
       if (Array.isArray(chunks)) {
         for (const chunk of chunks) {
@@ -453,10 +457,9 @@ onMounted(async () => {
           }
         }
       }
-    }
-
+    }, 'App.streamBatchSound'),
     // 重试警告声音提醒
-    if (message.type === 'retryStatus') {
+    onExtensionMessageType('retryStatus', (message: any) => {
       const status = message.data
       if (status?.type === 'retrying') {
         const attempt = typeof status.attempt === 'number' ? status.attempt : -1
@@ -469,14 +472,17 @@ onMounted(async () => {
         // retrySuccess / retryFailed -> 重置 attempt 去重计数
         lastRetryAttempt.value = -1
       }
-    }
-  })
+    }, 'App.retrySound')
+  ]
+  disposeMessageListener = () => disposers.forEach(dispose => dispose())
   
   // 异步初始化 chatStore（加载历史对话等）
   chatStore.initialize()
 })
 
 onBeforeUnmount(() => {
+  chatStore.dispose()
+  terminalStore.dispose()
   disposeMessageListener?.()
   disposeMessageListener = null
 
@@ -485,6 +491,9 @@ onBeforeUnmount(() => {
 
   disposeVisibilityHooks?.()
   disposeVisibilityHooks = null
+
+  disposeBackendVisibilityHooks?.()
+  disposeBackendVisibilityHooks = null
 
   agentStopNotificationController?.dispose()
   agentStopNotificationController = null

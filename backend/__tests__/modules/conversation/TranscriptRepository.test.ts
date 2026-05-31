@@ -30,6 +30,26 @@ function createFunctionResponseContent(id: string, index?: number): Content {
 }
 
 describe('TranscriptRepository', () => {
+    it('retries history reads when missing-then-create races with an existing conversation', async () => {
+        class RacingCreateStorage extends MemoryStorageAdapter {
+            private missed = false;
+
+            async loadHistoryWithStatus(conversationId: string) {
+                if (conversationId === 'repo-stop-race-main' && !this.missed) {
+                    this.missed = true;
+                    return { value: null, errorCode: 'not_found' as const };
+                }
+                return super.loadHistoryWithStatus(conversationId);
+            }
+        }
+
+        const storage = new RacingCreateStorage();
+        const manager = new ConversationManager(storage);
+        await storage.saveHistory('repo-stop-race-main', []);
+
+        await expect(manager.getHistory('repo-stop-race-main')).resolves.toEqual([]);
+    });
+
     it('appends content through ConversationManager repository without changing transcript shape', async () => {
         const storage = new MemoryStorageAdapter();
         const manager = new ConversationManager(storage);

@@ -59,6 +59,13 @@ export function createTailRunWindowRequestOptions(limit: number): RunContentWind
   }
 }
 
+export function createLatestRunWindowRequestOptions(limit: number): RunContentWindowRequestOptions {
+  // 修改原因：历史窗口被上限裁剪后可能保留 hasMoreAfter，刷新应保持历史阅读位置，但用户仍需要显式回到实时尾部。
+  // 修改方式：为“跳到最新”提供独立的 tail request 构造器，不复用 range-preserving refresh。
+  // 修改目的：保持 live-tail / historical-window 分离，同时避免历史 cap 让 Monitor 变成单向窗口。
+  return createTailRunWindowRequestOptions(limit)
+}
+
 export function createPreviousRunWindowRequestOptions(
   current: SubAgentRunContentWindowState,
   limit: number
@@ -123,6 +130,36 @@ export function prependRunContentWindow(
     eventSequence: Math.max(sequenceOf(current), sequenceOf(older)),
     hasMoreBefore: older.hasMoreBefore,
     hasMoreAfter: current.hasMoreAfter || older.hasMoreAfter
+  }
+}
+
+export function capRunContentWindow(
+  window: SubAgentRunContentWindowState | undefined,
+  maxContents: number,
+  anchor: 'start' | 'tail' = 'tail'
+): SubAgentRunContentWindowState | undefined {
+  if (!window) return window
+  const limit = Math.max(1, Math.floor(maxContents))
+  const contents = window.contents || []
+  if (contents.length <= limit) return window
+
+  if (anchor === 'start') {
+    const retained = contents.slice(0, limit)
+    return {
+      ...window,
+      contents: retained,
+      endIndex: window.startIndex + retained.length,
+      hasMoreAfter: true
+    }
+  }
+
+  const retained = contents.slice(contents.length - limit)
+  const startIndex = Math.max(0, window.endIndex - retained.length)
+  return {
+    ...window,
+    contents: retained,
+    startIndex,
+    hasMoreBefore: true
   }
 }
 

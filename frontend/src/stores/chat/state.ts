@@ -2,7 +2,7 @@
  * Chat Store 状态定义
  */
 
-import { ref } from 'vue'
+import { ref, triggerRef, type Ref } from 'vue'
 import type { Message, ErrorInfo } from '../../types'
 import type { CheckpointRecord } from '../../types'
 import type { Attachment } from '../../types'
@@ -20,9 +20,21 @@ import type {
   ConversationSessionSnapshot,
   QueuedMessage
 } from './types'
+import {
+  estimateMapJsonBytes,
+  frontendCacheLifecycleGovernor,
+  pruneMapToMaxEntries
+} from '../../utils/cacheLifecycleGovernor'
 
 export type MessageIndexState = Pick<ChatStoreState, 'allMessages' | 'messageIndexById'>
 export type MessageIndexLookupState = Pick<ChatStoreState, 'allMessages'> & Partial<Pick<ChatStoreState, 'messageIndexById'>>
+
+const CHAT_CACHE_LIMITS = {
+  sessionSnapshotsMaxEntries: 12,
+  backgroundBuffersMaxConversations: 8,
+  backgroundBuffersMaxChunksPerConversation: 200,
+  toolResponseMaxEntries: 1000
+}
 
 function hasMessageIndexState(state: MessageIndexLookupState): state is MessageIndexState {
   return state.messageIndexById?.value instanceof Map
@@ -164,6 +176,82 @@ export function getMessageIndexById(state: MessageIndexLookupState, messageId: s
   // 走到恢复分支说明当前 Map 对本次查询不可信；重建整表，避免只修单 key 留下陈旧下标。
   rebuildMessageIndexById(state)
   return state.messageIndexById.value.get(messageId) ?? recoveredIndex
+}
+
+function pruneBackgroundStreamBuffers(buffers: Map<string, StreamChunk[]>): number {
+  let removed = 0
+
+  while (buffers.size > CHAT_CACHE_LIMITS.backgroundBuffersMaxConversations) {
+    const next = buffers.keys().next()
+    if (next.done) break
+    const chunks = buffers.get(next.value)
+    removed += Array.isArray(chunks) ? chunks.length : 1
+    buffers.delete(next.value)
+  }
+
+  for (const chunks of buffers.values()) {
+    if (chunks.length > CHAT_CACHE_LIMITS.backgroundBuffersMaxChunksPerConversation) {
+      const removeCount = chunks.length - CHAT_CACHE_LIMITS.backgroundBuffersMaxChunksPerConversation
+      chunks.splice(0, removeCount)
+      removed += removeCount
+    }
+  }
+
+  return removed
+}
+
+function registerChatStateCaches(
+  sessionSnapshots: Ref<Map<string, ConversationSessionSnapshot>>,
+  backgroundStreamBuffers: Ref<Map<string, StreamChunk[]>>,
+  toolResponseCache: Ref<Map<string, Record<string, unknown>>>
+): void {
+  frontendCacheLifecycleGovernor.register({
+    id: 'chat.sessionSnapshots',
+    owner: 'chatStore',
+    scope: 'tab',
+    maxEntries: CHAT_CACHE_LIMITS.sessionSnapshotsMaxEntries,
+    getEntryCount: () => sessionSnapshots.value.size,
+    estimateBytes: () => estimateMapJsonBytes(sessionSnapshots.value),
+    prune: context => {
+      const removed = pruneMapToMaxEntries(
+        sessionSnapshots.value,
+        context.maxEntries ?? CHAT_CACHE_LIMITS.sessionSnapshotsMaxEntries
+      )
+      if (removed > 0) triggerRef(sessionSnapshots)
+      return removed
+    }
+  })
+
+  frontendCacheLifecycleGovernor.register({
+    id: 'chat.backgroundStreamBuffers',
+    owner: 'chatStore',
+    scope: 'conversation',
+    maxEntries: CHAT_CACHE_LIMITS.backgroundBuffersMaxConversations,
+    getEntryCount: () => backgroundStreamBuffers.value.size,
+    estimateBytes: () => estimateMapJsonBytes(backgroundStreamBuffers.value),
+    prune: () => {
+      const removed = pruneBackgroundStreamBuffers(backgroundStreamBuffers.value)
+      if (removed > 0) triggerRef(backgroundStreamBuffers)
+      return removed
+    }
+  })
+
+  frontendCacheLifecycleGovernor.register({
+    id: 'chat.toolResponseCache',
+    owner: 'chatStore',
+    scope: 'conversation-window',
+    maxEntries: CHAT_CACHE_LIMITS.toolResponseMaxEntries,
+    getEntryCount: () => toolResponseCache.value.size,
+    estimateBytes: () => estimateMapJsonBytes(toolResponseCache.value),
+    prune: context => {
+      const removed = pruneMapToMaxEntries(
+        toolResponseCache.value,
+        context.maxEntries ?? CHAT_CACHE_LIMITS.toolResponseMaxEntries
+      )
+      if (removed > 0) triggerRef(toolResponseCache)
+      return removed
+    }
+  })
 }
 
 /**
@@ -315,6 +403,8 @@ export function createChatState(): ChatStoreState {
 
   /** 工具响应缓存：toolCallId -> response，避免 O(M) 线性扫描 */
   const toolResponseCache = ref<Map<string, Record<string, unknown>>>(new Map())
+
+  registerChatStateCaches(sessionSnapshots, backgroundStreamBuffers, toolResponseCache)
 
   return {
     conversations,

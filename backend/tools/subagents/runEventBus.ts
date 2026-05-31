@@ -282,6 +282,7 @@ class SubAgentRunEventBus {
     private readonly stores = new Map<string, SubAgentRunConversationStore>();
     private readonly persistQueues = new Map<string, Promise<void>>();
     private readonly runtimeLedgerAppendQueues = new Map<string, Promise<void>>();
+    private readonly runtimeLedgerBackfillQueues = new Map<string, Promise<void>>();
 
     createRun(
         runId: string,
@@ -580,17 +581,24 @@ class SubAgentRunEventBus {
         runId: string,
         options: SubAgentRunMonitorProjectionOptions = {}
     ): Promise<SubAgentRuntimeLedgerMonitorProjection> {
-        await this.flushRuntimeLedgerEvents(runId);
         const snapshot = this.snapshots.get(runId);
-        if (snapshot) {
+        const includeContentWindow = options.includeContentWindow !== false;
+        const sourceWindow = includeContentWindow ? this.getContentWindow(runId, options) : undefined;
+        const canRenderFromSourceWindow = includeContentWindow && !!sourceWindow;
+
+        if (canRenderFromSourceWindow && snapshot) {
+            this.scheduleRuntimeLedgerContentWindowBackfill(snapshot);
+        } else {
+            await this.flushRuntimeLedgerEvents(runId);
             try {
-                await subAgentRuntimeLedgerBridge.ensureContentWindowForSnapshot(snapshot);
+                if (snapshot) {
+                    await subAgentRuntimeLedgerBridge.ensureContentWindowForSnapshot(snapshot);
+                }
             } catch (error) {
                 console.warn('[SubAgentRunEventBus] Runtime Ledger content window projection failed:', error);
             }
         }
-        const includeContentWindow = options.includeContentWindow !== false;
-        const sourceWindow = includeContentWindow ? this.getContentWindow(runId, options) : undefined;
+
         const ledgerSnapshot = await subAgentRuntimeLedgerBridge.getPartialSnapshotForRun(runId);
         const ledgerEventSequence = ledgerSnapshot.coverage?.eventSequence;
         const ledgerContentRevision = ledgerSnapshot.coverage?.contentRevision;
@@ -599,7 +607,7 @@ class SubAgentRunEventBus {
         const ledgerContentWindowRaw = includeContentWindow
             ? await subAgentRuntimeLedgerBridge.getContentWindowForRun(runId, options)
             : undefined;
-        const ledgerContentWindow = ledgerContentWindowRaw
+        const runtimeLedgerContentWindow = ledgerContentWindowRaw
             ? {
                 ...ledgerContentWindowRaw,
                 // 修改原因：内容窗口的正文覆盖点和 run 最新事件序列不是同一概念；run_completed 等非内容事件会推进最新序列。
@@ -608,6 +616,26 @@ class SubAgentRunEventBus {
                 eventSequence: ledgerEventSequence
             }
             : undefined;
+        const preferSourceWindow = !!sourceWindow && (
+            !runtimeLedgerContentWindow
+            || runtimeLedgerContentWindow.contentRevision !== sourceWindow.contentRevision
+            || runtimeLedgerContentWindow.totalCount !== sourceWindow.totalCount
+            || runtimeLedgerContentWindow.startIndex !== sourceWindow.startIndex
+            || runtimeLedgerContentWindow.endIndex !== sourceWindow.endIndex
+        );
+        const projectedSourceWindow = preferSourceWindow && sourceWindow && snapshot
+            ? subAgentRuntimeLedgerBridge.projectSourceContentWindow(snapshot, options)
+            : preferSourceWindow && sourceWindow
+                ? { ...sourceWindow, source: 'source-window' }
+                : undefined;
+        const ledgerContentWindow = preferSourceWindow && projectedSourceWindow
+            ? {
+                ...projectedSourceWindow,
+                contentCoveredEventSequence: runtimeLedgerContentWindow?.contentCoveredEventSequence,
+                partialCoveredEventSequence: runtimeLedgerContentWindow?.partialCoveredEventSequence,
+                source: runtimeLedgerContentWindow ? 'event-bus-window' : 'source-window'
+            }
+            : runtimeLedgerContentWindow;
         const ledgerContentCount = includeContentWindow ? ledgerContentWindow?.totalCount : undefined;
         const contentMismatches: string[] = [];
         const diagnosticMismatches: string[] = [];
@@ -620,7 +648,7 @@ class SubAgentRunEventBus {
         if (includeContentWindow) {
             if (!ledgerContentWindow) {
                 contentMismatches.push('contentWindow:missing');
-            } else {
+            } else if (runtimeLedgerContentWindow) {
                 if (ledgerContentRevision !== ledgerContentWindow.contentRevision) {
                     contentMismatches.push(`contentRevision:${ledgerContentWindow.contentRevision}->${ledgerContentRevision ?? 'missing'}`);
                 }
@@ -641,6 +669,8 @@ class SubAgentRunEventBus {
                 ) {
                     contentMismatches.push(`partialCoveredEventSequence:${ledgerContentWindow.partialCoveredEventSequence}->eventSequence:${ledgerEventSequence}`);
                 }
+            } else {
+                diagnosticMismatches.push('runtimeLedgerContentWindow:pending');
             }
 
             if (sourceWindow) {
@@ -655,15 +685,15 @@ class SubAgentRunEventBus {
                 } else if (ledgerContentCount !== undefined && ledgerContentCount !== sourceWindow.totalCount) {
                     diagnosticMismatches.push(`sourceContentCount:${sourceWindow.totalCount}->${ledgerContentCount}`);
                 }
-                if (ledgerContentWindow) {
-                    if (ledgerContentWindow.startIndex !== sourceWindow.startIndex || ledgerContentWindow.endIndex !== sourceWindow.endIndex) {
-                        diagnosticMismatches.push(`sourceContentWindowRange:${sourceWindow.startIndex}-${sourceWindow.endIndex}->${ledgerContentWindow.startIndex}-${ledgerContentWindow.endIndex}`);
+                if (runtimeLedgerContentWindow) {
+                    if (runtimeLedgerContentWindow.startIndex !== sourceWindow.startIndex || runtimeLedgerContentWindow.endIndex !== sourceWindow.endIndex) {
+                        diagnosticMismatches.push(`sourceContentWindowRange:${sourceWindow.startIndex}-${sourceWindow.endIndex}->${runtimeLedgerContentWindow.startIndex}-${runtimeLedgerContentWindow.endIndex}`);
                     }
-                    if (ledgerContentWindow.contentRevision !== sourceWindow.contentRevision) {
-                        diagnosticMismatches.push(`sourceContentWindowRevision:${sourceWindow.contentRevision}->${ledgerContentWindow.contentRevision ?? 'missing'}`);
+                    if (runtimeLedgerContentWindow.contentRevision !== sourceWindow.contentRevision) {
+                        diagnosticMismatches.push(`sourceContentWindowRevision:${sourceWindow.contentRevision}->${runtimeLedgerContentWindow.contentRevision ?? 'missing'}`);
                     }
-                    if (ledgerContentWindow.eventSequence !== sourceWindow.eventSequence) {
-                        diagnosticMismatches.push(`sourceContentWindowSequence:${sourceWindow.eventSequence}->${ledgerContentWindow.eventSequence ?? 'missing'}`);
+                    if (runtimeLedgerContentWindow.eventSequence !== sourceWindow.eventSequence) {
+                        diagnosticMismatches.push(`sourceContentWindowSequence:${sourceWindow.eventSequence}->${runtimeLedgerContentWindow.eventSequence ?? 'missing'}`);
                     }
                 }
             }
@@ -671,14 +701,18 @@ class SubAgentRunEventBus {
 
         const mismatches = [...contentMismatches, ...diagnosticMismatches];
         const renderable = includeContentWindow
-            ? !!ledgerContentWindow && contentMismatches.length === 0
+            ? !!ledgerContentWindow
             : true;
+        const status = mismatches.length === 0 && renderable ? 'ok' : 'degraded';
 
         return {
             runId,
-            status: renderable ? 'ok' : 'degraded',
+            status,
             mismatches,
             health: {
+                // 修改原因：Monitor 前端的可渲染窗口和 Runtime Ledger coverage 诊断不能共用一个熔断条件。
+                // 修改方式：只在 contentWindow 缺失时进入 recovering；窗口存在但 revision/coverage 有诊断时仍允许渲染。
+                // 修改目的：避免有 bounded window 时 UI 因诊断漂移卡在 Recovering，数据更新路径仍通过 mismatches 暴露问题。
                 content: renderable ? 'ok' : 'recovering',
                 replay: ledgerSnapshot.truncated ? 'truncated' : 'ok',
                 projection: ledgerSnapshot.projection.status === 'degraded' ? 'diagnostic' : 'ok',
@@ -728,7 +762,6 @@ class SubAgentRunEventBus {
             };
             this.snapshots.set(record.runId, snapshot);
             this.stores.set(record.runId, store);
-            await subAgentRuntimeLedgerBridge.ensureContentWindowForSnapshot(snapshot);
             snapshots.push(snapshot);
         }
 
@@ -790,6 +823,32 @@ class SubAgentRunEventBus {
         const pending = this.runtimeLedgerAppendQueues.get(runId);
         if (!pending) return;
         await pending.catch(() => undefined);
+    }
+
+    async flushRuntimeLedgerBackfillsForTests(): Promise<void> {
+        await Promise.all(Array.from(this.runtimeLedgerBackfillQueues.values()).map(pending => pending.catch(() => undefined)));
+    }
+
+    private scheduleRuntimeLedgerContentWindowBackfill(snapshot: SubAgentRunSnapshot): void {
+        const runId = snapshot.runId;
+        if (this.runtimeLedgerBackfillQueues.has(runId)) {
+            return;
+        }
+
+        const snapshotForBackfill = cloneRuntimeLedgerSnapshot(snapshot);
+        let job: Promise<void>;
+        job = new Promise<void>(resolve => setImmediate(resolve))
+            .then(() => this.flushRuntimeLedgerEvents(runId))
+            .then(() => subAgentRuntimeLedgerBridge.ensureContentWindowForSnapshot(snapshotForBackfill))
+            .catch(error => {
+                console.warn('[SubAgentRunEventBus] Runtime Ledger content window backfill failed:', error);
+            })
+            .finally(() => {
+                if (this.runtimeLedgerBackfillQueues.get(runId) === job) {
+                    this.runtimeLedgerBackfillQueues.delete(runId);
+                }
+            });
+        this.runtimeLedgerBackfillQueues.set(runId, job);
     }
 
     private appendRuntimeLedgerEvent(event: SubAgentRunEvent, snapshot: SubAgentRunSnapshot): void {

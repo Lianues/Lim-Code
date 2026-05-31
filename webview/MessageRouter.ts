@@ -10,7 +10,7 @@ import { StreamRequestHandler, StreamAbortManager } from './stream';
 import type { ChatHandler } from '../backend/modules/api/chat';
 import type { ConversationManager } from '../backend/modules/conversation/ConversationManager';
 import type { SettingsManager } from '../backend/modules/settings/SettingsManager';
-import { WebviewClientRegistry, type WebviewClientId, type WebviewClientRegistration } from './runtime/WebviewClientRegistry';
+import { WEBVIEW_CLIENT_IDS, WebviewClientRegistry, type WebviewClientId, type WebviewClientRegistration } from './runtime/WebviewClientRegistry';
 import type * as vscode from 'vscode';
 
 /**
@@ -56,6 +56,7 @@ export class MessageRouter {
       abortManager: this.abortManager,
       conversationManager: this.conversationManager,
       getView: this.getView,
+      isMainChatVisible: () => this.clientRegistry.isVisible(WEBVIEW_CLIENT_IDS.mainChat),
       sendResponse: (requestId, data) => this.sendRoutedResponse(requestId, data),
       sendError: (requestId, code, message) => this.sendRoutedError(requestId, code, message),
       settingsManager: this.settingsManager
@@ -191,6 +192,10 @@ export class MessageRouter {
    */
   cancelAllStreams(): void {
     this.streamHandler.cancelAllStreams().catch(console.error);
+  }
+
+  flushHiddenStreamTransports(): void {
+    this.streamHandler.flushHiddenStreamTransports();
   }
 
   /**

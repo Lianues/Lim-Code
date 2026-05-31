@@ -1,5 +1,10 @@
 ﻿import { subAgentRunEventBus } from '../../tools/subagents/runEventBus';
 import { subAgentRuntimeLedgerBridge } from '../../tools/subagents/runtimeLedgerBridge';
+import {
+  SUBAGENT_RUNS_METADATA_KEY,
+  type SubAgentRunConversationStore,
+  type SubAgentRunPersistedRecord
+} from '../../tools/subagents/runEventBus';
 import type { Content } from '../../modules/conversation/types';
 
 function createContent(text: string): Content {
@@ -46,7 +51,8 @@ function flushRuntimeLedger(): Promise<void> {
 describe('SubAgent Runtime Ledger bridge', () => {
   const runIds: string[] = [];
 
-  afterEach(() => {
+  afterEach(async () => {
+    await (subAgentRunEventBus as any).flushRuntimeLedgerBackfillsForTests?.();
     const snapshots = (subAgentRunEventBus as any).snapshots as Map<string, unknown> | undefined;
     const stores = (subAgentRunEventBus as any).stores as Map<string, unknown> | undefined;
     for (const runId of runIds.splice(0)) {
@@ -274,6 +280,50 @@ describe('SubAgent Runtime Ledger bridge', () => {
     expect(JSON.stringify(events)).not.toContain('ledger projected text');
   });
 
+  it('restores persisted snapshots without eagerly materializing Runtime Ledger content windows', async () => {
+    const runId = 'ledger-run-lazy-restore';
+    runIds.push(runId);
+    const record: SubAgentRunPersistedRecord = {
+      runId,
+      agentName: 'Ledger Agent',
+      status: 'completed',
+      createdAt: 1000,
+      updatedAt: 2000,
+      contents: [createContent('persisted restore text')],
+      contentRevision: 7,
+      eventSequence: 9
+    };
+    const store: SubAgentRunConversationStore = {
+      getCustomMetadata: jest.fn(async (_conversationId: string, key: string) => {
+        expect(key).toBe(SUBAGENT_RUNS_METADATA_KEY);
+        return { [runId]: record };
+      }),
+      setCustomMetadata: jest.fn()
+    };
+    const ensureSpy = jest.spyOn(subAgentRuntimeLedgerBridge, 'ensureContentWindowForSnapshot');
+
+    try {
+      const snapshots = await subAgentRunEventBus.loadConversationSnapshots('conversation-lazy-restore', store);
+
+      expect(snapshots).toHaveLength(1);
+      expect(snapshots[0]).toMatchObject({
+        runId,
+        conversationId: 'conversation-lazy-restore',
+        contentRevision: 7,
+        eventSequence: 9
+      });
+      expect(subAgentRunEventBus.getManifest(runId)).toMatchObject({
+        runId,
+        contentCount: 1,
+        contentRevision: 7,
+        eventSequence: 9
+      });
+      expect(ensureSpy).not.toHaveBeenCalled();
+    } finally {
+      ensureSpy.mockRestore();
+    }
+  });
+
   it('reports Monitor projection when source window metadata matches the ledger snapshot', async () => {
     runIds.push('ledger-run-projection');
     subAgentRunEventBus.createRun('ledger-run-projection', 'Ledger Agent', undefined, {
@@ -321,6 +371,73 @@ describe('SubAgent Runtime Ledger bridge', () => {
     });
   });
 
+  it('returns source content immediately while Runtime Ledger window backfill is pending', async () => {
+    runIds.push('ledger-run-source-window-pending');
+    subAgentRunEventBus.createRun('ledger-run-source-window-pending', 'Ledger Agent', undefined, {
+      conversationId: 'conversation-ledger-source-window-pending'
+    });
+    subAgentRunEventBus.appendContent('ledger-run-source-window-pending', createContent('source window text'));
+
+    await flushRuntimeLedger();
+    subAgentRuntimeLedgerBridge.resetForTests();
+
+    const projection = await (subAgentRunEventBus as any).getRuntimeLedgerMonitorProjection('ledger-run-source-window-pending', {
+      limit: 1,
+      fromTail: true
+    });
+
+    expect(projection.status).toBe('degraded');
+    expect(projection.mismatches).toContain('runtimeLedgerContentWindow:pending');
+    expect(projection.health).toMatchObject({
+      content: 'ok',
+      renderable: true
+    });
+    expect(projection.ledger.contentWindow).toMatchObject({
+      runId: 'ledger-run-source-window-pending',
+      totalCount: 1,
+      contentRevision: 1,
+      eventSequence: 2,
+      source: 'source-window'
+    });
+    expect(projection.ledger.contentWindow.contents[0].parts[0].text).toBe('source window text');
+  });
+
+  it('keeps an available content window renderable when coverage diagnostics drift', async () => {
+    runIds.push('ledger-run-projection-diagnostic');
+    subAgentRunEventBus.createRun('ledger-run-projection-diagnostic', 'Ledger Agent', undefined, {
+      conversationId: 'conversation-ledger-projection-diagnostic'
+    });
+    subAgentRunEventBus.appendContent('ledger-run-projection-diagnostic', createContent('diagnostic render text'));
+
+    await flushRuntimeLedger();
+
+    const actualSnapshot = await subAgentRuntimeLedgerBridge.getPartialSnapshotForRun('ledger-run-projection-diagnostic');
+    const snapshotSpy = jest.spyOn(subAgentRuntimeLedgerBridge, 'getPartialSnapshotForRun').mockResolvedValue({
+      ...actualSnapshot,
+      coverage: {
+        ...actualSnapshot.coverage,
+        contentRevision: (actualSnapshot.coverage?.contentRevision || 0) + 1
+      }
+    } as any);
+
+    try {
+      const projection = await (subAgentRunEventBus as any).getRuntimeLedgerMonitorProjection('ledger-run-projection-diagnostic', {
+        limit: 1,
+        fromTail: true
+      });
+
+      expect(projection.status).toBe('degraded');
+      expect(projection.mismatches).toContain('contentRevision:1->2');
+      expect(projection.health).toMatchObject({
+        content: 'ok',
+        renderable: true
+      });
+      expect(projection.ledger.contentWindow.contents[0].parts[0].text).toBe('diagnostic render text');
+    } finally {
+      snapshotSpy.mockRestore();
+    }
+  });
+
   it('reports degraded Monitor projection instead of guessing when ledger coverage is unavailable', async () => {
     runIds.push('ledger-run-projection-missing');
     subAgentRunEventBus.createRun('ledger-run-projection-missing', 'Ledger Agent', undefined, {
@@ -339,13 +456,23 @@ describe('SubAgent Runtime Ledger bridge', () => {
 
       expect(projection.status).toBe('degraded');
       expect(projection.mismatches).toEqual([
-        'contentWindow:missing',
+        'runtimeLedgerContentWindow:pending',
         'sourceContentRevision:1->missing',
-        'sourceEventSequence:2->missing',
-        'sourceContentCount:missing'
+        'sourceEventSequence:2->missing'
       ]);
+      expect(projection.health).toMatchObject({
+        content: 'ok',
+        renderable: true
+      });
       expect(projection.ledger).toMatchObject({
         projectionStatus: 'ok',
+        contentWindow: {
+          runId: 'ledger-run-projection-missing',
+          totalCount: 1,
+          contentRevision: 1,
+          eventSequence: 2,
+          source: 'source-window'
+        },
         truncated: false,
         eventCountsByType: {}
       });

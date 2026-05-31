@@ -9,6 +9,16 @@
  */
 export interface ContentPart {
   text?: string
+  textTruncated?: boolean
+  runtimeLedgerTextRef?: {
+    refId: string
+    runId: string
+    contentIndex: number
+    partIndex: number
+    byteLength: number
+    previewBytes: number
+    truncated: boolean
+  }
   inlineData?: {
     mimeType: string
     data: string  // Base64
@@ -536,7 +546,9 @@ export type VSCodeRequestType =
   | 'retry'
   | 'retryStream'
   | 'review.confirmPlanGeneration'
+  | 'runtimeLedger.getTerminalContentWindow'
   | 'saveImageToPath'
+  | 'subagents.monitor.getContentTextWindow'
   | 'savePromptMode'
   | 'searchWorkspaceFiles'
   | 'setCurrentPromptMode'
@@ -576,6 +588,7 @@ export type VSCodeRequestType =
   | 'task.getAll'
   | 'task.getByType'
   | 'terminal.getOutput'
+  | 'terminal.getOutputWindow'
   | 'terminal.kill'
   | 'toolConfirmation'
   | 'tools.checkShellAvailability'
@@ -613,6 +626,7 @@ export type VSCodeRequestType =
   | 'updateUISettings'
   | 'validateMcpServerId'
   | 'validatePinnedFile'
+  | 'webview.visibilityChanged'
   | 'webviewReady'
 
 export interface VSCodeRequest {
@@ -797,15 +811,59 @@ export interface StreamChunk {
         name?: string
         status: 'queued' | 'executing' | 'success' | 'error' | 'cancelled'
         args?: Record<string, unknown>
+        argsRef?: {
+          refId: string
+          kind: 'content' | 'toolResult' | 'pendingToolCalls' | 'toolArgs' | 'toolStatusResult' | 'liveDeltaContentSnapshot'
+          byteLength: number
+          previewBytes: number
+          truncated: boolean
+          createdAt: number
+        }
+        argsTruncated?: boolean
         result?: Record<string, unknown>
+        resultRef?: {
+          refId: string
+          kind: 'content' | 'toolResult' | 'pendingToolCalls' | 'toolArgs' | 'toolStatusResult' | 'liveDeltaContentSnapshot'
+          byteLength: number
+          previewBytes: number
+          truncated: boolean
+          createdAt: number
+        }
+        resultTruncated?: boolean
       }>
       terminalContent?: {
         type: 'toolsExecuting' | 'awaitingConfirmation' | 'toolIteration' | 'complete' | 'cancelled'
         messageId: string
         contentId: string
+        contentRef?: {
+          refId: string
+          kind: 'content' | 'toolResult' | 'pendingToolCalls' | 'toolArgs' | 'toolStatusResult' | 'liveDeltaContentSnapshot'
+          byteLength: number
+          previewBytes: number
+          truncated: boolean
+          createdAt: number
+        }
+        contentTruncated?: boolean
         content?: Content
         pendingToolCalls?: PendingToolCall[]
+        pendingToolCallsRef?: {
+          refId: string
+          kind: 'content' | 'toolResult' | 'pendingToolCalls' | 'toolArgs' | 'toolStatusResult' | 'liveDeltaContentSnapshot'
+          byteLength: number
+          previewBytes: number
+          truncated: boolean
+          createdAt: number
+        }
+        pendingToolCallsTruncated?: boolean
         toolResults?: ToolExecutionResult[]
+        toolResultRefsById?: Record<string, {
+          refId: string
+          kind: 'content' | 'toolResult' | 'pendingToolCalls' | 'toolArgs' | 'toolStatusResult' | 'liveDeltaContentSnapshot'
+          byteLength: number
+          previewBytes: number
+          truncated: boolean
+          createdAt: number
+        }>
         source?: string
       }
       terminalState?: {
@@ -818,22 +876,31 @@ export interface StreamChunk {
     }
   }
   streamId?: string
+  /** @deprecated Normal stream transport reads content deltas from runtimeLedger.ledger.liveDelta. */
   chunk?: BackendStreamChunk
+  /** @deprecated Normal terminal content transport reads content from runtimeLedger.ledger.terminalContent. */
   content?: Content
+  /** @deprecated Normal error transport reads error from runtimeLedger.ledger.terminalState. */
   error?: ErrorInfo
   /** 是否为工具迭代（工具调用后还有后续消息） */
+  /** @deprecated Event type is the transport discriminator; projection data lives under runtimeLedger. */
   toolIteration?: boolean
   /** 工具执行结果列表 */
+  /** @deprecated Normal tool result transport reads bound results from runtimeLedger.ledger.terminalContent. */
   toolResults?: ToolExecutionResult[]
   /** 创建的检查点列表 */
   checkpoints?: CheckpointRecord[]
   /** 等待确认的工具调用列表（当 type 为 'awaitingConfirmation' 时） */
+  /** @deprecated Normal pending-tool transport reads calls from runtimeLedger.ledger.terminalContent. */
   pendingToolCalls?: PendingToolCall[]
   /** 标记工具即将开始执行（用于在工具执行前先发送计时信息） */
+  /** @deprecated Event type is the transport discriminator; projection data lives under runtimeLedger. */
   toolsExecuting?: boolean
 
   /** 工具状态更新（用于实时排队推进） */
+  /** @deprecated Event type is the transport discriminator; projection data lives under runtimeLedger. */
   toolStatus?: boolean
+  /** @deprecated Normal tool status transport reads snapshots from runtimeLedger.ledger.toolSnapshotsByInvocationId. */
   tool?: {
     id: string
     name: string

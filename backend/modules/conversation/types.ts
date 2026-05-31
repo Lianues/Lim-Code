@@ -83,6 +83,18 @@ export interface ThoughtSignatures {
 export interface ContentPart {
     /** 文本内容 */
     text?: string;
+    /** 文本是否为 Runtime Ledger preview 截断内容 */
+    textTruncated?: boolean;
+    /** Runtime Ledger 文本 ref，用于按 ref/range 拉取完整 Monitor 内容 */
+    runtimeLedgerTextRef?: {
+        refId: string;
+        runId: string;
+        contentIndex: number;
+        partIndex: number;
+        byteLength: number;
+        previewBytes: number;
+        truncated: boolean;
+    };
     
     /**
      * 内联数据(Base64 编码)

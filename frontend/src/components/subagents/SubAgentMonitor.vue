@@ -2,11 +2,13 @@
 import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { CustomScrollbar } from '../common'
 import MessageItem from '../message/MessageItem.vue'
-import { contentToMessageEnhanced } from '@/stores/chat/parsers'
-import { onMessageFromExtension, sendToExtension } from '@/utils/vscode'
+import { onExtensionMessageType, registerWebviewVisibilityReporter, sendToExtension } from '@/utils/vscode'
+import { estimateJsonBytes, frontendCacheLifecycleGovernor } from '@/utils/cacheLifecycleGovernor'
 import { shouldApplyEventFocus } from './monitorFocusPolicy'
 import { compareMonitorRunsByStableCreationOrder } from './monitorRunOrdering'
 import {
+  capRunContentWindow,
+  createLatestRunWindowRequestOptions,
   createPreviousRunWindowRequestOptions,
   createRefreshRunWindowRequestOptions,
   createTailRunWindowRequestOptions,
@@ -18,21 +20,23 @@ import {
 import {
   DEFAULT_RUNTIME_LEDGER_LIVE_DELTA_BUFFER_LIMIT,
   applyRuntimeLedgerLiveDeltaToContents,
-  applyRuntimeLedgerToolProjection,
   describeRuntimeLedgerRecoveryState,
   enqueueRuntimeLedgerLiveDelta,
   getRuntimeLedgerContentWindow,
   getRuntimeLedgerLiveDelta,
   getRuntimeLedgerLiveDeltaRevision,
   getRuntimeLedgerLiveDeltaSequence,
-  hasRuntimeLedgerToolProjection,
   hasRenderableRuntimeLedgerLiveDelta,
   selectReplayableRuntimeLedgerLiveDeltas,
   type MonitorRuntimeLedgerLiveDelta,
   type MonitorRuntimeLedgerProjectionState
 } from './monitorRuntimeLedgerProjection'
 import { deriveMonitorSyncState } from './monitorSyncState'
-import type { Content, ContentPart, Message, ToolUsage } from '@/types'
+import {
+  getFunctionResponseMap,
+  MonitorMessageProjectionCache
+} from './monitorMessageProjectionCache'
+import type { Content, Message } from '@/types'
 
 // 修改原因：Monitor 需要区分暂停、等待用户处理和扩展重载中断，不能把它们都展示成失败。
 // 修改方式：与后端 SubAgentRunStatus 保持同构的前端状态联合类型。
@@ -88,6 +92,10 @@ interface SubAgentRunSnapshot {
 }
 
 const DEFAULT_RUN_WINDOW_LIMIT = 20
+const MONITOR_MESSAGE_PROJECTION_CACHE_MAX_ENTRIES = 400
+const MONITOR_RETAINED_RUN_CACHE_MAX_RUNS = 16
+const MONITOR_WINDOW_CONTENT_MAX_ENTRIES = 120
+const MONITOR_EVENTS_MAX_PER_RUN = 200
 
 // 修改原因：Monitor 首屏不再接收完整 snapshots，否则大输出会卡在传输、反序列化、Vue state 和 Markdown 渲染。
 // 修改方式：状态拆成轻量 manifests 与按 run 缓存的 transcript window，只有聚焦 run 才加载 Content[]。
@@ -108,11 +116,13 @@ const loadingOlderRunWindows = ref<Set<string>>(new Set())
 // 修改方式：用普通 Set 记录 dirty run，请求完成后自动补发一次 force refresh；requestSeq 防止旧响应覆盖新窗口。
 // 修改目的：保证 content_snapshot/run_completed 等边界事件最终一定校准当前窗口。
 const pendingForcedRunWindowRefreshes = new Set<string>()
+const pendingTailRunWindowRefreshes = new Set<string>()
 // 修改原因：Monitor 在流式中途打开时，llm_delta 可能早于 getRunWindow 响应到达，旧逻辑会直接丢弃这些正文增量。
 // 修改方式：为每个 run 维护有界 live delta 缓冲；窗口可用且 revision 匹配后按 eventSequence 回放。
 // 修改目的：不恢复 full snapshot 传输，也能让实时打开 Monitor 的显示最终追上同一轮流式输出。
 const liveDeltaBuffersByRunId = new Map<string, MonitorRuntimeLedgerLiveDelta[]>()
 const latestRunWindowRequestSeq = new Map<string, number>()
+const monitorMessageProjectionCache = new MonitorMessageProjectionCache()
 let runWindowRequestSeq = 0
 const focusedRunId = ref<string | undefined>((window as any).__LIMCODE_INITIAL_RUN_ID || undefined)
 // 修改原因：顶部控制按钮只能作用于后端仍持有活跃主工具 Promise 的 run。
@@ -131,6 +141,8 @@ const resyncingRunIds = ref<Set<string>>(new Set())
 const runWindowErrors = ref<Record<string, string>>({})
 let heartbeatTimer: ReturnType<typeof setInterval> | undefined
 let disposeMessageListener: (() => void) | undefined
+let disposeBackendVisibilityHooks: (() => void) | undefined
+let disposeCacheRegistrations: Array<() => void> = []
 
 const orderedRuns = computed(() => {
   // 修改原因：updatedAt 会被每个 llm_delta 和工具事件刷新，并发 run 按 updatedAt 排序会导致 tab 顺序不停跳动。
@@ -223,9 +235,14 @@ function upsertWindow(contentWindow: SubAgentRunContentWindow | undefined) {
   if (!contentWindow?.runId) return
   const replacement = replaceRunContentWindow(contentWindow, windowsByRunId.value[contentWindow.runId])
   if (!replacement) return
+  const capped = capRunContentWindow(
+    replacement,
+    MONITOR_WINDOW_CONTENT_MAX_ENTRIES,
+    replacement.hasMoreAfter ? 'start' : 'tail'
+  ) || replacement
   windowsByRunId.value = {
     ...windowsByRunId.value,
-    [contentWindow.runId]: replacement
+    [contentWindow.runId]: capped
   }
 }
 
@@ -233,9 +250,10 @@ function prependWindow(contentWindow: SubAgentRunContentWindow | undefined) {
   if (!contentWindow?.runId) return
   const merged = prependRunContentWindow(windowsByRunId.value[contentWindow.runId], contentWindow)
   if (!merged) return
+  const capped = capRunContentWindow(merged, MONITOR_WINDOW_CONTENT_MAX_ENTRIES, 'start') || merged
   windowsByRunId.value = {
     ...windowsByRunId.value,
-    [contentWindow.runId]: merged
+    [contentWindow.runId]: capped
   }
 }
 
@@ -286,14 +304,18 @@ function withRunWindowTimeout<T>(promise: Promise<T>, runId: string, timeoutMs =
   })
 }
 
-async function requestRunWindow(runId: string | undefined, force = false) {
+async function requestRunWindow(runId: string | undefined, force = false, mode: 'auto' | 'tail' = 'auto') {
   if (!runId) return
-  if (!force && windowsByRunId.value[runId]) return
+  if (!force && mode !== 'tail' && windowsByRunId.value[runId]) return
   if (force) {
     setRunResyncing(runId, true)
     setRunWindowError(runId, undefined)
   }
   if (loadingRunWindows.value.has(runId)) {
+    if (mode === 'tail') {
+      pendingTailRunWindowRefreshes.add(runId)
+      return
+    }
     if (force) {
       // 修改原因：强制校准通常由 content_snapshot/run_completed 触发，不能因为已有请求在飞就丢弃。
       // 修改方式：把 run 标记为 dirty，当前请求结束后再自动补发一次 force refresh，同时让 UI 进入 resyncing。
@@ -311,7 +333,9 @@ async function requestRunWindow(runId: string | undefined, force = false) {
   try {
     const manifest = manifests.value.find(item => item.runId === runId)
     const existingWindow = windowsByRunId.value[runId]
-    const requestOptions = force && existingWindow
+    const requestOptions = mode === 'tail'
+      ? createLatestRunWindowRequestOptions(DEFAULT_RUN_WINDOW_LIMIT)
+      : force && existingWindow
       ? createRefreshRunWindowRequestOptions(existingWindow, DEFAULT_RUN_WINDOW_LIMIT, manifest)
       : createTailRunWindowRequestOptions(DEFAULT_RUN_WINDOW_LIMIT)
     // 修改原因：聚焦 run 才需要 Content[]，请求窗口时携带 conversationId 允许后端先从 metadata 恢复历史 run。
@@ -362,7 +386,12 @@ async function requestRunWindow(runId: string | undefined, force = false) {
     const nextLoading = new Set(loadingRunWindows.value)
     nextLoading.delete(runId)
     loadingRunWindows.value = nextLoading
-    if (pendingForcedRunWindowRefreshes.delete(runId)) {
+    if (pendingTailRunWindowRefreshes.delete(runId)) {
+      // 修改原因：用户点击“跳到最新”时如果已有窗口请求在飞，不能降级成 range-preserving refresh。
+      // 修改方式：tail dirty 标记优先消费，继续发起显式 tail window 请求。
+      // 修改目的：保证历史窗口始终有可恢复 live-tail 的用户路径。
+      void requestRunWindow(runId, true, 'tail')
+    } else if (pendingForcedRunWindowRefreshes.delete(runId)) {
       // 修改原因：加载中发生的 force refresh 已被 dirty 标记记录，需要在当前请求释放后补偿执行。
       // 修改方式：finally 阶段消费 dirty 标记并递归发起一次强制刷新；若刷新期间又变 dirty，会继续排队。
       // 修改目的：把“强制校准不丢失”固化为窗口请求状态机不变量。
@@ -382,6 +411,12 @@ function resetFocusedView() {
   setRunResyncing(runId, true)
   setRunWindowError(runId, undefined)
   void requestRunWindow(runId, true)
+}
+
+function jumpToLatestMessages() {
+  const run = focusedRun.value
+  if (!run) return
+  void requestRunWindow(run.runId, true, 'tail')
 }
 
 async function loadOlderMessages() {
@@ -526,7 +561,7 @@ function replayBufferedLiveDeltas(runId: string) {
 
   windowsByRunId.value = {
     ...windowsByRunId.value,
-    [runId]: workingWindow
+    [runId]: capRunContentWindow(workingWindow, MONITOR_WINDOW_CONTENT_MAX_ENTRIES, workingWindow.hasMoreAfter ? 'start' : 'tail') || workingWindow
   }
   setLiveDeltaBuffer(runId, [...stillBlocked, ...remaining])
 }
@@ -601,29 +636,100 @@ function applyLiveDeltaEvent(event: SubAgentRunEvent, runtimeLedger?: MonitorRun
 
   windowsByRunId.value = {
     ...windowsByRunId.value,
-    [liveEvent.runId]: nextWindow
+    [liveEvent.runId]: capRunContentWindow(nextWindow, MONITOR_WINDOW_CONTENT_MAX_ENTRIES, nextWindow.hasMoreAfter ? 'start' : 'tail') || nextWindow
   }
 }
 
-function getFunctionResponseMap(contents: Content[]): Map<string, NonNullable<ContentPart['functionResponse']>> {
-  const map = new Map<string, NonNullable<ContentPart['functionResponse']>>()
-  for (const content of contents) {
-    const parts = content.parts || []
-    for (const part of parts) {
-      const response = part.functionResponse
-      if (response?.id) {
-        map.set(response.id, response)
-      }
+function selectRetainedRunIds(maxRuns: number): Set<string> {
+  const retained = new Set<string>()
+  if (focusedRunId.value) retained.add(focusedRunId.value)
+  for (const runId of activeRunIds.value) retained.add(runId)
+  for (const run of [...manifests.value].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))) {
+    if (retained.size >= maxRuns) break
+    retained.add(run.runId)
+  }
+  return retained
+}
+
+function pruneRecordByRunIds<T>(record: Record<string, T>, retainedRunIds: Set<string>): { next: Record<string, T>; removed: number } {
+  const next: Record<string, T> = {}
+  let removed = 0
+  for (const [runId, value] of Object.entries(record)) {
+    if (retainedRunIds.has(runId)) next[runId] = value
+    else removed += 1
+  }
+  return { next, removed }
+}
+
+function pruneMapByRunIds<K extends string, V>(map: Map<K, V>, retainedRunIds: Set<string>): number {
+  let removed = 0
+  for (const key of [...map.keys()]) {
+    if (!retainedRunIds.has(key)) {
+      map.delete(key)
+      removed += 1
     }
   }
-  return map
+  return removed
 }
 
-function deriveToolStatus(result: unknown): ToolUsage['status'] {
-  const r = result as any
-  if (r?.success === false || r?.error || r?.cancelled || r?.rejected) return 'error'
-  if (r?.data && r.data.appliedCount > 0 && r.data.failedCount > 0) return 'warning'
-  return 'success'
+function pruneMonitorRetainedCaches(maxRuns = MONITOR_RETAINED_RUN_CACHE_MAX_RUNS): number {
+  const retainedRunIds = selectRetainedRunIds(maxRuns)
+  let removed = 0
+
+  const windows = pruneRecordByRunIds(windowsByRunId.value, retainedRunIds)
+  windowsByRunId.value = Object.fromEntries(
+    Object.entries(windows.next).map(([runId, window]) => [
+      runId,
+      capRunContentWindow(window, MONITOR_WINDOW_CONTENT_MAX_ENTRIES, window.hasMoreAfter ? 'start' : 'tail') || window
+    ])
+  )
+  removed += windows.removed
+
+  const events = pruneRecordByRunIds(eventsByRunId.value, retainedRunIds)
+  eventsByRunId.value = Object.fromEntries(
+    Object.entries(events.next).map(([runId, runEvents]) => {
+      const retainedEvents = runEvents.slice(-MONITOR_EVENTS_MAX_PER_RUN)
+      removed += Math.max(0, runEvents.length - retainedEvents.length)
+      return [runId, retainedEvents]
+    })
+  )
+  removed += events.removed
+
+  const ledgers = pruneRecordByRunIds(runtimeLedgersByRunId.value, retainedRunIds)
+  runtimeLedgersByRunId.value = ledgers.next
+  removed += ledgers.removed
+
+  removed += pruneMapByRunIds(liveDeltaBuffersByRunId, retainedRunIds)
+  removed += pruneMapByRunIds(latestRunWindowRequestSeq, retainedRunIds)
+  removed += pruneMapByRunIds(lastEventSequenceByRunId, retainedRunIds)
+  for (const runId of [...pendingForcedRunWindowRefreshes]) {
+    if (!retainedRunIds.has(runId)) {
+      pendingForcedRunWindowRefreshes.delete(runId)
+      removed += 1
+    }
+  }
+  for (const runId of [...pendingTailRunWindowRefreshes]) {
+    if (!retainedRunIds.has(runId)) {
+      pendingTailRunWindowRefreshes.delete(runId)
+      removed += 1
+    }
+  }
+
+  return removed
+}
+
+function countMonitorWindowEntries(): number {
+  return Object.values(windowsByRunId.value).reduce((sum, window) => sum + (window.contents?.length || 0), 0)
+}
+
+function countMonitorEventEntries(): number {
+  return Object.values(eventsByRunId.value).reduce((sum, events) => sum + events.length, 0)
+}
+
+function countMonitorLiveDeltaEntries(): number {
+  let total = 0
+  for (const buffer of liveDeltaBuffersByRunId.values()) total += buffer.length
+  return total
 }
 
 function toRenderableMessages(run: SubAgentRunSnapshot | undefined): Message[] {
@@ -634,7 +740,8 @@ function toRenderableMessages(run: SubAgentRunSnapshot | undefined): Message[] {
   const isLiveRun = activeRunIds.value.has(run.runId)
     && (run.status === 'running' || run.status === 'paused' || run.status === 'awaiting_monitor_action')
 
-  return (run.contents || [])
+  const retainedContentIndexes = new Set<number>()
+  const messages = (run.contents || [])
     .map((content, windowOffset) => ({ content, windowOffset }))
     .filter(item => item.content.isFunctionResponse !== true)
     .map(({ content, windowOffset }) => {
@@ -644,43 +751,30 @@ function toRenderableMessages(run: SubAgentRunSnapshot | undefined): Message[] {
       const contentIndex = typeof content.index === 'number'
         ? content.index
         : (contentWindow?.startIndex || 0) + windowOffset
-      const message = contentToMessageEnhanced(content, `${run.runId}_${contentIndex}`)
-      message.backendIndex = contentIndex
+      retainedContentIndexes.add(contentIndex)
 
       // 修改原因：Monitor 复用 MessageItem 但过去没有给活跃尾部 model 消息标记 streaming，导致它不走主窗口同一流式 Markdown 策略。
       // 修改方式：当当前窗口覆盖 transcript 尾部，且 run 仍由后端 active controller 管理时，只把尾部 model 楼层投影为 streaming。
       // 修改目的：SubAgent Monitor 与主聊天共享“活跃尾部消息流式渲染、历史消息完成态渲染”的统一契约。
-      if (
+      const isLiveTail = (
         isLiveRun &&
         content.role === 'model' &&
         contentWindow?.hasMoreAfter !== true &&
         contentIndex === Math.max(0, (contentWindow?.totalCount || 0) - 1)
-      ) {
-        message.streaming = true
-      }
+      )
 
-      if (message.tools && message.tools.length > 0) {
-        message.tools = message.tools.map(tool => {
-          const response = responseMap.get(tool.id)
-          const hasLedgerProjection = hasRuntimeLedgerToolProjection(tool.id, runtimeLedger)
-          const projectedTool = hasLedgerProjection
-            ? applyRuntimeLedgerToolProjection(tool, runtimeLedger)
-            : tool
-          if (!response) return projectedTool
-          const result = response.response as Record<string, unknown>
-          const runtimeProjectedTool = hasLedgerProjection
-            ? applyRuntimeLedgerToolProjection(projectedTool, runtimeLedger)
-            : undefined
-          return {
-            ...projectedTool,
-            result,
-            status: runtimeProjectedTool?.status || deriveToolStatus(result)
-          }
-        })
-      }
-
-      return message
+      return monitorMessageProjectionCache.project({
+        runId: run.runId,
+        content,
+        contentIndex,
+        responseMap,
+        runtimeLedger,
+        isLiveTail
+      })
     })
+
+  monitorMessageProjectionCache.pruneRun(run.runId, retainedContentIndexes)
+  return messages
 }
 
 const renderMessages = computed(() => toRenderableMessages(focusedRun.value))
@@ -688,6 +782,7 @@ const focusedRunIsActive = computed(() => !!focusedRun.value && activeRunIds.val
 const focusedWindow = computed(() => focusedRun.value ? windowsByRunId.value[focusedRun.value.runId] : undefined)
 const focusedRuntimeLedger = computed(() => focusedRun.value ? runtimeLedgersByRunId.value[focusedRun.value.runId] : undefined)
 const focusedOlderLoading = computed(() => !!focusedRun.value && loadingOlderRunWindows.value.has(focusedRun.value.runId))
+const focusedTailLoading = computed(() => !!focusedRun.value && loadingRunWindows.value.has(focusedRun.value.runId))
 const focusedSyncState = computed(() => deriveMonitorSyncState({
   // 修改原因：Header、空态和 reset 状态必须消费同一 MonitorSyncState，不能各自从 heartbeat/window/loading 猜测。
   // 修改方式：把当前 focused run 的 transport、window、loading、resync、gap、error 一次性投影成 DisplayModel。
@@ -852,14 +947,64 @@ watch(
 )
 
 onMounted(async () => {
+  disposeBackendVisibilityHooks = registerWebviewVisibilityReporter('subagent-monitor')
+  disposeCacheRegistrations = [
+    frontendCacheLifecycleGovernor.register({
+      id: 'subagentMonitor.messageProjectionCache',
+      owner: 'SubAgentMonitor',
+      scope: 'run-window',
+      maxEntries: MONITOR_MESSAGE_PROJECTION_CACHE_MAX_ENTRIES,
+      getEntryCount: () => monitorMessageProjectionCache.size(),
+      estimateBytes: () => monitorMessageProjectionCache.estimateBytes(),
+      prune: context => monitorMessageProjectionCache.pruneToMaxEntries(
+        context.maxEntries ?? MONITOR_MESSAGE_PROJECTION_CACHE_MAX_ENTRIES
+      )
+    }),
+    frontendCacheLifecycleGovernor.register({
+      id: 'subagentMonitor.windows',
+      owner: 'SubAgentMonitor',
+      scope: 'run-window',
+      maxEntries: MONITOR_WINDOW_CONTENT_MAX_ENTRIES * MONITOR_RETAINED_RUN_CACHE_MAX_RUNS,
+      getEntryCount: countMonitorWindowEntries,
+      estimateBytes: () => estimateJsonBytes(windowsByRunId.value),
+      prune: () => pruneMonitorRetainedCaches()
+    }),
+    frontendCacheLifecycleGovernor.register({
+      id: 'subagentMonitor.events',
+      owner: 'SubAgentMonitor',
+      scope: 'run-events',
+      maxEntries: MONITOR_EVENTS_MAX_PER_RUN * MONITOR_RETAINED_RUN_CACHE_MAX_RUNS,
+      getEntryCount: countMonitorEventEntries,
+      estimateBytes: () => estimateJsonBytes(eventsByRunId.value),
+      prune: () => pruneMonitorRetainedCaches()
+    }),
+    frontendCacheLifecycleGovernor.register({
+      id: 'subagentMonitor.runtimeLedgers',
+      owner: 'SubAgentMonitor',
+      scope: 'runtime-ledger-projection',
+      maxEntries: MONITOR_RETAINED_RUN_CACHE_MAX_RUNS,
+      getEntryCount: () => Object.keys(runtimeLedgersByRunId.value).length,
+      estimateBytes: () => estimateJsonBytes(runtimeLedgersByRunId.value),
+      prune: () => pruneMonitorRetainedCaches()
+    }),
+    frontendCacheLifecycleGovernor.register({
+      id: 'subagentMonitor.liveDeltaBuffers',
+      owner: 'SubAgentMonitor',
+      scope: 'runtime-ledger-live-delta',
+      maxEntries: DEFAULT_RUNTIME_LEDGER_LIVE_DELTA_BUFFER_LIMIT * MONITOR_RETAINED_RUN_CACHE_MAX_RUNS,
+      getEntryCount: countMonitorLiveDeltaEntries,
+      estimateBytes: () => estimateJsonBytes([...liveDeltaBuffersByRunId.entries()]),
+      prune: () => pruneMonitorRetainedCaches()
+    })
+  ]
   // 修改原因：Monitor 应渲染 SubAgent 子对话 Content[]，但不应在首屏拉取所有 run 的完整 transcript。
   // 修改方式：挂载后请求轻量 manifests，并订阅后续 manifest/event；聚焦 run 再请求窗口。
   // 修改目的：像主聊天窗口一样展示消息语义，同时避免大输出 Monitor 打开卡顿。
-  disposeMessageListener = onMessageFromExtension((message: any) => {
-    if (message.type === 'subagentMonitor.heartbeat') {
+  const disposers = [
+    onExtensionMessageType('subagentMonitor.heartbeat', (message: any) => {
       markHeartbeat(message.data)
-    }
-    if (message.type === 'subagentMonitor.event') {
+    }, 'SubAgentMonitor.heartbeat'),
+    onExtensionMessageType('subagentMonitor.event', (message: any) => {
       markHeartbeat({ serverTime: Date.now(), activeRunIds: message.data?.activeRunIds })
       if (message.data?.manifest) upsertManifest(message.data.manifest)
       let appliedRuntimeLedgerWindow = false
@@ -911,11 +1056,20 @@ onMounted(async () => {
         }
       }
       updateActiveRunIds(message.data?.activeRunIds)
-    }
-    if (message.type === 'subagentMonitor.manifest') {
+    }, 'SubAgentMonitor.event'),
+    onExtensionMessageType('subagentMonitor.manifest', (message: any) => {
       applyManifestPayload(message.data)
-    }
-  })
+    }, 'SubAgentMonitor.manifest'),
+    onExtensionMessageType('subagentMonitor.visibilityRefresh', (message: any) => {
+      markHeartbeat({ serverTime: Date.now(), activeRunIds: message.data?.manifest?.activeRunIds })
+      if (message.data?.manifest) {
+        applyManifestPayload(message.data.manifest)
+      }
+      const refreshRunId = message.data?.manifest?.focusRunId || focusedRunId.value || focusedManifest.value?.runId
+      if (refreshRunId) void requestRunWindow(refreshRunId, true)
+    }, 'SubAgentMonitor.visibilityRefresh')
+  ]
+  disposeMessageListener = () => disposers.forEach(dispose => dispose())
 
   heartbeatTimer = setInterval(() => {
     heartbeatTick.value = Date.now()
@@ -932,6 +1086,11 @@ onMounted(async () => {
 })
 
 onBeforeUnmount(() => {
+  disposeBackendVisibilityHooks?.()
+  disposeBackendVisibilityHooks = undefined
+  disposeCacheRegistrations.forEach(dispose => dispose())
+  disposeCacheRegistrations = []
+  monitorMessageProjectionCache.clear()
   disposeMessageListener?.()
   if (heartbeatTimer) clearInterval(heartbeatTimer)
 })
@@ -1059,6 +1218,19 @@ onBeforeUnmount(() => {
           @restore-and-retry="noop"
           @copy="handleCopy"
         />
+
+        <div v-if="focusedWindow?.hasMoreAfter" class="load-older-row">
+          <!--
+            修改原因：历史窗口被上限裁剪后可能保留 hasMoreAfter，用户需要在 Monitor 内回到最新尾部。
+            修改方式：按钮强制请求 tail window，不复用保持历史 range 的 refresh。
+            修改目的：窗口 cap 只限制渲染成本，不改变用户可回到 live tail 的语义。
+          -->
+          <button class="load-older-btn" type="button" :disabled="focusedTailLoading" @click="jumpToLatestMessages">
+            <span v-if="focusedTailLoading" class="codicon codicon-sync codicon-modifier-spin"></span>
+            <span v-else class="codicon codicon-arrow-down"></span>
+            {{ focusedTailLoading ? '加载中…' : '跳到最新消息' }}
+          </button>
+        </div>
       </div>
     </CustomScrollbar>
   </div>

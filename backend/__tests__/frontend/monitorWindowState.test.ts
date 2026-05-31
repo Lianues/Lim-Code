@@ -1,4 +1,6 @@
 import {
+  capRunContentWindow,
+  createLatestRunWindowRequestOptions,
   createPreviousRunWindowRequestOptions,
   createRefreshRunWindowRequestOptions,
   createTailRunWindowRequestOptions,
@@ -37,6 +39,42 @@ describe('SubAgent Monitor window state helpers', () => {
 
   it('creates an explicit tail request only for initial/importer window loads', () => {
     expect(createTailRunWindowRequestOptions(20)).toEqual({ limit: 20, fromTail: true });
+  });
+
+  it('creates an explicit latest request for capped historical windows', () => {
+    const historical = {
+      runId: 'window-state-latest',
+      contents: Array.from({ length: 120 }, (_, index) => createContent(index, `history ${index}`)),
+      startIndex: 0,
+      endIndex: 120,
+      totalCount: 200,
+      hasMoreBefore: false,
+      hasMoreAfter: true
+    };
+
+    const tail = capRunContentWindow({
+      runId: historical.runId,
+      contents: Array.from({ length: 140 }, (_, index) => createContent(60 + index, `tail ${60 + index}`)),
+      startIndex: 60,
+      endIndex: 200,
+      totalCount: 200,
+      hasMoreBefore: true,
+      hasMoreAfter: false
+    }, 120, 'tail');
+
+    // 修改原因：历史窗口 cap 会设置 hasMoreAfter，刷新应保留历史阅读范围，但用户点击“跳到最新”必须显式回到 tail。
+    // 修改方式：latest request 始终使用 fromTail，不携带 start/end range；tail 响应再用 tail anchor 裁剪。
+    // 修改目的：防止 Monitor 在长历史里变成只能继续向前、不能回到最新输出的单向窗口。
+    expect(historical.hasMoreAfter).toBe(true);
+    expect(createLatestRunWindowRequestOptions(20)).toEqual({ limit: 20, fromTail: true });
+    expect(tail).toMatchObject({
+      startIndex: 80,
+      endIndex: 200,
+      hasMoreBefore: true,
+      hasMoreAfter: false
+    });
+    expect(tail?.contents[0].index).toBe(80);
+    expect(tail?.contents[119].index).toBe(199);
   });
 
   it('creates a refresh request that preserves the currently loaded range', () => {
@@ -128,6 +166,53 @@ describe('SubAgent Monitor window state helpers', () => {
     // 修改目的：保持 MessageItem key/backendIndex 唯一，删除/重试仍定位准确。
     expect(merged?.contents).toEqual([older0, current1, current2]);
     expect(merged?.contents[1]).toBe(current1);
+  });
+
+  it('caps repeated older windows while preserving the explicit historical range anchor', () => {
+    const contents = Array.from({ length: 140 }, (_, index) => createContent(index, `content ${index}`));
+
+    const capped = capRunContentWindow({
+      runId: 'capped-history-run',
+      contents,
+      startIndex: 0,
+      endIndex: 140,
+      totalCount: 200,
+      hasMoreBefore: false,
+      hasMoreAfter: true
+    }, 120, 'start');
+
+    expect(capped?.contents).toHaveLength(120);
+    expect(capped?.contents[0].index).toBe(0);
+    expect(capped?.contents[119].index).toBe(119);
+    expect(capped).toMatchObject({
+      startIndex: 0,
+      endIndex: 120,
+      hasMoreAfter: true
+    });
+  });
+
+  it('caps tail windows while preserving the live tail anchor', () => {
+    const contents = Array.from({ length: 140 }, (_, index) => createContent(index, `content ${index}`));
+
+    const capped = capRunContentWindow({
+      runId: 'capped-tail-run',
+      contents,
+      startIndex: 0,
+      endIndex: 140,
+      totalCount: 140,
+      hasMoreBefore: false,
+      hasMoreAfter: false
+    }, 120, 'tail');
+
+    expect(capped?.contents).toHaveLength(120);
+    expect(capped?.contents[0].index).toBe(20);
+    expect(capped?.contents[119].index).toBe(139);
+    expect(capped).toMatchObject({
+      startIndex: 20,
+      endIndex: 140,
+      hasMoreBefore: true,
+      hasMoreAfter: false
+    });
   });
 
   it('rejects stale replacement windows by contentRevision and eventSequence', () => {

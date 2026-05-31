@@ -28,7 +28,7 @@
 import { defineStore } from 'pinia'
 import { computed as vueComputed } from 'vue'
 import type { Attachment, CheckpointRecord, StreamChunk } from '../types'
-import { sendToExtension, onMessageFromExtension } from '../utils/vscode'
+import { sendToExtension, onExtensionMessageType } from '../utils/vscode'
 import { generateId } from '../utils/format'
 import { replayTodoStateFromMessages } from '../utils/todoList'
 import type { EditorNode } from '../types/editorNode'
@@ -122,6 +122,7 @@ export type { Conversation, WorkspaceFilter, TabInfo, QueuedMessage } from './ch
 export const useChatStore = defineStore('chat', () => {
   // ============ 状态 ============
   const state = createChatState()
+  let chatMessageBusDisposers: Array<() => void> = []
   
   // ============ 计算属性 ============
   const computed = createChatComputed(state)
@@ -523,19 +524,24 @@ export const useChatStore = defineStore('chat', () => {
   // ============ 初始化 ============
   
   async function initialize(): Promise<void> {
-    onMessageFromExtension((message) => {
-      if (message.type === 'streamChunk') {
-        handleStreamChunkWrapper(message.data)
-      } else if (message.type === 'streamChunkBatch') {
-        // 批量处理：对连续 toolStatus 做合并优化，其余逐条处理。
-        // 整个批量在同一同步上下文完成，Vue 自动合并响应式更新。
-        handleStreamChunkBatch(message.data as StreamChunk[], streamHandlerCtx)
-      } else if (message.type === 'workspaceUri') {
-        setCurrentWorkspaceUri(state, message.data)
-      } else if (message.type === 'retryStatus') {
-        handleRetryStatus(state, message.data)
-      }
-    })
+    if (chatMessageBusDisposers.length === 0) {
+      chatMessageBusDisposers = [
+        onExtensionMessageType('streamChunk', message => {
+          handleStreamChunkWrapper(message.data as StreamChunk)
+        }, 'chatStore.streamChunk'),
+        onExtensionMessageType('streamChunkBatch', message => {
+          // 批量处理：对连续 toolStatus 做合并优化，其余逐条处理。
+          // 整个批量在同一同步上下文完成，Vue 自动合并响应式更新。
+          handleStreamChunkBatch(message.data as StreamChunk[], streamHandlerCtx)
+        }, 'chatStore.streamChunkBatch'),
+        onExtensionMessageType('workspaceUri', message => {
+          setCurrentWorkspaceUri(state, message.data)
+        }, 'chatStore.workspaceUri'),
+        onExtensionMessageType('retryStatus', message => {
+          handleRetryStatus(state, message.data)
+        }, 'chatStore.retryStatus')
+      ]
+    }
     
     try {
       const uri = await sendToExtension<string | null>('getWorkspaceUri', {})
@@ -567,6 +573,11 @@ export const useChatStore = defineStore('chat', () => {
     if (initialTabId) {
       state.activeTabId.value = initialTabId
     }
+  }
+
+  function dispose(): void {
+    chatMessageBusDisposers.forEach(disposeHandler => disposeHandler())
+    chatMessageBusDisposers = []
   }
 
   // ============ 返回 ============
@@ -714,6 +725,7 @@ export const useChatStore = defineStore('chat', () => {
     reorderTab: (fromIndex: number, toIndex: number) => reorderTabAction(state, fromIndex, toIndex),
     
     // 初始化
-    initialize
+    initialize,
+    dispose
   }
 })

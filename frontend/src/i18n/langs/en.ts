@@ -2616,6 +2616,7 @@ const en: LanguageMessages = {
                     terminate: 'Terminate',
                     terminateTooltip: 'Terminate Process',
                     copyOutput: 'Copy Output',
+                    loadFullOutput: 'Load full output',
                     copied: 'Copied',
                     output: 'Output',
                     truncatedInfo: 'Showing last {outputLines} lines (total {totalLines} lines)',

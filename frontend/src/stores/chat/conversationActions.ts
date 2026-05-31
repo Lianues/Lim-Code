@@ -24,11 +24,14 @@ import { countVisibleChatMessages } from './visibilityUtils'
 /** 每次分页加载的对话数量 */
 export const CONVERSATIONS_PAGE_SIZE = 30
 
-/** 当前对话消息分页大小（窗口初始加载 / 上拉加载） */
-export const MESSAGES_PAGE_SIZE = 120
+/** importer / 外部进入当前对话时只取尾部窗口，避免一次性反序列化超长历史。 */
+export const INITIAL_MESSAGES_TAIL_SIZE = 20
+
+/** 上拉滚动加载的显式 range 页大小；它必须带 beforeIndex，不能退化成再次取最后 20 楼。 */
+export const OLDER_MESSAGES_PAGE_SIZE = 120
 
 /** 首屏至少应保证的可见消息数 */
-export const MIN_INITIAL_VISIBLE_MESSAGES = 40
+export const MIN_INITIAL_VISIBLE_MESSAGES = 20
 
 /** 拉取元数据时的并发数（避免一次性打爆 IPC / IO） */
 const METADATA_FETCH_CONCURRENCY = 30
@@ -444,7 +447,7 @@ export async function loadHistory(state: ChatStoreState): Promise<void> {
     const result = await perfMeasureAsync('conversation.loadHistoryPaged', () =>
       sendToExtension<{ total: number; messages: Content[] }>('conversation.getMessagesPaged', {
         conversationId,
-        limit: MESSAGES_PAGE_SIZE
+        limit: INITIAL_MESSAGES_TAIL_SIZE
       })
     )
 
@@ -456,7 +459,7 @@ export async function loadHistory(state: ChatStoreState): Promise<void> {
         sendToExtension<{ total: number; messages: Content[] }>('conversation.getMessagesPaged', {
           conversationId,
           beforeIndex,
-          limit: MESSAGES_PAGE_SIZE
+          limit: INITIAL_MESSAGES_TAIL_SIZE
         })
       )
     )
@@ -494,7 +497,7 @@ export async function loadOlderMessagesPage(
   // 已经到头
   if (state.windowStartIndex.value <= 0) return false
 
-  const pageSize = options.pageSize ?? MESSAGES_PAGE_SIZE
+  const pageSize = options.pageSize ?? OLDER_MESSAGES_PAGE_SIZE
   state.isLoadingMoreMessages.value = true
 
   try {
@@ -610,7 +613,7 @@ export async function switchConversation(
       const view = await perfMeasureAsync('conversation.loadConversationForView', () =>
         sendToExtension<ConversationViewPayload>('conversation.loadConversationForView', {
           conversationId: id,
-          limit: MESSAGES_PAGE_SIZE
+          limit: INITIAL_MESSAGES_TAIL_SIZE
         })
       )
 
@@ -628,7 +631,7 @@ export async function switchConversation(
           sendToExtension<{ total: number; messages: Content[] }>('conversation.getMessagesPaged', {
             conversationId: id,
             beforeIndex,
-            limit: MESSAGES_PAGE_SIZE
+            limit: INITIAL_MESSAGES_TAIL_SIZE
           })
         )
       )

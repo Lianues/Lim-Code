@@ -1,5 +1,6 @@
 import { StreamChunkProcessor } from '../../../webview/stream/StreamChunkProcessor';
 import { chatStreamRuntimeLedgerBridge } from '../../../webview/stream/runtimeLedgerBridge';
+import { estimateJsonBytes } from '../../../frontend/src/utils/cacheLifecycleGovernor';
 
 function createThenable<T>(value: T): Thenable<T> {
   return {
@@ -27,6 +28,26 @@ function createProcessor() {
   };
 }
 
+function createVisibilityAwareProcessor(visibleRef: { value: boolean }) {
+  const messages: any[] = [];
+  const view = {
+    webview: {
+      postMessage: jest.fn((message: any) => {
+        messages.push(message);
+        return createThenable(true);
+      })
+    }
+  };
+
+  return {
+    messages,
+    postMessage: view.webview.postMessage,
+    processor: new StreamChunkProcessor(view as any, 'conversation-1', 'stream-hidden-1', {
+      isVisible: () => visibleRef.value
+    })
+  };
+}
+
 function flushRuntimeLedger(): Promise<void> {
   return Array.from({ length: 20 }).reduce<Promise<void>>(
     promise => promise.then(() => Promise.resolve()),
@@ -34,7 +55,7 @@ function flushRuntimeLedger(): Promise<void> {
   );
 }
 
-describe('StreamChunkProcessor throttling', () => {
+describe('StreamChunkProcessor immediate transport', () => {
   beforeEach(() => {
     jest.useFakeTimers();
     jest.setSystemTime(new Date(0));
@@ -44,30 +65,22 @@ describe('StreamChunkProcessor throttling', () => {
     jest.useRealTimers();
   });
 
-  it('keeps high-frequency chunk messages buffered until the throttle window expires', async () => {
+  it('flushes high-frequency chunk messages immediately without throttle delay', async () => {
     const { processor, messages, postMessage } = createProcessor();
 
     processor.processChunk({ chunk: { delta: [{ text: 'A' }] } });
-    processor.processChunk({ chunk: { delta: [{ text: 'B' }] } });
-    await flushRuntimeLedger();
-
-    // 修改原因：此前 enqueue 内部的 setTimeout(0) 会抢先 flush，使 CHUNK_THROTTLE_MS 形同虚设。
-    // 修改方式：测试在 50ms 节流窗口结束前没有任何 postMessage，窗口结束后一次性发送 batch。
-    // 修改目的：锁定 trace 中 webview.postMessage 反序列化长任务的核心回归防线。
-    expect(postMessage).not.toHaveBeenCalled();
-    expect(messages).toHaveLength(0);
-
-    jest.advanceTimersByTime(49);
-    expect(postMessage).not.toHaveBeenCalled();
-
-    jest.advanceTimersByTime(1);
     expect(messages).toHaveLength(1);
     expect(messages[0]).toMatchObject({
-      type: 'streamChunkBatch',
-      data: [
-        { type: 'chunk', conversationId: 'conversation-1', streamId: 'stream-1' },
-        { type: 'chunk', conversationId: 'conversation-1', streamId: 'stream-1' }
-      ]
+      type: 'streamChunk',
+      data: { type: 'chunk', conversationId: 'conversation-1', streamId: 'stream-1' }
+    });
+
+    processor.processChunk({ chunk: { delta: [{ text: 'B' }] } });
+    expect(postMessage).toHaveBeenCalledTimes(2);
+    expect(messages).toHaveLength(2);
+    expect(messages[1]).toMatchObject({
+      type: 'streamChunk',
+      data: { type: 'chunk', conversationId: 'conversation-1', streamId: 'stream-1' }
     });
   });
 
@@ -76,18 +89,15 @@ describe('StreamChunkProcessor throttling', () => {
 
     processor.processChunk({ chunk: { delta: [{ text: 'A' }] } });
     processor.processChunk({ content: { role: 'model', parts: [{ text: 'final' }] } });
-    await flushRuntimeLedger();
 
-    // 修改原因：关闭 chunk 的 0ms 兜底后，complete 等终结事件仍必须立即把已有内容一起送到前端。
-    // 修改方式：complete 分支继续调用 flush，因此 pending chunk 与 complete 会合并为同一个 batch。
-    // 修改目的：降低消息频率的同时，保持前端完成态不延迟、不丢内容。
-    expect(messages).toHaveLength(1);
+    expect(messages).toHaveLength(2);
     expect(messages[0]).toMatchObject({
-      type: 'streamChunkBatch',
-      data: [
-        { type: 'chunk', conversationId: 'conversation-1', streamId: 'stream-1' },
-        { type: 'complete', conversationId: 'conversation-1', streamId: 'stream-1' }
-      ]
+      type: 'streamChunk',
+      data: { type: 'chunk', conversationId: 'conversation-1', streamId: 'stream-1' }
+    });
+    expect(messages[1]).toMatchObject({
+      type: 'streamChunk',
+      data: { type: 'complete', conversationId: 'conversation-1', streamId: 'stream-1' }
     });
   });
 });
@@ -188,8 +198,11 @@ describe('StreamChunkProcessor Runtime Ledger observer', () => {
           }
         }
       },
-      chunk: { delta: [{ text: 'secret stream text' }] }
     });
+    expect(messages[0].data).not.toHaveProperty('chunk');
+    expect(messages[0].data).not.toHaveProperty('content');
+    expect(messages[0].data).not.toHaveProperty('toolResults');
+    expect(messages[0].data).not.toHaveProperty('pendingToolCalls');
     expect(messages[1].data).toMatchObject({
       type: 'toolStatus',
       runtime: {
@@ -209,10 +222,281 @@ describe('StreamChunkProcessor Runtime Ledger observer', () => {
             }
           }
         }
-      },
-      toolStatus: true,
-      tool: { id: 'tool-call-1' }
+      }
     });
+    expect(messages[1].data).not.toHaveProperty('toolStatus');
+    expect(messages[1].data).not.toHaveProperty('tool');
+    expect(messages[1].data).not.toHaveProperty('content');
+    expect(messages[1].data).not.toHaveProperty('toolResults');
+  });
+
+  it('keeps a basic stream transport envelope under the current payload budget', async () => {
+    const { processor, messages } = createProcessor();
+
+    processor.processChunk({ chunk: { delta: [{ text: 'small projected text' }] } });
+    await flushRuntimeLedger();
+
+    expect(messages).toHaveLength(1);
+    expect(estimateJsonBytes(messages[0])).toBeLessThanOrEqual(16 * 1024);
+  });
+
+  it('keeps immediate stream chunk envelopes under the transport byte budget', async () => {
+    const { processor, messages } = createProcessor();
+    const chunkText = '批量分片'.repeat(900);
+
+    for (let index = 0; index < 6; index++) {
+      processor.processChunk({ chunk: { delta: [{ text: `${index}-${chunkText}` }] } });
+    }
+
+    expect(messages).toHaveLength(6);
+    expect(messages.every(message => message.type === 'streamChunk')).toBe(true);
+    expect(messages.every(message => estimateJsonBytes(message) <= 16 * 1024)).toBe(true);
+  });
+
+  it('bounds oversized live snapshots and function-call args on the stream hot path', async () => {
+    const { processor, messages } = createProcessor();
+    const huge = `HUGE-${'0123456789'.repeat(2000)}-END`;
+
+    processor.processChunk({
+      chunk: {
+        delta: [{
+          functionCall: {
+            id: 'tool-huge-args',
+            name: 'write_file',
+            args: { body: huge },
+            partialArgs: huge,
+            finalArgs: { body: huge }
+          }
+        }],
+        contentSnapshot: {
+          role: 'model',
+          parts: [{ text: huge }]
+        }
+      }
+    });
+    await flushRuntimeLedger();
+
+    expect(messages).toHaveLength(1);
+    const payload = messages[0].data.runtimeLedger.ledger.liveDelta.payload;
+    const functionCall = payload.delta[0].functionCall;
+    expect(JSON.stringify(messages[0])).not.toContain(huge);
+    expect(estimateJsonBytes(messages[0])).toBeLessThanOrEqual(16 * 1024);
+    expect(payload).toMatchObject({
+      contentSnapshotTruncated: true,
+      contentSnapshotRef: {
+        kind: 'liveDeltaContentSnapshot',
+        truncated: true
+      }
+    });
+    expect(functionCall).toMatchObject({
+      argsTruncated: true,
+      partialArgsTruncated: true,
+      finalArgsTruncated: true
+    });
+  });
+
+  it('bounds pending tool calls and tool status snapshots behind refs/previews', async () => {
+    const { processor, messages } = createProcessor();
+    const huge = `TOOL-${'abcdef'.repeat(2000)}-END`;
+
+    processor.processChunk({
+      toolsExecuting: true,
+      content: {
+        role: 'model',
+        parts: [{ functionCall: { id: 'pending-huge', name: 'write_file', args: { body: huge } } }]
+      },
+      pendingToolCalls: [{
+        id: 'pending-huge',
+        name: 'write_file',
+        args: { body: huge }
+      }]
+    });
+    processor.processChunk({
+      toolStatus: true,
+      tool: {
+        id: 'pending-huge',
+        name: 'write_file',
+        status: 'success',
+        args: { body: huge },
+        result: { output: huge }
+      }
+    });
+    await flushRuntimeLedger();
+
+    expect(messages).toHaveLength(2);
+    const terminalContent = messages[0].data.runtimeLedger.ledger.terminalContent;
+    const toolSnapshot = messages[1].data.runtimeLedger.ledger.toolSnapshotsByInvocationId['tool:chat:pending-huge'];
+
+    expect(JSON.stringify(messages)).not.toContain(huge);
+    expect(messages.every(message => estimateJsonBytes(message) <= 16 * 1024)).toBe(true);
+    expect(terminalContent).toMatchObject({
+      pendingToolCallsTruncated: true,
+      pendingToolCallsRef: {
+        kind: 'pendingToolCalls',
+        truncated: true
+      }
+    });
+    expect(toolSnapshot).toMatchObject({
+      argsTruncated: true,
+      argsRef: { kind: 'toolArgs', truncated: true },
+      resultTruncated: true,
+      resultRef: { kind: 'toolStatusResult', truncated: true }
+    });
+  });
+
+  it('coalesces hidden stream chunks and refreshes a bounded Runtime Ledger projection when visible', async () => {
+    const visibility = { value: false };
+    const { processor, messages, postMessage } = createVisibilityAwareProcessor(visibility);
+
+    processor.processChunk({ chunk: { delta: [{ text: 'hidden ' }] } });
+    processor.processChunk({ chunk: { delta: [{ text: 'stream' }] } });
+    await flushRuntimeLedger();
+
+    processor.flush();
+    expect(postMessage).not.toHaveBeenCalled();
+    expect(processor.hasHiddenTransportMessages()).toBe(true);
+
+    visibility.value = true;
+    processor.flushHiddenTransportMessages();
+
+    expect(messages).toHaveLength(2);
+    expect(messages[0]).toMatchObject({
+      type: 'webview.hiddenDeliverySummary',
+      data: {
+        originalType: 'streamChunk',
+        coalescedCount: 2,
+        deliveredCount: 1
+      }
+    });
+    expect(messages[1]).toMatchObject({
+      type: 'streamChunk',
+      data: {
+        type: 'chunk',
+        runtimeLedger: {
+          ledger: {
+            liveDelta: {
+              payload: {
+                delta: [{ text: 'hidden stream' }]
+              }
+            }
+          }
+        }
+      }
+    });
+    expect(messages[1].data).not.toHaveProperty('chunk');
+    expect(estimateJsonBytes(messages[0])).toBeLessThanOrEqual(16 * 1024);
+    expect(estimateJsonBytes(messages[1])).toBeLessThanOrEqual(16 * 1024);
+  });
+
+  it('does not deliver an unbounded accumulated hidden stream delta when visible again', async () => {
+    const visibility = { value: false };
+    const { processor, messages } = createVisibilityAwareProcessor(visibility);
+    const hugeHiddenChunk = 'hidden-long-stream'.repeat(400);
+
+    for (let index = 0; index < 8; index++) {
+      processor.processChunk({ chunk: { delta: [{ text: hugeHiddenChunk }] } });
+    }
+    await flushRuntimeLedger();
+
+    processor.flush();
+    expect(messages).toHaveLength(0);
+
+    visibility.value = true;
+    processor.flushHiddenTransportMessages();
+
+    expect(messages).toHaveLength(2);
+    expect(messages[0]).toMatchObject({
+      type: 'webview.hiddenDeliverySummary',
+      data: {
+        coalescedCount: 8
+      }
+    });
+    expect(JSON.stringify(messages[1])).not.toContain(hugeHiddenChunk);
+    expect(estimateJsonBytes(messages[1])).toBeLessThanOrEqual(16 * 1024);
+  });
+
+  it('bounds long terminal content behind Runtime Ledger refs and serves explicit byte windows', async () => {
+    const { processor, messages } = createProcessor();
+    const longText = `START-${'0123456789'.repeat(1200)}-END`;
+
+    processor.processChunk({
+      content: {
+        role: 'model',
+        parts: [{ text: longText }]
+      }
+    });
+    await flushRuntimeLedger();
+
+    const terminalContent = messages[0].data.runtimeLedger.ledger.terminalContent;
+    expect(messages).toHaveLength(1);
+    expect(JSON.stringify(messages[0])).not.toContain(longText);
+    expect(estimateJsonBytes(messages[0])).toBeLessThanOrEqual(16 * 1024);
+    expect(terminalContent).toMatchObject({
+      type: 'complete',
+      contentTruncated: true,
+      contentRef: {
+        kind: 'content',
+        truncated: true
+      }
+    });
+
+    const full = chatStreamRuntimeLedgerBridge.getTerminalContentWindow(terminalContent.contentRef.refId);
+    expect((full?.payload as any).parts[0].text).toBe(longText);
+
+    const window = chatStreamRuntimeLedgerBridge.getTerminalContentWindow(terminalContent.contentRef.refId, {
+      startBytes: 0,
+      maxBytes: 96,
+      includePayload: false
+    });
+    expect(window?.payload).toBeUndefined();
+    expect(window?.serializedWindow).toContain('START-');
+    expect(window?.window).toMatchObject({
+      startBytes: 0,
+      hasMoreBefore: false,
+      hasMoreAfter: true
+    });
+  });
+
+  it('bounds long bound tool results behind Runtime Ledger result refs', async () => {
+    const { processor, messages } = createProcessor();
+    const hugeResult = `RESULT-${'abcdef'.repeat(2000)}-END`;
+
+    processor.processChunk({
+      toolIteration: true,
+      content: {
+        role: 'model',
+        parts: [{ functionCall: { id: 'tool-long-result', name: 'read_file', args: { path: 'large.txt' } } }]
+      },
+      toolResults: [{
+        id: 'tool-long-result',
+        name: 'read_file',
+        result: { success: true, data: hugeResult }
+      }]
+    });
+    await flushRuntimeLedger();
+
+    const terminalContent = messages[0].data.runtimeLedger.ledger.terminalContent;
+    const resultRef = terminalContent.toolResultRefsById['tool-long-result'];
+    expect(JSON.stringify(messages[0])).not.toContain(hugeResult);
+    expect(estimateJsonBytes(messages[0])).toBeLessThanOrEqual(16 * 1024);
+    expect(resultRef).toMatchObject({
+      kind: 'toolResult',
+      truncated: true
+    });
+    expect(terminalContent.toolResults[0]).toMatchObject({
+      id: 'tool-long-result',
+      name: 'read_file',
+      runtimeLedgerRef: {
+        refId: resultRef.refId
+      },
+      result: {
+        success: true,
+        runtimeLedgerPreviewTruncated: true
+      }
+    });
+
+    const full = chatStreamRuntimeLedgerBridge.getTerminalContentWindow(resultRef.refId);
+    expect((full?.payload as any).result.data).toBe(hugeResult);
   });
 
   it('uses final functionResponse events as tool state authority over earlier lifecycle status', async () => {
@@ -350,32 +634,44 @@ describe('StreamChunkProcessor Runtime Ledger observer', () => {
       'ambiguous_function_response_id'
     ]);
     expect(messages[0].data.runtimeLedger.ledger.terminalContent.toolResults).toBeUndefined();
+    expect(messages[0].data).not.toHaveProperty('content');
+    expect(messages[0].data).not.toHaveProperty('toolResults');
+    expect(messages[0].data).not.toHaveProperty('pendingToolCalls');
   });
 
-  it('marks transport projection degraded when Runtime Ledger append is rejected', async () => {
+  it('keeps transport projection immediate when background Runtime Ledger append is rejected', async () => {
     const { processor, messages } = createProcessor();
-    jest.spyOn(chatStreamRuntimeLedgerBridge, 'appendStreamEvent').mockResolvedValueOnce({
+    const appendSpy = jest.spyOn(chatStreamRuntimeLedgerBridge, 'appendStreamEvent').mockResolvedValueOnce({
       accepted: false,
       diagnostics: ['append_failed:runtime.chat.stream_event:forced rejection']
     });
+    const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
 
-    processor.processChunk({
-      toolStatus: true,
-      tool: { id: 'tool-call-rejected', name: 'read_file', status: 'executing' }
-    });
+    try {
+      processor.processChunk({
+        toolStatus: true,
+        tool: { id: 'tool-call-rejected', name: 'read_file', status: 'executing' }
+      });
 
-    await flushRuntimeLedger();
-
-    expect(messages).toHaveLength(1);
-    expect(messages[0].data.runtimeLedger).toMatchObject({
-      status: 'degraded',
-      diagnostics: ['append_failed:runtime.chat.stream_event:forced rejection'],
-      ledger: {
-        toolStatesByInvocationId: {
-          'tool:chat:tool-call-rejected': 'executing'
+      expect(messages).toHaveLength(1);
+      expect(messages[0].data.runtimeLedger).toMatchObject({
+        status: 'ok',
+        ledger: {
+          toolStatesByInvocationId: {
+            'tool:chat:tool-call-rejected': 'executing'
+          }
         }
-      }
-    });
+      });
+
+      await processor.drainRuntimeLedgerForTests();
+      expect(appendSpy).toHaveBeenCalled();
+      expect(warnSpy).toHaveBeenCalledWith(
+        '[StreamChunkProcessor] Runtime Ledger append rejected:',
+        ['append_failed:runtime.chat.stream_event:forced rejection']
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it('attaches Runtime Ledger terminal content and state projections to transport messages', async () => {
@@ -420,6 +716,9 @@ describe('StreamChunkProcessor Runtime Ledger observer', () => {
         }
       }
     });
+    expect(messages[0].data).not.toHaveProperty('content');
+    expect(messages[0].data).not.toHaveProperty('toolIteration');
+    expect(messages[0].data).not.toHaveProperty('toolResults');
     expect(messages[1].data).toMatchObject({
       type: 'error',
       runtimeLedger: {
@@ -432,5 +731,6 @@ describe('StreamChunkProcessor Runtime Ledger observer', () => {
         }
       }
     });
+    expect(messages[1].data).not.toHaveProperty('error');
   });
 });

@@ -361,8 +361,19 @@ export class ConversationManager {
             return result.value;
         }
         if (!result.errorCode || result.errorCode === 'not_found') {
-            await this.createConversation(conversationId);
-            return [];
+            try {
+                await this.createConversation(conversationId);
+                return [];
+            } catch (error) {
+                // 修改原因：cancel/stop 与流式工具写入可能并发触发 loadHistory 的“缺失则创建”兜底。
+                // 修改方式：如果 create 时发现同 ID 已由另一条路径创建，重新读取并复用现有 history。
+                // 修改目的：主界面 stop 不应因为初始化竞态冒出“对话已存在”的 UNKNOWN_ERROR。
+                const retry = await this.storage.loadHistoryWithStatus(conversationId);
+                if (retry.value) {
+                    return retry.value;
+                }
+                throw error;
+            }
         }
         throw new Error(
             `Failed to load conversation history (${result.errorCode}) for ${conversationId}: ${result.errorMessage || 'Unknown error'}`

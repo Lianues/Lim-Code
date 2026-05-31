@@ -2,6 +2,27 @@
 
 All notable changes to the "Lim Code" extension will be documented in this file.
 
+## [1.2.8-nightly] - 2026-06-01
+
+### 新增（Runtime Ledger 与窗口化数据流）
+  - 主聊天流式事件接入 Runtime Ledger 投影层，前端 transport 与后台 ledger 写入解耦，避免长上下文记录写入拖慢 UI 刷新。
+  - SubAgent Monitor 改为 manifest + content window 数据流，列表先加载轻量 run manifest，聚焦后再按需加载对应 transcript window。
+  - 新增 source-window fallback：Runtime Ledger window 尚未回填完成时，Monitor 可直接用已落盘窗口恢复可见内容，减少 Recovering 空白等待。
+  - 新增前端缓存生命周期治理与 runtime perf budget/sample 工具，用统一入口约束消息窗口、后台 stream buffer、tool response cache 和 Monitor projection cache。
+  - 终端大输出改为 preview + ref/window 读取，避免一次性把超大 terminal payload 推入 webview。
+
+### 修复（主聊天与 SubAgent Monitor）
+  - 修复 SubAgent 运行中从主界面 stop 时可能触发的 `UNKNOWN_ERROR: 对话已存在` 创建竞态，冲突时会重新读取已有历史。
+  - 修复 SubAgent Monitor 数据更新后长期停留在 Recovering、重置视图空白或已落盘内容加载极慢的问题。
+  - 修复 Monitor 历史 window 与 live tail 混合时 backendIndex 偏移、旧 window 接收新 delta、工具状态投影不一致等问题。
+  - 调整对话窗口加载语义：从外部进入 / importer 只加载尾部 20 楼；向前滚动加载使用显式 `beforeIndex` 和独立页大小，不再退化成再次只取最后 20 楼。
+  - 取消主聊天 SSE chunk transport 的时间型 throttle，并取消 streaming Markdown debounce；收到上游 chunk 后立即投递、立即触发流式渲染。
+
+### 稳定性与回归测试
+  - 扩展 Webview client registry、MessageRouter、StreamChunkProcessor、SubAgent Monitor protocol 和 Runtime Ledger projection 的回归覆盖。
+  - 新增/更新 Monitor window state、conversation window loading、cache lifecycle、runtime perf budget、terminal output projection 和 SubAgent transcript mutation 相关测试。
+  - 已通过定向 Runtime Ledger / webview 测试、26 个相关回归测试套件和 `npm run compile`。
+
 ## [1.2.7] - 2026-05-30
 
 ### 修复（前端显示 Bug 修复）

@@ -47,6 +47,7 @@ import { WindowsAgentStopNotificationService } from '../backend/modules/notifica
 import { SubAgentMonitorPanel } from './SubAgentMonitorPanel';
 import { subAgentRuntimeLedgerBridge } from '../backend/tools/subagents/runtimeLedgerBridge';
 import { chatStreamRuntimeLedgerBridge } from './stream/runtimeLedgerBridge';
+import { TerminalOutputProjectionStore } from './terminalOutputProjection';
 
 /**
  * Diff 预览内容提供者
@@ -78,6 +79,13 @@ class DiffPreviewContentProvider implements vscode.TextDocumentContentProvider, 
     }
 }
 
+interface HiddenWebviewPush {
+    message: Record<string, any>;
+    count: number;
+    firstHiddenAt: number;
+    lastHiddenAt: number;
+}
+
 export class ChatViewProvider implements vscode.WebviewViewProvider {
     private _view?: vscode.WebviewView;
 
@@ -106,7 +114,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
     private windowsAgentStopNotificationService?: WindowsAgentStopNotificationService;
     private subAgentMonitorPanel?: SubAgentMonitorPanel;
     private mainChatClientDisposable?: vscode.Disposable;
+    private mainChatVisibilityDisposable?: vscode.Disposable;
     private readonly webviewClientRegistry = new WebviewClientRegistry();
+    private readonly hiddenMainChatPushes = new Map<string, HiddenWebviewPush>();
+    private readonly terminalOutputProjectionStore = new TerminalOutputProjectionStore();
     
     // 消息路由器
     private messageRouter!: MessageRouter;
@@ -384,7 +395,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             // 修改原因：Monitor 直接处理 monitorReady/getRunWindow，不经过 MessageRouter，历史 run 恢复仍需要 conversation metadata seam。
             // 修改方式：把现有 ConversationManager 以 SubAgentRunConversationStore 接口注入面板，而不是在路由器里按 endpoint 写特判。
             // 修改目的：遵守 clientId 路由边界，同时让 Monitor 首屏 manifest 可覆盖历史子对话。
-            this.conversationManager
+            this.conversationManager,
+            (clientId, visible, source, reason) => this.updateWebviewVisibility(clientId, visible, source, reason)
         );
         
 
@@ -396,48 +408,28 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
      * 处理终端输出事件，推送到前端
      */
     private handleTerminalOutputEvent(event: TerminalOutputEvent): void {
-        if (!this._view) return;
-        
-        this._view.webview.postMessage({
-            type: 'terminalOutput',
-            data: event
-        });
+        this.postMainChatPushMessage('terminalOutput', this.terminalOutputProjectionStore.project(event));
     }
     
     /**
      * 处理图像生成输出事件，推送到前端
      */
     private handleImageGenOutputEvent(event: ImageGenOutputEvent): void {
-        if (!this._view) return;
-        
-        this._view.webview.postMessage({
-            type: 'imageGenOutput',
-            data: event
-        });
+        this.postMainChatPushMessage('imageGenOutput', event);
     }
     
     /**
      * 处理统一任务事件，推送到前端
      */
     private handleTaskEvent(event: TaskEvent): void {
-        if (!this._view) return;
-        
-        this._view.webview.postMessage({
-            type: 'taskEvent',
-            data: event
-        });
+        this.postMainChatPushMessage('taskEvent', event);
     }
     
     /**
      * 处理依赖安装进度事件，推送到前端
      */
     private handleDependencyProgressEvent(event: InstallProgressEvent): void {
-        if (!this._view) return;
-        
-        this._view.webview.postMessage({
-            type: 'dependencyProgress',
-            data: event
-        });
+        this.postMainChatPushMessage('dependencyProgress', event);
     }
     
     /** 打开或聚焦 SubAgent Monitor；主聊天只保留摘要，完整内部过程放在编辑器区域。 */
@@ -451,7 +443,8 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
                 // 修改原因：懒创建 Monitor 面板也必须具备历史 run manifest/window 加载能力。
                 // 修改方式：传入同一个 ConversationManager seam，避免面板自行寻找全局状态。
                 // 修改目的：保持 SubAgentTranscriptRepository/RunController 语义单一。
-                this.conversationManager
+                this.conversationManager,
+                (clientId, visible, source, reason) => this.updateWebviewVisibility(clientId, visible, source, reason)
             );
         }
         this.subAgentMonitorPanel.open(runId, conversationId);
@@ -484,10 +477,193 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         });
     }
 
+    private updateWebviewVisibility(clientId: string, visible: boolean, source: 'vscode' | 'frontend', reason?: string): void {
+        this.webviewClientRegistry.setVisibility(clientId, visible, source, reason);
+        if (clientId === WEBVIEW_CLIENT_IDS.mainChat && visible) {
+            this.messageRouter?.flushHiddenStreamTransports();
+            this.flushHiddenMainChatPushes();
+        }
+    }
+
+    private handleVisibilityChangedMessage(
+        clientId: string,
+        data: any,
+        requestId?: string,
+        fallbackWebview?: vscode.Webview
+    ): void {
+        const visible = typeof data?.visible === 'boolean'
+            ? data.visible
+            : data?.hidden === true
+                ? false
+                : true;
+        const reason = typeof data?.visibilityState === 'string'
+            ? data.visibilityState
+            : typeof data?.source === 'string'
+                ? data.source
+                : undefined;
+
+        this.updateWebviewVisibility(clientId, visible, 'frontend', reason);
+
+        if (requestId) {
+            this.postRoutedWebviewMessage(clientId, {
+                type: 'response',
+                requestId,
+                success: true,
+                data: {
+                    success: true,
+                    visible
+                }
+            }, fallbackWebview);
+        }
+    }
+
+    private handleRuntimeLedgerTerminalContentWindowMessage(
+        clientId: string,
+        data: any,
+        requestId?: string,
+        fallbackWebview?: vscode.Webview
+    ): void {
+        if (!requestId) return;
+
+        const refId = typeof data?.refId === 'string' ? data.refId.trim() : '';
+        if (!refId) {
+            this.postRoutedWebviewMessage(clientId, {
+                type: 'error',
+                requestId,
+                success: false,
+                error: { code: 'INVALID_RUNTIME_LEDGER_REF', message: 'Missing Runtime Ledger terminal content refId' }
+            }, fallbackWebview);
+            return;
+        }
+
+        const window = chatStreamRuntimeLedgerBridge.getTerminalContentWindow(refId, {
+            startBytes: typeof data?.startBytes === 'number' ? data.startBytes : undefined,
+            maxBytes: typeof data?.maxBytes === 'number' ? data.maxBytes : undefined,
+            includePayload: typeof data?.includePayload === 'boolean' ? data.includePayload : undefined
+        });
+        if (!window) {
+            this.postRoutedWebviewMessage(clientId, {
+                type: 'error',
+                requestId,
+                success: false,
+                error: { code: 'RUNTIME_LEDGER_REF_NOT_FOUND', message: `Runtime Ledger terminal content ref not found: ${refId}` }
+            }, fallbackWebview);
+            return;
+        }
+
+        this.postRoutedWebviewMessage(clientId, {
+            type: 'response',
+            requestId,
+            success: true,
+            data: window
+        }, fallbackWebview);
+    }
+
+    private handleTerminalOutputWindowMessage(
+        clientId: string,
+        data: any,
+        requestId?: string,
+        fallbackWebview?: vscode.Webview
+    ): void {
+        if (!requestId) return;
+
+        const refId = typeof data?.refId === 'string' ? data.refId.trim() : '';
+        if (!refId) {
+            this.postRoutedWebviewMessage(clientId, {
+                type: 'error',
+                requestId,
+                success: false,
+                error: { code: 'INVALID_TERMINAL_OUTPUT_REF', message: 'Missing terminal output refId' }
+            }, fallbackWebview);
+            return;
+        }
+
+        const window = this.terminalOutputProjectionStore.getWindow(refId, {
+            startBytes: typeof data?.startBytes === 'number' ? data.startBytes : undefined,
+            maxBytes: typeof data?.maxBytes === 'number' ? data.maxBytes : undefined,
+            includePayload: typeof data?.includePayload === 'boolean' ? data.includePayload : undefined
+        });
+        if (!window) {
+            this.postRoutedWebviewMessage(clientId, {
+                type: 'error',
+                requestId,
+                success: false,
+                error: { code: 'TERMINAL_OUTPUT_REF_NOT_FOUND', message: `Terminal output ref not found: ${refId}` }
+            }, fallbackWebview);
+            return;
+        }
+
+        this.postRoutedWebviewMessage(clientId, {
+            type: 'response',
+            requestId,
+            success: true,
+            data: window
+        }, fallbackWebview);
+    }
+
+    private postMainChatPushMessage(type: string, data: any): void {
+        if (!this._view) return;
+
+        const message = { type, data };
+        if (!this.webviewClientRegistry.isVisible(WEBVIEW_CLIENT_IDS.mainChat)) {
+            this.coalesceHiddenMainChatPush(message);
+            return;
+        }
+
+        this.flushHiddenMainChatPushes();
+        this.postRoutedWebviewMessage(WEBVIEW_CLIENT_IDS.mainChat, message, this._view.webview);
+    }
+
+    private coalesceHiddenMainChatPush(message: Record<string, any>): void {
+        const type = typeof message.type === 'string' && message.type ? message.type : '__unknown__';
+        const now = Date.now();
+        const existing = this.hiddenMainChatPushes.get(type);
+        this.hiddenMainChatPushes.set(type, {
+            message,
+            count: (existing?.count ?? 0) + 1,
+            firstHiddenAt: existing?.firstHiddenAt ?? now,
+            lastHiddenAt: now
+        });
+    }
+
+    private flushHiddenMainChatPushes(): void {
+        if (!this._view || this.hiddenMainChatPushes.size === 0) {
+            return;
+        }
+
+        const entries = Array.from(this.hiddenMainChatPushes.entries());
+        this.hiddenMainChatPushes.clear();
+
+        for (const [originalType, entry] of entries) {
+            this.postRoutedWebviewMessage(WEBVIEW_CLIENT_IDS.mainChat, {
+                type: 'webview.hiddenDeliverySummary',
+                data: {
+                    originalType,
+                    coalescedCount: entry.count,
+                    firstHiddenAt: entry.firstHiddenAt,
+                    lastHiddenAt: entry.lastHiddenAt
+                }
+            }, this._view.webview);
+            this.postRoutedWebviewMessage(WEBVIEW_CLIENT_IDS.mainChat, entry.message, this._view.webview);
+        }
+    }
+
     private async routeSubAgentMonitorMessage(message: any, webview: vscode.Webview): Promise<boolean> {
         await this.initPromise;
         const { type, data, requestId, clientId } = message;
         const routedClientId = this.normalizeClientId(clientId, WEBVIEW_CLIENT_IDS.subagentMonitor);
+        if (type === 'webview.visibilityChanged') {
+            this.handleVisibilityChangedMessage(routedClientId, data, requestId, webview);
+            return true;
+        }
+        if (type === 'runtimeLedger.getTerminalContentWindow') {
+            this.handleRuntimeLedgerTerminalContentWindowMessage(routedClientId, data, requestId, webview);
+            return true;
+        }
+        if (type === 'terminal.getOutputWindow') {
+            this.handleTerminalOutputWindowMessage(routedClientId, data, requestId, webview);
+            return true;
+        }
         const sendResponse = (id: string, responseData: any) => {
             this.postRoutedWebviewMessage(routedClientId, {
                 type: 'response',
@@ -562,14 +738,7 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         nextRetryIn?: number;
         conversationId?: string;
     }): void {
-        if (!this._view) return;
-        
-        this._view.webview.postMessage({
-            type: 'retryStatus',
-            data: {
-                ...status
-            }
-        });
+        this.postMainChatPushMessage('retryStatus', { ...status });
     }
     
     /**
@@ -653,6 +822,11 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.mainChatClientDisposable = this.registerWebviewClient(WEBVIEW_CLIENT_IDS.mainChat, webviewView.webview, {
             type: 'conversation',
             conversationId: 'main-chat'
+        });
+        this.mainChatVisibilityDisposable?.dispose();
+        this.updateWebviewVisibility(WEBVIEW_CLIENT_IDS.mainChat, webviewView.visible !== false, 'vscode', 'resolveWebviewView');
+        this.mainChatVisibilityDisposable = webviewView.onDidChangeVisibility?.(() => {
+            this.updateWebviewVisibility(WEBVIEW_CLIENT_IDS.mainChat, webviewView.visible !== false, 'vscode', 'onDidChangeVisibility');
         });
 
         webviewView.webview.options = {
@@ -774,6 +948,21 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
             return;
         }
 
+        if (type === 'webview.visibilityChanged') {
+            this.handleVisibilityChangedMessage(routedClientId, data, requestId, this._view?.webview);
+            return;
+        }
+
+        if (type === 'runtimeLedger.getTerminalContentWindow') {
+            this.handleRuntimeLedgerTerminalContentWindowMessage(routedClientId, data, requestId, this._view?.webview);
+            return;
+        }
+
+        if (type === 'terminal.getOutputWindow') {
+            this.handleTerminalOutputWindowMessage(routedClientId, data, requestId, this._view?.webview);
+            return;
+        }
+
         try {
             // 等待初始化完成
             await this.initPromise;
@@ -868,8 +1057,13 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         this.windowsAgentStopNotificationService?.dispose();
         this.subAgentMonitorPanel?.dispose();
         this.subAgentMonitorPanel = undefined;
+        this.mainChatVisibilityDisposable?.dispose();
+        this.mainChatVisibilityDisposable = undefined;
         this.mainChatClientDisposable?.dispose();
         this.mainChatClientDisposable = undefined;
+        this.webviewClientRegistry.setVisibility(WEBVIEW_CLIENT_IDS.mainChat, false, 'dispose', 'provider disposed');
+        this.hiddenMainChatPushes.clear();
+        this.terminalOutputProjectionStore.clear();
 
         console.log('ChatViewProvider disposed');
     }

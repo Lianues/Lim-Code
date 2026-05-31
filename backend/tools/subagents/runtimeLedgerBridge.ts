@@ -39,6 +39,22 @@ function stableIdHash(value: string): string {
     return (hash >>> 0).toString(36);
 }
 
+const SUBAGENT_CONTENT_TEXT_PREVIEW_BYTES = 4096;
+const SUBAGENT_LIVE_DELTA_TEXT_PREVIEW_BYTES = 4096;
+const SUBAGENT_LIVE_DELTA_FUNCTION_FIELD_PREVIEW_BYTES = 1024;
+
+function encodeRefPart(value: string): string {
+    return Buffer.from(value, 'utf8').toString('base64url');
+}
+
+function decodeRefPart(value: string): string | undefined {
+    try {
+        return Buffer.from(value, 'base64url').toString('utf8');
+    } catch {
+        return undefined;
+    }
+}
+
 function payloadKind(payload: unknown): string | undefined {
     if (!payload) return undefined;
     if (Array.isArray(payload)) return 'array';
@@ -100,7 +116,73 @@ export class SubAgentRuntimeLedgerBridge {
         await this.ensureContentWindowStoreLoaded();
         const record = this.contentWindowsByRunId.get(runId);
         if (!record) return undefined;
+        if (record.projectionKind === 'source') return undefined;
         return toContentWindow(record, options);
+    }
+
+    projectSourceContentWindow(
+        snapshot: SubAgentRunSnapshot,
+        options: SubAgentRunContentWindowOptions = {}
+    ): RuntimeLedgerSubAgentContentWindowProjection {
+        const record: RuntimeLedgerSubAgentContentWindowRecord = {
+            sourceRunId: snapshot.runId,
+            runtimeRunId: this.toRuntimeRunId(snapshot.runId),
+            conversationId: this.toRuntimeConversationId(snapshot.conversationId),
+            contentRevision: snapshot.contentRevision,
+            eventSequence: snapshot.eventSequence,
+            updatedAt: snapshot.updatedAt || Date.now(),
+            contents: cloneContents(snapshot.contents || []),
+            projectionKind: 'source'
+        };
+        this.upsertContentWindowRecord(record);
+        return toContentWindow(record, options);
+    }
+
+    async getContentTextWindow(
+        refId: string,
+        options: { startBytes?: number; maxBytes?: number; includePayload?: boolean } = {}
+    ): Promise<RuntimeLedgerSubAgentContentTextWindow | undefined> {
+        await this.ensureContentWindowStoreLoaded();
+        const parsed = parseContentTextRefId(refId);
+        if (!parsed) return undefined;
+        const record = this.contentWindowsByRunId.get(parsed.runId);
+        const content = record?.contents?.find(item => item.index === parsed.contentIndex)
+            ?? record?.contents?.[parsed.contentIndex];
+        const part = content?.parts?.[parsed.partIndex] as Record<string, unknown> | undefined;
+        const text = typeof part?.text === 'string' ? part.text : undefined;
+        if (text === undefined) return undefined;
+
+        const totalBytes = Buffer.byteLength(text, 'utf8');
+        const hasRange = typeof options.startBytes === 'number' || typeof options.maxBytes === 'number';
+        const startBytes = Math.max(0, Math.min(totalBytes, Math.floor(options.startBytes ?? 0)));
+        const maxBytes = Math.max(0, Math.floor(options.maxBytes ?? totalBytes));
+        const includePayload = options.includePayload ?? !hasRange;
+        const textWindow = includePayload
+            ? text
+            : sliceUtf8ByBytes(text, startBytes, maxBytes);
+        const endBytes = includePayload
+            ? totalBytes
+            : Math.min(totalBytes, startBytes + Buffer.byteLength(textWindow, 'utf8'));
+
+        return {
+            ref: {
+                refId,
+                runId: parsed.runId,
+                contentIndex: parsed.contentIndex,
+                partIndex: parsed.partIndex,
+                byteLength: totalBytes,
+                previewBytes: SUBAGENT_CONTENT_TEXT_PREVIEW_BYTES,
+                truncated: totalBytes > SUBAGENT_CONTENT_TEXT_PREVIEW_BYTES
+            },
+            text: textWindow,
+            window: {
+                startBytes,
+                endBytes,
+                totalBytes,
+                hasMoreBefore: startBytes > 0,
+                hasMoreAfter: endBytes < totalBytes
+            }
+        };
     }
 
     getLiveDeltaForRun(runId: string): RuntimeLedgerSubAgentLiveDeltaProjection | undefined {
@@ -595,13 +677,35 @@ interface RuntimeLedgerSubAgentContentWindowRecord {
     partialCoveredEventSequence?: number;
     updatedAt: number;
     contents: Content[];
-    projectionKind?: 'snapshot' | 'live';
+    projectionKind?: 'snapshot' | 'live' | 'source';
 }
 
 export interface RuntimeLedgerSubAgentContentWindowProjection extends SubAgentRunContentWindow {
     contentCoveredEventSequence?: number;
     partialCoveredEventSequence?: number;
-    source: 'runtime-ledger';
+    source: 'runtime-ledger' | 'source-window';
+}
+
+export interface RuntimeLedgerSubAgentContentTextRef {
+    refId: string;
+    runId: string;
+    contentIndex: number;
+    partIndex: number;
+    byteLength: number;
+    previewBytes: number;
+    truncated: boolean;
+}
+
+export interface RuntimeLedgerSubAgentContentTextWindow {
+    ref: RuntimeLedgerSubAgentContentTextRef;
+    text?: string;
+    window: {
+        startBytes: number;
+        endBytes: number;
+        totalBytes: number;
+        hasMoreBefore: boolean;
+        hasMoreAfter: boolean;
+    };
 }
 
 export interface RuntimeLedgerSubAgentLiveDeltaProjection {
@@ -645,6 +749,81 @@ function cloneJsonSafeValue(value: unknown): unknown {
     } catch {
         return undefined;
     }
+}
+
+function safeStringify(value: unknown): string {
+    try {
+        const serialized = JSON.stringify(value);
+        return typeof serialized === 'string' ? serialized : 'null';
+    } catch {
+        return JSON.stringify(String(value));
+    }
+}
+
+function estimateJsonBytes(value: unknown): number {
+    return Buffer.byteLength(safeStringify(value), 'utf8');
+}
+
+function createStructuredPreview(value: unknown, maxBytes: number, depth = 0): unknown {
+    if (estimateJsonBytes(value) <= maxBytes) return cloneJsonSafeValue(value);
+    if (typeof value === 'string') return truncateTextByBytes(value, maxBytes);
+    if (value === null || value === undefined || typeof value !== 'object') return value;
+    if (depth >= 3) {
+        return {
+            runtimeLedgerPreviewTruncated: true,
+            kind: payloadKind(value),
+            byteLength: estimateJsonBytes(value)
+        };
+    }
+
+    if (Array.isArray(value)) {
+        const items = value
+            .slice(0, 20)
+            .map(item => createStructuredPreview(item, Math.max(256, Math.floor(maxBytes / 4)), depth + 1));
+        if (value.length > items.length) {
+            items.push({
+                runtimeLedgerPreviewOmitted: value.length - items.length
+            });
+        }
+        return estimateJsonBytes(items) <= maxBytes ? items : items.slice(0, 5);
+    }
+
+    const source = value as Record<string, unknown>;
+    const preview: Record<string, unknown> = {
+        runtimeLedgerPreviewTruncated: true,
+        byteLength: estimateJsonBytes(value)
+    };
+    for (const key of ['id', 'name', 'status', 'success', 'error', 'message', 'rejected']) {
+        if (Object.prototype.hasOwnProperty.call(source, key)) {
+            preview[key] = createStructuredPreview(source[key], Math.max(256, Math.floor(maxBytes / 4)), depth + 1);
+        }
+    }
+    for (const key of Object.keys(source)) {
+        if (Object.prototype.hasOwnProperty.call(preview, key)) continue;
+        if (Object.keys(preview).length >= 16) break;
+        preview[key] = createStructuredPreview(source[key], Math.max(256, Math.floor(maxBytes / 6)), depth + 1);
+        if (estimateJsonBytes(preview) > maxBytes) {
+            delete preview[key];
+            break;
+        }
+    }
+    return preview;
+}
+
+function createBoundedLiveDeltaValue(value: unknown, maxBytes: number): {
+    value: unknown;
+    truncated: boolean;
+    byteLength: number;
+} {
+    const byteLength = estimateJsonBytes(value);
+    if (byteLength <= maxBytes) {
+        return { value: cloneJsonSafeValue(value), truncated: false, byteLength };
+    }
+    return {
+        value: createStructuredPreview(value, maxBytes),
+        truncated: true,
+        byteLength
+    };
 }
 
 function hasRenderableLiveDeltaPayload(payload: Record<string, unknown>): boolean {
@@ -829,8 +1008,13 @@ function sanitizeLiveDeltaPart(part: unknown): Record<string, unknown> | undefin
     const source = part as Record<string, any>;
 
     if (typeof source.text === 'string') {
-        const textPart: Record<string, unknown> = { text: source.text };
+        const bounded = createBoundedLiveDeltaValue(source.text, SUBAGENT_LIVE_DELTA_TEXT_PREVIEW_BYTES);
+        const textPart: Record<string, unknown> = { text: bounded.value };
         if (source.thought === true) textPart.thought = true;
+        if (bounded.truncated) {
+            textPart.textTruncated = true;
+            textPart.textByteLength = bounded.byteLength;
+        }
         return textPart;
     }
 
@@ -839,6 +1023,15 @@ function sanitizeLiveDeltaPart(part: unknown): Record<string, unknown> | undefin
         const safeFunctionCall: Record<string, unknown> = {};
         for (const key of ['id', 'name', 'args', 'partialArgs', 'index', 'itemId', 'finalArgs', 'rejected']) {
             if (!(key in fc)) continue;
+            if (key === 'args' || key === 'partialArgs' || key === 'finalArgs') {
+                const bounded = createBoundedLiveDeltaValue(fc[key], SUBAGENT_LIVE_DELTA_FUNCTION_FIELD_PREVIEW_BYTES);
+                if (bounded.value !== undefined) safeFunctionCall[key] = bounded.value;
+                if (bounded.truncated) {
+                    safeFunctionCall[`${key}Truncated`] = true;
+                    safeFunctionCall[`${key}ByteLength`] = bounded.byteLength;
+                }
+                continue;
+            }
             const cloned = cloneJsonSafeValue(fc[key]);
             if (cloned !== undefined) safeFunctionCall[key] = cloned;
         }
@@ -865,7 +1058,9 @@ function createLiveDeltaProjectionPayload(event: SubAgentRunEvent, snapshot: Sub
         thinkingStartTime: rawPayload.thinkingStartTime,
         usage: cloneJsonSafeValue(rawPayload.usage),
         delta: delta.length > 0 ? delta : undefined,
-        contentSnapshot: isContent(rawPayload.contentSnapshot) ? cloneContent(rawPayload.contentSnapshot as Content) : undefined,
+        contentSnapshot: isContent(rawPayload.contentSnapshot)
+            ? createLiveDeltaContentSnapshotPreview(rawPayload.contentSnapshot as Content)
+            : undefined,
         contentRevision: snapshot.contentRevision,
         eventSequence: snapshot.eventSequence
     };
@@ -876,6 +1071,27 @@ function createLiveDeltaProjectionPayload(event: SubAgentRunEvent, snapshot: Sub
     return payload;
 }
 
+function createLiveDeltaContentSnapshotPreview(content: Content): Content {
+    const preview = cloneContent(content);
+    let truncated = false;
+    preview.parts = (preview.parts || []).map(part => {
+        if (typeof part.text !== 'string') return part;
+        const byteLength = Buffer.byteLength(part.text, 'utf8');
+        if (byteLength <= SUBAGENT_LIVE_DELTA_TEXT_PREVIEW_BYTES) return part;
+        truncated = true;
+        return {
+            ...part,
+            text: truncateTextByBytes(part.text, SUBAGENT_LIVE_DELTA_TEXT_PREVIEW_BYTES),
+            textTruncated: true,
+            textByteLength: byteLength
+        } as any;
+    });
+    if (truncated) {
+        (preview as any).runtimeLedgerPreviewTruncated = true;
+    }
+    return preview;
+}
+
 function isValidContentWindowRecord(record: RuntimeLedgerSubAgentContentWindowRecord | undefined): record is RuntimeLedgerSubAgentContentWindowRecord {
     return !!record
         && typeof record.sourceRunId === 'string'
@@ -883,6 +1099,83 @@ function isValidContentWindowRecord(record: RuntimeLedgerSubAgentContentWindowRe
         && Array.isArray(record.contents)
         && typeof record.contentRevision === 'number'
         && typeof record.eventSequence === 'number';
+}
+
+function createContentTextRefId(runId: string, contentIndex: number, partIndex: number, text: string): string {
+    return [
+        'subagent-content-text',
+        encodeRefPart(runId),
+        String(contentIndex),
+        String(partIndex),
+        stableIdHash(text)
+    ].join(':');
+}
+
+function parseContentTextRefId(refId: string): { runId: string; contentIndex: number; partIndex: number } | undefined {
+    const parts = refId.split(':');
+    if (parts.length < 5 || parts[0] !== 'subagent-content-text') return undefined;
+    const runId = decodeRefPart(parts[1]);
+    const contentIndex = Number(parts[2]);
+    const partIndex = Number(parts[3]);
+    if (!runId || !Number.isInteger(contentIndex) || contentIndex < 0 || !Number.isInteger(partIndex) || partIndex < 0) {
+        return undefined;
+    }
+    return { runId, contentIndex, partIndex };
+}
+
+function sliceUtf8ByBytes(text: string, startBytes: number, maxBytes: number): string {
+    if (maxBytes <= 0) return '';
+    let currentBytes = 0;
+    let outputBytes = 0;
+    let output = '';
+
+    for (const char of text) {
+        const charBytes = Buffer.byteLength(char, 'utf8');
+        if (currentBytes + charBytes <= startBytes) {
+            currentBytes += charBytes;
+            continue;
+        }
+        if (outputBytes + charBytes > maxBytes) {
+            break;
+        }
+        output += char;
+        outputBytes += charBytes;
+        currentBytes += charBytes;
+    }
+    return output;
+}
+
+function truncateTextByBytes(text: string, maxBytes: number): string {
+    const marker = '\n[SubAgent content preview truncated.]';
+    const markerBytes = Buffer.byteLength(marker, 'utf8');
+    return `${sliceUtf8ByBytes(text, 0, Math.max(0, maxBytes - markerBytes))}${marker}`;
+}
+
+function projectContentTextRefs(content: Content, runId: string, fallbackContentIndex: number): Content {
+    const contentIndex = typeof content.index === 'number' ? content.index : fallbackContentIndex;
+    const projected = cloneContent(content);
+    projected.index = contentIndex;
+    projected.parts = (projected.parts || []).map((part, partIndex) => {
+        if (typeof part.text !== 'string') return part;
+        const byteLength = Buffer.byteLength(part.text, 'utf8');
+        if (byteLength <= SUBAGENT_CONTENT_TEXT_PREVIEW_BYTES) return part;
+        const ref: RuntimeLedgerSubAgentContentTextRef = {
+            refId: createContentTextRefId(runId, contentIndex, partIndex, part.text),
+            runId,
+            contentIndex,
+            partIndex,
+            byteLength,
+            previewBytes: SUBAGENT_CONTENT_TEXT_PREVIEW_BYTES,
+            truncated: true
+        };
+        return {
+            ...part,
+            text: truncateTextByBytes(part.text, SUBAGENT_CONTENT_TEXT_PREVIEW_BYTES),
+            textTruncated: true,
+            runtimeLedgerTextRef: ref
+        } as any;
+    });
+    return projected;
 }
 
 function toContentWindow(
@@ -920,7 +1213,9 @@ function toContentWindow(
 
     return {
         runId: record.sourceRunId,
-        contents: cloneContents(contents.slice(startIndex, endIndex)),
+        contents: contents
+            .slice(startIndex, endIndex)
+            .map((content, offset) => projectContentTextRefs(content, record.sourceRunId, startIndex + offset)),
         startIndex,
         endIndex,
         totalCount,
@@ -930,7 +1225,7 @@ function toContentWindow(
         partialCoveredEventSequence: record.partialCoveredEventSequence,
         hasMoreBefore: startIndex > 0,
         hasMoreAfter: endIndex < totalCount,
-        source: 'runtime-ledger'
+        source: record.projectionKind === 'source' ? 'source-window' : 'runtime-ledger'
     };
 }
 

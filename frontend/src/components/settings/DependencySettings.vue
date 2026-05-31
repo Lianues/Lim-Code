@@ -99,7 +99,7 @@
 
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted, computed } from 'vue';
-import { sendToExtension } from '../../utils/vscode';
+import { onExtensionMessageType, sendToExtension } from '../../utils/vscode';
 import { TOOL_DEPENDENCIES } from '../../composables/useDependency';
 import { useI18n } from '@/i18n';
 
@@ -126,6 +126,7 @@ const installing = ref<string | null>(null);
 const uninstalling = ref<string | null>(null);
 const progressMessage = ref<string>('');
 const progressType = ref<'info' | 'success' | 'error'>('info');
+let disposeDependencyProgress: (() => void) | null = null;
 
 // 展开的面板（记住状态）
 const STORAGE_KEY = 'limcode.dependencyPanels.expanded';
@@ -308,23 +309,20 @@ function handleProgressEvent(event: any) {
   }
 }
 
-// 消息处理器
-function handleMessage(event: MessageEvent) {
-  const message = event.data;
-  if (message.type === 'dependencyProgress') {
-    handleProgressEvent(message.data);
-  }
-}
-
 onMounted(() => {
   loadExpandedState();
   loadDependencies();
   getInstallPath();
-  window.addEventListener('message', handleMessage);
+  disposeDependencyProgress = onExtensionMessageType(
+    'dependencyProgress',
+    message => handleProgressEvent(message.data),
+    'DependencySettings'
+  );
 });
 
 onUnmounted(() => {
-  window.removeEventListener('message', handleMessage);
+  disposeDependencyProgress?.();
+  disposeDependencyProgress = null;
 });
 </script>
 

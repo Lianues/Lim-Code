@@ -9,8 +9,8 @@
  * - 流式响应处理
  */
 
-import { ref, computed } from 'vue'
-import { sendToExtension, onMessageFromExtension } from '../utils/vscode'
+import { ref, computed, onBeforeUnmount } from 'vue'
+import { sendToExtension, onExtensionMessageType } from '../utils/vscode'
 import type {
   Message,
   Content,
@@ -341,10 +341,14 @@ export function useChat(conversationId: string, configId: string) {
   }
 
   // 监听来自插件的消息
-  onMessageFromExtension((message) => {
-    if (message.type === 'streamChunk' && message.data.conversationId === conversationId) {
+  const disposeStreamChunkListener = onExtensionMessageType('streamChunk', message => {
+    if (message.data.conversationId === conversationId) {
       handleStreamChunk(message.data)
     }
+  }, 'useChat.streamChunk')
+
+  onBeforeUnmount(() => {
+    disposeStreamChunkListener()
   })
 
   return {

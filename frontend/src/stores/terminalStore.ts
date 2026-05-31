@@ -8,9 +8,18 @@
  */
 
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
-import { sendToExtension, onMessageFromExtension } from '../utils/vscode'
+import { ref, computed, triggerRef } from 'vue'
+import { sendToExtension, onExtensionMessageType } from '../utils/vscode'
 import { useI18n } from '../composables/useI18n'
+import {
+  estimateMapJsonBytes,
+  frontendCacheLifecycleGovernor
+} from '../utils/cacheLifecycleGovernor'
+
+const TERMINAL_CACHE_LIMITS = {
+  maxTerminals: 24,
+  maxBytes: 512 * 1024
+}
 
 /**
  * 终端输出事件类型（与后端对应）
@@ -19,6 +28,15 @@ export interface TerminalOutputEvent {
   terminalId: string
   type: 'start' | 'output' | 'error' | 'exit'
   data?: string
+  dataRef?: {
+    refId: string
+    terminalId: string
+    byteLength: number
+    previewBytes: number
+    truncated: boolean
+    createdAt: number
+  }
+  dataTruncated?: boolean
   command?: string  // start 事件时包含命令
   cwd?: string      // start 事件时包含工作目录
   shell?: string    // start 事件时包含 shell 类型
@@ -34,6 +52,10 @@ export interface TerminalState {
   id: string
   /** 累积的输出内容 */
   output: string
+  /** 被 preview 截断的输出片段 ref，用于显式按 range 拉取完整内容 */
+  outputRefs?: string[]
+  /** ref -> preview 文本，用于显式拉取完整输出后在 UI 中替换预览片段 */
+  outputRefPreviews?: Record<string, string>
   /** 是否正在运行 */
   running: boolean
   /** 退出码（运行结束后设置） */
@@ -62,6 +84,8 @@ export const useTerminalStore = defineStore('terminal', () => {
   
   /** 是否已初始化监听 */
   const initialized = ref(false)
+  let disposeTerminalOutputListener: (() => void) | undefined
+  let disposeCacheRegistration: (() => void) | undefined
   
   // ============ 计算属性 ============
   
@@ -101,6 +125,42 @@ export const useTerminalStore = defineStore('terminal', () => {
       lastUpdate: now
     })
   }
+
+  function removeTerminalState(terminalId: string): void {
+    const terminal = terminals.value.get(terminalId)
+    if (terminal?.command) {
+      commandToTerminalId.value.delete(terminal.command)
+    }
+    terminals.value.delete(terminalId)
+  }
+
+  function estimateTerminalCacheBytes(): number {
+    return estimateMapJsonBytes(terminals.value) + estimateMapJsonBytes(commandToTerminalId.value)
+  }
+
+  function pruneTerminalCache(maxEntries = TERMINAL_CACHE_LIMITS.maxTerminals, maxBytes = TERMINAL_CACHE_LIMITS.maxBytes): number {
+    let removed = 0
+    const sorted = Array.from(terminals.value.values()).sort((a, b) => {
+      if (a.running !== b.running) return a.running ? 1 : -1
+      return a.lastUpdate - b.lastUpdate
+    })
+
+    while (
+      terminals.value.size > maxEntries ||
+      (estimateTerminalCacheBytes() > maxBytes && terminals.value.size > 0)
+    ) {
+      const next = sorted.shift()
+      if (!next) break
+      removeTerminalState(next.id)
+      removed += 1
+    }
+
+    if (removed > 0) {
+      triggerRef(terminals)
+      triggerRef(commandToTerminalId)
+    }
+    return removed
+  }
   
   /**
    * 获取终端状态
@@ -135,7 +195,7 @@ export const useTerminalStore = defineStore('terminal', () => {
    * 处理终端输出事件
    */
   function handleTerminalOutput(event: TerminalOutputEvent): void {
-    const { terminalId, type, data, command, cwd, shell, exitCode, killed, duration } = event
+    const { terminalId, type, data, dataRef, command, cwd, shell, exitCode, killed, duration } = event
     
     let terminal = terminals.value.get(terminalId)
     
@@ -180,6 +240,15 @@ export const useTerminalStore = defineStore('terminal', () => {
         // 追加输出
         if (data) {
           terminal.output += data
+        }
+        if (dataRef?.refId) {
+          terminal.outputRefs = [...(terminal.outputRefs || []), dataRef.refId]
+          if (data) {
+            terminal.outputRefPreviews = {
+              ...(terminal.outputRefPreviews || {}),
+              [dataRef.refId]: data
+            }
+          }
         }
         break
         
@@ -275,14 +344,14 @@ export const useTerminalStore = defineStore('terminal', () => {
       }
     })
     
-    toDelete.forEach(id => terminals.value.delete(id))
+    toDelete.forEach(id => removeTerminalState(id))
   }
   
   /**
    * 清除指定终端
    */
   function removeTerminal(terminalId: string): void {
-    terminals.value.delete(terminalId)
+    removeTerminalState(terminalId)
   }
   
   /**
@@ -290,6 +359,7 @@ export const useTerminalStore = defineStore('terminal', () => {
    */
   function clearAll(): void {
     terminals.value.clear()
+    commandToTerminalId.value.clear()
   }
   
   // ============ 初始化 ============
@@ -299,14 +369,37 @@ export const useTerminalStore = defineStore('terminal', () => {
    */
   function initialize(): void {
     if (initialized.value) return
-    
-    onMessageFromExtension((message) => {
-      if (message.type === 'terminalOutput') {
-        handleTerminalOutput(message.data as TerminalOutputEvent)
+
+    disposeTerminalOutputListener = onExtensionMessageType('terminalOutput', message => {
+      handleTerminalOutput(message.data as TerminalOutputEvent)
+      frontendCacheLifecycleGovernor.enforceBudgets('terminal-output')
+    }, 'terminalStore.output')
+
+    disposeCacheRegistration = frontendCacheLifecycleGovernor.register({
+      id: 'terminal.outputs',
+      owner: 'terminalStore',
+      scope: 'terminal-output',
+      maxEntries: TERMINAL_CACHE_LIMITS.maxTerminals,
+      maxBytes: TERMINAL_CACHE_LIMITS.maxBytes,
+      getEntryCount: () => terminals.value.size,
+      estimateBytes: () => estimateTerminalCacheBytes(),
+      prune: context => {
+        return pruneTerminalCache(
+          context.maxEntries ?? TERMINAL_CACHE_LIMITS.maxTerminals,
+          context.maxBytes ?? TERMINAL_CACHE_LIMITS.maxBytes
+        )
       }
     })
     
     initialized.value = true
+  }
+
+  function dispose(): void {
+    disposeTerminalOutputListener?.()
+    disposeTerminalOutputListener = undefined
+    disposeCacheRegistration?.()
+    disposeCacheRegistration = undefined
+    initialized.value = false
   }
   
   return {
@@ -327,6 +420,7 @@ export const useTerminalStore = defineStore('terminal', () => {
     cleanup,
     removeTerminal,
     clearAll,
-    initialize
+    initialize,
+    dispose
   }
 })

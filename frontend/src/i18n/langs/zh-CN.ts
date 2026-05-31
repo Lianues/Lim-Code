@@ -2849,6 +2849,7 @@ const zhCN: LanguageMessages = {
                     terminate: '终止',
                     terminateTooltip: '终止进程',
                     copyOutput: '复制输出',
+                    loadFullOutput: '加载完整输出',
                     copied: '已复制',
                     output: '输出',
                     truncatedInfo: '显示最后 {outputLines} 行 (共 {totalLines} 行)',

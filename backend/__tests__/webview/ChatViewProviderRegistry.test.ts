@@ -7,6 +7,7 @@ import { createTestRegistry } from './helpers/createTestRegistry';
 import * as vscode from 'vscode';
 import { createSkillsManager } from '../../../backend/modules/skills';
 import * as path from 'path';
+import { estimateJsonBytes } from '../../../frontend/src/utils/cacheLifecycleGovernor';
 
 jest.mock('../../../webview/handlers', () => ({
   createMessageHandlerRegistry: () => {
@@ -28,7 +29,8 @@ jest.mock('../../../webview/stream', () => ({
     handleRetryStream: jest.fn().mockResolvedValue(undefined),
     handleEditAndRetryStream: jest.fn().mockResolvedValue(undefined),
     handleToolConfirmationStream: jest.fn().mockResolvedValue(undefined),
-    cancelStream: jest.fn().mockResolvedValue(undefined)
+    cancelStream: jest.fn().mockResolvedValue(undefined),
+    flushHiddenStreamTransports: jest.fn()
   }))
 }));
 
@@ -410,5 +412,93 @@ describe('WP23 runtime registry lifecycle', () => {
       })
     ]);
     expect(fallbackResponses).toEqual([]);
+  });
+
+  it('coalesces main-chat direct pushes while hidden and flushes the latest event when visible', async () => {
+    const context = createContext();
+    const provider = new ChatViewProvider(context);
+    const fakeView = createFakeWebviewView();
+
+    provider.resolveWebviewView(fakeView.view, {} as any, {} as any);
+    await (provider as any).initPromise;
+
+    const internals = provider as any;
+    internals.updateWebviewVisibility(WEBVIEW_CLIENT_IDS.mainChat, false, 'frontend', 'test-hidden');
+
+    internals.handleTaskEvent({ taskId: 'task-1', type: 'progress', createdAt: 1 });
+    internals.handleTaskEvent({ taskId: 'task-1', type: 'complete', createdAt: 2 });
+
+    expect(fakeView.messages).toEqual([]);
+
+    internals.updateWebviewVisibility(WEBVIEW_CLIENT_IDS.mainChat, true, 'frontend', 'test-visible');
+
+    expect(fakeView.messages).toEqual([
+      expect.objectContaining({
+        type: 'webview.hiddenDeliverySummary',
+        clientId: WEBVIEW_CLIENT_IDS.mainChat,
+        data: expect.objectContaining({
+          originalType: 'taskEvent',
+          coalescedCount: 2
+        })
+      }),
+      expect.objectContaining({
+        type: 'taskEvent',
+        clientId: WEBVIEW_CLIENT_IDS.mainChat,
+        data: expect.objectContaining({
+          taskId: 'task-1',
+          type: 'complete',
+          createdAt: 2
+        })
+      })
+    ]);
+  });
+
+  it('keeps main-chat direct-push envelope matrix under payload budgets', async () => {
+    const context = createContext();
+    const provider = new ChatViewProvider(context);
+    const fakeView = createFakeWebviewView();
+
+    provider.resolveWebviewView(fakeView.view, {} as any, {} as any);
+    await (provider as any).initPromise;
+
+    const internals = provider as any;
+    internals.handleTerminalOutputEvent({
+      terminalId: 'terminal-1',
+      type: 'output',
+      data: `START-${'0123456789'.repeat(1600)}-END`
+    });
+    internals.handleImageGenOutputEvent({
+      toolId: 'image-1',
+      type: 'progress',
+      data: { message: 'rendering', progress: 50 }
+    });
+    internals.handleTaskEvent({
+      taskId: 'task-1',
+      taskType: 'terminal',
+      type: 'progress',
+      createdAt: 1,
+      data: { message: 'running' }
+    });
+    internals.handleDependencyProgressEvent({
+      dependency: 'node',
+      status: 'installing',
+      message: 'installing'
+    });
+    internals.handleRetryStatus({
+      type: 'retrying',
+      conversationId: 'conversation-1',
+      attempt: 1,
+      maxAttempts: 3,
+      nextRetryIn: 1000,
+      createdAt: 2
+    });
+
+    const byType = new Map(fakeView.messages.map(message => [message.type, message]));
+    for (const type of ['terminalOutput', 'imageGenOutput', 'taskEvent', 'dependencyProgress', 'retryStatus']) {
+      expect(byType.has(type)).toBe(true);
+      expect(estimateJsonBytes(byType.get(type))).toBeLessThanOrEqual(16 * 1024);
+    }
+    expect(JSON.stringify(byType.get('terminalOutput'))).not.toContain('0123456789'.repeat(1600));
+    expect(byType.get('terminalOutput').data.dataRef).toBeDefined();
   });
 });

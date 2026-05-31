@@ -21,6 +21,7 @@ export interface StreamHandlerDeps {
   abortManager: StreamAbortManager;
   conversationManager: ConversationManager;
   getView: () => vscode.WebviewView | undefined;
+  isMainChatVisible?: () => boolean;
   sendResponse: (requestId: string, data: any) => void;
   sendError: (requestId: string, code: string, message: string) => void;
   settingsManager?: SettingsManager;
@@ -30,6 +31,9 @@ export interface StreamHandlerDeps {
  * 流式请求处理器
  */
 export class StreamRequestHandler {
+  private readonly activeProcessors = new Set<StreamChunkProcessor>();
+  private readonly retainedHiddenProcessors = new Set<StreamChunkProcessor>();
+
   constructor(private deps: StreamHandlerDeps) {}
 
   /**
@@ -132,6 +136,33 @@ export class StreamRequestHandler {
     await this.cleanupAbortedConversations(conversationIds);
   }
 
+  flushHiddenStreamTransports(): void {
+    for (const processor of this.activeProcessors) {
+      processor.flushHiddenTransportMessages();
+    }
+    for (const processor of Array.from(this.retainedHiddenProcessors)) {
+      processor.flushHiddenTransportMessages();
+      if (!processor.hasHiddenTransportMessages()) {
+        this.retainedHiddenProcessors.delete(processor);
+      }
+    }
+  }
+
+  private createProcessor(conversationId: string, streamId: string): StreamChunkProcessor {
+    const processor = new StreamChunkProcessor(this.deps.getView(), conversationId, streamId, {
+      isVisible: this.deps.isMainChatVisible
+    });
+    this.activeProcessors.add(processor);
+    return processor;
+  }
+
+  private releaseProcessor(processor: StreamChunkProcessor): void {
+    this.activeProcessors.delete(processor);
+    if (processor.hasHiddenTransportMessages()) {
+      this.retainedHiddenProcessors.add(processor);
+    }
+  }
+
   /**
    * 处理普通聊天流
    */
@@ -141,7 +172,7 @@ export class StreamRequestHandler {
     
     const controller = this.deps.abortManager.create(conversationId);
     const summarizeController = this.deps.abortManager.createSummary(conversationId);
-    const processor = new StreamChunkProcessor(this.deps.getView(), conversationId, streamId);
+    const processor = this.createProcessor(conversationId, streamId);
     
     try {
       const stream = this.deps.chatHandler.handleChatStream({
@@ -180,6 +211,7 @@ export class StreamRequestHandler {
     } finally {
       this.deps.abortManager.delete(conversationId);
       this.deps.abortManager.deleteSummary(conversationId);
+      this.releaseProcessor(processor);
     }
   }
 
@@ -192,7 +224,7 @@ export class StreamRequestHandler {
     
     const controller = this.deps.abortManager.create(conversationId);
     const summarizeController = this.deps.abortManager.createSummary(conversationId);
-    const processor = new StreamChunkProcessor(this.deps.getView(), conversationId, streamId);
+    const processor = this.createProcessor(conversationId, streamId);
     
     try {
       const stream = this.deps.chatHandler.handleRetryStream({
@@ -225,6 +257,7 @@ export class StreamRequestHandler {
     } finally {
       this.deps.abortManager.delete(conversationId);
       this.deps.abortManager.deleteSummary(conversationId);
+      this.releaseProcessor(processor);
     }
   }
 
@@ -237,7 +270,7 @@ export class StreamRequestHandler {
     
     const controller = this.deps.abortManager.create(conversationId);
     const summarizeController = this.deps.abortManager.createSummary(conversationId);
-    const processor = new StreamChunkProcessor(this.deps.getView(), conversationId, streamId);
+    const processor = this.createProcessor(conversationId, streamId);
     
     try {
       const stream = this.deps.chatHandler.handleEditAndRetryStream({
@@ -273,6 +306,7 @@ export class StreamRequestHandler {
     } finally {
       this.deps.abortManager.delete(conversationId);
       this.deps.abortManager.deleteSummary(conversationId);
+      this.releaseProcessor(processor);
     }
   }
 
@@ -285,7 +319,7 @@ export class StreamRequestHandler {
     
     const controller = this.deps.abortManager.create(conversationId);
     const summarizeController = this.deps.abortManager.createSummary(conversationId);
-    const processor = new StreamChunkProcessor(this.deps.getView(), conversationId, streamId);
+    const processor = this.createProcessor(conversationId, streamId);
     
     try {
       const stream = this.deps.chatHandler.handleToolConfirmation({
@@ -320,6 +354,7 @@ export class StreamRequestHandler {
     } finally {
       this.deps.abortManager.delete(conversationId);
       this.deps.abortManager.deleteSummary(conversationId);
+      this.releaseProcessor(processor);
     }
   }
 
