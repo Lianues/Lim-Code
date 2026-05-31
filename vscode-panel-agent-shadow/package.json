@@ -10,7 +10,7 @@
   "categories": [
     "Other"
   ],
-  "main": "./dist/extension.js",
+  "main": "./dist/extension-host/extension.js",
   "contributes": {
     "commands": [
       {

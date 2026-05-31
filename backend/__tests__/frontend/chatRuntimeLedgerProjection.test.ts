@@ -8,9 +8,17 @@ import {
   applyRuntimeLedgerToolStatusBatchProjection,
   applyRuntimeLedgerToolIterationProjection,
   applyRuntimeLedgerToolStatusProjection,
-  applyRuntimeLedgerToolsExecutingProjection
+  applyRuntimeLedgerToolsExecutingProjection,
+  drainRuntimeTerminalHydrationForTests
 } from '../../../frontend/src/stores/chat/runtimeLedgerProjection';
 import type { Message, StreamChunk } from '../../../frontend/src/types';
+import { loadRuntimeLedgerTerminalContentWindow } from '../../../frontend/src/utils/vscode';
+
+jest.mock('../../../frontend/src/utils/vscode', () => ({
+  loadRuntimeLedgerTerminalContentWindow: jest.fn()
+}));
+
+const loadRuntimeLedgerTerminalContentWindowMock = loadRuntimeLedgerTerminalContentWindow as jest.MockedFunction<typeof loadRuntimeLedgerTerminalContentWindow>;
 
 function createState(message: Message, extras: Record<string, any> = {}) {
   return {
@@ -48,6 +56,10 @@ function createAssistantMessage(): Message {
 }
 
 describe('main chat Runtime Ledger projection reducer', () => {
+  beforeEach(() => {
+    loadRuntimeLedgerTerminalContentWindowMock.mockReset();
+  });
+
   it('applies text and functionCall live deltas from Runtime Ledger projection', () => {
     const message = createAssistantMessage();
     const state = createState(message);
@@ -423,6 +435,106 @@ describe('main chat Runtime Ledger projection reducer', () => {
     expect(state.isWaitingForResponse.value).toBe(false);
     expect(addCheckpoint).toHaveBeenCalledWith(expect.objectContaining({ id: 'cp-complete' }));
     expect(updateConversationAfterMessage).toHaveBeenCalled();
+  });
+
+  it('hydrates full terminal content when complete projection only carries a preview ref', async () => {
+    const message = createAssistantMessage();
+    message.streaming = true;
+    message.localOnly = true;
+    message.parts = [{
+      functionCall: {
+        id: 'call-write-preview',
+        name: 'write_file',
+        args: {},
+        partialArgs: '{"path"'
+      }
+    }];
+    message.tools = [{
+      id: 'call-write-preview',
+      name: 'write_file',
+      args: {},
+      partialArgs: '{"path"',
+      status: 'streaming'
+    }];
+    const state = createState(message);
+    const addCheckpoint = jest.fn();
+    const updateConversationAfterMessage = jest.fn().mockResolvedValue(undefined);
+    const finalContent = {
+      role: 'model',
+      parts: [{
+        functionCall: {
+          id: 'call-write-preview',
+          name: 'write_file',
+          args: { path: 'src/extension.ts', content: 'final source' }
+        }
+      }]
+    };
+    loadRuntimeLedgerTerminalContentWindowMock.mockResolvedValue({
+      ref: {
+        refId: 'terminal-content:large',
+        kind: 'content',
+        byteLength: 128000,
+        previewBytes: 4096,
+        truncated: true,
+        createdAt: 1
+      },
+      payload: finalContent,
+      window: {
+        startBytes: 0,
+        endBytes: 128000,
+        totalBytes: 128000,
+        hasMoreBefore: false,
+        hasMoreAfter: false
+      }
+    });
+    const chunk = {
+      type: 'complete',
+      conversationId: 'conversation-1',
+      streamId: 'stream-1',
+      runtimeLedger: {
+        status: 'ok',
+        ledger: {
+          terminalState: {
+            type: 'complete',
+            messageId: 'msg:stream:stream-1',
+            contentId: 'cnt:stream:stream-1',
+            source: 'runtime-ledger'
+          },
+          terminalContent: {
+            type: 'complete',
+            messageId: 'msg:stream:stream-1',
+            contentId: 'cnt:stream:stream-1',
+            source: 'runtime-ledger',
+            contentTruncated: true,
+            contentRef: {
+              refId: 'terminal-content:large',
+              kind: 'content',
+              byteLength: 128000,
+              previewBytes: 4096,
+              truncated: true,
+              createdAt: 1
+            },
+            content: { role: 'model', parts: [{ text: 'preview only' }] }
+          }
+        }
+      }
+    } as StreamChunk;
+
+    expect(applyRuntimeLedgerCompleteProjection(chunk, state, addCheckpoint, updateConversationAfterMessage)).toBe(true);
+    expect(loadRuntimeLedgerTerminalContentWindowMock).toHaveBeenCalledWith('terminal-content:large', { includePayload: true });
+
+    await drainRuntimeTerminalHydrationForTests();
+
+    expect(state.allMessages.value[0].parts?.[0].functionCall?.args).toEqual({
+      path: 'src/extension.ts',
+      content: 'final source'
+    });
+    expect(state.allMessages.value[0].parts?.[0].functionCall?.partialArgs).toBeUndefined();
+    expect(state.allMessages.value[0].tools?.[0]).toMatchObject({
+      id: 'call-write-preview',
+      args: { path: 'src/extension.ts', content: 'final source' }
+    });
+    expect(state.allMessages.value[0].tools?.[0].partialArgs).toBeUndefined();
   });
 
   it('applies cancelled and error terminal states from Runtime Ledger projection', () => {

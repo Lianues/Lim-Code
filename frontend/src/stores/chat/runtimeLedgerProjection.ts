@@ -15,9 +15,11 @@ import { appendMessage, getMessageIndexById, removeMessageAt, replaceAllMessages
 import { addTextToMessage, handleFunctionCallPart, processStreamingText } from './streamHelpers'
 import { contentToMessageEnhanced } from './parsers'
 import { syncTotalMessagesFromWindow, trimWindowFromTop } from './windowUtils'
+import { loadRuntimeLedgerTerminalContentWindow } from '../../utils/vscode'
 
 type RuntimeToolState = 'queued' | 'executing' | 'success' | 'error' | 'cancelled'
 type RuntimeTerminalContentType = NonNullable<NonNullable<StreamChunk['runtimeLedger']>['ledger']>['terminalContent']['type']
+type RuntimeTerminalContentProjection = NonNullable<NonNullable<NonNullable<StreamChunk['runtimeLedger']>['ledger']>['terminalContent']>
 
 export interface RuntimeLedgerMutationProjection {
   status?: 'ok' | 'degraded'
@@ -119,6 +121,15 @@ function getRuntimeToolState(toolId: string | undefined, chunk: StreamChunk): Ru
 
 function hasArgsSnapshot(args: unknown): args is Record<string, unknown> {
   return !!args && typeof args === 'object' && !Array.isArray(args)
+}
+
+function isContentPayload(value: unknown): value is Content {
+  const record = value as Content | undefined
+  return !!(
+    record &&
+    (record.role === 'model' || record.role === 'user') &&
+    Array.isArray(record.parts)
+  )
 }
 
 function getNextBackendIndex(state: ChatStoreState): number {
@@ -322,9 +333,80 @@ function rebuildToolResponseCacheFromMessages(state: ChatStoreState): void {
 }
 
 function isRuntimeTerminalContentPreview(
-  terminalContent: NonNullable<NonNullable<NonNullable<StreamChunk['runtimeLedger']>['ledger']>['terminalContent']>
+  terminalContent: RuntimeTerminalContentProjection
 ): boolean {
   return terminalContent.contentTruncated === true || terminalContent.contentRef?.truncated === true
+}
+
+const runtimeTerminalHydrationTasks = new Set<Promise<void>>()
+
+export async function drainRuntimeTerminalHydrationForTests(): Promise<void> {
+  await Promise.all(Array.from(runtimeTerminalHydrationTasks))
+}
+
+function findMessageIndexByStableId(state: ChatStoreState, messageId: string): number {
+  const indexed = getMessageIndexById(state, messageId)
+  if (indexed !== -1) return indexed
+  return state.allMessages.value.findIndex(message => message.id === messageId)
+}
+
+function replaceMessageWithFullTerminalContent(
+  state: ChatStoreState,
+  messageId: string,
+  content: Content
+): void {
+  const messageIndex = findMessageIndexByStableId(state, messageId)
+  if (messageIndex === -1) return
+
+  const message = state.allMessages.value[messageIndex]
+  if (!message || message.id !== messageId) return
+
+  const existingModelVersion = message.metadata?.modelVersion
+  const finalMessage = contentToMessageEnhanced(content, message.id)
+  const tools = mergeToolsPreferExisting(message.tools, finalMessage.tools)
+  const updatedMessage: Message = {
+    ...message,
+    ...finalMessage,
+    id: message.id,
+    timestamp: message.timestamp,
+    backendIndex: message.backendIndex,
+    streaming: false,
+    localOnly: false,
+    tools: tools && tools.length > 0
+      ? tools
+      : (finalMessage.tools && finalMessage.tools.length > 0 ? finalMessage.tools : message.tools),
+    parts: finalMessage.parts
+  }
+
+  if (!updatedMessage.metadata) updatedMessage.metadata = {}
+  if (existingModelVersion) updatedMessage.metadata.modelVersion = existingModelVersion
+  delete updatedMessage.metadata.thinkingStartTime
+
+  replaceMessageAt(state, messageIndex, updatedMessage)
+}
+
+function scheduleRuntimeTerminalContentHydration(
+  terminalContent: RuntimeTerminalContentProjection,
+  state: ChatStoreState,
+  messageId: string
+): void {
+  const refId = terminalContent.contentRef?.refId
+  if (!refId || !isRuntimeTerminalContentPreview(terminalContent)) return
+
+  let task: Promise<void>
+  task = (async () => {
+    const contentWindow = await loadRuntimeLedgerTerminalContentWindow(refId, { includePayload: true })
+    if (!isContentPayload(contentWindow?.payload)) return
+    replaceMessageWithFullTerminalContent(state, messageId, contentWindow.payload)
+  })()
+    .catch(error => {
+      console.warn('[runtimeLedgerProjection] Failed to hydrate full terminal content:', error)
+    })
+    .finally(() => {
+      runtimeTerminalHydrationTasks.delete(task)
+    })
+
+  runtimeTerminalHydrationTasks.add(task)
 }
 
 export function applyRuntimeLedgerMutationProjection(
@@ -366,7 +448,7 @@ function shouldPreserveToolParts(existingTools: ToolUsage[] | undefined, finalMe
 }
 
 function applyRuntimeTerminalContentSnapshot(
-  terminalContent: NonNullable<NonNullable<NonNullable<StreamChunk['runtimeLedger']>['ledger']>['terminalContent']>,
+  terminalContent: RuntimeTerminalContentProjection,
   state: ChatStoreState,
   options: {
     preserveExistingTools?: boolean
@@ -408,6 +490,7 @@ function applyRuntimeTerminalContentSnapshot(
     delete updatedMessage.metadata.thinkingStartTime
 
     replaceMessageAt(state, messageIndex, updatedMessage)
+    scheduleRuntimeTerminalContentHydration(terminalContent, state, message.id)
     return { applied: true, messageIndex, tools: updatedMessage.tools }
   }
 

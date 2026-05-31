@@ -1,7 +1,7 @@
 {
-  // 为什么要改：Stage 1 需要一个可编译的最小 VSCode 扩展，而不是直接写散落的 JavaScript。
-  // 怎么改：把 Extension Host 入口从 src/extension-host 编译到 dist，并开启严格类型检查。
-  // 目的是什么：让最小 Hello World 面板也走正式扩展编译路径，为后续协议和状态 owner 留出清晰边界。
+  // 为什么要改：Stage 1 现在开始引入 src/protocol 作为 Webview 与 Extension Host 的共享边界类型。
+  // 怎么改：把 rootDir 从 src/extension-host 提升到 src，并让 include 覆盖 src 下所有 TypeScript 文件。
+  // 目的是什么：让协议类型和 Extension Host 入口一起被 TypeScript 检查，同时保持输出仍集中在 dist。
   "compilerOptions": {
     "module": "commonjs",
     "target": "ES2020",
@@ -11,13 +11,13 @@
       "DOM"
     ],
     "sourceMap": true,
-    "rootDir": "src/extension-host",
+    "rootDir": "src",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true
   },
   "include": [
-    "src/extension-host/**/*.ts"
+    "src/**/*.ts"
   ],
   "exclude": [
     "node_modules",
