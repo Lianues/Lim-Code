@@ -43,3 +43,4 @@ tmp/
 .kagent/
 .tmp-limcode-dataflow-server.pid
 测试mcp.json
+vscode-panel-agent-shadow/

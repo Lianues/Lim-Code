@@ -86,15 +86,19 @@ async function handleApplyDiffPreview(
   ctx: HandlerContext,
   toolId?: string
 ): Promise<void> {
-  const filePath = args.path as string;
+  const resultData = result?.data as Record<string, unknown> | undefined;
+  const filePath = (args.path as string | undefined)
+    || (resultData?.file as string | undefined)
+    || (resultData?.path as string | undefined)
+    || '';
   const hunks = args.hunks as Array<{ oldContent: string; newContent: string; startLine?: number }> | undefined;
   const patch = args.patch as string | undefined;
   
-  const resultData = result?.data as Record<string, unknown> | undefined;
   let fullOriginalContent = resultData?.originalContent as string | undefined;
   let fullNewContent = resultData?.newContent as string | undefined;
   
   const diffContentId = resultData?.diffContentId as string | undefined;
+  let previewId = diffContentId || toolId || `${filePath}:${Date.now()}`;
   if (diffContentId && (!fullOriginalContent || !fullNewContent)) {
     try {
       const loadedContent = await ctx.diffStorageManager.loadGlobalDiff(diffContentId);
@@ -104,6 +108,15 @@ async function handleApplyDiffPreview(
       }
     } catch (e) {
       console.warn('Failed to load diff content:', e);
+    }
+  }
+
+  if (typeof fullOriginalContent !== 'string' || typeof fullNewContent !== 'string') {
+    const storedDiff = findStoredDiffPreviewByToolAndPath(toolId, filePath);
+    if (storedDiff) {
+      fullOriginalContent = storedDiff.originalContent;
+      fullNewContent = storedDiff.newContent;
+      previewId = storedDiff.id;
     }
   }
 
@@ -144,8 +157,33 @@ async function handleApplyDiffPreview(
     throw new Error(t('webview.errors.invalidDiffData'));
   }
   
-  const previewId = diffContentId || toolId || `${filePath}:${Date.now()}`;
   await openDiffView(filePath, originalContent, newContent, diffTitle, ctx, previewId);
+}
+
+function findStoredDiffPreviewByToolAndPath(
+  toolId: string | undefined,
+  filePath: string | undefined
+): {
+  id: string;
+  filePath: string;
+  originalContent: string;
+  newContent: string;
+} | undefined {
+  const normalizedToolId = typeof toolId === 'string' ? toolId.trim() : '';
+  const normalizedFilePath = typeof filePath === 'string' ? filePath.trim() : '';
+  if (!normalizedToolId || !normalizedFilePath) return undefined;
+
+  try {
+    const diffs = getDiffManager().getDiffsByToolId(normalizedToolId);
+    return diffs.find((diff) => (
+      diff?.filePath === normalizedFilePath &&
+      typeof diff.originalContent === 'string' &&
+      typeof diff.newContent === 'string'
+    ));
+  } catch (e) {
+    console.warn('Failed to load stored diff by tool id:', e);
+    return undefined;
+  }
 }
 
 function buildPreviewContentsFromStructuredHunks(

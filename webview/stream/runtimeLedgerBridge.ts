@@ -840,8 +840,16 @@ export class ChatStreamRuntimeLedgerBridge {
       'canceled',
       'rejected',
       'requiresUserConfirmation',
+      'data',
+      'file',
+      'path',
+      'diffContentId',
+      'pendingDiffId',
       'appliedCount',
       'failedCount',
+      'autoSaveError',
+      'diffGuardWarning',
+      'diffGuardDeletePercent',
       'id',
       'name'
     ];

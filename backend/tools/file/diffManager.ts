@@ -1511,6 +1511,18 @@ export class DiffManager {
     }
 
     /**
+     * 按工具调用 ID 查找该工具生成过的 diff。
+     */
+    public getDiffsByToolId(toolId: string): PendingDiff[] {
+        const normalizedToolId = typeof toolId === 'string' ? toolId.trim() : '';
+        if (!normalizedToolId) return [];
+
+        return Array.from(this.pendingDiffs.values())
+            .filter(diff => diff.toolId === normalizedToolId)
+            .sort((a, b) => b.timestamp - a.timestamp);
+    }
+
+    /**
      * 检查是否所有 diff 都已处理
      */
     public areAllProcessed(): boolean {

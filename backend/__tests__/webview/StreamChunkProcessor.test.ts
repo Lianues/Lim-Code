@@ -499,6 +499,47 @@ describe('StreamChunkProcessor Runtime Ledger observer', () => {
     expect((full?.payload as any).result.data).toBe(hugeResult);
   });
 
+  it('keeps diffContentId in truncated tool result previews so diff actions can load full files', async () => {
+    const { processor, messages } = createProcessor();
+    const noisyResults = Array.from({ length: 80 }, (_, index) => ({
+      index,
+      success: true,
+      startLine: index + 1,
+      endLine: index + 1,
+      detail: `changed ${index} ${'x'.repeat(80)}`
+    }));
+
+    processor.processChunk({
+      toolIteration: true,
+      content: {
+        role: 'model',
+        parts: [{ functionCall: { id: 'tool-apply-diff', name: 'apply_diff', args: { path: 'src/example.ts', hunks: [] } } }]
+      },
+      toolResults: [{
+        id: 'tool-apply-diff',
+        name: 'apply_diff',
+        result: {
+          success: true,
+          data: {
+            file: 'src/example.ts',
+            status: 'accepted',
+            appliedCount: 80,
+            failedCount: 0,
+            results: noisyResults,
+            diffContentId: 'diff-full-file-1',
+            pendingDiffId: 'pending-diff-1'
+          }
+        }
+      }]
+    });
+    await flushRuntimeLedger();
+
+    const projectedResult = messages[0].data.runtimeLedger.ledger.terminalContent.toolResults[0].result;
+    expect(projectedResult.runtimeLedgerPreviewTruncated).toBe(true);
+    expect(projectedResult.data.diffContentId).toBe('diff-full-file-1');
+    expect(projectedResult.data.pendingDiffId).toBe('pending-diff-1');
+  });
+
   it('uses final functionResponse events as tool state authority over earlier lifecycle status', async () => {
     const { processor } = createProcessor();
 
