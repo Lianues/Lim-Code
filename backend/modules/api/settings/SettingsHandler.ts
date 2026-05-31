@@ -942,15 +942,22 @@ export class SettingsHandler {
             }
             
             const changelogPath = path.join(extension.extensionPath, 'CHANGELOG.md');
+            const lowercaseChangelogPath = path.join(extension.extensionPath, 'changelog.md');
+            const readableChangelogPath = fs.existsSync(changelogPath)
+                ? changelogPath
+                : fs.existsSync(lowercaseChangelogPath)
+                    ? lowercaseChangelogPath
+                    : undefined;
             
-            if (!fs.existsSync(changelogPath)) {
+            if (!readableChangelogPath) {
                 return '';
             }
             
-            const content = fs.readFileSync(changelogPath, 'utf-8');
+            const content = fs.readFileSync(readableChangelogPath, 'utf-8');
             
-            // 解析所有版本及其内容
-            const versionBlockRegex = /## \[(\d+\.\d+\.\d+)\][^\n]*\n([\s\S]*?)(?=## \[|$)/g;
+            // 解析所有版本及其内容。预发布 nightly/pre 版本也必须进入公告，否则
+            // package.json 使用预发布版本时会显示弹窗但正文为空。
+            const versionBlockRegex = /^## \[(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)\][^\r\n]*\r?\n([\s\S]*?)(?=^## \[|(?![\s\S]))/gm;
             const versions: { version: string; content: string }[] = [];
             
             let match;
@@ -963,13 +970,19 @@ export class SettingsHandler {
             
             // 筛选需要的版本（大于 fromVersion 且小于等于 toVersion）
             const relevantVersions = versions.filter(v => {
+                const isExactCurrentVersion = v.version === toVersion;
+
                 // 版本必须 <= toVersion
-                if (this.compareVersions(v.version, toVersion) > 0) {
+                if (!isExactCurrentVersion && this.compareVersions(v.version, toVersion) > 0) {
                     return false;
                 }
                 // 如果没有 fromVersion，只返回当前版本
                 if (!fromVersion) {
-                    return v.version === toVersion;
+                    return isExactCurrentVersion;
+                }
+                // nightly/pre 等预发布标识没有全局业务顺序，当前版本条目精确匹配时必须显示。
+                if (isExactCurrentVersion && v.version !== fromVersion) {
+                    return true;
                 }
                 // 版本必须 > fromVersion
                 return this.compareVersions(v.version, fromVersion) > 0;
