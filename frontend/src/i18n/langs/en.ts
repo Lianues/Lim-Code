@@ -1877,11 +1877,6 @@ const en: LanguageMessages = {
                         infoEnabled: 'Current setting: After AI modifies files, changes will be automatically saved after {delay} and continue execution.',
                         infoDisabled: 'Current setting: After AI modifies files, you need to manually press Ctrl+S in the editor to confirm and save changes.',
 
-                        format: 'Diff Format',
-                        formatDesc: 'Choose the parameter format used when AI calls apply_diff (structured hunks are recommended by default; legacy unified diff patch remains compatible)',
-                        formatUnified: 'Structured hunks (recommended; unified diff patch compatible)',
-                        formatSearchReplace: 'Legacy (search/replace)',
-
                         skipDiffView: 'Skip Diff View',
                         enableSkipDiffView: 'Skip diff view when auto-applying',
                         enableSkipDiffViewDesc: 'When enabled, auto-applied changes will be saved directly without opening the diff comparison view',

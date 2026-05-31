@@ -1,7 +1,7 @@
 /**
  * WP15: functionCall 合并逻辑统一预备
  *
- * 为什么需要这个文件：Main Chat (streamHelpers.ts) 和 SubAgent Monitor (contentDelta.ts)
+ * 为什么需要这个文件：Main Chat (streamHelpers.ts) 和 SubAgent Monitor Runtime Ledger projection
  * 各自维护了几乎相同的 functionCall merge 纯函数，包括 normalizeNonEmptyString、
  * hasNonEmptyArgs、tryParseArgs、getMergeReason/mergeFunctionCall 等。
  * parsers.ts 和 toolRenderEntries.ts 也各自重复定义了 normalizeNonEmptyString、hasNonEmptyArgs。
@@ -138,7 +138,7 @@ export function getFunctionCallMergeReason(
 export interface FunctionCallMergeOptions {
   /**
    * 是否尝试在每次 partialArgs 累积后解析 JSON。
-   * 默认：只在 finalArgs=true 时解析（适合 Monitor contentDelta）。
+   * 默认：只在 finalArgs=true 时解析（适合 Monitor Runtime Ledger live delta）。
    * Main Chat 流式路径应传入自定义回调以使用节流控制（shouldAttemptParse）。
    */
   shouldParseArgs?: (incoming: StreamFunctionCall, combinedPartialArgs: string) => boolean

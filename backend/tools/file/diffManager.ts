@@ -17,7 +17,6 @@ import { t } from '../../i18n';
 
 import { getDiffCodeLensProvider } from './DiffCodeLensProvider';
 import {
-    applyDiffToContent,
     applyStructuredDiffHunksBestEffort,
     type StructuredDiffHunk
 } from './apply_diff';
@@ -116,10 +115,6 @@ type DiffOp = {
     type: 'equal' | 'insert' | 'delete';
     line: string;
 };
-
-function isLegacySearchReplaceDiff(d: any): d is { search: string; replace: string; start_line?: number } {
-    return !!d && typeof d === 'object' && typeof d.search === 'string' && typeof d.replace === 'string';
-}
 
 function isUnifiedDiffHunk(d: any): d is UnifiedDiffHunk {
     return (
@@ -835,9 +830,9 @@ export class DiffManager {
                 const first = diff.rawDiffs[0];
 
                 if (isStructuredDiffHunk(first)) {
-                    // 为什么结构化 hunk 要优先处理：它和 legacy search/replace 字段名不同，但同样需要支持块级拒绝后的内容重算。
+                    // 为什么结构化 hunk 要优先处理：它的字段名不同于 unified patch hunk，但同样需要支持块级拒绝后的内容重算。
                     // 怎么改：复用 apply_diff 导出的结构化应用函数，并传入未拒绝块索引集合。
-                    // 目的：避免拒绝某个 hunk 后用旧 start_line 逻辑误算后续重复内容。
+                    // 目的：避免拒绝某个 hunk 后误算后续重复内容。
                     try {
                         const hunks = diff.rawDiffs as StructuredDiffHunk[];
                         const r = applyStructuredDiffHunksBestEffort(tempContent, hunks, { applyIndices });
@@ -870,26 +865,6 @@ export class DiffManager {
                         }
                     } catch (e) {
                         console.warn('[DiffManager] Failed to recompute unified diff content after rejecting a block:', e);
-                    }
-                } else {
-                    // legacy search/replace diffs（向后兼容）
-                    for (let i = 0; i < diff.rawDiffs.length; i++) {
-                        const blockInfo = session.blocks.find(b => b.index === i);
-                        const d = diff.rawDiffs[i];
-                        if (!blockInfo || blockInfo.rejected || !isLegacySearchReplaceDiff(d)) {
-                            continue;
-                        }
-
-                        const replaceLines = d.replace.split('\n').length;
-
-                        const result = applyDiffToContent(tempContent, d.search, d.replace, d.start_line);
-                        if (result.success && result.matchedLine !== undefined) {
-                            tempContent = result.result;
-
-                            // 更新此块在当前内容中的范围
-                            blockInfo.startLine = result.matchedLine;
-                            blockInfo.endLine = result.matchedLine + replaceLines - 1;
-                        }
                     }
                 }
 
@@ -980,20 +955,6 @@ export class DiffManager {
                 finalContent = r.newContent;
             } catch (e) {
                 console.warn('[DiffManager] Failed to recompute final suggested content for unified diff:', e);
-            }
-        } else {
-            // legacy search/replace diffs
-            for (let i = 0; i < diff.rawDiffs.length; i++) {
-                const blockInfo = session.blocks.find(b => b.index === i);
-                const d = diff.rawDiffs[i];
-                if (!blockInfo || blockInfo.rejected || !isLegacySearchReplaceDiff(d)) {
-                    continue;
-                }
-
-                const result = applyDiffToContent(finalContent, d.search, d.replace, d.start_line);
-                if (result.success) {
-                    finalContent = result.result;
-                }
             }
         }
 

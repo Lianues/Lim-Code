@@ -40,3 +40,4 @@ tmp-*.err.log
 docs/
 .tmp/
 tmp/
+.kagent/

@@ -48,6 +48,46 @@ describe('TranscriptRepository', () => {
         expect(typeof persisted[0].timestamp).toBe('number');
     });
 
+    it('returns backend-authored rejected functionResponse content for rejected tool calls', async () => {
+        const storage = new MemoryStorageAdapter();
+        const manager = new ConversationManager(storage);
+        const conversationId = 'repo-reject-tools-main';
+        const repository = manager.getTranscriptRepository(conversationId);
+
+        await repository.replaceContents([
+            createTextContent('start', 'user', 0),
+            createToolCallContent('call-1', 1)
+        ]);
+
+        const result = await manager.rejectToolCalls(conversationId, 1, ['call-1']);
+        const persisted = await manager.getHistory(conversationId);
+
+        expect(result).toMatchObject({
+            modified: true,
+            insertedIndex: 2,
+            rejectedToolCalls: [{ id: 'call-1', name: 'read_file' }],
+            functionResponseContent: {
+                role: 'user',
+                isFunctionResponse: true,
+                parts: [{
+                    functionResponse: {
+                        id: 'call-1',
+                        name: 'read_file',
+                        response: {
+                            success: false,
+                            rejected: true
+                        }
+                    }
+                }]
+            }
+        });
+        expect(persisted[2].parts[0].functionResponse?.id).toBe('call-1');
+        expect(persisted[2].parts[0].functionResponse?.response).toMatchObject({
+            success: false,
+            rejected: true
+        });
+    });
+
     it('replaces an empty transcript and keeps long transcripts readable through the same repository', async () => {
         const storage = new MemoryStorageAdapter();
         const manager = new ConversationManager(storage);

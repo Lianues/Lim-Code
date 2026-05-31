@@ -1877,11 +1877,6 @@ const zhCN: LanguageMessages = {
                         infoEnabled: '当前设置：AI 修改文件后，将在 {delay} 后自动保存并继续执行。',
                         infoDisabled: '当前设置：AI 修改文件后，需要您手动在编辑器中按 Ctrl+S 保存确认修改。',
 
-                        format: '差异格式',
-                        formatDesc: '选择 AI 调用 apply_diff 时使用的参数格式（默认推荐结构化 hunks，兼容旧 unified diff patch）',
-                        formatUnified: '结构化 hunks（推荐，兼容 unified diff patch）',
-                        formatSearchReplace: '旧格式（search/replace）',
-
                         skipDiffView: '跳过差异视图',
                         enableSkipDiffView: '自动应用时不打开差异视图',
                         enableSkipDiffViewDesc: '开启后，自动应用修改时将直接保存文件而不打开差异对比视图',

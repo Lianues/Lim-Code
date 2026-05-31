@@ -465,7 +465,6 @@ export type VSCodeRequestType =
   | 'conversation.getMessagesPaged'
   | 'conversation.listConversations'
   | 'conversation.loadConversationForView'
-  | 'conversation.rejectToolCalls'
   | 'conversation.revealInExplorer'
   | 'conversation.setCustomMetadata'
   | 'conversation.setMetadata'
@@ -774,6 +773,50 @@ export interface StreamChunk {
   /** 前端生成的流请求 ID，用于过滤迟到/过期 chunk */
   /** 事件创建时间戳（毫秒），用于声音提醒过期丢弃等场景 */
   createdAt?: number
+  /** 后端 Runtime Ledger / Event Fabric 投影；新热路径优先消费它，旧 chunk 字段只作迁移 fallback。 */
+  runtimeLedger?: {
+    status?: 'ok' | 'degraded'
+    diagnostics?: string[]
+    identity?: {
+      conversationId: string
+      runId: string
+      messageId: string
+      contentId: string
+    }
+    ledger?: {
+      liveDelta?: {
+        type: 'chunk'
+        messageId: string
+        contentId: string
+        payload: BackendStreamChunk
+        source?: string
+      }
+      toolStatesByInvocationId?: Record<string, 'queued' | 'executing' | 'success' | 'error' | 'cancelled'>
+      toolSnapshotsByInvocationId?: Record<string, {
+        id: string
+        name?: string
+        status: 'queued' | 'executing' | 'success' | 'error' | 'cancelled'
+        args?: Record<string, unknown>
+        result?: Record<string, unknown>
+      }>
+      terminalContent?: {
+        type: 'toolsExecuting' | 'awaitingConfirmation' | 'toolIteration' | 'complete' | 'cancelled'
+        messageId: string
+        contentId: string
+        content?: Content
+        pendingToolCalls?: PendingToolCall[]
+        toolResults?: ToolExecutionResult[]
+        source?: string
+      }
+      terminalState?: {
+        type: 'complete' | 'cancelled' | 'error'
+        messageId: string
+        contentId: string
+        error?: ErrorInfo
+        source?: string
+      }
+    }
+  }
   streamId?: string
   chunk?: BackendStreamChunk
   content?: Content

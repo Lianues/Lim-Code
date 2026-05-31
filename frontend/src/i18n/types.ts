@@ -908,11 +908,6 @@ export interface LanguageMessages {
                         infoEnabled: string;
                         infoDisabled: string;
 
-                        format: string;
-                        formatDesc: string;
-                        formatUnified: string;
-                        formatSearchReplace: string;
-
                         skipDiffView: string;
                         enableSkipDiffView: string;
                         enableSkipDiffViewDesc: string;

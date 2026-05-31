@@ -10,6 +10,8 @@ import type { ITranscriptRepository } from '../../modules/conversation/Transcrip
 import type { Content } from '../../modules/conversation/types';
 import { SubAgentTranscriptRepository } from './SubAgentTranscriptRepository';
 import type { ToolProgressEvent } from '../types';
+import type { RuntimePartialSnapshot } from '../../modules/runtimeLedger';
+import { subAgentRuntimeLedgerBridge, type RuntimeLedgerSubAgentLiveDeltaProjection } from './runtimeLedgerBridge';
 
 export const SUBAGENT_RUNS_METADATA_KEY = 'subAgentRuns';
 
@@ -100,6 +102,41 @@ export interface SubAgentRunContentWindowOptions {
     endIndex?: number;
     limit?: number;
     fromTail?: boolean;
+}
+
+export interface SubAgentRunMonitorProjectionOptions extends SubAgentRunContentWindowOptions {
+    includeContentWindow?: boolean;
+}
+
+export type SubAgentRuntimeLedgerContentHealth = 'ok' | 'recovering';
+export type SubAgentRuntimeLedgerReplayHealth = 'ok' | 'truncated';
+export type SubAgentRuntimeLedgerProjectionHealth = 'ok' | 'diagnostic';
+
+export interface SubAgentRuntimeLedgerMonitorProjection {
+    runId: string;
+    status: 'ok' | 'degraded';
+    mismatches: string[];
+    health: {
+        content: SubAgentRuntimeLedgerContentHealth;
+        replay: SubAgentRuntimeLedgerReplayHealth;
+        projection: SubAgentRuntimeLedgerProjectionHealth;
+        renderable: boolean;
+        contentReasons: string[];
+        diagnosticReasons: string[];
+    };
+    ledger: {
+        projectionStatus: 'ok' | 'degraded';
+        eventSequence?: number;
+        contentRevision?: number;
+        contentCoveredEventSequence?: number;
+        partialCoveredEventSequence?: number;
+        contentCount?: number;
+        contentWindow?: Omit<SubAgentRunContentWindow, 'eventSequence'> & { eventSequence?: number; contentCoveredEventSequence?: number; partialCoveredEventSequence?: number; source?: string };
+        liveDelta?: RuntimeLedgerSubAgentLiveDeltaProjection;
+        truncated: boolean;
+        eventCountsByType: Record<string, number>;
+        toolStatesByInvocationId: Record<string, 'queued' | 'executing' | 'success' | 'error' | 'cancelled'>;
+    };
 }
 
 export interface SubAgentRunConversationStore {
@@ -201,6 +238,30 @@ function isLiveOnlyEvent(event: SubAgentRunEvent): boolean {
     return event.type === 'llm_delta';
 }
 
+function cloneRuntimeLedgerEvent(event: SubAgentRunEvent): SubAgentRunEvent {
+    return {
+        ...event,
+        payload: cloneJsonForRuntimeLedger(event.payload)
+    };
+}
+
+function cloneRuntimeLedgerSnapshot(snapshot: SubAgentRunSnapshot): SubAgentRunSnapshot {
+    return {
+        ...snapshot,
+        contents: cloneContentsForWindow(snapshot.contents || []),
+        events: [...(snapshot.events || [])]
+    };
+}
+
+function cloneJsonForRuntimeLedger<T>(value: T): T {
+    if (value === undefined || value === null) return value;
+    try {
+        return JSON.parse(JSON.stringify(value)) as T;
+    } catch {
+        return value;
+    }
+}
+
 function normalizePersistedMap(raw: unknown): Record<string, SubAgentRunPersistedRecord> {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
         return {};
@@ -220,6 +281,7 @@ class SubAgentRunEventBus {
     private readonly snapshots = new Map<string, SubAgentRunSnapshot>();
     private readonly stores = new Map<string, SubAgentRunConversationStore>();
     private readonly persistQueues = new Map<string, Promise<void>>();
+    private readonly runtimeLedgerAppendQueues = new Map<string, Promise<void>>();
 
     createRun(
         runId: string,
@@ -315,6 +377,7 @@ class SubAgentRunEventBus {
             snapshot.status = 'interrupted';
         }
 
+        this.appendRuntimeLedgerEvent(stamped, snapshot);
         this.notify(stamped, snapshot);
         if (stamped.type.startsWith('run_')) {
             this.enqueuePersist(stamped.runId);
@@ -344,6 +407,7 @@ class SubAgentRunEventBus {
             payload: { contents: snapshot.contents }
         });
         snapshot.events.push(event);
+        this.appendRuntimeLedgerEvent(event, snapshot);
         this.notify(event, snapshot);
         this.enqueuePersist(runId);
     }
@@ -377,6 +441,7 @@ class SubAgentRunEventBus {
             payload: { contents: snapshot.contents }
         });
         snapshot.events.push(event);
+        this.appendRuntimeLedgerEvent(event, snapshot);
         this.notify(event, snapshot);
     }
 
@@ -407,6 +472,7 @@ class SubAgentRunEventBus {
             payload: { contents: snapshot.contents }
         });
         snapshot.events.push(event);
+        this.appendRuntimeLedgerEvent(event, snapshot);
         this.notify(event, snapshot);
         this.enqueuePersist(runId);
         return snapshot;
@@ -441,7 +507,7 @@ class SubAgentRunEventBus {
 
     getManifests(): SubAgentRunManifest[] {
         // 修改原因：SubAgent Monitor 首屏只需要 run 列表、状态和预览，完整 contents 会在大输出场景造成打开卡顿。
-        // 修改方式：保留 getSnapshots 供兼容路径使用，新增 getManifests 只派生轻量字段且绝不包含 contents/events。
+        // 修改方式：getManifests 只派生轻量字段且绝不包含 contents/events。
         // 修改目的：不引入第二真源，仍从现有 snapshot 派生 Monitor manifest。
         return Array.from(this.snapshots.values())
             .map(snapshot => toManifest(snapshot))
@@ -503,8 +569,137 @@ class SubAgentRunEventBus {
         };
     }
 
-    getSnapshots(): SubAgentRunSnapshot[] {
-        return Array.from(this.snapshots.values()).sort((a, b) => b.updatedAt - a.updatedAt);
+    async getRuntimeLedgerPartialSnapshot(runId: string): Promise<RuntimePartialSnapshot<Record<string, unknown>>> {
+        // 修改原因：Monitor 需要一个 Runtime Ledger backed 查询入口用于恢复、诊断和测试。
+        // 修改方式：暴露只读 partial snapshot 查询。
+        // 修改目的：验证 Runtime Ledger projection/coverage 是否能覆盖 SubAgent run。
+        return await subAgentRuntimeLedgerBridge.getPartialSnapshotForRun(runId);
+    }
+
+    async getRuntimeLedgerMonitorProjection(
+        runId: string,
+        options: SubAgentRunMonitorProjectionOptions = {}
+    ): Promise<SubAgentRuntimeLedgerMonitorProjection> {
+        await this.flushRuntimeLedgerEvents(runId);
+        const snapshot = this.snapshots.get(runId);
+        if (snapshot) {
+            try {
+                await subAgentRuntimeLedgerBridge.ensureContentWindowForSnapshot(snapshot);
+            } catch (error) {
+                console.warn('[SubAgentRunEventBus] Runtime Ledger content window projection failed:', error);
+            }
+        }
+        const includeContentWindow = options.includeContentWindow !== false;
+        const sourceWindow = includeContentWindow ? this.getContentWindow(runId, options) : undefined;
+        const ledgerSnapshot = await subAgentRuntimeLedgerBridge.getPartialSnapshotForRun(runId);
+        const ledgerEventSequence = ledgerSnapshot.coverage?.eventSequence;
+        const ledgerContentRevision = ledgerSnapshot.coverage?.contentRevision;
+        const ledgerContentCoveredEventSequence = ledgerSnapshot.coverage?.contentCoveredEventSequence;
+        const ledgerPartialCoveredEventSequence = ledgerSnapshot.coverage?.partialCoveredEventSequence;
+        const ledgerContentWindowRaw = includeContentWindow
+            ? await subAgentRuntimeLedgerBridge.getContentWindowForRun(runId, options)
+            : undefined;
+        const ledgerContentWindow = ledgerContentWindowRaw
+            ? {
+                ...ledgerContentWindowRaw,
+                // 修改原因：内容窗口的正文覆盖点和 run 最新事件序列不是同一概念；run_completed 等非内容事件会推进最新序列。
+                // 修改方式：对外 projection 的 eventSequence 只使用 Runtime Ledger coverage 的 run-local 序列；正文边界保留在 contentCoveredEventSequence。
+                // 修改目的：禁止把全局 envelope sequence 或 contentWindow 本地缓存序列当作 run-local coverage。
+                eventSequence: ledgerEventSequence
+            }
+            : undefined;
+        const ledgerContentCount = includeContentWindow ? ledgerContentWindow?.totalCount : undefined;
+        const contentMismatches: string[] = [];
+        const diagnosticMismatches: string[] = [];
+
+        if (includeContentWindow && !sourceWindow) diagnosticMismatches.push('source_window_missing');
+        if (!snapshot) diagnosticMismatches.push('source_snapshot_missing');
+        if (ledgerSnapshot.projection.status === 'degraded') diagnosticMismatches.push('ledger_projection_diagnostic');
+        if (ledgerSnapshot.truncated) diagnosticMismatches.push('ledger_recent_replay_truncated');
+
+        if (includeContentWindow) {
+            if (!ledgerContentWindow) {
+                contentMismatches.push('contentWindow:missing');
+            } else {
+                if (ledgerContentRevision !== ledgerContentWindow.contentRevision) {
+                    contentMismatches.push(`contentRevision:${ledgerContentWindow.contentRevision}->${ledgerContentRevision ?? 'missing'}`);
+                }
+                if (ledgerContentCoveredEventSequence === undefined) {
+                    if (ledgerPartialCoveredEventSequence === undefined || ledgerContentWindow.partialCoveredEventSequence !== ledgerPartialCoveredEventSequence) {
+                        contentMismatches.push('contentCoveredEventSequence:missing');
+                    }
+                } else if (ledgerContentWindow.contentCoveredEventSequence !== ledgerContentCoveredEventSequence) {
+                    contentMismatches.push(`contentCoveredEventSequence:${ledgerContentWindow.contentCoveredEventSequence ?? 'missing'}->${ledgerContentCoveredEventSequence}`);
+                }
+                if (ledgerContentCoveredEventSequence !== undefined && (ledgerEventSequence === undefined || ledgerContentCoveredEventSequence > ledgerEventSequence)) {
+                    contentMismatches.push(`contentCoveredEventSequence:${ledgerContentCoveredEventSequence}->eventSequence:${ledgerEventSequence ?? 'missing'}`);
+                }
+                if (
+                    ledgerContentWindow.partialCoveredEventSequence !== undefined
+                    && ledgerEventSequence !== undefined
+                    && ledgerContentWindow.partialCoveredEventSequence > ledgerEventSequence
+                ) {
+                    contentMismatches.push(`partialCoveredEventSequence:${ledgerContentWindow.partialCoveredEventSequence}->eventSequence:${ledgerEventSequence}`);
+                }
+            }
+
+            if (sourceWindow) {
+                if (ledgerContentRevision !== sourceWindow.contentRevision) {
+                    diagnosticMismatches.push(`sourceContentRevision:${sourceWindow.contentRevision}->${ledgerContentRevision ?? 'missing'}`);
+                }
+                if (ledgerEventSequence !== sourceWindow.eventSequence) {
+                    diagnosticMismatches.push(`sourceEventSequence:${sourceWindow.eventSequence}->${ledgerEventSequence ?? 'missing'}`);
+                }
+                if (ledgerContentCount === undefined && sourceWindow.totalCount > 0) {
+                    diagnosticMismatches.push('sourceContentCount:missing');
+                } else if (ledgerContentCount !== undefined && ledgerContentCount !== sourceWindow.totalCount) {
+                    diagnosticMismatches.push(`sourceContentCount:${sourceWindow.totalCount}->${ledgerContentCount}`);
+                }
+                if (ledgerContentWindow) {
+                    if (ledgerContentWindow.startIndex !== sourceWindow.startIndex || ledgerContentWindow.endIndex !== sourceWindow.endIndex) {
+                        diagnosticMismatches.push(`sourceContentWindowRange:${sourceWindow.startIndex}-${sourceWindow.endIndex}->${ledgerContentWindow.startIndex}-${ledgerContentWindow.endIndex}`);
+                    }
+                    if (ledgerContentWindow.contentRevision !== sourceWindow.contentRevision) {
+                        diagnosticMismatches.push(`sourceContentWindowRevision:${sourceWindow.contentRevision}->${ledgerContentWindow.contentRevision ?? 'missing'}`);
+                    }
+                    if (ledgerContentWindow.eventSequence !== sourceWindow.eventSequence) {
+                        diagnosticMismatches.push(`sourceContentWindowSequence:${sourceWindow.eventSequence}->${ledgerContentWindow.eventSequence ?? 'missing'}`);
+                    }
+                }
+            }
+        }
+
+        const mismatches = [...contentMismatches, ...diagnosticMismatches];
+        const renderable = includeContentWindow
+            ? !!ledgerContentWindow && contentMismatches.length === 0
+            : true;
+
+        return {
+            runId,
+            status: renderable ? 'ok' : 'degraded',
+            mismatches,
+            health: {
+                content: renderable ? 'ok' : 'recovering',
+                replay: ledgerSnapshot.truncated ? 'truncated' : 'ok',
+                projection: ledgerSnapshot.projection.status === 'degraded' ? 'diagnostic' : 'ok',
+                renderable,
+                contentReasons: contentMismatches,
+                diagnosticReasons: diagnosticMismatches
+            },
+            ledger: {
+                projectionStatus: ledgerSnapshot.projection.status,
+                eventSequence: ledgerEventSequence,
+                contentRevision: ledgerContentRevision,
+                contentCoveredEventSequence: ledgerSnapshot.coverage?.contentCoveredEventSequence,
+                partialCoveredEventSequence: ledgerSnapshot.coverage?.partialCoveredEventSequence,
+                contentCount: ledgerContentCount,
+                contentWindow: ledgerContentWindow,
+                liveDelta: subAgentRuntimeLedgerBridge.getLiveDeltaForRun(runId),
+                truncated: ledgerSnapshot.truncated,
+                eventCountsByType: ledgerSnapshot.projection.eventCountsByType,
+                toolStatesByInvocationId: ledgerSnapshot.projection.toolStatesByInvocationId
+            }
+        };
     }
 
     async loadConversationSnapshots(
@@ -533,6 +728,7 @@ class SubAgentRunEventBus {
             };
             this.snapshots.set(record.runId, snapshot);
             this.stores.set(record.runId, store);
+            await subAgentRuntimeLedgerBridge.ensureContentWindowForSnapshot(snapshot);
             snapshots.push(snapshot);
         }
 
@@ -570,8 +766,8 @@ class SubAgentRunEventBus {
                 const repository = store.getMetadataRepository?.();
                 if (repository?.updateSubAgentRunsValue) {
                     // 修改原因：P1 中央事实源要求 subAgentRuns 也经过 typed metadata repository，不能继续只有裸 setCustomMetadata 写路径。
-                    // 修改方式：优先使用 updateSubAgentRunsValue 的白名单串行更新；旧 store/mock 缺少 repository 时保留 legacy fallback。
-                    // 修改目的：兼容历史恢复与测试夹层，同时把 SubAgentRunRecord 扩展纳入统一 metadata 更新队列。
+                    // 修改方式：优先使用 updateSubAgentRunsValue 的白名单串行更新；测试夹层缺少 repository 时走直接 metadata 写入。
+                    // 修改目的：把 SubAgentRunRecord 扩展纳入统一 metadata 更新队列，同时保留最小 mock 能力。
                     await repository.updateSubAgentRunsValue(snapshot.conversationId!, runs => {
                         runs[runId] = record as unknown as Record<string, unknown>;
                         return runs;
@@ -588,6 +784,30 @@ class SubAgentRunEventBus {
             });
 
         this.persistQueues.set(runId, next);
+    }
+
+    private async flushRuntimeLedgerEvents(runId: string): Promise<void> {
+        const pending = this.runtimeLedgerAppendQueues.get(runId);
+        if (!pending) return;
+        await pending.catch(() => undefined);
+    }
+
+    private appendRuntimeLedgerEvent(event: SubAgentRunEvent, snapshot: SubAgentRunSnapshot): void {
+        const ledgerEvent = cloneRuntimeLedgerEvent(event);
+        const ledgerSnapshot = cloneRuntimeLedgerSnapshot(snapshot);
+        const previous = this.runtimeLedgerAppendQueues.get(event.runId) || Promise.resolve();
+        const next = previous
+            .catch(() => undefined)
+            .then(() => subAgentRuntimeLedgerBridge.appendRunEvent(ledgerEvent, ledgerSnapshot))
+            .catch(error => {
+                console.error('[SubAgentRunEventBus] Runtime Ledger append failed:', error);
+            });
+        this.runtimeLedgerAppendQueues.set(event.runId, next);
+        void next.finally(() => {
+            if (this.runtimeLedgerAppendQueues.get(event.runId) === next) {
+                this.runtimeLedgerAppendQueues.delete(event.runId);
+            }
+        });
     }
 }
 

@@ -11,12 +11,27 @@ import { generateId } from '../../utils/format'
 import { calculateBackendIndex } from './messageActions'
 import { appendMessage, replaceAllMessages } from './state'
 import { syncTotalMessagesFromWindow, setTotalMessagesFromWindow, trimWindowFromTop } from './windowUtils'
-import { loadCheckpoints, refreshCurrentConversationBuildSession } from './conversationActions'
+import {
+  applyRuntimeLedgerMutationProjection,
+  type RuntimeLedgerMutationProjection
+} from './runtimeLedgerProjection'
 
 function resolveConversationModelOverride(state: ChatStoreState): string | undefined {
   const selected = (state.selectedModelId.value || '').trim()
   const configModel = (state.currentConfig.value?.model || '').trim()
   return selected && selected !== configModel ? selected : undefined
+}
+
+interface StreamStartResponse {
+  started?: boolean
+  streamId?: string
+}
+
+function bindAuthoritativeStreamId(state: ChatStoreState, response: StreamStartResponse | undefined): void {
+  const streamId = typeof response?.streamId === 'string' ? response.streamId.trim() : ''
+  if (streamId) {
+    state.activeStreamId.value = streamId
+  }
 }
 
 /**
@@ -38,6 +53,21 @@ export function hasCheckpoint(state: ChatStoreState, messageIndex: number): bool
  */
 export function addCheckpoint(state: ChatStoreState, checkpoint: CheckpointRecord): void {
   state.checkpoints.value.push(checkpoint)
+}
+
+function failRuntimeLedgerMutationProjection(
+  state: ChatStoreState,
+  action: string
+): void {
+  state.error.value = {
+    code: 'RUNTIME_LEDGER_PROJECTION_ERROR',
+    message: `Runtime Ledger mutation projection missing for ${action}`
+  }
+  state.streamingMessageId.value = null
+  state.activeStreamId.value = null
+  state.isStreaming.value = false
+  state.isWaitingForResponse.value = false
+  state.isLoading.value = false
 }
 
 /**
@@ -76,6 +106,7 @@ export async function restoreCheckpoint(
       error?: string
       missingBackupDirs?: string[]
       autoPrunedCheckpointCount?: number
+      runtimeLedger?: RuntimeLedgerMutationProjection
     }>(
       'checkpoint.restore',
       {
@@ -85,16 +116,15 @@ export async function restoreCheckpoint(
     )
     
     const normalized = result || { success: false, restored: 0, error: 'Unknown error' }
-    if ((normalized.autoPrunedCheckpointCount || 0) > 0) {
-      try {
-        await loadCheckpoints(state)
-      } catch (error) {
-        console.error('[checkpointActions] Failed to refresh checkpoints after auto prune:', error)
-      }
-    }
     if (normalized.success) {
-      // 回退后同步会话元数据（activeBuild/todoList）到前端，避免继续显示旧的 Build 壳。
-      await refreshCurrentConversationBuildSession(state)
+      if (!applyRuntimeLedgerMutationProjection(normalized.runtimeLedger, state)) {
+        failRuntimeLedgerMutationProjection(state, 'checkpoint restore')
+        return {
+          success: false,
+          restored: normalized.restored || 0,
+          error: 'Runtime Ledger mutation projection missing for checkpoint restore'
+        }
+      }
     }
     return normalized
   } catch (err: any) {
@@ -145,28 +175,38 @@ export async function restoreAndRetry(
     // 2. 计算后端索引（在删除本地消息之前）
     const backendIndex = calculateBackendIndex(state.allMessages.value, messageIndex, state.windowStartIndex.value)
     
-    // 3. 删除该消息及后续的本地消息和检查点
-    // 修改原因：checkpoint 回档会截断消息窗口，旧 id 下标整体失效。
-    // 修改方式：统一通过 helper 截断消息窗口，并在同一维护点刷新索引。
-    // 修改目的：保证 restoreAndRetry 之后所有基于 id 的定位都与截断后的窗口一致。
-    replaceAllMessages(state, state.allMessages.value.slice(0, messageIndex))
-    clearCheckpointsFromIndex(state, backendIndex)
-    setTotalMessagesFromWindow(state)
-    
-    // 4. 删除后端的消息
+    // 3. 删除后端的消息，并使用 Runtime Ledger mutation projection 回灌权威窗口。
     try {
-      const resp = await sendToExtension<any>('deleteMessage', {
+      const resp = await sendToExtension<{
+        success: boolean
+        runtimeLedger?: RuntimeLedgerMutationProjection
+        error?: { code?: string; message?: string }
+      }>('deleteMessage', {
         conversationId: state.currentConversationId.value,
         targetIndex: backendIndex
       })
       if (!resp?.success) {
         console.error('[checkpointActions] restoreAndRetry: backend deleteMessage returned error:', resp)
+        state.error.value = {
+          code: resp?.error?.code || 'DELETE_ERROR',
+          message: resp?.error?.message || '删除回档后的消息失败'
+        }
+        return
+      }
+      if (!applyRuntimeLedgerMutationProjection(resp.runtimeLedger, state)) {
+        failRuntimeLedgerMutationProjection(state, 'restore retry delete_range')
+        return
       }
     } catch (err) {
       console.error('Failed to delete messages from backend:', err)
+      state.error.value = {
+        code: 'DELETE_ERROR',
+        message: err instanceof Error ? err.message : '删除回档后的消息失败'
+      }
+      return
     }
     
-    // 5. 开始流式重试
+    // 4. 开始流式重试
     state.isStreaming.value = true
     state.isWaitingForResponse.value = true
     
@@ -188,17 +228,16 @@ export async function restoreAndRetry(
     trimWindowFromTop(state)
     state.streamingMessageId.value = assistantMessageId
     
-    // 6. 调用后端重试
+    // 5. 调用后端重试
     const modelOverride = resolveConversationModelOverride(state)
-    const streamId = generateId()
-    state.activeStreamId.value = streamId
+    state.activeStreamId.value = null
     state._lastCancelledStreamId.value = null
-    await sendToExtension('retryStream', {
+    const startResponse = await sendToExtension<StreamStartResponse>('retryStream', {
       conversationId: state.currentConversationId.value,
       configId: state.configId.value,
-      modelOverride,
-      streamId
+      modelOverride
     })
+    bindAuthoritativeStreamId(state, startResponse)
     
   } catch (err: any) {
     if (state.isStreaming.value) {
@@ -257,28 +296,33 @@ export async function restoreAndDelete(
     // 2. 计算后端索引（在删除本地消息之前）
     const backendIndex = calculateBackendIndex(state.allMessages.value, messageIndex, state.windowStartIndex.value)
     
-    // 3. 删除该消息及后续的本地消息和检查点
-    // 修改原因：restoreAndDelete 同样会裁剪消息窗口，必须同步刷新派生索引。
-    // 修改方式：统一通过 helper 截断 allMessages，并在同一维护点刷新索引。
-    // 修改目的：避免删除后继续使用旧下标映射造成 id 定位失配。
-    replaceAllMessages(state, state.allMessages.value.slice(0, messageIndex))
-    clearCheckpointsFromIndex(state, backendIndex)
-    setTotalMessagesFromWindow(state)
-    
-    // 4. 删除后端的消息
+    // 3. 删除后端的消息，并使用 Runtime Ledger mutation projection 回灌权威窗口。
     try {
-      const resp = await sendToExtension<any>('deleteMessage', {
+      const resp = await sendToExtension<{
+        success: boolean
+        runtimeLedger?: RuntimeLedgerMutationProjection
+        error?: { code?: string; message?: string }
+      }>('deleteMessage', {
         conversationId: state.currentConversationId.value,
         targetIndex: backendIndex
       })
       if (!resp?.success) {
         console.error('[checkpointActions] restoreAndDelete: backend deleteMessage returned error:', resp)
+        state.error.value = {
+          code: resp?.error?.code || 'DELETE_ERROR',
+          message: resp?.error?.message || '删除回档后的消息失败'
+        }
       } else {
-        // 删除/回滚后刷新 activeBuild，避免展示旧的 Build 壳
-        await refreshCurrentConversationBuildSession(state)
+        if (!applyRuntimeLedgerMutationProjection(resp.runtimeLedger, state)) {
+          failRuntimeLedgerMutationProjection(state, 'restore delete_range')
+        }
       }
     } catch (err) {
       console.error('Failed to delete messages from backend:', err)
+      state.error.value = {
+        code: 'DELETE_ERROR',
+        message: err instanceof Error ? err.message : '删除回档后的消息失败'
+      }
     }
     
   } catch (err: any) {
@@ -393,18 +437,17 @@ export async function restoreAndEdit(
     
     // 7. 调用后端编辑并重试
     const modelOverride = resolveConversationModelOverride(state)
-    const streamId = generateId()
-    state.activeStreamId.value = streamId
+    state.activeStreamId.value = null
     state._lastCancelledStreamId.value = null
-    await sendToExtension('editAndRetryStream', {
+    const startResponse = await sendToExtension<StreamStartResponse>('editAndRetryStream', {
       conversationId: state.currentConversationId.value,
       messageIndex: backendMessageIndex,
       newMessage: newContent,
       attachments: attachmentData,
       configId: state.configId.value,
-      modelOverride,
-      streamId
+      modelOverride
     })
+    bindAuthoritativeStreamId(state, startResponse)
     
   } catch (err: any) {
     if (state.isStreaming.value) {

@@ -45,6 +45,8 @@ import { initializeSubAgentsFromSettings } from './handlers/SubAgentsHandlers';
 import type { HandlerContext, DiffPreviewContentProvider as IDiffPreviewContentProvider } from './types';
 import { WindowsAgentStopNotificationService } from '../backend/modules/notifications/WindowsAgentStopNotificationService';
 import { SubAgentMonitorPanel } from './SubAgentMonitorPanel';
+import { subAgentRuntimeLedgerBridge } from '../backend/tools/subagents/runtimeLedgerBridge';
+import { chatStreamRuntimeLedgerBridge } from './stream/runtimeLedgerBridge';
 
 /**
  * Diff 预览内容提供者
@@ -179,6 +181,10 @@ export class ChatViewProvider implements vscode.WebviewViewProvider {
         // 5. 初始化 Diff 存储管理器（用于 apply_diff 的大文件内容抽离）
         this.diffStorageManager = DiffStorageManager.initialize(this.storagePathManager.getEffectiveDataPath());
         setGlobalDiffStorageManager(this.diffStorageManager);
+
+        const runtimeLedgerPath = path.join(this.storagePathManager.getEffectiveDataPath(), 'runtime-ledger');
+        subAgentRuntimeLedgerBridge.configureDurableStore(path.join(runtimeLedgerPath, 'subagent-events.jsonl'));
+        chatStreamRuntimeLedgerBridge.configureDurableStore(path.join(runtimeLedgerPath, 'chat-stream-events.jsonl'));
         
         // 6. 初始化对话管理器
         this.conversationManager = new ConversationManager(storageAdapter);

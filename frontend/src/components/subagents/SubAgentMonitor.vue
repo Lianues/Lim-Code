@@ -3,31 +3,34 @@ import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { CustomScrollbar } from '../common'
 import MessageItem from '../message/MessageItem.vue'
 import { contentToMessageEnhanced } from '@/stores/chat/parsers'
-import { applyStreamChunkToContents } from '@/stores/agentRun/contentDelta'
 import { onMessageFromExtension, sendToExtension } from '@/utils/vscode'
 import { shouldApplyEventFocus } from './monitorFocusPolicy'
 import { compareMonitorRunsByStableCreationOrder } from './monitorRunOrdering'
 import {
   createPreviousRunWindowRequestOptions,
+  createRefreshRunWindowRequestOptions,
+  createTailRunWindowRequestOptions,
   isRunWindowTailAuthoritative,
   prependRunContentWindow,
   replaceRunContentWindow,
   type SubAgentRunContentWindowState
 } from './monitorWindowState'
 import {
-  applyMonitorToolOverlay,
-  reduceMonitorToolStatusOverlay,
-  type MonitorToolStatusOverlay
-} from './monitorToolStatusOverlay'
-import {
-  DEFAULT_MONITOR_LIVE_DELTA_BUFFER_LIMIT,
-  enqueueMonitorLiveDelta,
-  getMonitorLiveDeltaRevision,
-  getMonitorLiveDeltaSequence,
-  hasRenderableMonitorLiveDelta,
-  selectReplayableMonitorLiveDeltas,
-  type MonitorLiveDeltaEvent
-} from './monitorLiveDeltaBuffer'
+  DEFAULT_RUNTIME_LEDGER_LIVE_DELTA_BUFFER_LIMIT,
+  applyRuntimeLedgerLiveDeltaToContents,
+  applyRuntimeLedgerToolProjection,
+  describeRuntimeLedgerRecoveryState,
+  enqueueRuntimeLedgerLiveDelta,
+  getRuntimeLedgerContentWindow,
+  getRuntimeLedgerLiveDelta,
+  getRuntimeLedgerLiveDeltaRevision,
+  getRuntimeLedgerLiveDeltaSequence,
+  hasRuntimeLedgerToolProjection,
+  hasRenderableRuntimeLedgerLiveDelta,
+  selectReplayableRuntimeLedgerLiveDeltas,
+  type MonitorRuntimeLedgerLiveDelta,
+  type MonitorRuntimeLedgerProjectionState
+} from './monitorRuntimeLedgerProjection'
 import { deriveMonitorSyncState } from './monitorSyncState'
 import type { Content, ContentPart, Message, ToolUsage } from '@/types'
 
@@ -95,7 +98,7 @@ const eventsByRunId = ref<Record<string, SubAgentRunEvent[]>>({})
 // 修改原因：工具状态是运行时事件状态，不能只从窗口内 functionResponse 反推，否则刷新丢失时工具卡会卡住。
 // 修改方式：为每个 run 维护 toolId -> ToolUsage 状态 overlay，事件到达时用纯 reducer 更新。
 // 修改目的：让 tool_started/tool_completed/tool_failed 实时驱动工具卡，同时仍由 functionResponse 做最终结果校准。
-const toolStatusOverlaysByRunId = ref<Record<string, MonitorToolStatusOverlay>>({})
+const runtimeLedgersByRunId = ref<Record<string, MonitorRuntimeLedgerProjectionState>>({})
 const loadingRunWindows = ref<Set<string>>(new Set())
 // 修改原因：“加载更早消息”是按 run 维度的分页请求，必须单独记录 loading 以避免用户重复点击造成重叠 prepend。
 // 修改方式：使用 Set<runId> 表示正在向前加载历史的 run，不复用聚焦尾部窗口 loading。
@@ -108,7 +111,7 @@ const pendingForcedRunWindowRefreshes = new Set<string>()
 // 修改原因：Monitor 在流式中途打开时，llm_delta 可能早于 getRunWindow 响应到达，旧逻辑会直接丢弃这些正文增量。
 // 修改方式：为每个 run 维护有界 live delta 缓冲；窗口可用且 revision 匹配后按 eventSequence 回放。
 // 修改目的：不恢复 full snapshot 传输，也能让实时打开 Monitor 的显示最终追上同一轮流式输出。
-const liveDeltaBuffersByRunId = new Map<string, MonitorLiveDeltaEvent[]>()
+const liveDeltaBuffersByRunId = new Map<string, MonitorRuntimeLedgerLiveDelta[]>()
 const latestRunWindowRequestSeq = new Map<string, number>()
 let runWindowRequestSeq = 0
 const focusedRunId = ref<string | undefined>((window as any).__LIMCODE_INITIAL_RUN_ID || undefined)
@@ -236,17 +239,6 @@ function prependWindow(contentWindow: SubAgentRunContentWindow | undefined) {
   }
 }
 
-function applyToolStatusEvent(event: SubAgentRunEvent) {
-  if (!event?.runId) return
-  const current = toolStatusOverlaysByRunId.value[event.runId] || {}
-  const next = reduceMonitorToolStatusOverlay(current, event)
-  if (next === current) return
-  toolStatusOverlaysByRunId.value = {
-    ...toolStatusOverlaysByRunId.value,
-    [event.runId]: next
-  }
-}
-
 function appendEvent(event: SubAgentRunEvent) {
   if (!event?.runId || event.type === 'llm_delta') return
   const current = eventsByRunId.value[event.runId] || []
@@ -254,10 +246,9 @@ function appendEvent(event: SubAgentRunEvent) {
     ...eventsByRunId.value,
     [event.runId]: [...current, event]
   }
-  // 修改原因：工具事件不仅用于审计列表，还必须实时推进 MessageItem 内的工具卡状态。
-  // 修改方式：事件入库后同步喂给 run 级工具状态 overlay reducer。
-  // 修改目的：窗口刷新或 functionResponse 暂未到达时，工具卡仍能显示 executing/success/error。
-  applyToolStatusEvent(event)
+  // 修改原因：非正文事件只作为 Monitor 审计日志和窗口刷新触发器，不能重新成为工具/正文渲染事实源。
+  // 修改方式：工具卡实时状态由 Runtime Ledger projection 提供，这里不再维护前端 overlay reducer。
+  // 修改目的：保留可见审计信息，同时避免旧 Monitor tool/status 旁路回流。
 }
 
 function setRunResyncing(runId: string, value: boolean) {
@@ -278,7 +269,7 @@ function withRunWindowTimeout<T>(promise: Promise<T>, runId: string, timeoutMs =
   /**
    * 修改原因：Bug 3 中 reset 可被悬挂的 getRunWindow 请求卡住，用户只看到空白或旧 Live。
    * 修改方式：Monitor 窗口请求在调用层加入超时，不改通用 sendToExtension 的后端超时策略。
-   * 修改目的：resync 失败时能进入 degraded 状态并保留旧内容，而不是永久等待。
+   * 修改目的：resync 失败时能进入恢复状态并保留旧内容，而不是永久等待。
    */
   return new Promise((resolve, reject) => {
     const timer = window.setTimeout(() => reject(new Error(`getRunWindow timed out for ${runId}`)), timeoutMs)
@@ -319,17 +310,21 @@ async function requestRunWindow(runId: string | undefined, force = false) {
   loadingRunWindows.value = loading
   try {
     const manifest = manifests.value.find(item => item.runId === runId)
+    const existingWindow = windowsByRunId.value[runId]
+    const requestOptions = force && existingWindow
+      ? createRefreshRunWindowRequestOptions(existingWindow, DEFAULT_RUN_WINDOW_LIMIT, manifest)
+      : createTailRunWindowRequestOptions(DEFAULT_RUN_WINDOW_LIMIT)
     // 修改原因：聚焦 run 才需要 Content[]，请求窗口时携带 conversationId 允许后端先从 metadata 恢复历史 run。
     // 修改方式：调用 Monitor 专属 getRunWindow 协议，默认尾部 20 条；返回 manifest 用于同步 contentCount/status。
     // 修改目的：20k token 完成报告不会在 monitorReady 阶段一次性进入前端。
     const response = await withRunWindowTimeout(sendToExtension<{
-      window?: SubAgentRunContentWindow
       manifest?: SubAgentRunManifest
+      runtimeLedger?: MonitorRuntimeLedgerProjectionState
       activeRunIds?: string[]
     }>('subagents.monitor.getRunWindow', {
       runId,
       conversationId: manifest?.conversationId,
-      options: { limit: DEFAULT_RUN_WINDOW_LIMIT, fromTail: true }
+      options: requestOptions
     }), runId)
     if (latestRunWindowRequestSeq.get(runId) !== requestSeq) {
       // 修改原因：Webview request/response 没有业务顺序保证，旧响应可能晚于后续强制刷新返回。
@@ -338,18 +333,26 @@ async function requestRunWindow(runId: string | undefined, force = false) {
       return
     }
     if (response?.manifest) upsertManifest(response.manifest)
-    if (response?.window) {
-      clearEventGap(response.window.runId)
-      setRunWindowError(response.window.runId, undefined)
-      setRunResyncing(response.window.runId, false)
-      upsertWindow(response.window)
+    if (response?.runtimeLedger) {
+      runtimeLedgersByRunId.value = {
+        ...runtimeLedgersByRunId.value,
+        [runId]: response.runtimeLedger
+      }
+    }
+    const ledgerWindow = getRuntimeLedgerContentWindow(response?.runtimeLedger, runId)
+    if (ledgerWindow) {
+      const nextWindow = applyProjectionLiveDeltaToWindow(ledgerWindow, response?.runtimeLedger, response?.manifest || manifest)
+      clearEventGap(ledgerWindow.runId)
+      setRunWindowError(ledgerWindow.runId, undefined)
+      setRunResyncing(ledgerWindow.runId, false)
+      upsertWindow(nextWindow)
       // 修改原因：窗口响应可能是 Monitor 打开后第一次可用的 transcript 基线，之前到达的 llm_delta 不能再丢弃。
       // 修改方式：窗口写入缓存后立即尝试回放同 run 的有界 live delta 缓冲。
       // 修改目的：解决流式过程中打开 Monitor 时正文或工具调用只在结束后才恢复的问题。
-      replayBufferedLiveDeltas(response.window.runId)
+      replayBufferedLiveDeltas(ledgerWindow.runId)
     } else if (force) {
       setRunResyncing(runId, false)
-      setRunWindowError(runId, 'Monitor 没有返回可渲染窗口，旧内容已保留。')
+      setRunWindowError(runId, describeRuntimeLedgerRecoveryState(response?.runtimeLedger, runId) || '正在重新同步 SubAgent 对话窗口…')
     }
     updateActiveRunIds(response?.activeRunIds)
   } catch (error: any) {
@@ -403,8 +406,8 @@ async function loadOlderMessages() {
     // 修改方式：传 endIndex=currentWindow.startIndex 且 limit=20，后端从该位置向前取窗口。
     // 修改目的：prepend 后每条 content.index 仍是全局真实索引，删除/重试不会因分页错位。
     const response = await sendToExtension<{
-      window?: SubAgentRunContentWindow
       manifest?: SubAgentRunManifest
+      runtimeLedger?: MonitorRuntimeLedgerProjectionState
       activeRunIds?: string[]
     }>('subagents.monitor.getRunWindow', {
       runId: run.runId,
@@ -412,7 +415,15 @@ async function loadOlderMessages() {
       options: createPreviousRunWindowRequestOptions(currentWindow, DEFAULT_RUN_WINDOW_LIMIT)
     })
     if (response?.manifest) upsertManifest(response.manifest)
-    if (response?.window) prependWindow(response.window)
+    if (response?.runtimeLedger) {
+      runtimeLedgersByRunId.value = {
+        ...runtimeLedgersByRunId.value,
+        [run.runId]: response.runtimeLedger
+      }
+    }
+    const ledgerWindow = getRuntimeLedgerContentWindow(response?.runtimeLedger, run.runId)
+    if (ledgerWindow) prependWindow(applyProjectionLiveDeltaToWindow(ledgerWindow, response?.runtimeLedger, response?.manifest))
+    else setRunWindowError(run.runId, describeRuntimeLedgerRecoveryState(response?.runtimeLedger, run.runId) || '正在重新同步 SubAgent 对话窗口…')
     updateActiveRunIds(response?.activeRunIds)
   } finally {
     const nextLoading = new Set(loadingOlderRunWindows.value)
@@ -421,7 +432,7 @@ async function loadOlderMessages() {
   }
 }
 
-function setLiveDeltaBuffer(runId: string, buffer: MonitorLiveDeltaEvent[]) {
+function setLiveDeltaBuffer(runId: string, buffer: MonitorRuntimeLedgerLiveDelta[]) {
   // 修改原因：缓冲区是 Map，Vue 不需要追踪它；但必须集中删除空数组，避免长期打开 Monitor 后残留空 run key。
   // 修改方式：空缓冲直接 delete，非空缓冲替换为新数组引用。
   // 修改目的：让有界缓冲的生命周期清晰，避免后台 run 持续占用内存。
@@ -432,12 +443,12 @@ function setLiveDeltaBuffer(runId: string, buffer: MonitorLiveDeltaEvent[]) {
   }
 }
 
-function bufferLiveDeltaEvent(event: SubAgentRunEvent) {
-  if (!event.runId || !hasRenderableMonitorLiveDelta(event)) return
+function bufferLiveDeltaEvent(event: MonitorRuntimeLedgerLiveDelta) {
+  if (!event.runId || !hasRenderableRuntimeLedgerLiveDelta(event)) return
   const current = liveDeltaBuffersByRunId.get(event.runId)
   setLiveDeltaBuffer(
     event.runId,
-    enqueueMonitorLiveDelta(current, event, DEFAULT_MONITOR_LIVE_DELTA_BUFFER_LIMIT)
+    enqueueRuntimeLedgerLiveDelta(current, event, DEFAULT_RUNTIME_LEDGER_LIVE_DELTA_BUFFER_LIMIT)
   )
 }
 
@@ -447,39 +458,43 @@ function clearSupersededLiveDeltaBuffer(runId: string, revision: number | undefi
   // 修改原因：content_snapshot 表示后端 transcript 已进入更新 revision，旧 revision 的 live delta 已被权威窗口取代。
   // 修改方式：低于新 revision 的缓冲 delta 提前淘汰，等于或高于 revision 的 delta 继续等待匹配窗口。
   // 修改目的：流结束或工具结果写入后，不让旧实时片段重新追加到新窗口。
-  setLiveDeltaBuffer(runId, current.filter(event => getMonitorLiveDeltaRevision(event) >= revision))
+  setLiveDeltaBuffer(runId, current.filter(event => getRuntimeLedgerLiveDeltaRevision(event) >= revision))
 }
 
 function applyLiveDeltaToWindow(
-  event: MonitorLiveDeltaEvent,
+  event: MonitorRuntimeLedgerLiveDelta,
   contentWindow: SubAgentRunContentWindow,
   freshness?: SubAgentContentFreshness
 ): SubAgentRunContentWindow | undefined {
-  if (!event.runId || !hasRenderableMonitorLiveDelta(event)) return contentWindow
-  const eventRevision = getMonitorLiveDeltaRevision(event)
+  if (!event.runId || !hasRenderableRuntimeLedgerLiveDelta(event)) return contentWindow
+  const eventRevision = getRuntimeLedgerLiveDeltaRevision(event)
   const windowRevision = typeof contentWindow.contentRevision === 'number' ? contentWindow.contentRevision : 0
+  const eventSequence = getRuntimeLedgerLiveDeltaSequence(event)
+  const windowSequence = typeof contentWindow.eventSequence === 'number' ? contentWindow.eventSequence : undefined
+  if (typeof eventSequence === 'number' && typeof windowSequence === 'number' && eventSequence <= windowSequence) {
+    return contentWindow
+  }
   if (eventRevision < windowRevision) return contentWindow
 
   const effectiveFreshness = {
     contentCount: freshness?.contentCount ?? contentWindow.totalCount,
     contentRevision: eventRevision,
-    eventSequence: getMonitorLiveDeltaSequence(event) ?? freshness?.eventSequence ?? contentWindow.eventSequence
+    eventSequence: eventSequence ?? freshness?.eventSequence ?? contentWindow.eventSequence
   }
   if (!isRunWindowTailAuthoritative(contentWindow, effectiveFreshness)) return undefined
 
   // 修改原因：后端不再为每个 SubAgent llm_delta 附带完整 snapshot，否则大输出会造成 postMessage 与事件数组 O(n²) 膨胀。
   // 修改方式：当事件仍携带轻量可渲染 delta 且窗口已确认是同 revision 尾部时，Monitor 前端用共享 Content[] delta reducer 本地更新已加载 run。
-  // 修改目的：兼容旧协议实时输出，同时新瘦身协议不会把大正文塞进 event。
+  // 修改目的：实时输出只经过 Runtime Ledger live delta，瘦身协议不会把大正文塞进 event。
   const timestamp = event.timestamp || Date.now()
-  const nextContents = applyStreamChunkToContents(contentWindow.contents || [], event.payload, timestamp, contentWindow.startIndex || 0)
-  const sequence = getMonitorLiveDeltaSequence(event)
+  const nextContents = applyRuntimeLedgerLiveDeltaToContents(contentWindow.contents || [], event.payload, timestamp, contentWindow.startIndex || 0)
   return {
     ...contentWindow,
     contents: nextContents,
     endIndex: Math.max(contentWindow.endIndex, contentWindow.startIndex + nextContents.length),
     totalCount: Math.max(contentWindow.totalCount, contentWindow.startIndex + nextContents.length),
     contentRevision: eventRevision,
-    eventSequence: Math.max(contentWindow.eventSequence || 0, sequence ?? freshness?.eventSequence ?? 0)
+    eventSequence: Math.max(contentWindow.eventSequence || 0, eventSequence ?? freshness?.eventSequence ?? 0)
   }
 }
 
@@ -488,19 +503,19 @@ function replayBufferedLiveDeltas(runId: string) {
   const currentBuffer = liveDeltaBuffersByRunId.get(runId)
   if (!currentWindow || !currentBuffer?.length) return
 
-  const { replayable, remaining } = selectReplayableMonitorLiveDeltas(currentBuffer, currentWindow)
+  const { replayable, remaining } = selectReplayableRuntimeLedgerLiveDeltas(currentBuffer, currentWindow)
   if (replayable.length === 0) {
     setLiveDeltaBuffer(runId, remaining)
     return
   }
 
   let workingWindow = currentWindow
-  const stillBlocked: MonitorLiveDeltaEvent[] = []
+  const stillBlocked: MonitorRuntimeLedgerLiveDelta[] = []
   for (const event of replayable) {
     const nextWindow = applyLiveDeltaToWindow(event, workingWindow, {
       contentCount: workingWindow.totalCount,
-      contentRevision: getMonitorLiveDeltaRevision(event),
-      eventSequence: getMonitorLiveDeltaSequence(event) ?? workingWindow.eventSequence
+      contentRevision: getRuntimeLedgerLiveDeltaRevision(event),
+      eventSequence: getRuntimeLedgerLiveDeltaSequence(event) ?? workingWindow.eventSequence
     })
     if (!nextWindow) {
       stillBlocked.push(event)
@@ -516,10 +531,20 @@ function replayBufferedLiveDeltas(runId: string) {
   setLiveDeltaBuffer(runId, [...stillBlocked, ...remaining])
 }
 
-function applyLiveDeltaEvent(event: SubAgentRunEvent) {
-  if (event.type !== 'llm_delta' || !event.runId) return
+function applyProjectionLiveDeltaToWindow(
+  contentWindow: SubAgentRunContentWindow,
+  runtimeLedger: MonitorRuntimeLedgerProjectionState | undefined,
+  freshness?: SubAgentContentFreshness
+): SubAgentRunContentWindow {
+  const liveDelta = getRuntimeLedgerLiveDelta(runtimeLedger, contentWindow.runId)
+  if (!liveDelta || !hasRenderableRuntimeLedgerLiveDelta(liveDelta)) return contentWindow
+  return applyLiveDeltaToWindow(liveDelta, contentWindow, freshness) || contentWindow
+}
 
-  const timestamp = event.timestamp || Date.now()
+function applyLiveDeltaEvent(event: SubAgentRunEvent, runtimeLedger?: MonitorRuntimeLedgerProjectionState) {
+  if (event.type !== 'llm_delta' || !event.runId) return
+  const ledgerLiveDelta = getRuntimeLedgerLiveDelta(runtimeLedger, event.runId)
+  const timestamp = ledgerLiveDelta?.timestamp || event.timestamp || Date.now()
   const existingWindow = windowsByRunId.value[event.runId]
   const existingManifest = manifests.value.find(item => item.runId === event.runId)
   upsertManifest({
@@ -529,15 +554,22 @@ function applyLiveDeltaEvent(event: SubAgentRunEvent) {
     createdAt: existingManifest?.createdAt || timestamp,
     updatedAt: timestamp,
     conversationId: existingManifest?.conversationId,
-    contentCount: event.payload?.contentCount || existingManifest?.contentCount || existingWindow?.totalCount || 0,
+    contentCount: ledgerLiveDelta?.payload?.contentCount || existingManifest?.contentCount || existingWindow?.totalCount || 0,
     eventCount: existingManifest?.eventCount || 0,
-    contentRevision: event.contentRevision ?? event.payload?.contentRevision ?? existingManifest?.contentRevision ?? existingWindow?.contentRevision,
-    eventSequence: event.eventSequence ?? event.payload?.eventSequence ?? existingManifest?.eventSequence ?? existingWindow?.eventSequence,
+    contentRevision: ledgerLiveDelta?.contentRevision ?? ledgerLiveDelta?.payload?.contentRevision ?? existingManifest?.contentRevision ?? existingWindow?.contentRevision,
+    eventSequence: ledgerLiveDelta?.eventSequence ?? ledgerLiveDelta?.payload?.eventSequence ?? existingManifest?.eventSequence ?? existingWindow?.eventSequence,
     preview: existingManifest?.preview,
     lastMessageRole: existingManifest?.lastMessageRole
   })
 
-  if (!hasRenderableMonitorLiveDelta(event)) {
+  if (!ledgerLiveDelta) {
+    const isFocusedLiveRun = event.runId === focusedRunId.value || event.runId === focusedManifest.value?.runId
+    if (isFocusedLiveRun && !existingWindow) void requestRunWindow(event.runId)
+    return
+  }
+
+  const liveEvent = ledgerLiveDelta
+  if (!hasRenderableRuntimeLedgerLiveDelta(liveEvent)) {
     // 修改原因：Monitor 后端事件瘦身后，llm_delta 可能只携带 deltaCount/done 等状态计数，不再包含正文 delta。
     // 修改方式：没有可渲染正文时只更新 manifest，不调用 Content[] reducer 创建空 model 楼层。
     // 目的：遵守“正文走 window”原则，同时避免状态事件污染当前 transcript window。
@@ -545,31 +577,31 @@ function applyLiveDeltaEvent(event: SubAgentRunEvent) {
   }
 
   if (!existingWindow) {
-    const isFocusedLiveRun = event.runId === focusedRunId.value || event.runId === focusedManifest.value?.runId
+    const isFocusedLiveRun = liveEvent.runId === focusedRunId.value || liveEvent.runId === focusedManifest.value?.runId
     if (isFocusedLiveRun) {
       // 修改原因：打开 Monitor 的首个 getRunWindow 可能尚未返回；此时直接 return 会永久丢失已经到达的正文或 functionCall delta。
       // 修改方式：只为当前聚焦 run 缓冲可渲染 live delta，并触发一次窗口请求；窗口到达后按 revision/sequence 回放。
       // 目的：仍然避免为所有后台 run 构造 Content[]，但当前查看 run 不再缺字或缺工具卡。
-      bufferLiveDeltaEvent(event)
-      void requestRunWindow(event.runId, true)
+      bufferLiveDeltaEvent(liveEvent)
+      void requestRunWindow(liveEvent.runId, true)
     }
     return
   }
 
-  const latestManifest = manifests.value.find(item => item.runId === event.runId) || existingManifest
-  const nextWindow = applyLiveDeltaToWindow(event, existingWindow, latestManifest)
+  const latestManifest = manifests.value.find(item => item.runId === liveEvent.runId) || existingManifest
+  const nextWindow = applyLiveDeltaToWindow(liveEvent, existingWindow, latestManifest)
   if (!nextWindow) {
     // 修改原因：可渲染 delta 没有独立 content identity，只能追加到同 revision 的尾部窗口；窗口落后时不能丢弃 delta。
     // 修改方式：先把 delta 放入有界缓冲，再强制拉取权威窗口，等待窗口 revision 匹配后回放。
     // 目的：避免 stale window 混楼，同时修复中途窗口校准导致的实时片段丢失。
-    bufferLiveDeltaEvent(event)
-    void requestRunWindow(event.runId, true)
+    bufferLiveDeltaEvent(liveEvent)
+    void requestRunWindow(liveEvent.runId, true)
     return
   }
 
   windowsByRunId.value = {
     ...windowsByRunId.value,
-    [event.runId]: nextWindow
+    [liveEvent.runId]: nextWindow
   }
 }
 
@@ -597,7 +629,7 @@ function deriveToolStatus(result: unknown): ToolUsage['status'] {
 function toRenderableMessages(run: SubAgentRunSnapshot | undefined): Message[] {
   if (!run) return []
   const responseMap = getFunctionResponseMap(run.contents || [])
-  const toolOverlay = toolStatusOverlaysByRunId.value[run.runId]
+  const runtimeLedger = runtimeLedgersByRunId.value[run.runId]
   const contentWindow = windowsByRunId.value[run.runId]
   const isLiveRun = activeRunIds.value.has(run.runId)
     && (run.status === 'running' || run.status === 'paused' || run.status === 'awaiting_monitor_action')
@@ -630,12 +662,19 @@ function toRenderableMessages(run: SubAgentRunSnapshot | undefined): Message[] {
       if (message.tools && message.tools.length > 0) {
         message.tools = message.tools.map(tool => {
           const response = responseMap.get(tool.id)
-          if (!response) return applyMonitorToolOverlay(tool, toolOverlay)
+          const hasLedgerProjection = hasRuntimeLedgerToolProjection(tool.id, runtimeLedger)
+          const projectedTool = hasLedgerProjection
+            ? applyRuntimeLedgerToolProjection(tool, runtimeLedger)
+            : tool
+          if (!response) return projectedTool
           const result = response.response as Record<string, unknown>
+          const runtimeProjectedTool = hasLedgerProjection
+            ? applyRuntimeLedgerToolProjection(projectedTool, runtimeLedger)
+            : undefined
           return {
-            ...applyMonitorToolOverlay(tool, toolOverlay),
+            ...projectedTool,
             result,
-            status: deriveToolStatus(result)
+            status: runtimeProjectedTool?.status || deriveToolStatus(result)
           }
         })
       }
@@ -647,18 +686,20 @@ function toRenderableMessages(run: SubAgentRunSnapshot | undefined): Message[] {
 const renderMessages = computed(() => toRenderableMessages(focusedRun.value))
 const focusedRunIsActive = computed(() => !!focusedRun.value && activeRunIds.value.has(focusedRun.value.runId))
 const focusedWindow = computed(() => focusedRun.value ? windowsByRunId.value[focusedRun.value.runId] : undefined)
+const focusedRuntimeLedger = computed(() => focusedRun.value ? runtimeLedgersByRunId.value[focusedRun.value.runId] : undefined)
 const focusedOlderLoading = computed(() => !!focusedRun.value && loadingOlderRunWindows.value.has(focusedRun.value.runId))
 const focusedSyncState = computed(() => deriveMonitorSyncState({
   // 修改原因：Header、空态和 reset 状态必须消费同一 MonitorSyncState，不能各自从 heartbeat/window/loading 猜测。
   // 修改方式：把当前 focused run 的 transport、window、loading、resync、gap、error 一次性投影成 DisplayModel。
-  // 修改目的：Live/Syncing/Degraded 与内容区等待提示保持一致，修复 Bug 3 和 Bug 6 的状态语义分裂。
+  // 修改目的：Live/Syncing/Recovering 与内容区等待提示保持一致，修复 Bug 3 和 Bug 6 的状态语义分裂。
   hasFocusedRun: !!focusedRun.value,
   hasWindow: !!focusedWindow.value,
   isLoadingWindow: !!focusedRun.value && loadingRunWindows.value.has(focusedRun.value.runId),
   isResyncing: !!focusedRun.value && resyncingRunIds.value.has(focusedRun.value.runId),
   hasRenderableMessages: renderMessages.value.length > 0,
   hasGap: !!focusedRun.value && gapRunIds.value.has(focusedRun.value.runId),
-  error: focusedRun.value ? runWindowErrors.value[focusedRun.value.runId] : undefined,
+  error: describeRuntimeLedgerRecoveryState(focusedRuntimeLedger.value, focusedRun.value?.runId)
+    || (focusedRun.value ? runWindowErrors.value[focusedRun.value.runId] : undefined),
   lastHeartbeatAt: lastHeartbeatAt.value,
   now: heartbeatTick.value
 }))
@@ -689,9 +730,25 @@ function selectRun(runId: string) {
 
 function updateActiveRunIds(raw: unknown) {
   // 修改原因：activeRunIds 来自后端运行控制器，是判断顶部控制按钮是否可用的权威来源。
-  // 修改方式：只接受字符串数组并转换为 Set，非法载荷回退为空集合。
+  // 修改方式：只接受字符串数组并转换为 Set，非法载荷归一化为空集合。
   // 修改目的：避免前端根据历史状态猜测可控制性。
   activeRunIds.value = new Set(Array.isArray(raw) ? raw.filter((item): item is string => typeof item === 'string') : [])
+  prefetchActiveRunWindows()
+}
+
+function prefetchActiveRunWindows() {
+  // 修改原因：多 SubAgent 并发时，用户在 running run 之间切换不应先看到空白同步态。
+  // 修改方式：沿用既有 getRunWindow + Runtime Ledger projection 路径，后台轻量预热活跃 run 的尾部窗口。
+  // 修改目的：提升切换手感，同时不新增 raw event、本地拼接或全量 snapshot 旁路。
+  const active = activeRunIds.value
+  if (active.size === 0 || orderedRuns.value.length === 0) return
+  const candidates = orderedRuns.value
+    .filter(run => active.has(run.runId))
+    .filter(run => !windowsByRunId.value[run.runId] && !loadingRunWindows.value.has(run.runId))
+    .slice(0, 8)
+  for (const run of candidates) {
+    void requestRunWindow(run.runId)
+  }
 }
 
 async function controlFocusedRun(action: 'pause' | 'resume' | 'exit') {
@@ -748,55 +805,29 @@ async function mutateRunMessage(messageId: string, messageType: 'delete' | 'retr
   const type = messageType === 'delete' ? 'subagents.deleteRunMessage' : 'subagents.retryRunFromMessage'
   const response = await sendToExtension<{
     manifest?: SubAgentRunManifest
-    window?: SubAgentRunContentWindow
-    contentWindow?: SubAgentRunContentWindow
-    snapshot?: SubAgentRunSnapshot
+    runtimeLedger?: MonitorRuntimeLedgerProjectionState
+    activeRunIds?: string[]
   }>(type, {
     runId: run.runId,
     contentIndex,
     conversationId: run.conversationId
   })
   if (response?.manifest) upsertManifest(response.manifest)
-  const returnedWindow = response?.window || response?.contentWindow
-  if (returnedWindow) {
-    // 修改原因：删除/重试后端响应已改为 manifest + window，不能再把完整 snapshot.contents 回传到 Monitor。
-    // 修改方式：用后端返回的权威窗口替换当前 run 缓存；窗口内 Content[] 仍交给 MessageItem 渲染。
-    // 修改目的：用户操作后校准当前 run，但大 run 不会因单次 mutation 全量进入前端。
-    upsertWindow(returnedWindow)
-  }
-  if (response?.snapshot) {
-    // 修改原因：保留旧协议兼容只用于防御旧扩展/测试夹层，新增后端不应再走这里。
-    // 修改方式：只在没有 window 时从 snapshot 投影为窗口，避免新协议回退依赖 full snapshot。
-    // 修改目的：不破坏运行中的旧消息，同时让测试锁定新 handler 不返回 snapshot。
-    upsertManifest({
-      runId: response.snapshot.runId,
-      agentName: response.snapshot.agentName,
-      status: response.snapshot.status,
-      createdAt: response.snapshot.createdAt,
-      updatedAt: response.snapshot.updatedAt,
-      conversationId: response.snapshot.conversationId,
-      contentCount: response.snapshot.contents.length,
-      eventCount: response.snapshot.events.length,
-      contentRevision: response.snapshot.contentRevision,
-      eventSequence: response.snapshot.eventSequence,
-      preview: response.snapshot.contents[response.snapshot.contents.length - 1]?.parts?.find(part => part.text)?.text?.slice(0, 160),
-      lastMessageRole: response.snapshot.contents[response.snapshot.contents.length - 1]?.role
-    })
-    if (!returnedWindow) {
-      upsertWindow({
-        runId: response.snapshot.runId,
-        contents: response.snapshot.contents,
-        startIndex: 0,
-        endIndex: response.snapshot.contents.length,
-        totalCount: response.snapshot.contents.length,
-        contentRevision: response.snapshot.contentRevision,
-        eventSequence: response.snapshot.eventSequence,
-        hasMoreBefore: false,
-        hasMoreAfter: false
-      })
+  if (response?.runtimeLedger) {
+    runtimeLedgersByRunId.value = {
+      ...runtimeLedgersByRunId.value,
+      [run.runId]: response.runtimeLedger
     }
-    eventsByRunId.value = { ...eventsByRunId.value, [response.snapshot.runId]: response.snapshot.events || [] }
   }
+  const ledgerWindow = getRuntimeLedgerContentWindow(response?.runtimeLedger, run.runId)
+  if (ledgerWindow) {
+    upsertWindow(applyProjectionLiveDeltaToWindow(ledgerWindow, response?.runtimeLedger, response?.manifest))
+    clearEventGap(ledgerWindow.runId)
+    setRunWindowError(ledgerWindow.runId, undefined)
+  } else {
+    setRunWindowError(run.runId, describeRuntimeLedgerRecoveryState(response?.runtimeLedger, run.runId) || '正在重新同步 SubAgent 对话窗口…')
+  }
+  updateActiveRunIds(response?.activeRunIds)
 }
 
 function handleDelete(messageId: string) {
@@ -831,6 +862,27 @@ onMounted(async () => {
     if (message.type === 'subagentMonitor.event') {
       markHeartbeat({ serverTime: Date.now(), activeRunIds: message.data?.activeRunIds })
       if (message.data?.manifest) upsertManifest(message.data.manifest)
+      let appliedRuntimeLedgerWindow = false
+      if (message.data?.runtimeLedger && message.data?.event?.runId) {
+        runtimeLedgersByRunId.value = {
+          ...runtimeLedgersByRunId.value,
+          [message.data.event.runId]: message.data.runtimeLedger
+        }
+        const ledgerWindow = getRuntimeLedgerContentWindow(message.data.runtimeLedger, message.data.event.runId)
+        if (ledgerWindow) {
+          const nextWindow = applyProjectionLiveDeltaToWindow(ledgerWindow, message.data.runtimeLedger, message.data.manifest)
+          // 修改原因：并发 SubAgent 的非聚焦 run 也会持续收到 Runtime Ledger projection；旧逻辑只在 content_snapshot 时缓存窗口，
+          // 用户切换到正在流式的 run 时就只能看到同步/恢复态。
+          // 修改方式：所有事件类型都只接受 runtimeLedger.ledger.contentWindow 这个权威窗口并写入 run 缓存。
+          // 修改目的：切换 run 只是切换已缓存的 projection，不恢复 raw event 正文路径，也不额外新建 Monitor 旁路。
+          clearEventGap(ledgerWindow.runId)
+          setRunWindowError(ledgerWindow.runId, undefined)
+          setRunResyncing(ledgerWindow.runId, false)
+          upsertWindow(nextWindow)
+          replayBufferedLiveDeltas(ledgerWindow.runId)
+          appliedRuntimeLedgerWindow = true
+        }
+      }
       if (shouldApplyEventFocus({
         currentFocusRunId: focusedRunId.value,
         incomingFocusRunId: message.data?.focusRunId,
@@ -844,14 +896,14 @@ onMounted(async () => {
       if (message.data?.event) {
         detectEventGap(message.data.event)
         appendEvent(message.data.event)
-        applyLiveDeltaEvent(message.data.event)
+        applyLiveDeltaEvent(message.data.event, message.data.runtimeLedger)
         if (message.data.event.type === 'content_snapshot') {
           clearSupersededLiveDeltaBuffer(
             message.data.event.runId,
             message.data.event.contentRevision ?? message.data.event.payload?.contentRevision
           )
         }
-        if (message.data.event.type !== 'llm_delta' && message.data.event.runId === focusedRun.value?.runId) {
+        if (message.data.event.type !== 'llm_delta' && message.data.event.runId === focusedRun.value?.runId && !appliedRuntimeLedgerWindow) {
           // 修改原因：content_snapshot/run_completed 等低频事件代表后端真源可能已校准，当前聚焦窗口需要刷新但不能接收完整 snapshot。
           // 修改方式：只对当前聚焦 run 强制重新拉取窗口；非聚焦 run 等用户切换时再拉。
           // 修改目的：保证当前可见内容最终一致，同时避免后台 run 大 transcript 进入前端。
@@ -895,7 +947,7 @@ onBeforeUnmount(() => {
       </div>
       <div class="monitor-header-actions">
         <span class="freshness-indicator" :class="`freshness-indicator--${monitorConnectionState}`">
-          <i class="codicon" :class="monitorConnectionState === 'live' ? 'codicon-radio-tower' : monitorConnectionState === 'syncing' ? 'codicon-sync codicon-modifier-spin' : 'codicon-warning'"></i>
+          <i class="codicon" :class="monitorConnectionState === 'live' ? 'codicon-radio-tower' : (monitorConnectionState === 'syncing' || monitorConnectionState === 'recovering') ? 'codicon-sync codicon-modifier-spin' : 'codicon-warning'"></i>
           {{ freshnessLabel }}
         </span>
         <span class="freshness-description">{{ freshnessDescription }}</span>
@@ -975,10 +1027,10 @@ onBeforeUnmount(() => {
         <div v-if="focusedSyncState.waitingMessage" class="monitor-waiting-state" :class="`monitor-waiting-state--${focusedSyncState.contentHealth}`">
           <!--
             修改原因：Monitor 有 manifest 但无 window、正在 resync 或 replay pending 时旧模板会显示空白 shell。
-            修改方式：内容区直接消费 focusedSyncState.waitingMessage，在同一 run shell 位置展示等待/降级状态。
+            修改方式：内容区直接消费 focusedSyncState.waitingMessage，在同一 run shell 位置展示等待/恢复状态。
             修改目的：等待上游 LLM、等待窗口同步和 reset 恢复都使用统一 WaitingState 位置，不再与主窗口语义分裂。
           -->
-          <span class="codicon" :class="focusedSyncState.contentHealth === 'degraded' ? 'codicon-warning' : 'codicon-sync codicon-modifier-spin'"></span>
+          <span class="codicon codicon-sync codicon-modifier-spin"></span>
           <span>{{ focusedSyncState.waitingMessage }}</span>
         </div>
 
@@ -986,7 +1038,7 @@ onBeforeUnmount(() => {
           <!--
             修改原因：默认只加载尾部 20 条时，用户需要可控地向前补齐历史，而不是误以为早期内容丢失。
             修改方式：按钮调用同一个 getRunWindow 协议，以当前 window.startIndex 为 endIndex 拉取上一页并 prepend。
-            修改目的：继续保持 manifest/window 按需加载，不回退到一次性完整 snapshot。
+            修改目的：继续保持 manifest/window 按需加载，不重新启用一次性完整 snapshot。
           -->
           <button class="load-older-btn" type="button" :disabled="focusedOlderLoading" @click="loadOlderMessages">
             <span v-if="focusedOlderLoading" class="codicon codicon-sync codicon-modifier-spin"></span>
@@ -1069,8 +1121,7 @@ onBeforeUnmount(() => {
 }
 
 .freshness-indicator--stale,
-.freshness-indicator--gap,
-.freshness-indicator--degraded,
+.freshness-indicator--recovering,
 .freshness-indicator--disconnected {
   border-color: var(--vscode-editorWarning-foreground);
   background: color-mix(in srgb, var(--vscode-editorWarning-foreground) 14%, var(--vscode-editorWidget-background));
@@ -1263,7 +1314,7 @@ onBeforeUnmount(() => {
   font-size: 12px;
 }
 
-.monitor-waiting-state--degraded {
+.monitor-waiting-state--recovering {
   border-color: var(--vscode-inputValidation-warningBorder);
   background: var(--vscode-inputValidation-warningBackground);
   color: var(--vscode-foreground);

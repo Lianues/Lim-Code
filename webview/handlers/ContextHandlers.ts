@@ -18,7 +18,7 @@ export const getContextStatus: MessageHandler = async (data, requestId, ctx) => 
   try {
     // 修改原因：context status 现在是前端诊断窗口的数据源，不能再通过 chatStream 伪装成一次对话。
     // 修改方式：新增普通 request/response handler，直接调用 ChatHandler 的只读 getContextStatus。
-    // 修改目的：返回 projection、ledger、legacy/degraded 等状态，同时不写聊天历史、不触发模型、不影响上下文。
+    // 修改目的：返回 projection、ledger 和 degraded 等状态，同时不写聊天历史、不触发模型、不影响上下文。
     const conversationId = normalizeConversationId(data?.conversationId);
     if (!conversationId) {
       ctx.sendError(requestId, 'CONTEXT_STATUS_CONVERSATION_REQUIRED', 'conversationId is required');

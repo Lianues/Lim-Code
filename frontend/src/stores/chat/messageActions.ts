@@ -4,21 +4,18 @@
  * 包含消息发送、重试、编辑、删除等操作
  */
 
-import type { Message, Attachment, Content } from '../../types'
+import type { Message, Attachment } from '../../types'
 import type { ChatStoreState, ChatStoreComputed, AttachmentData, ErrorInfo } from './types'
 import { triggerRef } from 'vue'
 import { sendToExtension } from '../../utils/vscode'
 import { generateId } from '../../utils/format'
 import {
   createAndPersistConversation,
-  MESSAGES_PAGE_SIZE,
-  loadCheckpoints,
   refreshCurrentConversationBuildSession,
   syncConversationWorkspaceUri
 } from './conversationActions'
 import { updateTabConversationId, updateTabTitle } from './tabActions'
 import { clearCheckpointsFromIndex } from './checkpointActions'
-import { contentToMessageEnhanced } from './parsers'
 import {
   appendMessage,
   replaceAllMessages,
@@ -26,6 +23,10 @@ import {
 } from './state'
 import { syncTotalMessagesFromWindow, setTotalMessagesFromWindow, trimWindowFromTop } from './windowUtils'
 import { persistConversationModelConfig, persistConversationPromptMode } from './configActions'
+import {
+  applyRuntimeLedgerMutationProjection,
+  type RuntimeLedgerMutationProjection
+} from './runtimeLedgerProjection'
 
 /**
  * 安全写入错误信息（支持对话切换隔离）
@@ -57,9 +58,37 @@ function safeSetError(
   }
 }
 
+function failRuntimeLedgerMutationProjection(
+  state: ChatStoreState,
+  originConvId: string | null,
+  action: string
+): void {
+  safeSetError(state, originConvId, {
+    code: 'RUNTIME_LEDGER_PROJECTION_ERROR',
+    message: `Runtime Ledger mutation projection missing for ${action}`
+  })
+  state.streamingMessageId.value = null
+  state.activeStreamId.value = null
+  state.isStreaming.value = false
+  state.isWaitingForResponse.value = false
+  state.isLoading.value = false
+}
+
 /**
  * 取消流式的回调类型
  */
+interface StreamStartResponse {
+  started?: boolean
+  streamId?: string
+}
+
+function bindAuthoritativeStreamId(state: ChatStoreState, response: StreamStartResponse | undefined): void {
+  const streamId = typeof response?.streamId === 'string' ? response.streamId.trim() : ''
+  if (streamId) {
+    state.activeStreamId.value = streamId
+  }
+}
+
 export type CancelStreamCallback = () => Promise<void>
 
 /**
@@ -167,7 +196,7 @@ function mergeResponseWithCleanup(
   }
 }
 
-function upsertHiddenFunctionResponseMessage(
+function legacyUnusedHiddenFunctionResponseMessageProjection(
   state: ChatStoreState,
   payload: HiddenFunctionResponsePayload
 ): void {
@@ -282,10 +311,8 @@ export async function sendMessage(
       await persistConversationPromptMode(state)
     }
     
-    if (hiddenFunctionResponse) {
+    if (!hiddenFunctionResponse && !isContextCommandSend) {
       // 隐藏模式：不创建可见 user 消息，改为 functionResponse（可用于计划确认等场景）
-      upsertHiddenFunctionResponseMessage(state, hiddenFunctionResponse)
-    } else if (!isContextCommandSend) {
       const userMessage: Message = {
         id: generateId(),
         role: 'user',
@@ -339,8 +366,7 @@ export async function sendMessage(
       await syncConversationWorkspaceUri(state, state.currentConversationId.value)
     }
     state.pendingModelOverride.value = effectiveModelOverride || null
-    const streamId = generateId()
-    state.activeStreamId.value = streamId
+    state.activeStreamId.value = null
     state._lastApprovalGatedStreamId.value = null
 
     state._lastCancelledStreamId.value = null
@@ -358,16 +384,16 @@ export async function sendMessage(
         }))
       : undefined
     
-    await sendToExtension('chatStream', {
+    const startResponse = await sendToExtension<StreamStartResponse>('chatStream', {
       conversationId: state.currentConversationId.value,
       configId: state.configId.value,
       message: messageText,
       attachments: hiddenFunctionResponse ? undefined : attachmentData,
       modelOverride: effectiveModelOverride,
       hiddenFunctionResponse,
-      promptModeId: state.currentPromptModeId.value,
-      streamId
+      promptModeId: state.currentPromptModeId.value
     })
+    bindAuthoritativeStreamId(state, startResponse)
 
   } catch (err: any) {
     if (state.isStreaming.value) {
@@ -460,16 +486,15 @@ export async function retryFromMessage(
 
     try {
       const modelOverride = resolveConversationModelOverride(state)
-      const streamId = generateId()
-      state.activeStreamId.value = streamId
+      state.activeStreamId.value = null
       state._lastCancelledStreamId.value = null
-      await sendToExtension('retryStream', {
+      const startResponse = await sendToExtension<StreamStartResponse>('retryStream', {
         conversationId: state.currentConversationId.value,
         configId: state.configId.value,
         modelOverride,
-        streamId,
         promptModeId: state.currentPromptModeId.value
       })
+      bindAuthoritativeStreamId(state, startResponse)
     } catch (err: any) {
       if (state.isStreaming.value) {
         safeSetError(state, originConvId, {
@@ -495,12 +520,12 @@ export async function retryFromMessage(
   // 计算后端索引（在修改数组之前）
   const backendIndex = calculateBackendIndex(state.allMessages.value, messageIndex, state.windowStartIndex.value)
   
-  replaceAllMessages(state, state.allMessages.value.slice(0, messageIndex))
-  clearCheckpointsFromIndex(state, backendIndex)
-  setTotalMessagesFromWindow(state)
-  
   try {
-    const resp = await sendToExtension<any>('deleteMessage', {
+    const resp = await sendToExtension<{
+      success: boolean
+      runtimeLedger?: RuntimeLedgerMutationProjection
+      error?: { code?: string; message?: string }
+    }>('deleteMessage', {
       conversationId: state.currentConversationId.value,
       targetIndex: backendIndex
     })
@@ -513,20 +538,6 @@ export async function retryFromMessage(
         message: err?.message || 'Failed to delete messages in backend'
       })
 
-      // 尝试回滚：重新从后端拉取“最后一页”历史，避免前端与后端状态错位（避免全量拉取造成卡顿）
-      try {
-        const result = await sendToExtension<{ total: number; messages: Content[] }>('conversation.getMessagesPaged', {
-          conversationId: state.currentConversationId.value,
-          limit: MESSAGES_PAGE_SIZE
-        })
-        const page = result?.messages || []
-        state.totalMessages.value = result?.total ?? page.length
-        state.windowStartIndex.value = page[0]?.index ?? 0
-        replaceAllMessages(state, page.map(content => contentToMessageEnhanced(content)))
-      } catch (reloadErr) {
-        console.error('[messageActions] retryFromMessage: failed to reload history after delete failure:', reloadErr)
-      }
-
       state.streamingMessageId.value = null
       state.isStreaming.value = false
       state.activeStreamId.value = null
@@ -534,8 +545,23 @@ export async function retryFromMessage(
       state.isLoading.value = false
       return
     }
+
+    if (!applyRuntimeLedgerMutationProjection(resp.runtimeLedger, state)) {
+      failRuntimeLedgerMutationProjection(state, originConvId, 'retry delete_range')
+      return
+    }
   } catch (err) {
     console.error('Failed to delete messages from backend:', err)
+    safeSetError(state, originConvId, {
+      code: 'DELETE_ERROR',
+      message: err instanceof Error ? err.message : 'Failed to delete messages in backend'
+    })
+    state.streamingMessageId.value = null
+    state.isStreaming.value = false
+    state.activeStreamId.value = null
+    state.isWaitingForResponse.value = false
+    state.isLoading.value = false
+    return
   }
 
   
@@ -559,16 +585,15 @@ export async function retryFromMessage(
   
   try {
     const modelOverride = resolveConversationModelOverride(state)
-    const streamId = generateId()
-    state.activeStreamId.value = streamId
+    state.activeStreamId.value = null
     state._lastCancelledStreamId.value = null
-    await sendToExtension('retryStream', {
+    const startResponse = await sendToExtension<StreamStartResponse>('retryStream', {
       conversationId: state.currentConversationId.value,
       configId: state.configId.value,
       modelOverride,
-      streamId,
       promptModeId: state.currentPromptModeId.value
     })
+    bindAuthoritativeStreamId(state, startResponse)
   } catch (err: any) {
     if (state.isStreaming.value) {
       safeSetError(state, originConvId, {
@@ -624,16 +649,15 @@ export async function retryAfterError(
   
   try {
     const modelOverride = resolveConversationModelOverride(state)
-    const streamId = generateId()
-    state.activeStreamId.value = streamId
+    state.activeStreamId.value = null
     state._lastCancelledStreamId.value = null
-    await sendToExtension('retryStream', {
+    const startResponse = await sendToExtension<StreamStartResponse>('retryStream', {
       conversationId: state.currentConversationId.value,
       configId: state.configId.value,
       modelOverride,
-      streamId,
       promptModeId: state.currentPromptModeId.value
     })
+    bindAuthoritativeStreamId(state, startResponse)
   } catch (err: any) {
     if (state.isStreaming.value) {
       safeSetError(state, originConvId, {
@@ -722,19 +746,18 @@ export async function editAndRetry(
   
   try {
     const modelOverride = resolveConversationModelOverride(state)
-    const streamId = generateId()
-    state.activeStreamId.value = streamId
+    state.activeStreamId.value = null
     state._lastCancelledStreamId.value = null
-    await sendToExtension('editAndRetryStream', {
+    const startResponse = await sendToExtension<StreamStartResponse>('editAndRetryStream', {
       conversationId: state.currentConversationId.value,
       messageIndex: backendMessageIndex,
       newMessage,
       attachments: attachmentData,
       configId: state.configId.value,
       modelOverride,
-      streamId,
       promptModeId: state.currentPromptModeId.value
     })
+    bindAuthoritativeStreamId(state, startResponse)
   } catch (err: any) {
     if (state.isStreaming.value) {
       safeSetError(state, originConvId, {
@@ -794,16 +817,19 @@ export async function deleteMessage(
   const backendIndex = calculateBackendIndex(state.allMessages.value, targetIndex, state.windowStartIndex.value)
   
   try {
-    const response = await sendToExtension<any>('deleteMessage', {
+    const response = await sendToExtension<{
+      success: boolean
+      runtimeLedger?: RuntimeLedgerMutationProjection
+      error?: { code?: string; message?: string }
+    }>('deleteMessage', {
       conversationId: state.currentConversationId.value,
       targetIndex: backendIndex
     })
 
     if (response?.success) {
-      replaceAllMessages(state, state.allMessages.value.slice(0, targetIndex))
-      clearCheckpointsFromIndex(state, backendIndex)
-      setTotalMessagesFromWindow(state)
-      await refreshCurrentConversationBuildSession(state)
+      if (!applyRuntimeLedgerMutationProjection(response.runtimeLedger, state)) {
+        failRuntimeLedgerMutationProjection(state, originConvId, 'delete_range')
+      }
     } else {
       const err = response?.error
       safeSetError(state, originConvId, {
@@ -844,28 +870,15 @@ export async function deleteSingleMessage(
   }
   
   try {
-    const response = await sendToExtension<{ success: boolean }>('deleteSingleMessage', {
+    const response = await sendToExtension<{ success: boolean; runtimeLedger?: RuntimeLedgerMutationProjection }>('deleteSingleMessage', {
       conversationId: state.currentConversationId.value,
       targetIndex: backendIndex
     })
     
     if (response.success) {
-      // 重新加载最后一页，确保 backendIndex 与 checkpoints 的 messageIndex 不错位
-      const result = await sendToExtension<{ total: number; messages: Content[] }>('conversation.getMessagesPaged', {
-        conversationId: state.currentConversationId.value,
-        limit: MESSAGES_PAGE_SIZE
-      })
-      const page = result?.messages || []
-      state.totalMessages.value = result?.total ?? page.length
-      state.windowStartIndex.value = page[0]?.index ?? 0
-      replaceAllMessages(state, page.map(content => contentToMessageEnhanced(content)))
-
-      state.isLoadingMoreMessages.value = false
-      state.historyFolded.value = false
-      state.foldedMessageCount.value = 0
-
-      await loadCheckpoints(state)
-      await refreshCurrentConversationBuildSession(state)
+      if (!applyRuntimeLedgerMutationProjection(response.runtimeLedger, state)) {
+        failRuntimeLedgerMutationProjection(state, originConvId, 'delete_single')
+      }
     }
   } catch (err: any) {
     safeSetError(state, originConvId, {

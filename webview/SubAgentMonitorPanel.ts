@@ -85,38 +85,9 @@ function cloneJsonSafeValue(value: unknown): unknown {
     }
 }
 
-function sanitizeLlmDeltaPart(part: unknown): Record<string, unknown> | undefined {
-    if (!part || typeof part !== 'object') return undefined;
-    const source = part as Record<string, any>;
-
-    if (typeof source.text === 'string') {
-        const textPart: Record<string, unknown> = { text: source.text };
-        if (source.thought === true) textPart.thought = true;
-        return textPart;
-    }
-
-    if (source.functionCall && typeof source.functionCall === 'object') {
-        const fc = source.functionCall as Record<string, unknown>;
-        const safeFunctionCall: Record<string, unknown> = {};
-        for (const key of ['id', 'name', 'args', 'partialArgs', 'index', 'itemId', 'finalArgs', 'rejected']) {
-            if (!(key in fc)) continue;
-            const cloned = cloneJsonSafeValue(fc[key]);
-            if (cloned !== undefined) safeFunctionCall[key] = cloned;
-        }
-        return Object.keys(safeFunctionCall).length > 0
-            ? { functionCall: safeFunctionCall }
-            : undefined;
-    }
-
-    return undefined;
-}
-
 function createLlmDeltaPayload(event: SubAgentRunEvent, snapshot: SubAgentRunSnapshot): Record<string, unknown> {
     const rawPayload = (event.payload || {}) as Record<string, any>;
     const rawDelta = Array.isArray(rawPayload.delta) ? rawPayload.delta : [];
-    const delta = rawDelta
-        .map(sanitizeLlmDeltaPart)
-        .filter((part): part is Record<string, unknown> => !!part);
 
     const payload: Record<string, unknown> = {
         deltaCount: rawDelta.length,
@@ -125,10 +96,9 @@ function createLlmDeltaPayload(event: SubAgentRunEvent, snapshot: SubAgentRunSna
         modelVersion: rawPayload.modelVersion,
         thinkingStartTime: rawPayload.thinkingStartTime,
         usage: cloneJsonSafeValue(rawPayload.usage),
-        // 修改原因：llm_delta 需要轻量正文 delta 才能满足 Monitor 实时显示，但不能重新携带完整 snapshot.contents 或工具大结果。
-        // 修改方式：只白名单 text/thought/functionCall 增量字段；contentSnapshot 继续只以计数提示窗口校准。
-        // 修改目的：保持“实时正文走轻量 delta，大对象走 getRunWindow”的统一协议边界。
-        delta: delta.length > 0 ? delta : undefined,
+        // 修改原因：Monitor event payload 是控制/诊断通道；可渲染正文 delta 已进入 Runtime Ledger live projection。
+        // 修改方式：raw llm_delta event 只保留计数、done 和小型元数据，不再携带 text/functionCall delta。
+        // 修改目的：彻底删除 raw event 的第二条正文路径，Monitor 只能从 runtimeLedger.ledger.liveDelta 渲染实时内容。
         contentRevision: snapshot.contentRevision,
         eventSequence: snapshot.eventSequence
     };
@@ -359,13 +329,14 @@ export class SubAgentMonitorPanel {
                 }, clientId);
                 return;
             }
+            const runtimeLedger = await subAgentRunEventBus.getRuntimeLedgerMonitorProjection(runId, message.data?.options || {});
             this.postRoutedMessage({
                 type: 'response',
                 requestId: message.requestId,
                 success: true,
                 data: {
-                    window: contentWindow,
                     manifest: subAgentRunEventBus.getManifest(runId),
+                    runtimeLedger,
                     activeRunIds: subAgentRunController.getActiveRunIds()
                 }
             }, clientId);
@@ -397,6 +368,14 @@ export class SubAgentMonitorPanel {
     }
 
     private postEvent(event: SubAgentRunEvent, snapshot: SubAgentRunSnapshot): void {
+        void this.postEventWithRuntimeLedger(event, snapshot);
+    }
+
+    private async postEventWithRuntimeLedger(event: SubAgentRunEvent, snapshot: SubAgentRunSnapshot): Promise<void> {
+        await new Promise(resolve => setImmediate(resolve));
+        const runtimeLedger = await subAgentRunEventBus.getRuntimeLedgerMonitorProjection(snapshot.runId, {
+            includeContentWindow: false
+        });
         this.postRoutedMessage({
             type: 'subagentMonitor.event',
             data: {
@@ -405,6 +384,7 @@ export class SubAgentMonitorPanel {
                 // 修改方式：事件推送只携带轻量 manifest；当前聚焦 run 需要校准内容时由前端 getRunWindow 拉窗口。
                 // 修改目的：避免 Monitor 打开后任一低频事件再次把大 transcript 全量送入前端。
                 manifest: subAgentRunEventBus.getManifest(snapshot.runId),
+                runtimeLedger,
                 focusRunId: this.focusRunId,
                 focusConversationId: this.focusConversationId,
                 // 控制按钮可见性以后端活跃运行控制器为准，不让前端猜测 run 是否仍活跃。

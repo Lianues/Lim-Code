@@ -47,7 +47,16 @@ function sequenceOf(value: { eventSequence?: number } | undefined): number {
 
 export interface RunContentWindowRequestOptions {
   limit: number
-  endIndex: number
+  startIndex?: number
+  endIndex?: number
+  fromTail?: boolean
+}
+
+export function createTailRunWindowRequestOptions(limit: number): RunContentWindowRequestOptions {
+  return {
+    limit,
+    fromTail: true
+  }
 }
 
 export function createPreviousRunWindowRequestOptions(
@@ -60,6 +69,28 @@ export function createPreviousRunWindowRequestOptions(
   return {
     limit,
     endIndex: current.startIndex
+  }
+}
+
+export function createRefreshRunWindowRequestOptions(
+  current: SubAgentRunContentWindowState,
+  limit: number,
+  manifest?: SubAgentRunFreshnessManifest
+): RunContentWindowRequestOptions {
+  const startIndex = Math.max(0, Math.floor(current.startIndex))
+  const currentEndIndex = Math.max(startIndex, Math.floor(current.endIndex))
+  const manifestCount = typeof manifest?.contentCount === 'number' && Number.isFinite(manifest.contentCount)
+    ? Math.max(0, Math.floor(manifest.contentCount))
+    : undefined
+  const endIndex = current.hasMoreAfter || manifestCount === undefined
+    ? currentEndIndex
+    : Math.max(startIndex, manifestCount)
+
+  return {
+    startIndex,
+    endIndex,
+    limit: Math.max(1, Math.floor(Math.max(limit, endIndex - startIndex))),
+    fromTail: false
   }
 }
 

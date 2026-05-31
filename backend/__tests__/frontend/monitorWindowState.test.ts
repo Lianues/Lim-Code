@@ -1,5 +1,7 @@
 import {
   createPreviousRunWindowRequestOptions,
+  createRefreshRunWindowRequestOptions,
+  createTailRunWindowRequestOptions,
   isRunWindowTailAuthoritative,
   prependRunContentWindow,
   shouldApplyRunContentWindow
@@ -31,6 +33,29 @@ describe('SubAgent Monitor window state helpers', () => {
     // 修改方式：纯函数返回 { limit, endIndex: current.startIndex }，组件直接使用该对象调用 getRunWindow。
     // 修改目的：防止 UI 后续改动破坏分页锚点，导致 prepend 合并错位。
     expect(createPreviousRunWindowRequestOptions(current, 20)).toEqual({ limit: 20, endIndex: 20 });
+  });
+
+  it('creates an explicit tail request only for initial/importer window loads', () => {
+    expect(createTailRunWindowRequestOptions(20)).toEqual({ limit: 20, fromTail: true });
+  });
+
+  it('creates a refresh request that preserves the currently loaded range', () => {
+    const current = {
+      runId: 'window-state-refresh',
+      contents: [createContent(10, 'older'), createContent(29, 'tail')],
+      startIndex: 10,
+      endIndex: 30,
+      totalCount: 30,
+      hasMoreBefore: true,
+      hasMoreAfter: false
+    };
+
+    expect(createRefreshRunWindowRequestOptions(current, 20, { contentCount: 31 })).toEqual({
+      startIndex: 10,
+      endIndex: 31,
+      limit: 21,
+      fromTail: false
+    });
   });
 
   it('prepends an older window before current startIndex and preserves existing tail object references', () => {

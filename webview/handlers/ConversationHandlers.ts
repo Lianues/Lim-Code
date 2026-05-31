@@ -2,7 +2,6 @@
  * 对话管理消息处理器
  */
 
-import { t } from '../../backend/i18n';
 import type { HandlerContext, MessageHandler } from '../types';
 
 /**
@@ -111,19 +110,6 @@ export const loadConversationForView: MessageHandler = async (data, requestId, c
 };
 
 /**
- * 拒绝工具调用
- */
-export const rejectToolCalls: MessageHandler = async (data, requestId, ctx) => {
-  const { conversationId, messageIndex, toolCallIds } = data;
-  try {
-    await ctx.conversationManager.rejectToolCalls(conversationId, messageIndex, toolCallIds);
-    ctx.sendResponse(requestId, { success: true });
-  } catch (error: any) {
-    ctx.sendError(requestId, 'REJECT_TOOL_CALLS_ERROR', error.message || t('webview.errors.rejectToolCallsFailed'));
-  }
-};
-
-/**
  * 注册对话管理处理器
  */
 export function registerConversationHandlers(registry: Map<string, MessageHandler>): void {
@@ -137,5 +123,4 @@ export function registerConversationHandlers(registry: Map<string, MessageHandle
   registry.set('conversation.getMessages', getMessages);
   registry.set('conversation.getMessagesPaged', getMessagesPaged);
   registry.set('conversation.loadConversationForView', loadConversationForView);
-  registry.set('conversation.rejectToolCalls', rejectToolCalls);
 }

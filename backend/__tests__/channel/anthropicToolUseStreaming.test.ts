@@ -1,7 +1,7 @@
 import { AnthropicFormatter } from '../../modules/channel/formatters/anthropic';
 import { StreamAccumulator } from '../../modules/channel/StreamAccumulator';
 import { StreamResponseProcessor } from '../../modules/api/chat/handlers/StreamResponseProcessor';
-import { handleChunkType } from '../../../frontend/src/stores/chat/streamChunkHandlers';
+import { applyRuntimeLedgerChunkProjection } from '../../../frontend/src/stores/chat/runtimeLedgerProjection';
 import type { Message } from '../../../frontend/src/types';
 
 async function* streamAnthropicEvents(events: any[]) {
@@ -28,13 +28,14 @@ async function processToFrontend(events: any[]) {
     };
     const state = {
         allMessages: { value: [message] },
-        streamingMessageId: { value: message.id }
+        streamingMessageId: { value: message.id },
+        messageIndexById: { value: new Map([[message.id, 0]]) }
     } as any;
     const emitted: any[] = [];
 
     for await (const chunkData of processor.processStream(streamAnthropicEvents(events))) {
         emitted.push(chunkData.chunk);
-        handleChunkType(chunkData as any, state);
+        applyRuntimeLedgerChunk(chunkData.chunk, state);
     }
 
     return {
@@ -42,6 +43,26 @@ async function processToFrontend(events: any[]) {
         message: state.allMessages.value[0] as Message,
         emitted
     };
+}
+
+function applyRuntimeLedgerChunk(chunk: any, state: any): void {
+    applyRuntimeLedgerChunkProjection({
+        type: 'chunk',
+        conversationId: 'anthropic-tool-use-test',
+        streamId: 'stream-under-test',
+        runtimeLedger: {
+            status: 'ok',
+            ledger: {
+                liveDelta: {
+                    type: 'chunk',
+                    messageId: 'msg:stream:stream-under-test',
+                    contentId: 'cnt:stream:stream-under-test',
+                    payload: chunk,
+                    source: 'runtime-ledger'
+                }
+            }
+        }
+    } as any, state);
 }
 
 function toolCallsFromMessage(message: Message) {
@@ -169,16 +190,14 @@ describe('Anthropic tool_use streaming', () => {
         };
         const state = {
             allMessages: { value: [message] },
-            streamingMessageId: { value: message.id }
+            streamingMessageId: { value: message.id },
+            messageIndexById: { value: new Map([[message.id, 0]]) }
         } as any;
 
         const emit = (event: any) => {
             const chunk = formatter.parseStreamChunk(event);
             const normalizedDelta = accumulator.add(chunk);
-            handleChunkType({
-                conversationId: 'anthropic-tool-use-test',
-                chunk: { ...chunk, delta: normalizedDelta }
-            } as any, state);
+            applyRuntimeLedgerChunk({ ...chunk, delta: normalizedDelta }, state);
         };
 
         emit({ type: 'content_block_start', index: 2, content_block: { type: 'tool_use', id: 'toolu_stop_1', name: 'write_file', input: {} } });

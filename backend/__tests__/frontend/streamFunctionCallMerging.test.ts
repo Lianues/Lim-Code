@@ -1,5 +1,8 @@
 import { handleFunctionCallPart } from '../../../frontend/src/stores/chat/streamHelpers';
-import { handleToolStatus, handleToolStatusBatch } from '../../../frontend/src/stores/chat/streamChunkHandlers';
+import {
+  applyRuntimeLedgerToolStatusBatchProjection,
+  applyRuntimeLedgerToolStatusProjection
+} from '../../../frontend/src/stores/chat/runtimeLedgerProjection';
 import { contentToMessageEnhanced } from '../../../frontend/src/stores/chat/parsers';
 import { buildFunctionCallToolRenderEntry, upsertToolRenderEntry } from '../../../frontend/src/utils/toolRenderEntries';
 import type { Content, Message, StreamChunk, ToolUsage } from '../../../frontend/src/types';
@@ -19,16 +22,39 @@ function functionCallPart(functionCall: Record<string, unknown>) {
 }
 
 function createStateForToolStatus(message: Message) {
-  // 修改原因：toolStatus 的回归点在前端状态合并函数，不需要启动完整 Pinia store 或 VS Code Webview。
-  // 修改方式：只构造 handleToolStatus/handleToolStatusBatch 实际读取的响应式字段。
+  // 修改原因：toolStatus 的回归点已经迁移到 Runtime Ledger projection，不需要启动完整 Pinia store 或 VS Code Webview。
+  // 修改方式：只构造 projection reducer 实际读取的响应式字段。
   // 修改目的：用最小真实状态形状锁住“状态事件携带 args 后必须补齐工具卡片”的行为。
   return {
     // 修改原因：Jest 根工程没有把 frontend/node_modules 暴露给测试文件，直接 import vue/ref 会造成模块解析失败。
     // 修改方式：构造 Vue Ref 实际被这些 handler 使用的最小 `{ value }` 形状。
     // 修改目的：测试前端状态合并语义，而不把测试稳定性绑定到包解析路径。
     allMessages: { value: [message] },
-    streamingMessageId: { value: message.id }
+    streamingMessageId: { value: message.id },
+    messageIndexById: { value: new Map([[message.id, 0]]) }
   } as any;
+}
+
+function runtimeToolStatusChunk(id: string, name: string, status: 'queued' | 'executing' | 'success' | 'error' | 'cancelled', args?: Record<string, unknown>): StreamChunk {
+  return {
+    type: 'toolStatus',
+    conversationId: 'conversation-under-test',
+    streamId: 'stream-under-test',
+    runtimeLedger: {
+      status: 'ok',
+      ledger: {
+        toolStatesByInvocationId: { [`tool:chat:${id}`]: status },
+        toolSnapshotsByInvocationId: {
+          [`tool:chat:${id}`]: {
+            id,
+            name,
+            status,
+            args
+          }
+        }
+      }
+    }
+  } as StreamChunk;
 }
 
 describe('frontend streaming function call merging', () => {
@@ -189,17 +215,10 @@ describe('frontend streaming function call merging', () => {
     const state = createStateForToolStatus(message);
     const args = { path: 'frontend/src/components/message', query: 'ToolMessage', maxResults: 15 };
 
-    handleToolStatus({
-      type: 'toolStatus',
-      conversationId: 'conversation-under-test',
-      toolStatus: true,
-      tool: {
-        id: 'call_search_status_single',
-        name: 'search_in_files',
-        status: 'executing',
-        args
-      }
-    } as StreamChunk, state);
+    expect(applyRuntimeLedgerToolStatusProjection(
+      runtimeToolStatusChunk('call_search_status_single', 'search_in_files', 'executing', args),
+      state
+    )).toBe(true);
 
     const updated = state.allMessages.value[0].tools?.[0];
     expect(updated?.status).toBe('executing');
@@ -222,17 +241,9 @@ describe('frontend streaming function call merging', () => {
     const state = createStateForToolStatus(message);
     const args = { path: 'frontend/src/components/message', query: 'ToolMessage', maxResults: 15 };
 
-    handleToolStatusBatch([{
-      type: 'toolStatus',
-      conversationId: 'conversation-under-test',
-      toolStatus: true,
-      tool: {
-        id: 'call_search_status_batch',
-        name: 'search_in_files',
-        status: 'executing',
-        args
-      }
-    } as StreamChunk], state);
+    expect(applyRuntimeLedgerToolStatusBatchProjection([
+      runtimeToolStatusChunk('call_search_status_batch', 'search_in_files', 'executing', args)
+    ], state)).toEqual([]);
 
     const updated = state.allMessages.value[0].tools?.[0];
     expect(updated?.status).toBe('executing');

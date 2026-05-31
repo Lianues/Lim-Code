@@ -262,7 +262,7 @@ export function contentToMessage(content: Content, id?: string): Message {
       streamDuration: content.streamDuration,
       firstChunkTime: content.firstChunkTime,
       chunkCount: content.chunkCount,
-      // 保留向后兼容
+      // 历史消息可能只有扁平 usage 字段；新消息以 usageMetadata 为准。
       thoughtsTokenCount: content.usageMetadata?.thoughtsTokenCount ?? content.thoughtsTokenCount,
       candidatesTokenCount: content.usageMetadata?.candidatesTokenCount ?? content.candidatesTokenCount
     }

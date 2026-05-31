@@ -10,29 +10,27 @@ import type { HandlerContext, MessageHandler } from '../types';
 
 const MUTATION_RESPONSE_WINDOW_LIMIT = 20;
 
-function createRunMutationResponse(runId: string, anchorIndex?: number) {
+async function createRunMutationResponse(runId: string, anchorIndex?: number) {
   // 修改原因：删除/重试后只需要让 Monitor 校准当前 run 的轻量元数据和一个窗口，不能再返回完整 snapshot.contents。
-  // 修改方式：从事件总线唯一真源派生 manifest，并优先围绕变更位置取窗口；如果变更点在尾部之外则回退尾部窗口。
+  // 修改方式：从事件总线唯一真源派生 manifest，并请求 Runtime Ledger 围绕变更位置产出窗口投影。
   // 修改目的：用户操作大 run 时响应体大小保持 O(window)，同时不引入 Monitor 专用第二业务模型。
   const manifest = subAgentRunEventBus.getManifest(runId);
   if (!manifest) return undefined;
 
-  let contentWindow = typeof anchorIndex === 'number'
-    ? subAgentRunEventBus.getContentWindow(runId, {
+  const options = typeof anchorIndex === 'number'
+    ? {
       startIndex: Math.max(0, Math.floor(anchorIndex) - Math.floor(MUTATION_RESPONSE_WINDOW_LIMIT / 2)),
       limit: MUTATION_RESPONSE_WINDOW_LIMIT,
       fromTail: false
-    })
-    : undefined;
-
-  if (!contentWindow || contentWindow.contents.length === 0) {
-    contentWindow = subAgentRunEventBus.getContentWindow(runId, { limit: MUTATION_RESPONSE_WINDOW_LIMIT, fromTail: true });
-  }
+    }
+    : { limit: MUTATION_RESPONSE_WINDOW_LIMIT, fromTail: true };
+  const runtimeLedger = await subAgentRunEventBus.getRuntimeLedgerMonitorProjection(runId, options);
 
   return {
     success: true,
     manifest,
-    window: contentWindow
+    runtimeLedger,
+    activeRunIds: subAgentRunController.getActiveRunIds()
   };
 }
 
@@ -347,7 +345,7 @@ export const deleteRunMessage: MessageHandler = async (data, requestId, ctx) => 
       return;
     }
 
-    const response = createRunMutationResponse(runId, contentIndex);
+    const response = await createRunMutationResponse(runId, contentIndex);
     if (!response) {
       ctx.sendError(requestId, 'SUBAGENT_RUN_NOT_FOUND', `SubAgent run not found: ${runId}`);
       return;
@@ -386,7 +384,7 @@ export const retryRunFromMessage: MessageHandler = async (data, requestId, ctx) 
       return;
     }
 
-    const response = createRunMutationResponse(runId, contentIndex);
+    const response = await createRunMutationResponse(runId, contentIndex);
     if (!response) {
       ctx.sendError(requestId, 'SUBAGENT_RUN_NOT_FOUND', `SubAgent run not found: ${runId}`);
       return;

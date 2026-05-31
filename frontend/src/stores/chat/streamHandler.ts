@@ -3,7 +3,8 @@
  * 
  * 将各种流式处理功能模块化：
  * - streamHelpers.ts: 辅助函数（消息操作、工具解析）
- * - streamChunkHandlers.ts: 各种 chunk 类型的处理函数
+ * - runtimeLedgerProjection.ts: Runtime Ledger / Event Fabric 权威投影
+ * - streamAuxiliaryHandlers.ts: 非核心 UI 辅助事件
  */
 
 import type { StreamChunk } from '../../types'
@@ -12,28 +13,22 @@ import { nextTick } from 'vue'
 import { bufferBackgroundChunk, updateTabStreamingStatus } from './tabActions'
 
 import {
-  handleChunkType,
-  handleToolsExecuting,
-  handleToolStatus,
-  handleToolStatusBatch,
-  handleAwaitingConfirmation,
-  handleToolIteration,
-  handleComplete,
   handleCheckpoints,
   handleAutoSummaryStatus,
   handleContextCommand,
-  handleAutoSummary,
-  handleCancelled,
-  handleError
-} from './streamChunkHandlers'
-
-// 重新导出辅助函数，保持向后兼容
-export {
-  addFunctionCallToMessage,
-  addTextToMessage,
-  processStreamingText,
-  flushToolCallBuffer
-} from './streamHelpers'
+  handleAutoSummary
+} from './streamAuxiliaryHandlers'
+import {
+  applyRuntimeLedgerAwaitingConfirmationProjection,
+  applyRuntimeLedgerChunkProjection,
+  applyRuntimeLedgerCancelledProjection,
+  applyRuntimeLedgerCompleteProjection,
+  applyRuntimeLedgerErrorProjection,
+  applyRuntimeLedgerToolStatusBatchProjection,
+  applyRuntimeLedgerToolIterationProjection,
+  applyRuntimeLedgerToolStatusProjection,
+  applyRuntimeLedgerToolsExecutingProjection
+} from './runtimeLedgerProjection'
 
 /**
  * 创建流式处理器上下文
@@ -58,6 +53,27 @@ function warnLateApprovalGatedChunk(chunk: StreamChunk, state: ChatStoreState): 
     type: chunk.type
   })
   state._lastApprovalGatedStreamId.value = null
+}
+
+function markRuntimeLedgerProjectionViolation(chunk: StreamChunk, state: ChatStoreState): void {
+  const message = `Runtime Ledger projection missing or degraded for stream event: ${chunk.type}`
+  console.error('[streamHandler] Runtime Ledger projection violation', {
+    conversationId: chunk.conversationId,
+    streamId: chunk.streamId,
+    type: chunk.type,
+    status: chunk.runtimeLedger?.status,
+    identity: chunk.runtimeLedger?.identity
+  })
+  state.error.value = {
+    code: 'RUNTIME_LEDGER_PROJECTION_ERROR',
+    message
+  }
+  state.streamingMessageId.value = null
+  state.activeStreamId.value = null
+  state.isStreaming.value = false
+  state.isWaitingForResponse.value = false
+  state.autoSummaryStatus.value = null
+  state.pendingModelOverride.value = null
 }
 
 /**
@@ -94,33 +110,40 @@ export function handleStreamChunk(
   
   switch (chunk.type) {
     case 'chunk':
-      if (chunk.chunk && state.streamingMessageId.value) {
-        handleChunkType(chunk, state)
+      if (state.streamingMessageId.value && !applyRuntimeLedgerChunkProjection(chunk, state)) {
+        markRuntimeLedgerProjectionViolation(chunk, state)
       }
       break
       
     case 'toolsExecuting':
-      handleToolsExecuting(chunk, state)
+      if (!applyRuntimeLedgerToolsExecutingProjection(chunk, state)) {
+        markRuntimeLedgerProjectionViolation(chunk, state)
+      }
       break
 
     case 'toolStatus':
-      handleToolStatus(chunk, state)
+      if (!applyRuntimeLedgerToolStatusProjection(chunk, state)) {
+        markRuntimeLedgerProjectionViolation(chunk, state)
+      }
       break
       
     case 'awaitingConfirmation':
-      handleAwaitingConfirmation(chunk, state, addCheckpoint)
+      if (!applyRuntimeLedgerAwaitingConfirmationProjection(chunk, state, addCheckpoint)) {
+        markRuntimeLedgerProjectionViolation(chunk, state)
+      }
       break
       
     case 'toolIteration':
-      if (chunk.content) {
-        handleToolIteration(chunk, state, currentModelName, addCheckpoint)
+      if (!applyRuntimeLedgerToolIterationProjection(chunk, state, currentModelName, addCheckpoint)) {
+        markRuntimeLedgerProjectionViolation(chunk, state)
       }
       break
       
     case 'complete':
-      if (chunk.content) {
-        handleComplete(chunk, state, addCheckpoint, updateConversationAfterMessage)
+      if (applyRuntimeLedgerCompleteProjection(chunk, state, addCheckpoint, updateConversationAfterMessage)) {
         nextTick(() => processQueue())
+      } else {
+        markRuntimeLedgerProjectionViolation(chunk, state)
       }
       break
       
@@ -141,11 +164,15 @@ export function handleStreamChunk(
       break
       
     case 'cancelled':
-      handleCancelled(chunk, state)
+      if (!applyRuntimeLedgerCancelledProjection(chunk, state)) {
+        markRuntimeLedgerProjectionViolation(chunk, state)
+      }
       break
       
     case 'error':
-      handleError(chunk, state)
+      if (!applyRuntimeLedgerErrorProjection(chunk, state)) {
+        markRuntimeLedgerProjectionViolation(chunk, state)
+      }
       break
   }
 }
@@ -247,7 +274,10 @@ export function handleStreamChunkBatch(
       if (batch.length > 1) {
         // 批量标签页状态更新（只取最后一条）
         updateTabStreamingStatus(state, batch[batch.length - 1])
-        handleToolStatusBatch(batch, state)
+        const unhandled = applyRuntimeLedgerToolStatusBatchProjection(batch, state)
+        if (unhandled.length > 0) {
+          markRuntimeLedgerProjectionViolation(unhandled[0], state)
+        }
       } else {
         // 只有一条，走常规路径
         handleStreamChunk(chunk, ctx)

@@ -765,7 +765,6 @@ Output content directly without any prefix.`
             getInstallPathFailed: 'Failed to get install path',
             
             showNotificationFailed: 'Failed to show notification',
-            rejectToolCallsFailed: 'Failed to reject tool calls',
             
             getStorageConfigFailed: 'Failed to get storage config',
             updateStorageConfigFailed: 'Failed to update storage config',

@@ -20,10 +20,13 @@ docs/**
 2026年5月28日 修复资料/**
 .tmp/**
 tmp/**
+.kagent/**
 Junk/**
 ast-grep/**
 sgconfig.yml
 AGENTS.md
+subagent-orchestration-skill/**
+测试mcp.json
 *.vsix
 
 # 内置 Skill 运行时资产必须进入 VSIX。

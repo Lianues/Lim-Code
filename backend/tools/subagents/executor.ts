@@ -163,7 +163,7 @@ async function executeToolCall(
         }
 
         if (!context.toolExecutionService || !context.configManager || !agentConfig) {
-            const error = 'SubAgent shared ToolExecutionService/configManager is missing. Refusing to use legacy fallback execution.';
+            const error = 'SubAgent shared ToolExecutionService/configManager is required for canonical tool execution.';
             emitToolFailure(error);
             return {
                 result: null,
@@ -220,6 +220,35 @@ async function executeToolCall(
             const error = typeof (resultPayload as any)?.error === 'string'
                 ? (resultPayload as any).error
                 : undefined;
+            const responseParts = Array.isArray(fullResult.responseParts)
+                ? fullResult.responseParts
+                : [];
+
+            if (responseParts.length === 0) {
+                const protocolError = `ToolExecutionService did not return canonical functionResponse responseParts for SubAgent tool call: ${toolName}`;
+                subAgentRunEventBus.emit({
+                    runId: actualRunId,
+                    agentName,
+                    type: 'tool_failed',
+                    toolId: executionCall.id,
+                    toolName,
+                    payload: {
+                        ...(toolResult || {}),
+                        result: resultPayload,
+                        success: false,
+                        error: protocolError,
+                        protocolError: 'missing_function_response_parts'
+                    }
+                });
+                return {
+                    result: resultPayload,
+                    success: false,
+                    error: protocolError,
+                    responseParts,
+                    toolResults: fullResult.toolResults,
+                    multimodalAttachments: fullResult.multimodalAttachments
+                };
+            }
 
             subAgentRunEventBus.emit({
                 runId: actualRunId,
@@ -234,7 +263,7 @@ async function executeToolCall(
                 result: resultPayload,
                 success,
                 error,
-                responseParts: fullResult.responseParts,
+                responseParts,
                 toolResults: fullResult.toolResults,
                 multimodalAttachments: fullResult.multimodalAttachments
             };
@@ -764,28 +793,18 @@ export function createDefaultExecutor(
                         duration
                     });
                     
-                    if (result.responseParts && result.responseParts.length > 0) {
-                        // 修改原因：主 ToolExecutionService 已经负责构造包含多模态 parts 的 functionResponse，SubAgent 不应再手写简化结果。
-                        // 修改方式：优先写入 ToolExecutionService 返回的 responseParts，并在 prompt 模式下带上 multimodalAttachments。
-                        // 修改目的：确保图片/PDF/MCP 多模态结果在 SubAgent 内部能按主流程同样的格式回传给子模型。
-                        if (result.multimodalAttachments && result.multimodalAttachments.length > 0) {
-                            toolResultParts.push(...result.multimodalAttachments);
-                        }
-                        toolResultParts.push(...result.responseParts);
-                    } else {
-                        // 回退路径只用于旧上下文缺少 ToolExecutionService 的情况，保留原始 id 以满足 Anthropic/Responses 配对要求。
-                        toolResultParts.push({
-                            functionResponse: {
-                                name: call.name,
-                                response: {
-                                    success: result.success,
-                                    result: result.result,
-                                    error: result.error
-                                },
-                                id: call.id
-                            }
-                        });
+                    if (!result.responseParts || result.responseParts.length === 0) {
+                        const detail = result.error ? ` ${result.error}` : '';
+                        throw new Error(`SubAgent tool call ${call.name} did not produce canonical functionResponse responseParts.${detail}`);
                     }
+
+                    // 修改原因：主 ToolExecutionService 已经负责构造包含多模态 parts 的 functionResponse，SubAgent 不应再手写简化结果。
+                    // 修改方式：只写入 ToolExecutionService 返回的 responseParts，并在 prompt 模式下带上 multimodalAttachments。
+                    // 修改目的：确保 functionResponse.id 与主工具服务一致，图片/PDF/MCP 多模态结果也按主流程同样格式回传给子模型。
+                    if (result.multimodalAttachments && result.multimodalAttachments.length > 0) {
+                        toolResultParts.push(...result.multimodalAttachments);
+                    }
+                    toolResultParts.push(...result.responseParts);
                 }
                 
                 // 将工具结果添加到历史（作为 user 消息）

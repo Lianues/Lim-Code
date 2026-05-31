@@ -10,21 +10,39 @@ import { triggerRef } from 'vue'
 import { sendToExtension } from '../../utils/vscode'
 import { generateId } from '../../utils/format'
 import { isPerfEnabled } from '../../utils/perf'
-import { calculateBackendIndex } from './messageActions'
 import {
   appendMessage,
   getMessageIndexById,
-  insertMessageAt,
-  removeMessageAt,
   replaceMessageAt
 } from './state'
 import { syncTotalMessagesFromWindow, trimWindowFromTop } from './windowUtils'
+import {
+  applyRuntimeLedgerMutationProjection,
+  type RuntimeLedgerMutationProjection
+} from './runtimeLedgerProjection'
 
 const duplicateFunctionResponseWarned = new Set<string>()
 
+interface CancelStreamResponse {
+  cancelled?: boolean
+  runtimeLedger?: RuntimeLedgerMutationProjection
+}
+
+interface StreamStartResponse {
+  started?: boolean
+  streamId?: string
+}
+
+function bindAuthoritativeStreamId(state: ChatStoreState, response: StreamStartResponse | undefined): void {
+  const streamId = typeof response?.streamId === 'string' ? response.streamId.trim() : ''
+  if (streamId) {
+    state.activeStreamId.value = streamId
+  }
+}
+
 /**
  * 根据工具调用 ID 获取工具响应。
- * 优先从 toolResponseCache 中 O(1) 查询，cache miss 时回退到线性扫描并回填缓存。
+ * 优先从 toolResponseCache 中 O(1) 查询，cache miss 时从已投影消息中扫描并回填缓存。
  */
 export function getToolResponseById(
   state: ChatStoreState,
@@ -61,7 +79,7 @@ export function getToolResponseById(
     }
   }
 
-  // 3) 回填缓存（包括 null，避免重复扫描）
+  // 3) 回填缓存，避免重复扫描
   if (latest !== null) {
     state.toolResponseCache.value.set(toolCallId, latest)
     // 手动触发 ref 更新，因为 Map.set() 不会被 Vue 的 ref 追踪
@@ -92,232 +110,27 @@ export function getActualIndex(
   }
   const targetId = displayMessages[displayIndex].id
   // 修改原因：显示索引映射会频繁按消息 id 反查 allMessages，下钻到消息操作时不应每次线性扫描。
-  // 修改方式：优先走 messageIndexById；索引缺失时由 helper 回退到 findIndex 并自动回填。
+  // 修改方式：优先走 messageIndexById；索引缺失时由 helper 恢复索引并自动回填。
   // 修改目的：保持 displayMessages -> allMessages 的语义不变，同时把高频定位降为 O(1)。
   return getMessageIndexById(state, targetId)
 }
 
-/**
- * 将指定消息（或最后一条包含未完成工具的 assistant 消息）中的未完成工具标记为 error。
- *
- * 用于：用户取消请求 / 终止 diff 等场景。
- */
-type IncompleteToolInfo = {
-  messageIndex: number
-  toolCalls: Array<{ id: string; name: string }>
-}
-
-/**
- * 将当前流式 assistant 消息的 streaming 标记置为 false，以便前端 Loading 动画立即消失。
- *
- * 注意：取消请求时不一定存在工具调用，因此不能依赖 markIncompleteToolsAsError。
- */
-function stopStreamingMessage(state: ChatStoreState, messageId?: string | null): void {
-  const all = state.allMessages.value
-
-  // 1) 优先使用传入的 messageId
-  let targetIndex = -1
-  if (messageId) {
-    // 修改原因：取消/停止流式时会频繁按当前 streamingMessageId 定位占位 assistant。
-    // 修改方式：先走 O(1) 索引；若索引失配则 helper 内部回退并回填，保留旧语义。
-    // 修改目的：让 stop/cancel 热路径不再反复扫描整个消息窗口。
-    const idx = getMessageIndexById(state, messageId)
-    if (idx !== -1 && all[idx].role === 'assistant' && all[idx].streaming === true) {
-      targetIndex = idx
-    }
-  }
-
-  // 2) fallback：从后往前找最后一条 streaming 的 assistant 消息
-  if (targetIndex === -1) {
-    for (let i = all.length - 1; i >= 0; i--) {
-      const msg = all[i]
-      if (msg.role === 'assistant' && msg.streaming === true) {
-        targetIndex = i
-        break
-      }
-    }
-  }
-
-  if (targetIndex === -1) return
-
-  const msg = all[targetIndex]
-  replaceMessageAt(state, targetIndex, { ...msg, streaming: false })
-}
-
-/**
- * 删除“完全为空”的 assistant 占位消息。
- *
- * 背景：用户点击中断时，前端会先 stopStreamingMessage()，如果后端没有持久化该条消息，
- * 该占位消息会变成一个空的 assistant，并可能导致后续 delete/retry 使用错误索引。
- */
-function removeEmptyAssistantPlaceholder(state: ChatStoreState, messageId?: string | null): void {
-  const all = state.allMessages.value
-
-  // 1) 优先用 messageId 定位
-  let targetIndex = -1
-  if (messageId) {
-    // 修改原因：空占位删除与 stopStreamingMessage 使用同一消息 id 定位热点。
-    // 修改方式：复用 messageIndexById helper，必要时保留 findIndex fallback。
-    // 修改目的：避免取消流程里多次对 allMessages 做重复线性扫描。
-    const idx = getMessageIndexById(state, messageId)
-    if (idx !== -1) targetIndex = idx
-  }
-
-  // 2) fallback：找最近一条“刚刚生成、已停止 streaming 的 assistant 空消息”
-  if (targetIndex === -1) {
-    const now = Date.now()
-    for (let i = all.length - 1; i >= 0; i--) {
-      const msg = all[i]
-      if (msg.role !== 'assistant') continue
-      if (msg.streaming === true) continue
-      if (now - (msg.timestamp || 0) > 10_000) continue
-      targetIndex = i
-      break
-    }
-  }
-
-  if (targetIndex === -1) return
-
-  const msg = all[targetIndex]
-  if (msg.role !== 'assistant') return
-
-  const hasPartsContent = !!msg.parts?.some(p => p.text || p.functionCall)
-  const hasTools = !!(msg.tools && msg.tools.length > 0)
-  const hasContent = !!(msg.content && msg.content.trim())
-
-  if (!hasContent && !hasTools && !hasPartsContent) {
-    removeMessageAt(state, targetIndex)
+function failMissingCancelProjection(state: ChatStoreState): void {
+  state.error.value = {
+    code: 'RUNTIME_LEDGER_PROJECTION_ERROR',
+    message: 'Runtime Ledger mutation projection missing for cancelled stream'
   }
 }
 
-function markIncompleteToolsAsError(state: ChatStoreState, messageId?: string | null): IncompleteToolInfo | null {
-  const all = state.allMessages.value
-
-  // 只要工具调用在历史中没有对应 functionResponse，就认为它“未完成”
-  const isToolIncomplete = (toolId: string) => !hasToolResponse(state, toolId)
-
-  // 1) 优先定位指定 messageId
-  let targetIndex = -1
-  if (messageId) {
-    // 修改原因：工具取消/拒绝路径会反复按 streamingMessageId 定位消息。
-    // 修改方式：统一通过 messageIndexById helper 获取目标下标，索引未命中时自动回退并回填。
-    // 修改目的：把 markIncompleteToolsAsError 的 id 定位从 O(n) 降到 O(1)。
-    targetIndex = getMessageIndexById(state, messageId)
-
-    // 重要：有些场景 streamingMessageId 指向的是“后续占位的 assistant 消息”，
-    // 该消息本身可能没有工具调用（或没有未完成工具）。
-    // 此时需要回退到“最近一条包含未完成工具的 assistant 消息”。
-    if (targetIndex !== -1) {
-      const msg = all[targetIndex]
-      const hasIncomplete = !!msg.tools?.some(t => isToolIncomplete(t.id))
-      if (!hasIncomplete) {
-        targetIndex = -1
-      }
-    }
-  }
-
-  // 2) fallback：找最后一条包含“未完成工具”的 assistant 消息
-  // 注意：有些场景 tool.status 可能被错误标记为 success（例如内容转换时），
-  // 但只要没有 functionResponse，就仍然应该在 cancel 时标记为 error。
-  if (targetIndex === -1) {
-    for (let i = all.length - 1; i >= 0; i--) {
-      const msg = all[i]
-      if (msg.role === 'assistant' && msg.tools?.some(t => isToolIncomplete(t.id))) {
-        targetIndex = i
-        break
-      }
-    }
-  }
-
-  if (targetIndex === -1) {
-    return null
-  }
-
-  const message = all[targetIndex]
-
-  const toolCalls: Array<{ id: string; name: string }> = (message.tools || [])
-    .filter(tool => isToolIncomplete(tool.id))
-    .map(tool => ({ id: tool.id, name: tool.name }))
-
-  const updatedTools = message.tools?.map(tool => {
-    if (isToolIncomplete(tool.id)) {
-      return { ...tool, status: 'error' as const }
-    }
-    return tool
+async function cancelStreamWithRuntimeLedgerProjection(state: ChatStoreState): Promise<boolean> {
+  const response = await sendToExtension<CancelStreamResponse>('cancelStream', {
+    conversationId: state.currentConversationId.value
   })
-
-  const updatedMessage: Message = {
-    ...message,
-    streaming: false,
-    tools: updatedTools
+  if (!applyRuntimeLedgerMutationProjection(response?.runtimeLedger, state)) {
+    failMissingCancelProjection(state)
+    return false
   }
-
-  replaceMessageAt(state, targetIndex, updatedMessage)
-
-  return {
-    messageIndex: targetIndex,
-    toolCalls
-  }
-}
-
-/**
- * 确保“被拒绝/取消的工具”有对应的 functionResponse 消息，保证前后端历史索引一致。
- *
- * 背景：后端在 cancelStream / deleteToMessage 等场景会 rejectAllPendingToolCalls，
- * 并在工具调用消息后插入 functionResponse；前端如果不同步插入，会导致索引错位。
- */
-function ensureFunctionResponseMessageForRejectedTools(state: ChatStoreState, info: IncompleteToolInfo | null): void {
-  if (!info || info.toolCalls.length === 0) return
-
-  const all = state.allMessages.value
-
-  // 如果紧随其后已经是 functionResponse，认为已同步过，无需重复插入
-  const nextMsg = all[info.messageIndex + 1]
-  if (nextMsg?.isFunctionResponse) {
-    return
-  }
-
-  // 如果这些 toolCallId 在历史中已经有 functionResponse，也不再插入（防止极端竞态重复）
-  const respondedIds = new Set<string>()
-  for (const msg of all) {
-    if (msg.isFunctionResponse && msg.parts) {
-      for (const p of msg.parts) {
-        const id = (p as any)?.functionResponse?.id
-        if (id) respondedIds.add(id)
-      }
-    }
-  }
-  const missingCalls = info.toolCalls.filter(c => !respondedIds.has(c.id))
-  if (missingCalls.length === 0) {
-    return
-  }
-
-  const responseBackendIndex = state.windowStartIndex.value + info.messageIndex + 1
-  const responseMessage: Message = {
-    id: generateId(),
-    role: 'user',
-    content: '',
-    timestamp: Date.now(),
-    backendIndex: responseBackendIndex,
-    isFunctionResponse: true,
-    parts: missingCalls.map(call => ({
-      functionResponse: {
-        id: call.id,
-        name: call.name,
-        response: {
-          success: false,
-          error: 'Cancelled by user',
-          rejected: true
-        }
-      }
-    }))
-  }
-
-  insertMessageAt(state, info.messageIndex + 1, responseMessage)
-
-  syncTotalMessagesFromWindow(state)
-  trimWindowFromTop(state)
-
+  return true
 }
 
 /**
@@ -325,74 +138,9 @@ function ensureFunctionResponseMessageForRejectedTools(state: ChatStoreState, in
  */
 export async function cancelStreamAndRejectTools(
   state: ChatStoreState,
-  _computed: ChatStoreComputed
+  computed: ChatStoreComputed
 ): Promise<void> {
-  if (!state.currentConversationId.value) return
-
-  const currentStreamingId = state.streamingMessageId.value
-
-  // 仅在“真实流式生成中”才记录取消标记。
-  // awaitingConfirmation 等非流式等待阶段不会再收到该请求的 complete/cancelled，
-  // 若保留旧标记会误伤下一次正常请求的 complete。
-  state._lastCancelledStreamId.value = state.isStreaming.value && currentStreamingId ? currentStreamingId : null
-
-  // 先让前端流式指示器立即消失（无论是否存在工具调用）
-  stopStreamingMessage(state, currentStreamingId)
-  // 如果是“完全空”的占位消息，立即删除，避免后续重试/删除产生索引错位
-  removeEmptyAssistantPlaceholder(state, currentStreamingId)
-  
-  if (state.retryStatus.value) {
-    state.retryStatus.value = null
-  }
-  
-  if (currentStreamingId) {
-    // 修改原因：cancel/reject 工具是 UX 红线区，必须在不改语义前提下去掉热路径 findIndex。
-    // 修改方式：先走 messageIndexById；索引失配时 helper 回退到 findIndex 并回填。
-    // 修改目的：保持取消与拒绝工具的行为不变，同时避免长会话下重复线性扫描。
-    const messageIndex = getMessageIndexById(state, currentStreamingId)
-    if (messageIndex !== -1) {
-      const message = state.allMessages.value[messageIndex]
-      
-      // 收集所有未完成的工具（没有 functionResponse 的都算）
-      const incompleteToolIds = message.tools
-        ?.filter(tool => !hasToolResponse(state, tool.id))
-        ?.map(tool => tool.id) || []
-      
-      // 本地先更新工具状态（更健壮：即使 messageIndex 不准确也能 fallback）
-      const info = markIncompleteToolsAsError(state, currentStreamingId)
-      // 插入 functionResponse，保持前后端索引一致
-      ensureFunctionResponseMessageForRejectedTools(state, info)
-      
-      // 计算后端索引
-      const backendIndex = calculateBackendIndex(state.allMessages.value, messageIndex, state.windowStartIndex.value)
-      if (backendIndex !== -1 && incompleteToolIds.length > 0) {
-        try {
-          await sendToExtension('conversation.rejectToolCalls', {
-            conversationId: state.currentConversationId.value,
-            messageIndex: backendIndex,
-            toolCallIds: incompleteToolIds
-          })
-        } catch (err) {
-          console.error('Failed to reject tool calls in backend:', err)
-        }
-      }
-    }
-  }
-  
-  if (state.isStreaming.value) {
-    try {
-      await sendToExtension('cancelStream', {
-        conversationId: state.currentConversationId.value
-      })
-    } catch (err) {
-      console.error('Failed to cancel stream:', err)
-    }
-  }
-  
-  state.streamingMessageId.value = null
-  state.activeStreamId.value = null
-  state.isStreaming.value = false
-  state.isWaitingForResponse.value = false
+  await cancelStream(state, computed)
 }
 
 /**
@@ -416,61 +164,21 @@ export async function cancelStream(
     return
   }
 
-  // 先让前端流式指示器立即消失（无论是否存在工具调用）
-  stopStreamingMessage(state, currentStreamingId)
-  // 如果是“完全空”的占位消息，立即删除，避免残留空消息导致索引越界
-  removeEmptyAssistantPlaceholder(state, currentStreamingId)
-  
-  // 等待工具确认状态（包括 diff 工具等待用户操作）
-  if (!state.isStreaming.value) {
-    // 先调用后端 cancelStream 来关闭 diff 编辑器并拒绝工具
-    try {
-      await sendToExtension('cancelStream', {
-        conversationId: state.currentConversationId.value
-      })
-    } catch (err) {
-      console.error('Failed to cancel stream:', err)
-    }
-
-    // 更新前端工具状态（更健壮：即使 streamingMessageId 丢失也能 fallback）
-    const info = markIncompleteToolsAsError(state, currentStreamingId)
-    // 插入 functionResponse，保持前后端索索引一致
-    ensureFunctionResponseMessageForRejectedTools(state, info)
-
-    state.streamingMessageId.value = null
-    state.activeStreamId.value = null
-    state.isLoading.value = false
-    state.isWaitingForResponse.value = false
-    return
-  }
-  
-  // 正在流式响应
   try {
-    await sendToExtension('cancelStream', {
-      conversationId: state.currentConversationId.value
-    })
-
-    // 使用保存的 ID 来查找和更新消息（更健壮：即使找不到，也 fallback）
-    const info = markIncompleteToolsAsError(state, currentStreamingId)
-    // 插入 functionResponse，保持前后端索引一致
-    ensureFunctionResponseMessageForRejectedTools(state, info)
-
-    state.streamingMessageId.value = null
-    state.activeStreamId.value = null
-    state.isLoading.value = false
-    state.isStreaming.value = false
-    state.isWaitingForResponse.value = false
+    await cancelStreamWithRuntimeLedgerProjection(state)
   } catch (err) {
     console.error('取消请求失败:', err)
-    // 即使出错也要尝试更新本地状态
-    const info = markIncompleteToolsAsError(state, currentStreamingId)
-    ensureFunctionResponseMessageForRejectedTools(state, info)
-    state.streamingMessageId.value = null
-    state.activeStreamId.value = null
-    state.isLoading.value = false
-    state.isStreaming.value = false
-    state.isWaitingForResponse.value = false
+    state.error.value = {
+      code: 'CANCEL_STREAM_ERROR',
+      message: err instanceof Error ? err.message : 'Cancel stream failed'
+    }
   }
+
+  state.streamingMessageId.value = null
+  state.activeStreamId.value = null
+  state.isLoading.value = false
+  state.isStreaming.value = false
+  state.isWaitingForResponse.value = false
 }
 
 /**
@@ -497,7 +205,7 @@ export async function rejectPendingToolsWithAnnotation(
 
   if (state.streamingMessageId.value) {
     // 修改原因：等待审批时输入批注会命中这里，属于用户高频交互路径。
-    // 修改方式：使用 messageIndexById 直接定位当前 streaming assistant；helper 自带 defensive fallback。
+    // 修改方式：使用 messageIndexById 直接定位当前 streaming assistant；helper 自带索引恢复。
     // 修改目的：避免每次批注拒绝都线性扫描 allMessages。
     const messageIndex = getMessageIndexById(state, state.streamingMessageId.value)
     if (messageIndex !== -1) {
@@ -534,18 +242,17 @@ export async function rejectPendingToolsWithAnnotation(
   }
 
   try {
-    const streamId = generateId()
-    state.activeStreamId.value = streamId
+    state.activeStreamId.value = null
     state._lastCancelledStreamId.value = null
-    await sendToExtension('toolConfirmation', {
+    const startResponse = await sendToExtension<StreamStartResponse>('toolConfirmation', {
       conversationId: state.currentConversationId.value,
       configId: state.currentConfig.value.id,
       modelOverride: state.pendingModelOverride.value || undefined,
       toolResponses,
       annotation: trimmedAnnotation,
-      streamId,
       promptModeId: state.currentPromptModeId.value
     })
+    bindAuthoritativeStreamId(state, startResponse)
   } catch (error) {
     console.error('Failed to send tool confirmation with annotation:', error)
   }

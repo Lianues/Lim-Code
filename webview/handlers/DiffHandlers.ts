@@ -89,12 +89,6 @@ async function handleApplyDiffPreview(
   const filePath = args.path as string;
   const hunks = args.hunks as Array<{ oldContent: string; newContent: string; startLine?: number }> | undefined;
   const patch = args.patch as string | undefined;
-  // legacy fallback
-  const diffs = args.diffs as Array<{ search: string; replace: string; start_line?: number }> | undefined;
-  
-  if (!filePath || ((!hunks || hunks.length === 0) && !patch && (!diffs || diffs.length === 0))) {
-    throw new Error(t('webview.errors.invalidDiffData'));
-  }
   
   const resultData = result?.data as Record<string, unknown> | undefined;
   let fullOriginalContent = resultData?.originalContent as string | undefined;
@@ -111,6 +105,18 @@ async function handleApplyDiffPreview(
     } catch (e) {
       console.warn('Failed to load diff content:', e);
     }
+  }
+
+  if (
+    !filePath ||
+    (
+      typeof fullOriginalContent !== 'string' &&
+      typeof fullNewContent !== 'string' &&
+      (!hunks || hunks.length === 0) &&
+      !patch
+    )
+  ) {
+    throw new Error(t('webview.errors.invalidDiffData'));
   }
   
   let originalContent: string;
@@ -135,11 +141,7 @@ async function handleApplyDiffPreview(
     newContent = built.newContent;
     diffTitle = t('webview.messages.historyDiffPreview', { filePath });
   } else {
-    // legacy diffs preview
-    const safeDiffs = diffs || [];
-    originalContent = safeDiffs.map((d, i) => `// === Diff #${i + 1}${d.start_line ? ` (Line ${d.start_line})` : ''} ===\n${d.search}`).join('\n\n');
-    newContent = safeDiffs.map((d, i) => `// === Diff #${i + 1}${d.start_line ? ` (Line ${d.start_line})` : ''} ===\n${d.replace}`).join('\n\n');
-    diffTitle = t('webview.messages.historyDiffPreview', { filePath });
+    throw new Error(t('webview.errors.invalidDiffData'));
   }
   
   const previewId = diffContentId || toolId || `${filePath}:${Date.now()}`;

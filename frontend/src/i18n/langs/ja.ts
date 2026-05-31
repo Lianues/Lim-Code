@@ -1877,11 +1877,6 @@ const ja: LanguageMessages = {
                         infoEnabled: '現在の設定：AI がファイルを変更すると、{delay} 後に自動的に保存され、実行が続行されます。',
                         infoDisabled: '現在の設定：AI がファイルを変更した後、エディターで Ctrl+S を手動で押して変更を確認して保存する必要があります。',
 
-                        format: '差分形式',
-                        formatDesc: 'AI が apply_diff を呼び出すときのパラメータ形式を選択します（デフォルトは統一 diff 推奨）',
-                        formatUnified: '統一 diff（unified diff patch）',
-                        formatSearchReplace: '旧形式（search/replace）',
-
                         skipDiffView: '差分ビューをスキップ',
                         enableSkipDiffView: '自動適用時に差分ビューを開かない',
                         enableSkipDiffViewDesc: '有効にすると、自動適用時にファイルを直接保存し、差分比較ビューを開きません',

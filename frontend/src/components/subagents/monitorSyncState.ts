@@ -1,4 +1,4 @@
-export type MonitorConnectionState = 'syncing' | 'live' | 'stale' | 'gap' | 'degraded' | 'disconnected'
+export type MonitorConnectionState = 'syncing' | 'live' | 'stale' | 'recovering' | 'disconnected'
 
 export interface MonitorSyncStateInput {
   hasFocusedRun: boolean
@@ -14,7 +14,7 @@ export interface MonitorSyncStateInput {
 
 export interface MonitorSyncState {
   transportHealth: MonitorConnectionState
-  contentHealth: 'not_loaded' | 'loading' | 'fresh' | 'resyncing' | 'gap' | 'degraded' | 'empty'
+  contentHealth: 'not_loaded' | 'loading' | 'fresh' | 'resyncing' | 'recovering' | 'empty'
   headerState: MonitorConnectionState
   label: string
   description: string
@@ -41,12 +41,12 @@ export function deriveMonitorSyncState(input: MonitorSyncStateInput): MonitorSyn
 
   if (!input.hasFocusedRun) {
     contentHealth = 'empty'
-  } else if (input.error) {
-    contentHealth = 'degraded'
+  } else if (input.error && !input.hasRenderableMessages) {
+    contentHealth = 'recovering'
     waitingMessage = input.error
-  } else if (input.hasGap) {
-    contentHealth = 'gap'
-    waitingMessage = '检测到事件缺口，正在重新同步 Monitor 内容…'
+  } else if (input.hasGap && !input.hasRenderableMessages) {
+    contentHealth = 'recovering'
+    waitingMessage = '正在重新同步 Monitor 内容…'
   } else if (input.isResyncing) {
     contentHealth = 'resyncing'
     waitingMessage = '正在原地重新同步视图，旧内容会保留到新窗口成功返回。'
@@ -62,20 +62,16 @@ export function deriveMonitorSyncState(input: MonitorSyncStateInput): MonitorSyn
 
   const headerState: MonitorConnectionState = transportHealth === 'disconnected' || transportHealth === 'stale'
     ? transportHealth
-    : contentHealth === 'degraded'
-      ? 'degraded'
-      : contentHealth === 'gap'
-        ? 'gap'
+    : contentHealth === 'recovering'
+      ? 'recovering'
         : contentHealth === 'fresh'
           ? 'live'
           : 'syncing'
 
   const label = headerState === 'live'
     ? 'Live'
-    : headerState === 'gap'
-      ? 'Gap recovering'
-      : headerState === 'degraded'
-        ? 'Degraded'
+    : headerState === 'recovering'
+      ? 'Recovering'
         : headerState === 'stale'
           ? 'Stale'
           : headerState === 'disconnected'

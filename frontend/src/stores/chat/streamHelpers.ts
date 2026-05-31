@@ -130,13 +130,6 @@ export function processStreamingText(
 }
 
 /**
- * 兼容旧调用链。
- * Prompt 模式工具缓冲现在位于后端，此处不再需要额外处理。
- */
-export function flushToolCallBuffer(_message: Message, _state: ChatStoreState): void {
-}
-
-/**
  * 处理工具调用 part（原生 function call format）
  */
 
@@ -228,7 +221,7 @@ function syncToolEntryFromFunctionCall(message: Message, fc: StreamFunctionCall,
  * WP15: Main Chat 专用的 mergeFunctionCall 薄包装。
  * 
  * 为什么需要这个包装：Main Chat 流式路径有特有的 partialArgs JSON.parse 节流策略（shouldAttemptParse），
- * 而 SubAgent Monitor 的 contentDelta 只在 finalArgs=true 时解析。
+ * 而 SubAgent Monitor 的 Runtime Ledger live delta 只在 finalArgs=true 时解析。
  * 怎么改：把节流回调传入 unifiedMergeFunctionCall，保持 Main Chat 流式性能优化不丢失。
  * 目的：统一合并语义的同时，保留 Main Chat 特有的 O(N²) 防护。
  */

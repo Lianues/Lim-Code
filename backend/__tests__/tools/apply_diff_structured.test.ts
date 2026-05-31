@@ -7,8 +7,8 @@ import { applyUnifiedDiffBestEffort, parseUnifiedDiff } from '../../tools/file/u
 /**
  * apply_diff 结构化 hunk 回归测试。
  *
- * 为什么要新增：旧 patch 字符串会让模型把 JSON 字符串转义和 unified diff 文本语义混在一起，导致双引号、反斜杠被错误写入文件。
- * 怎么改：直接测试 oldContent/newContent 结构化路径，确认 newContent 是最终文件内容；同时保留旧 patch 兼容测试，避免迁移破坏历史调用。
+ * 为什么要新增：patch 字符串会让模型把 JSON 字符串转义和 unified diff 文本语义混在一起，导致双引号、反斜杠被错误写入文件。
+ * 怎么改：直接测试 oldContent/newContent 结构化路径，确认 newContent 是最终文件内容；同时保留显式 patch 输入测试，避免破坏手写 unified diff 调用。
  * 目的：把“内容唯一时忽略 startLine，重复时才用 startLine，并维护多 hunk 行号偏移”的约定锁成可执行规范。
  */
 describe('apply_diff structured hunks', () => {
@@ -253,7 +253,7 @@ describe('apply_diff structured hunks', () => {
     });
 
 
-    it('保留旧 patch 字符串兼容路径', () => {
+    it('保留显式 patch 字符串输入路径', () => {
         const parsed = parseUnifiedDiff('@@ -1,1 +1,1 @@\n-content: old;\n+content: "";\n');
         const result = applyUnifiedDiffBestEffort('content: old;\n', parsed);
 

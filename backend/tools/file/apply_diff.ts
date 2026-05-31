@@ -1,7 +1,7 @@
 /**
- * Apply Diff 工具 - 按用户设置选择两种格式应用文件变更：
+ * Apply Diff 工具 - 应用结构化 hunks 或 unified diff patch 文件变更：
+ * - structured hunks（oldContent/newContent/startLine）
  * - unified diff patch（---/+++/@ @/+/-）
- * - legacy search/replace/start_line diffs
  *
  * 支持多工作区（Multi-root Workspaces）
  */
@@ -11,25 +11,12 @@ import type { Tool, ToolDeclaration, ToolResult } from '../types';
 import { getDiffManager } from './diffManager';
 import { resolveUriWithInfo, getAllWorkspaces } from '../utils';
 import { getDiffStorageManager } from '../../modules/conversation';
-import { getGlobalSettingsManager } from '../../core/settingsContext';
 import { applyUnifiedDiffBestEffort, parseUnifiedDiff, type UnifiedDiffHunk } from './unifiedDiff';
-
-/**
- * Legacy：单个 search/replace diff（仍被 DiffManager 用于旧结构的块级 accept/reject 逻辑）
- */
-export interface LegacyDiffBlock {
-    /** 要搜索的内容（必须 100% 精确匹配） */
-    search: string;
-    /** 替换后的内容 */
-    replace: string;
-    /** 搜索起始行号（1-based，可选） */
-    start_line?: number;
-}
 
 /**
  * 结构化 hunk：apply_diff 的推荐新输入格式。
  *
- * 为什么要新增：旧 patch 字符串要求模型同时处理 JSON 字符串转义和 unified diff 前缀，容易把 `"` 当成文件内容写入。
+ * 为什么要新增：patch 字符串要求模型同时处理 JSON 字符串转义和 unified diff 前缀，容易把 `"` 当成文件内容写入。
  * 怎么改：把每个连续修改片段拆成 oldContent/newContent 字段，字段值按 JSON 字符串规则进入工具后直接作为最终文本使用。
  * 目的：保留多 hunk 能力来处理行号偏移，同时让内容字段和 write_file.content 的语义保持一致。
  */
@@ -49,48 +36,9 @@ function normalizeLineEndings(text: string): string {
     return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 }
 
-function findAllExactMatchLineNumbers(
-    normalizedContent: string,
-    normalizedSearch: string,
-    options?: {
-        /** 最多返回多少个候选（避免返回体过大） */
-        limit?: number;
-    }
-): number[] {
-    if (!normalizedSearch) return [];
-
-    const limit = options?.limit ?? 20;
-
-    const result: number[] = [];
-    let fromIndex = 0;
-    let scanIndex = 0;
-    let currentLine = 1;
-
-    while (result.length < limit) {
-        const pos = normalizedContent.indexOf(normalizedSearch, fromIndex);
-        if (pos === -1) {
-            break;
-        }
-
-        // 从 scanIndex 扫描到 pos，累计行号（scanIndex 单调递增，整体 O(n)）
-        for (; scanIndex < pos; scanIndex++) {
-            if (normalizedContent.charCodeAt(scanIndex) === 10) {
-                currentLine++;
-            }
-        }
-
-        result.push(currentLine);
-
-        // 继续往后找（按非重叠匹配推进，避免候选行噪声）
-        fromIndex = pos + Math.max(1, normalizedSearch.length);
-    }
-
-    return result;
-}
-
 function findAllExactMatchIndexes(normalizedContent: string, normalizedSearch: string): number[] {
     // 为什么要单独返回索引：结构化 hunks 需要先判断 oldContent 是否唯一，唯一时必须忽略 startLine，避免 stale line number 让本来正确的内容替换失败。
-    // 怎么改：使用非重叠 indexOf 扫描，和 legacy search/replace 的匹配语义保持一致。
+    // 怎么改：使用非重叠 indexOf 扫描，避免重复内容候选彼此重叠。
     // 目的：让“内容唯一优先，重复时才看 startLine”的规则有稳定、可测试的实现边界。
     if (!normalizedSearch) return [];
 
@@ -111,7 +59,7 @@ function findAllExactMatchIndexes(normalizedContent: string, normalizedSearch: s
 function getCharOffsetForLine(normalizedContent: string, line: number): number | undefined {
     // 为什么要从行号转换为字符偏移：重复 oldContent 时 startLine 只是定位提示，最终替换仍然是字符串精确替换。
     // 怎么改：按 LF 扫描到指定 1-based 行的开头，超出文件范围时返回 undefined。
-    // 目的：兼容现有 legacy start_line“从某行开始搜索”的用户心智，同时避免在内容唯一时依赖行号。
+    // 目的：保留 startLine“从某行开始搜索”的定位心智，同时避免在内容唯一时依赖行号。
     if (!Number.isFinite(line) || line < 1) return undefined;
     if (line === 1) return 0;
 
@@ -702,387 +650,6 @@ export function applyStructuredDiffHunksBestEffort(
 }
 
 /**
- * 对常见“AI 包裹/噪声行”做轻量去除，提升 loose patch 解析兼容性。
- *
- * 说明：
- * - 这是 unifiedDiff.ts 中 sanitize 的轻量副本，避免引入跨模块依赖。
- * - 仅移除明显不属于 patch 的外层壳；不做语义修复。
- */
-function sanitizeLooseUnifiedPatch(patch: string): string {
-    const normalized = normalizeLineEndings(patch);
-    const lines = normalized.split('\n');
-    const out: string[] = [];
-
-    for (const line of lines) {
-        // Markdown code fences（``` / ```diff / ```patch）
-        if (line.startsWith('```')) {
-            continue;
-        }
-
-        // 常见 ApplyPatch 风格包裹（*** Begin Patch / *** Update File: / *** End Patch 等）
-        if (line.startsWith('***')) {
-            if (
-                line === '***' ||
-                line.startsWith('*** Begin Patch') ||
-                line.startsWith('*** End Patch') ||
-                line.startsWith('*** Update File:') ||
-                line.startsWith('*** Add File:') ||
-                line.startsWith('*** Delete File:') ||
-                line.startsWith('*** End of File')
-            ) {
-                continue;
-            }
-        }
-
-        out.push(line);
-    }
-
-    return out.join('\n');
-}
-
-/**
- * 将“裸 @@”的 unified diff hunks 解析为 legacy search/replace diffs。
- *
- * 兜底语义：
- * - 每个 hunk 头以 `@@` 开始（不要求带行号）
- * - hunk 内：
- *   - search = context(' ') + del('-')
- *   - replace = context(' ') + add('+')
- */
-function parseLooseUnifiedPatchToLegacyDiffs(patch: string): LegacyDiffBlock[] {
-    const normalized = sanitizeLooseUnifiedPatch(patch);
-    const lines = normalized.split('\n');
-
-    const diffs: LegacyDiffBlock[] = [];
-
-    let inHunk = false;
-    let searchLines: string[] = [];
-    let replaceLines: string[] = [];
-
-    const flush = () => {
-        if (!inHunk) return;
-        const search = searchLines.join('\n');
-        const replace = replaceLines.join('\n');
-
-        // 没有 search 无法定位（裸 @@ 没有行号），直接拒绝
-        if (!search.trim()) {
-            throw new Error('Loose @@ hunk has empty search block. Please provide context lines so it can be matched uniquely.');
-        }
-
-        diffs.push({ search, replace });
-        searchLines = [];
-        replaceLines = [];
-    };
-
-    for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-
-        // 新 hunk
-        if (line.startsWith('@@')) {
-            flush();
-            inHunk = true;
-            continue;
-        }
-
-        if (!inHunk) {
-            // 跳过 file header / diff header 等
-            continue;
-        }
-
-        // 结束条件：遇到文件头/新的 diff 块
-        if (line.startsWith('diff --git ') || line.startsWith('--- ') || line.startsWith('+++ ')) {
-            // flush 当前 hunk，然后回到非 hunk 状态
-            flush();
-            inHunk = false;
-            continue;
-        }
-
-        // 统一 diff 里常见的特殊行："\\ No newline at end of file"
-        if (line.startsWith('\\')) {
-            continue;
-        }
-
-        // 忽略纯空行（一般是 patch 末尾 split 出来的噪声）
-        if (line === '') {
-            continue;
-        }
-
-        const prefix = line[0];
-        const content = line.length > 0 ? line.slice(1) : '';
-
-        if (prefix === ' ') {
-            searchLines.push(content);
-            replaceLines.push(content);
-        } else if (prefix === '-') {
-            searchLines.push(content);
-        } else if (prefix === '+') {
-            replaceLines.push(content);
-        } else {
-            // 兜底：AI 可能会漏掉前缀，将其视为 context 行
-            searchLines.push(line);
-            replaceLines.push(line);
-        }
-    }
-
-    flush();
-
-    if (diffs.length === 0) {
-        throw new Error('No hunks (@@) found in patch.');
-    }
-
-    return diffs;
-}
-
-function convertUnifiedHunksToLegacyDiffs(hunks: UnifiedDiffHunk[]): LegacyDiffBlock[] {
-    return hunks.map(h => {
-        // 为 unified fallback 提供行号锚点，避免全局 search 在重复上下文中出现“多处匹配”歧义。
-        // 这里使用 oldStart（1-based）作为起点提示：
-        // - 与 hunk 在原文件中的定位语义一致
-        // - 即使 search 很短（如仅 "}"），也能优先命中预期区域的首个匹配
-        const startLineHint = Number.isFinite(h.oldStart) ? Math.max(1, h.oldStart) : undefined;
-
-        const searchLines: string[] = [];
-        const replaceLines: string[] = [];
-
-        for (const l of h.lines) {
-            if (l.type === 'context') {
-                searchLines.push(l.content);
-                replaceLines.push(l.content);
-                continue;
-            }
-
-            if (l.type === 'del') {
-                searchLines.push(l.content);
-                continue;
-            }
-
-            // add
-            replaceLines.push(l.content);
-        }
-
-        return {
-            search: searchLines.join('\n'),
-            replace: replaceLines.join('\n'),
-            start_line: startLineHint
-        };
-    });
-}
-
-/**
- * Legacy：应用单个 search/replace diff
- */
-export function applyDiffToContent(
-    content: string,
-    search: string,
-    replace: string,
-    startLine?: number
-): {
-    success: boolean;
-    result: string;
-    error?: string;
-    matchCount: number;
-    matchedLine?: number;
-    /** 当匹配不唯一时，返回候选行号（1-based，最多返回部分） */
-    candidateLines?: number[];
-} {
-    const normalizedContent = normalizeLineEndings(content);
-    const normalizedSearch = normalizeLineEndings(search);
-    const normalizedReplace = normalizeLineEndings(replace);
-
-    if (!normalizedSearch) {
-        return {
-            success: false,
-            result: normalizedContent,
-            error: 'Search content is empty. Please provide enough context so the change can be located.',
-            matchCount: 0
-        };
-    }
-
-    // 如果提供了起始行号，从该行开始搜索
-    if (startLine !== undefined && startLine > 0) {
-        const lines = normalizedContent.split('\n');
-        const startIndex = startLine - 1;
-
-        if (startIndex >= lines.length) {
-            return {
-                success: false,
-                result: normalizedContent,
-                error: `Start line ${startLine} is out of range. File has ${lines.length} lines.`,
-                matchCount: 0
-            };
-        }
-
-        // 计算从起始行开始的字符位置
-        let charOffset = 0;
-        for (let i = 0; i < startIndex; i++) {
-            charOffset += lines[i].length + 1;
-        }
-
-        // 从起始位置开始查找
-        const contentFromStart = normalizedContent.substring(charOffset);
-        const matchIndex = contentFromStart.indexOf(normalizedSearch);
-
-        if (matchIndex === -1) {
-            return {
-                success: false,
-                result: normalizedContent,
-                error: `No exact match found starting from line ${startLine}.`,
-                matchCount: 0
-            };
-        }
-
-        // 计算实际匹配的行号
-        const textBeforeMatch = normalizedContent.substring(0, charOffset + matchIndex);
-        const actualMatchedLine = textBeforeMatch.split('\n').length;
-
-        // 执行替换
-        const result =
-            normalizedContent.substring(0, charOffset + matchIndex) +
-            normalizedReplace +
-            normalizedContent.substring(charOffset + matchIndex + normalizedSearch.length);
-
-        return {
-            success: true,
-            result,
-            matchCount: 1,
-            matchedLine: actualMatchedLine
-        };
-    }
-
-    // 没有提供起始行号，计算匹配次数
-    const matches = normalizedContent.split(normalizedSearch).length - 1;
-
-    if (matches === 0) {
-        return {
-            success: false,
-            result: normalizedContent,
-            error: 'No exact match found. Please verify the content matches exactly.',
-            matchCount: 0
-        };
-    }
-
-    if (matches > 1) {
-        const candidateLines = findAllExactMatchLineNumbers(normalizedContent, normalizedSearch, { limit: 20 });
-        return {
-            success: false,
-            result: normalizedContent,
-            error:
-                `Multiple matches found (${matches}). Please provide 'start_line' parameter to specify which match to use.` +
-                (candidateLines.length > 0 ? ` Candidate match lines: ${candidateLines.join(', ')}.` : ''),
-            matchCount: matches,
-            candidateLines
-        };
-    }
-
-    // 计算实际匹配的行号
-    const matchIndex = normalizedContent.indexOf(normalizedSearch);
-    const textBeforeMatch = normalizedContent.substring(0, matchIndex);
-    const actualMatchedLine = textBeforeMatch.split('\n').length;
-
-    // 精确替换
-    const result = normalizedContent.replace(normalizedSearch, normalizedReplace);
-
-    return {
-        success: true,
-        result,
-        matchCount: 1,
-        matchedLine: actualMatchedLine
-    };
-}
-
-function applyLegacyDiffsBestEffort(
-    originalContent: string,
-    diffs: LegacyDiffBlock[],
-    options?: {
-        /** 在错误信息中附加说明（用于统一 diff 的 loose fallback 场景） */
-        errorSuffix?: string;
-    }
-): {
-    newContent: string;
-    results: Array<{
-        index: number;
-        success: boolean;
-        error?: string;
-        startLine?: number;
-        endLine?: number;
-        matchCount?: number;
-        candidateLines?: number[];
-    }>;
-    blocks: Array<{ index: number; startLine: number; endLine: number }>;
-    appliedCount: number;
-    failedCount: number;
-} {
-    let currentContent = originalContent;
-
-    const results: Array<{
-        index: number;
-        success: boolean;
-        error?: string;
-        startLine?: number;
-        endLine?: number;
-        matchCount?: number;
-        candidateLines?: number[];
-    }> = [];
-    const blocks: Array<{ index: number; startLine: number; endLine: number }> = [];
-
-    for (let i = 0; i < diffs.length; i++) {
-        const diff = diffs[i];
-        if (typeof diff.search !== 'string' || diff.replace === undefined) {
-            results.push({
-                index: i,
-                success: false,
-                error: `Diff at index ${i} is missing 'search' or 'replace' field${options?.errorSuffix ? ` ${options.errorSuffix}` : ''}`
-            });
-            continue;
-        }
-
-        const r = applyDiffToContent(currentContent, diff.search, diff.replace, diff.start_line);
-        let error = r.error;
-        if (!r.success && error && options?.errorSuffix) {
-            error = `${error} ${options.errorSuffix}`;
-        }
-
-        const replaceLines = normalizeLineEndings(diff.replace).split('\n').length;
-        const startLine = r.matchedLine;
-        const endLine = startLine !== undefined ? startLine + replaceLines - 1 : undefined;
-
-        results.push({
-            index: i,
-            success: r.success,
-            error,
-            startLine,
-            endLine,
-            matchCount: r.matchCount,
-            candidateLines: r.candidateLines
-        });
-
-        if (r.success) {
-            currentContent = r.result;
-            if (startLine !== undefined && endLine !== undefined) {
-                blocks.push({ index: i, startLine, endLine });
-            }
-        }
-    }
-
-    const appliedCount = results.filter(x => x.success).length;
-    const failedCount = results.length - appliedCount;
-
-    return {
-        newContent: currentContent,
-        results,
-        blocks,
-        appliedCount,
-        failedCount
-    };
-}
-
-function getApplyDiffFormat(): 'unified' | 'search_replace' {
-    const settingsManager = getGlobalSettingsManager();
-    const raw = settingsManager?.getApplyDiffConfig()?.format;
-    return raw === 'search_replace' ? 'search_replace' : 'unified';
-}
-
-/**
  * 创建 apply_diff 工具
  */
 export function createApplyDiffTool(): Tool {
@@ -1100,78 +667,8 @@ export function createApplyDiffTool(): Tool {
             descriptionSuffix = `\n\n多根工作区：必须使用 "workspace_name/path" 格式。可用工作区：${workspaces.map(w => w.name).join(', ')}`;
         }
 
-        const format = getApplyDiffFormat();
-
-        if (format === 'search_replace') {
-            // 修改原因：旧版 search/replace 声明只强调“单次调用单文件”，容易让模型误以为每改一个文件后必须停止等待。
-            // 修改方式：在工具 description 中加入批量修改规则，明确“一个工具调用单文件”和“一轮回复多个工具调用”并不冲突。
-            // 修改目的：鼓励模型在多文件修改计划已经明确且互不依赖时，同一轮连续输出多个 apply_diff 调用，减少无意义的工具迭代。
-            return {
-                name: 'apply_diff',
-                category: 'file',
-                strict: true,  // API 端强制 schema 校验
-                description: `对单个文件应用旧版 search/replace 差异，并打开待确认 diff 预览。
-
-参数：
-- path：目标文件路径。
-- diffs：要应用的旧版差异数组。
-
-每个 diff 对象包含：
-- search：要查找的原始内容，必须和文件内容完全一致。
-- replace：替换后的目标内容。
-- start_line：可选，1-based 起始行号，用于重复内容定位。
-
-规则：
-- search 必须精确匹配，包括空格、缩进和换行。
-- diffs 会按数组顺序应用。
-- 某个 diff 失败时，该 diff 不会生效。
-
-批量修改规则：
-- 本工具一次调用仍然只修改一个文件；如果计划要修改多个互不依赖的文件，应该在同一轮回复中连续输出多个 apply_diff 调用。
-- 不要在完成第一个文件的 apply_diff 后停止等待结果，除非后续修改依赖该工具结果或需要先确认上一处修改是否成功。
-- 对已经明确、互不依赖的多文件修改，应一次性输出所有 apply_diff 调用，以减少无意义的工具迭代。
-- 错误示例：修改 A 文件后停止，等下一轮再修改 B 文件。
-- 正确示例：同一轮依次输出 apply_diff(A)、apply_diff(B)、apply_diff(C)。
-
-${descriptionSuffix}`,
-
-                parameters: {
-                    type: 'object',
-                    properties: {
-                        path: {
-                            type: 'string',
-                            description: pathDescription
-                        },
-                        diffs: {
-                            type: 'array',
-                            description: '旧版 diff 对象数组。即使只有一个 diff，也必须使用数组。',
-                            items: {
-                                type: 'object',
-                                properties: {
-                                    search: {
-                                        type: 'string',
-                                        description: '要查找的原始内容，必须精确匹配。'
-                                    },
-                                    replace: {
-                                        type: 'string',
-                                        description: '替换后的目标内容。'
-                                    },
-                                    start_line: {
-                                        type: 'number',
-                                        description: '可选，1-based 起始行号，用于重复内容定位。'
-                                    }
-                                },
-                                required: ['search', 'replace']
-                            }
-                        }
-                    },
-                    required: ['path', 'diffs']
-                }
-            };
-        }
-
-        // 为什么要把默认声明改为结构化 hunks：旧 patch 字符串让模型混淆 JSON 转义和 unified diff 文本，双引号、反斜杠等内容容易写错。
-        // 怎么改：主推 hunks[{oldContent,newContent,startLine?}]，同时保留 patch 字符串作为历史兼容字段。
+        // 为什么要把声明改为结构化 hunks：patch 字符串让模型混淆 JSON 转义和 unified diff 文本，双引号、反斜杠等内容容易写错。
+        // 怎么改：主推 hunks[{oldContent,newContent,startLine?}]，patch 字符串只用于显式 unified diff 输入。
         // 目的：让 newContent 像 write_file.content 一样表示最终内容，并保留一次调用处理多个连续片段的能力。
         // 修改原因：模型会把“apply_diff 一次调用只处理一个文件”误读成“一轮只能调用一次 apply_diff”。
         // 修改方式：在默认结构化 hunk 声明中补充批量修改规则，明确多文件计划应在同一轮连续输出多个 apply_diff 调用。
@@ -1194,7 +691,7 @@ ${descriptionSuffix}`,
 - hunks 应按原文件中的出现顺序排列，这样前面修改造成的行号偏移可以被工具正确维护。
 - 不能让两个 hunk 修改同一段或互相覆盖的文本；如果要改同一个区块，应该合并成一个 hunk。
 - oldContent 必须能匹配；如果 oldContent 重复出现，请提供 startLine 或增加上下文让它唯一。
-- patch 字段仅作为兼容旧 unified diff hunk 字符串的 fallback；新调用优先使用 hunks。
+- patch 字段仅用于显式 unified diff hunk 字符串；新调用优先使用 hunks。
 
 批量修改规则：
 - 本工具一次调用仍然只修改一个文件；如果计划要修改多个互不依赖的文件，应该在同一轮回复中连续输出多个 apply_diff 调用。
@@ -1247,7 +744,7 @@ ${descriptionSuffix}`,
                     },
                     patch: {
                         type: 'string',
-                        description: "兼容字段。旧 unified diff hunks 文本；新调用请优先使用 hunks。"
+                        description: "显式 unified diff hunks 文本；新调用请优先使用 hunks。"
                     }
                 },
                 required: ['path']
@@ -1265,7 +762,6 @@ ${descriptionSuffix}`,
             const filePath = args.path as string;
             const patch = args.patch as string | undefined;
             const structuredHunks = args.hunks as StructuredDiffHunk[] | undefined;
-            const diffs = args.diffs as LegacyDiffBlock[] | undefined;
 
             if (!filePath || typeof filePath !== 'string') {
                 return { success: false, error: 'Path is required' };
@@ -1281,17 +777,13 @@ ${descriptionSuffix}`,
                 return { success: false, error: `File not found: ${filePath}` };
             }
 
-            const format = getApplyDiffFormat();
-
             try {
                 const originalContent = fs.readFileSync(absolutePath, 'utf8');
 
-                // ========== 统一 diff 模式 ==========
-                if (format === 'unified') {
                     if ((!structuredHunks || !Array.isArray(structuredHunks) || structuredHunks.length === 0) && (!patch || typeof patch !== 'string')) {
                         return {
                             success: false,
-                            error: 'apply_diff 当前推荐使用结构化 hunks。请提供 { path, hunks: [{ oldContent, newContent, startLine? }] }；旧 patch 字符串仅作为兼容 fallback。'
+                            error: 'apply_diff 需要结构化 hunks 或显式 unified patch。请提供 { path, hunks: [{ oldContent, newContent, startLine? }] } 或 { path, patch }.'
                         };
                     }
 
@@ -1302,11 +794,10 @@ ${descriptionSuffix}`,
                     let blocks: Array<{ index: number; startLine: number; endLine: number }> = [];
                     let newContent = originalContent;
                     let rawDiffs: any[] = [];
-                    let fallbackMode: 'none' | 'structured_hunks' | 'loose_hunk_search_replace' | 'unified_hunks_search_replace' = 'none';
 
-                    // 为什么优先处理 hunks：新格式把 newContent 当最终内容字段，避免旧 patch 字符串里的反斜杠/双引号被模型误写。
+                    // 为什么优先处理 hunks：新格式把 newContent 当最终内容字段，避免 patch 字符串里的反斜杠/双引号被模型误写。
                     // 怎么改：当 hunks 存在时不再解析 patch；按结构化规则应用，并把原始 hunks 存入 DiffManager 以支持块级接受/拒绝重放。
-                    // 目的：兼容历史 patch 的同时，让新的 AI 调用路径默认走更稳定的结构化参数。
+                    // 目的：让新的 AI 调用路径默认走更稳定的结构化参数，同时保留显式 patch 输入。
                     if (structuredHunks && Array.isArray(structuredHunks) && structuredHunks.length > 0) {
                         const applied = applyStructuredDiffHunksBestEffort(originalContent, structuredHunks);
 
@@ -1317,12 +808,10 @@ ${descriptionSuffix}`,
                         blocks = applied.blocks;
                         newContent = applied.newContent;
                         rawDiffs = structuredHunks as any[];
-                        fallbackMode = 'structured_hunks';
                     } else {
-                        try {
-                            if (!patch || typeof patch !== 'string') {
-                                throw new Error('Missing patch fallback input.');
-                            }
+                        if (!patch || typeof patch !== 'string') {
+                            throw new Error('Missing patch input.');
+                        }
                         const parsed = parseUnifiedDiff(patch);
                         const applied = applyUnifiedDiffBestEffort(originalContent, parsed);
 
@@ -1346,52 +835,6 @@ ${descriptionSuffix}`,
 
                         newContent = applied.newContent;
                         rawDiffs = parsed.hunks as UnifiedDiffHunk[] as any[];
-
-                        // 若有 hunk 因行号/上下文不匹配等原因失败，尝试兜底：将 hunks 退化为全局精确 search/replace。
-                        // 说明：
-                        // - 仅在兜底能“额外应用更多块”时采用，避免降低标准 unified diff 的成功率。
-                        // - 兜底不会在多处匹配时强行选择（会失败并返回 candidateLines）。
-                        if (appliedCount < diffCount) {
-                            const legacyDiffs = convertUnifiedHunksToLegacyDiffs(parsed.hunks);
-                            const legacyApplied = applyLegacyDiffsBestEffort(originalContent, legacyDiffs, {
-                                errorSuffix:
-                                    '(unified fallback: applied via global exact search/replace; if ambiguous, add more context or provide start_line)'
-                            });
-
-                            if (legacyApplied.appliedCount > appliedCount) {
-                                diffCount = legacyDiffs.length;
-                                appliedCount = legacyApplied.appliedCount;
-                                failedCount = legacyApplied.failedCount;
-                                results = legacyApplied.results as any;
-                                blocks = legacyApplied.blocks;
-                                newContent = legacyApplied.newContent;
-                                rawDiffs = legacyDiffs as any[];
-                                fallbackMode = 'unified_hunks_search_replace';
-                            }
-                        }
-                        } catch (e) {
-                            const msg = e instanceof Error ? e.message : String(e);
-
-                            // “裸 @@”兜底：将 patch 退化为 legacy search/replace diffs（全局精确匹配）
-                            if (msg.startsWith('Invalid hunk header')) {
-                                const legacyDiffs = parseLooseUnifiedPatchToLegacyDiffs(patch || '');
-                                const looseApplied = applyLegacyDiffsBestEffort(originalContent, legacyDiffs, {
-                                    errorSuffix:
-                                        '(loose @@ fallback: ensure the search block is unique, or use a full @@ -a,b +c,d @@ header)'
-                                });
-
-                                diffCount = legacyDiffs.length;
-                                appliedCount = looseApplied.appliedCount;
-                                failedCount = looseApplied.failedCount;
-                                results = looseApplied.results;
-                                blocks = looseApplied.blocks;
-                                newContent = looseApplied.newContent;
-                                rawDiffs = legacyDiffs as any[];
-                                fallbackMode = 'loose_hunk_search_replace';
-                            } else {
-                                throw e;
-                            }
-                        }
                     }
 
                     // 一个都没应用上：直接失败返回（不创建 pending diff）
@@ -1408,8 +851,7 @@ ${descriptionSuffix}`,
                                 totalCount: diffCount,
                                 appliedCount: 0,
                                 failedCount: diffCount,
-                                results,
-                                fallbackMode
+                                results
                             }
                         };
                     }
@@ -1430,7 +872,7 @@ ${descriptionSuffix}`,
                     // 等待 diff 被处理（保存、拒绝、abort 或用户新请求中断）。
                     // 为什么改用 DiffManager 统一等待：apply_diff 之前只监听状态变化，用户中断会清掉自动保存定时器但不一定产生新状态事件，导致偶发卡住。
                     // 怎么改：统一等待方法同时监听状态事件、轮询中断标记，并处理 AbortSignal。
-                    // 目的：让结构化 hunks 与旧 patch 路径共享可靠的 diff 生命周期收敛逻辑。
+                    // 目的：让结构化 hunks 与显式 patch 路径共享可靠的 diff 生命周期收敛逻辑。
                     const interruptReason = await diffManager.waitForDiffResolution(pendingDiff.id, context?.abortSignal);
                     const wasInterrupted = interruptReason !== 'none';
 
@@ -1474,8 +916,7 @@ ${descriptionSuffix}`,
                                 results,
                                 diffContentId,
                                 diffGuardWarning: pendingDiff.diffGuardWarning,
-                                diffGuardDeletePercent: pendingDiff.diffGuardDeletePercent,
-                                fallbackMode
+                                diffGuardDeletePercent: pendingDiff.diffGuardDeletePercent
                             }
                         };
                     }
@@ -1505,183 +946,12 @@ ${descriptionSuffix}`,
                             results,
                             userEditedContent,
                             diffContentId,
-                            fallbackMode,
                             diffGuardWarning: pendingDiff.diffGuardWarning,
                             diffGuardDeletePercent: pendingDiff.diffGuardDeletePercent,
                             autoSaveError,
                             pendingDiffId: pendingDiff.id
                         }
                     };
-                }
-
-                // ========== 旧 search/replace 模式 ==========
-                if (!diffs || !Array.isArray(diffs) || diffs.length === 0) {
-                    return {
-                        success: false,
-                        error: 'apply_diff is configured to use legacy diffs. Please provide { diffs: [{search, replace, start_line?}, ...] }.'
-                    };
-                }
-
-                let currentContent = originalContent;
-
-                const diffResults: Array<{
-                    index: number;
-                    success: boolean;
-                    error?: string;
-                    matchedLine?: number;
-                }> = [];
-
-                for (let i = 0; i < diffs.length; i++) {
-                    const diff = diffs[i];
-
-                    if (!diff.search || diff.replace === undefined) {
-                        diffResults.push({
-                            index: i,
-                            success: false,
-                            error: `Diff at index ${i} is missing 'search' or 'replace' field`
-                        });
-                        continue;
-                    }
-
-                    const result = applyDiffToContent(currentContent, diff.search, diff.replace, diff.start_line);
-                    diffResults.push({
-                        index: i,
-                        success: result.success,
-                        error: result.error,
-                        matchedLine: result.matchedLine
-                    });
-
-                    if (result.success) {
-                        currentContent = result.result;
-                    }
-                }
-
-                const appliedCount = diffResults.filter(r => r.success).length;
-                const failedCount = diffResults.length - appliedCount;
-
-                // 如果没有任何一个 diff 成功应用，则返回失败
-                if (appliedCount === 0 && diffs.length > 0) {
-                    const firstError = diffResults.find(r => !r.success)?.error || 'All diffs failed';
-                    return {
-                        success: false,
-                        error: `Failed to apply any diffs: ${firstError}`,
-                        data: {
-                            file: filePath,
-                            message: `Failed to apply any diffs to ${filePath}.`,
-                            results: diffResults,
-                            appliedCount: 0,
-                            totalCount: diffs.length,
-                            failedCount: diffs.length
-                        }
-                    };
-                }
-
-                const diffManager = getDiffManager();
-
-                const blocks: Array<{ index: number; startLine: number; endLine: number }> = [];
-                for (let i = 0; i < diffs.length; i++) {
-                    const res = diffResults[i];
-                    if (res.success && res.matchedLine !== undefined) {
-                        const replaceLines = diffs[i].replace.split('\n').length;
-                        blocks.push({
-                            index: i,
-                            startLine: res.matchedLine,
-                            endLine: res.matchedLine + replaceLines - 1
-                        });
-                    }
-                }
-
-                const pendingDiff = await diffManager.createPendingDiff(
-                    filePath,
-                    absolutePath,
-                    originalContent,
-                    currentContent,
-                    blocks,
-                    diffs as any[],
-                    context?.toolId
-                );
-
-                // 等待 diff 被处理（保存、拒绝、abort 或用户新请求中断）。
-                // 为什么旧 search/replace 路径也要改：它和结构化 hunks 一样会创建 pending diff，不能保留另一套可能遗漏中断的等待逻辑。
-                // 怎么改：复用 DiffManager.waitForDiffResolution，统一事件监听、轮询兜底和 abort 清理。
-                // 目的：让 apply_diff 的所有输入格式在自动保存和取消场景下表现一致。
-                const interruptReason = await diffManager.waitForDiffResolution(pendingDiff.id, context?.abortSignal);
-                const wasInterrupted = interruptReason !== 'none';
-
-                const finalDiff = diffManager.getDiff(pendingDiff.id);
-                const wasAccepted = !wasInterrupted && (!finalDiff || finalDiff.status === 'accepted');
-                const userEditedContent = finalDiff?.userEditedContent;
-
-                const diffStorageManager = getDiffStorageManager();
-                let diffContentId: string | undefined;
-
-                if (diffStorageManager) {
-                    try {
-                        const diffRef = await diffStorageManager.saveGlobalDiff({
-                            originalContent,
-                            newContent: currentContent,
-                            filePath
-                        });
-                        diffContentId = diffRef.diffId;
-                    } catch (e) {
-                        console.warn('Failed to save diff content to storage:', e);
-                    }
-                }
-
-                if (wasInterrupted) {
-                    return {
-                        success: false,
-                        cancelled: true,
-                        error: 'Diff was cancelled by user',
-                        data: {
-                            file: filePath,
-                            message: `Diff for ${filePath} was cancelled by user.`,
-                            status: 'rejected',
-                            diffCount: diffs.length,
-                            appliedCount,
-                            failedCount,
-                            results: diffResults,
-                            diffContentId,
-                            diffGuardWarning: pendingDiff.diffGuardWarning,
-                            diffGuardDeletePercent: pendingDiff.diffGuardDeletePercent
-                        }
-                    };
-                }
-
-                const autoSaveError = finalDiff?.autoSaveError;
-                let message: string;
-                if (wasAccepted) {
-                    message = `Diff applied and saved to ${filePath}`;
-                    if (failedCount > 0) {
-                        message = `Partially applied diffs to ${filePath}: ${appliedCount} succeeded, ${failedCount} failed. Saved successfully.`;
-                    }
-                } else {
-                    message = autoSaveError
-                        ? `Auto-save failed for ${filePath}: ${autoSaveError}`
-                        : finalDiff?.status === 'rejected'
-                        ? `Diff was explicitly rejected by the user for ${filePath}. No changes were saved.`
-                        : `Diff was not accepted for ${filePath}. No changes were saved.`;
-                }
-
-                return {
-                    success: wasAccepted,
-                    error: wasAccepted ? undefined : autoSaveError,
-                    data: {
-                        file: filePath,
-                        message,
-                        status: wasAccepted ? 'accepted' : 'rejected',
-                        diffCount: diffs.length,
-                        appliedCount,
-                        failedCount,
-                        results: diffResults,
-                        userEditedContent,
-                        diffContentId,
-                        diffGuardWarning: pendingDiff.diffGuardWarning,
-                        diffGuardDeletePercent: pendingDiff.diffGuardDeletePercent,
-                        autoSaveError,
-                        pendingDiffId: pendingDiff.id
-                    }
-                };
             } catch (error) {
                 return {
                     success: false,

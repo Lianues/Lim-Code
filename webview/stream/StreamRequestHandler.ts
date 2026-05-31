@@ -5,6 +5,7 @@
  */
 
 import type * as vscode from 'vscode';
+import { randomUUID } from 'crypto';
 import type { ChatHandler } from '../../backend/modules/api/chat';
 import type { ConversationManager } from '../../backend/modules/conversation/ConversationManager';
 import type { SettingsManager } from '../../backend/modules/settings/SettingsManager';
@@ -13,6 +14,7 @@ import { StreamChunkProcessor } from './StreamChunkProcessor';
 import { t } from '../../backend/i18n';
 import { getDiffManager } from '../../backend/tools/file/diffManager';
 import { ChannelError, ErrorType } from '../../backend/modules/channel/types';
+import { chatStreamRuntimeLedgerBridge } from './runtimeLedgerBridge';
 
 export interface StreamHandlerDeps {
   chatHandler: ChatHandler;
@@ -76,12 +78,8 @@ export class StreamRequestHandler {
     return t('errors.unknown')
   }
 
-  private resolveStreamId(clientStreamId: unknown, requestId: string): string {
-    if (typeof clientStreamId === 'string') {
-      const id = clientStreamId.trim()
-      if (id) return id
-    }
-    return requestId
+  private createAuthoritativeStreamId(): string {
+    return `server-stream-${randomUUID()}`
   }
 
   private async cleanupAbortedConversations(conversationIds: string[]): Promise<void> {
@@ -105,6 +103,29 @@ export class StreamRequestHandler {
     }));
   }
 
+  private async createCancelMutationProjection(conversationId: string) {
+    const [page, metadata] = await Promise.all([
+      this.deps.conversationManager.getMessagesPaged(conversationId, { limit: 800 }),
+      this.deps.conversationManager.getMetadata(conversationId).catch(error => {
+        console.warn('[StreamRequestHandler] Failed to include metadata in Runtime Ledger cancel projection:', error);
+        return undefined;
+      })
+    ]);
+    const custom = (metadata?.custom || {}) as Record<string, unknown>;
+    const checkpoints = Array.isArray(custom.checkpoints)
+      ? custom.checkpoints as Record<string, unknown>[]
+      : [];
+
+    return chatStreamRuntimeLedgerBridge.createMutationProjection({
+      conversationId,
+      operation: 'cancel_stream',
+      messages: page.messages as unknown as Record<string, unknown>[],
+      totalMessages: page.total,
+      checkpoints,
+      activeBuild: (custom.activeBuild ?? null) as Record<string, unknown> | null
+    });
+  }
+
   async cancelAllStreams(): Promise<void> {
     const conversationIds = this.deps.abortManager.listConversationIds();
     this.deps.abortManager.cancelAll(this.deps.getView());
@@ -115,8 +136,8 @@ export class StreamRequestHandler {
    * 处理普通聊天流
    */
   async handleChatStream(data: any, requestId: string): Promise<void> {
-    const { conversationId, message, configId, attachments, modelOverride, hiddenFunctionResponse, promptModeId, streamId: clientStreamId } = data;
-    const streamId = this.resolveStreamId(clientStreamId, requestId)
+    const { conversationId, message, configId, attachments, modelOverride, hiddenFunctionResponse, promptModeId } = data;
+    const streamId = this.createAuthoritativeStreamId()
     
     const controller = this.deps.abortManager.create(conversationId);
     const summarizeController = this.deps.abortManager.createSummary(conversationId);
@@ -136,14 +157,14 @@ export class StreamRequestHandler {
       });
       
       // 发送响应，通知前端请求已接收并开始
-      this.deps.sendResponse(requestId, { started: true });
+      this.deps.sendResponse(requestId, { started: true, streamId });
       
       for await (const chunk of stream) {
         const isError = processor.processChunk(chunk);
         if (isError) break;
       }
       // 流结束后刷新缓冲区，确保所有消息都已发送
-      processor.flush();
+      await processor.drain();
     } catch (error: any) {
       // AbortError 可能来自：用户点击中断 / 网络抖动 / 上游直接抛 abort
       // 关键：无论哪种情况，都必须给前端一个明确的 stream 结尾事件，避免残留空占位消息。
@@ -166,8 +187,8 @@ export class StreamRequestHandler {
    * 处理重试流
    */
   async handleRetryStream(data: any, requestId: string): Promise<void> {
-    const { conversationId, configId, modelOverride, promptModeId, streamId: clientStreamId } = data;
-    const streamId = this.resolveStreamId(clientStreamId, requestId)
+    const { conversationId, configId, modelOverride, promptModeId } = data;
+    const streamId = this.createAuthoritativeStreamId()
     
     const controller = this.deps.abortManager.create(conversationId);
     const summarizeController = this.deps.abortManager.createSummary(conversationId);
@@ -184,13 +205,13 @@ export class StreamRequestHandler {
       });
       
       // 发送响应，通知前端请求已接收并开始
-      this.deps.sendResponse(requestId, { started: true });
+      this.deps.sendResponse(requestId, { started: true, streamId });
       
       for await (const chunk of stream) {
         const isError = processor.processChunk(chunk);
         if (isError) break;
       }
-      processor.flush();
+      await processor.drain();
     } catch (error: any) {
       if (controller.signal.aborted) {
         this.reportCancelled(processor)
@@ -211,8 +232,8 @@ export class StreamRequestHandler {
    * 处理编辑并重试流
    */
   async handleEditAndRetryStream(data: any, requestId: string): Promise<void> {
-    const { conversationId, messageIndex, newMessage, configId, modelOverride, attachments, promptModeId, streamId: clientStreamId } = data;
-    const streamId = this.resolveStreamId(clientStreamId, requestId)
+    const { conversationId, messageIndex, newMessage, configId, modelOverride, attachments, promptModeId } = data;
+    const streamId = this.createAuthoritativeStreamId()
     
     const controller = this.deps.abortManager.create(conversationId);
     const summarizeController = this.deps.abortManager.createSummary(conversationId);
@@ -232,13 +253,13 @@ export class StreamRequestHandler {
       });
       
       // 发送响应，通知前端请求已接收并开始
-      this.deps.sendResponse(requestId, { started: true });
+      this.deps.sendResponse(requestId, { started: true, streamId });
       
       for await (const chunk of stream) {
         const isError = processor.processChunk(chunk);
         if (isError) break;
       }
-      processor.flush();
+      await processor.drain();
     } catch (error: any) {
       if (controller.signal.aborted) {
         this.reportCancelled(processor)
@@ -259,8 +280,8 @@ export class StreamRequestHandler {
    * 处理工具确认流
    */
   async handleToolConfirmationStream(data: any, requestId: string): Promise<void> {
-    const { conversationId, toolResponses, annotation, configId, modelOverride, promptModeId, streamId: clientStreamId } = data;
-    const streamId = this.resolveStreamId(clientStreamId, requestId)
+    const { conversationId, toolResponses, annotation, configId, modelOverride, promptModeId } = data;
+    const streamId = this.createAuthoritativeStreamId()
     
     const controller = this.deps.abortManager.create(conversationId);
     const summarizeController = this.deps.abortManager.createSummary(conversationId);
@@ -279,13 +300,13 @@ export class StreamRequestHandler {
       });
       
       // 发送响应，通知前端请求已接收并开始
-      this.deps.sendResponse(requestId, { started: true });
+      this.deps.sendResponse(requestId, { started: true, streamId });
       
       for await (const chunk of stream) {
         const isError = processor.processChunk(chunk);
         if (isError) break;
       }
-      processor.flush();
+      await processor.drain();
     } catch (error: any) {
       if (controller.signal.aborted) {
         this.reportCancelled(processor)
@@ -311,7 +332,8 @@ export class StreamRequestHandler {
 
     await this.cleanupAbortedConversations([conversationId]);
 
-    this.deps.sendResponse(requestId, { cancelled: true });
+    const runtimeLedger = await this.createCancelMutationProjection(conversationId);
+    this.deps.sendResponse(requestId, { cancelled: true, runtimeLedger });
   }
 
   /**
@@ -335,9 +357,9 @@ export class StreamRequestHandler {
       }
 
       const errorCode = error.type || 'STREAM_ERROR'
-      const fallbackMessage = message || t('errors.unknown')
-      processor.sendError(errorCode, fallbackMessage)
-      this.deps.sendError(requestId, errorCode, fallbackMessage)
+      const resolvedMessage = message || t('errors.unknown')
+      processor.sendError(errorCode, resolvedMessage)
+      this.deps.sendError(requestId, errorCode, resolvedMessage)
       return
     }
 

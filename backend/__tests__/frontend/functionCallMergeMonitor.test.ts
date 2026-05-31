@@ -11,7 +11,7 @@ import {
 /**
  * WP15 条件 2：Monitor args "替换 → spread 合并" 语义测试。
  *
- * 为什么需要这些测试：contentDelta.ts 旧行为是 target.args = incoming.args（直接替换），
+ * 为什么需要这些测试：Monitor 旧 delta reducer 曾经是 target.args = incoming.args（直接替换），
  * 统一模块改为 { ...(target.args || {}), ...incoming.args }（spread 合并）。
  * 旧 key 不应丢失，且 finalArgs 少字段时不丢失之前通过 partialArgs 解析出的字段。
  *

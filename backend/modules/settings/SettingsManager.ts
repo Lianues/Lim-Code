@@ -630,6 +630,7 @@ export class SettingsManager {
             ...oldConfig,
             ...config
         };
+        newConfig.format = 'unified';
         if (typeof newConfig.autoSaveDelay === 'number' && Number.isFinite(newConfig.autoSaveDelay)) {
             // 修改原因：前端设置界面现在允许最小 0.05s 自动应用延迟，后端应直接使用该毫秒值，同时保护非法外部写入。
             // 修改方式：保存配置前只做 50ms 下限归一化，不再强行提升到 1s。

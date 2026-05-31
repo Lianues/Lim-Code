@@ -6,6 +6,7 @@
 
 import { t } from '../../backend/i18n';
 import type { HandlerContext, MessageHandler } from '../types';
+import { createChatMutationProjection } from './runtimeLedgerMutationProjection';
 
 /**
  * 删除消息（删除到指定位置）
@@ -31,6 +32,16 @@ export const deleteMessage: MessageHandler = async (data, requestId, ctx) => {
     conversationId,
     targetIndex
   });
+  if (result.success) {
+    const runtimeLedger = await createChatMutationProjection(ctx, {
+      conversationId,
+      operation: 'delete_range',
+      targetIndex,
+      deletedCount: result.deletedCount
+    });
+    ctx.sendResponse(requestId, { ...result, runtimeLedger });
+    return;
+  }
   ctx.sendResponse(requestId, result);
 };
 
@@ -48,7 +59,14 @@ export const deleteSingleMessage: MessageHandler = async (data, requestId, ctx) 
       await ctx.chatHandler.refreshDerivedMetadataAfterHistoryMutation(conversationId);
     }
 
-    ctx.sendResponse(requestId, { success: true });
+    const runtimeLedger = await createChatMutationProjection(ctx, {
+      conversationId,
+      operation: 'delete_single',
+      targetIndex,
+      deletedCount: 1
+    });
+
+    ctx.sendResponse(requestId, { success: true, runtimeLedger });
   } catch (error: any) {
     ctx.sendError(requestId, 'DELETE_SINGLE_MESSAGE_ERROR', error.message || t('webview.errors.deleteMessageFailed'));
   }

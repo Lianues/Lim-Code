@@ -765,7 +765,6 @@ const zhCN: BackendLanguageMessages = {
             getInstallPathFailed: '获取安装路径失败',
             
             showNotificationFailed: '显示通知失败',
-            rejectToolCallsFailed: '标记工具拒绝状态失败',
             
             getStorageConfigFailed: '获取存储配置失败',
             updateStorageConfigFailed: '更新存储配置失败',

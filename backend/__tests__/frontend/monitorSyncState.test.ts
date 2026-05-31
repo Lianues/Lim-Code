@@ -42,16 +42,16 @@ describe('MonitorSyncState display projection', () => {
     expect(state.waitingMessage).toContain('旧内容会保留');
   });
 
-  it('reports degraded when resync request fails while heartbeat remains fresh', () => {
+  it('reports recovering when resync request fails while heartbeat remains fresh', () => {
     // 修改原因：reset/getRunWindow 失败不能静默留空，也不能继续显示 Live。
-    // 修改方式：显式 error 派生 contentHealth=degraded。
+    // 修改方式：显式 error 派生 contentHealth=recovering。
     // 修改目的：用户能看到可重试的同步失败状态。
     const state = deriveMonitorSyncState({
       hasFocusedRun: true,
       hasWindow: true,
       isLoadingWindow: false,
       isResyncing: false,
-      hasRenderableMessages: true,
+      hasRenderableMessages: false,
       hasGap: false,
       error: '窗口同步失败',
       lastHeartbeatAt: 1000,
@@ -59,8 +59,8 @@ describe('MonitorSyncState display projection', () => {
     });
 
     expect(state.transportHealth).toBe('live');
-    expect(state.contentHealth).toBe('degraded');
-    expect(state.headerState).toBe('degraded');
-    expect(state.label).toBe('Degraded');
+    expect(state.contentHealth).toBe('recovering');
+    expect(state.headerState).toBe('recovering');
+    expect(state.label).toBe('Recovering');
   });
 });

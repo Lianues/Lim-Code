@@ -788,9 +788,6 @@ export interface BackendLanguageMessages {
             /** 通知相关 */
             showNotificationFailed: string;
             
-            /** 工具拒绝相关 */
-            rejectToolCallsFailed: string;
-            
             /** 存储配置相关 */
             getStorageConfigFailed: string;
             updateStorageConfigFailed: string;

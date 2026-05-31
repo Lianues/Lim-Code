@@ -1584,7 +1584,12 @@ export class ConversationManager {
         conversationId: string,
         messageIndex: number,
         toolCallIds?: string[]
-    ): Promise<void> {
+    ): Promise<{
+        modified: boolean;
+        insertedIndex?: number;
+        rejectedToolCalls: Array<{ id: string; name: string }>;
+        functionResponseContent?: Content;
+    }> {
         const repository = this.getTranscriptRepository(conversationId);
         const history = await repository.getContents();
         
@@ -1630,6 +1635,9 @@ export class ConversationManager {
             }
         }
         
+        let functionResponseContent: Content | undefined;
+        let insertedIndex: number | undefined;
+
         // 为被拒绝的工具添加 functionResponse
         if (rejectedCalls.length > 0) {
             const rejectedResponseParts: ContentPart[] = rejectedCalls.map(call => ({
@@ -1645,11 +1653,13 @@ export class ConversationManager {
             }));
             
             // 在工具调用消息的紧接后面插入 functionResponse
-            history.splice(messageIndex + 1, 0, {
+            insertedIndex = messageIndex + 1;
+            functionResponseContent = {
                 role: 'user',
                 parts: rejectedResponseParts,
                 isFunctionResponse: true
-            });
+            };
+            history.splice(insertedIndex, 0, functionResponseContent);
             modified = true;
         }
         
@@ -1660,6 +1670,13 @@ export class ConversationManager {
             await repository.replaceContents(history);
             await this.invalidateContextManagementState(conversationId, 'tool_calls_rejected');
         }
+
+        return {
+            modified,
+            insertedIndex,
+            rejectedToolCalls: rejectedCalls,
+            functionResponseContent
+        };
     }
     
     /**
@@ -1744,4 +1761,3 @@ export class ConversationManager {
         }
     }
 }
-

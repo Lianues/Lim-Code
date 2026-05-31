@@ -4,6 +4,7 @@
 
 import { t } from '../../backend/i18n';
 import type { HandlerContext, MessageHandler } from '../types';
+import { createChatMutationProjection } from './runtimeLedgerMutationProjection';
 
 /**
  * 获取检查点配置
@@ -55,6 +56,15 @@ export const restoreCheckpoint: MessageHandler = async (data, requestId, ctx) =>
     // 回退后刷新派生元数据（todoList / activeBuild），确保后续发给模型的 TODO_LIST 不过期。
     if (result?.success && ctx.chatHandler) {
       await ctx.chatHandler.refreshDerivedMetadataAfterHistoryMutation(conversationId);
+    }
+
+    if (result?.success) {
+      const runtimeLedger = await createChatMutationProjection(ctx, {
+        conversationId,
+        operation: 'restore'
+      });
+      ctx.sendResponse(requestId, { ...result, runtimeLedger });
+      return;
     }
 
     ctx.sendResponse(requestId, result);

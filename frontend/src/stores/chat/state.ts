@@ -134,7 +134,7 @@ export function removeMessageAt(state: MessageIndexLookupState, index: number): 
 
 /**
  * messageIndexById 的唯一查询入口。
- * 主路径走 Map；索引缺失或失配时回退到 findIndex，并在真实 store 中重建整表索引修复不变式。
+ * 主路径走 Map；索引缺失或失配时用 findIndex 恢复索引，并在真实 store 中重建整表索引修复不变式。
  */
 export function getMessageIndexById(state: MessageIndexLookupState, messageId: string | null | undefined): number {
   if (!messageId) return -1
@@ -151,19 +151,19 @@ export function getMessageIndexById(state: MessageIndexLookupState, messageId: s
     return indexed
   }
 
-  const fallbackIndex = messages.findIndex(message => message.id === messageId)
-  if (fallbackIndex === -1) {
+  const recoveredIndex = messages.findIndex(message => message.id === messageId)
+  if (recoveredIndex === -1) {
     return -1
   }
 
   // 最小调用形状可能没有 messageIndexById；此时只返回 findIndex 结果，不强行绑定完整 store。
   if (!indexMap || !state.messageIndexById) {
-    return fallbackIndex
+    return recoveredIndex
   }
 
-  // 走到 fallback 说明当前 Map 对本次查询不可信；重建整表，避免只修单 key 留下陈旧下标。
+  // 走到恢复分支说明当前 Map 对本次查询不可信；重建整表，避免只修单 key 留下陈旧下标。
   rebuildMessageIndexById(state)
-  return state.messageIndexById.value.get(messageId) ?? fallbackIndex
+  return state.messageIndexById.value.get(messageId) ?? recoveredIndex
 }
 
 /**

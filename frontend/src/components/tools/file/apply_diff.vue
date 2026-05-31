@@ -70,7 +70,7 @@ interface StructuredHunk {
 function parseStructuredHunksToDiffBlocks(hunks: StructuredHunk[]): DiffBlock[] {
   // 为什么要单独转换：面板现有渲染逻辑已经围绕 search/replace DiffBlock 工作，复用它可以避免 UI 分叉。
   // 怎么改：oldContent 映射为 search，newContent 映射为 replace，startLine 映射为展示用 start_line。
-  // 目的：让新结构化协议和旧 diff 面板拥有一致的展示、复制和失败预览行为。
+  // 目的：让结构化协议和 diff 面板拥有一致的展示、复制和失败预览行为。
   return hunks.map(h => ({
     search: h.oldContent,
     replace: h.newContent,
@@ -160,8 +160,7 @@ const filePath = computed(() => {
 
 // 获取 diff 列表
 // - 推荐格式：优先读取 args.hunks（结构化 oldContent/newContent）
-// - 兼容格式：读取 args.patch（unified diff）并按 hunk 转换为可展示的 DiffBlock
-// - 旧格式：兼容 args.diffs
+// - 显式 patch：读取 args.patch（unified diff）并按 hunk 转换为可展示的 DiffBlock
 const diffList = computed((): DiffBlock[] => {
   const hunks = props.args.hunks as StructuredHunk[] | undefined
   if (Array.isArray(hunks) && hunks.length > 0) {
@@ -206,36 +205,7 @@ const diffList = computed((): DiffBlock[] => {
     })
   }
 
-  const argsDiffs = (props.args.diffs as DiffBlock[] | undefined) || []
-  const failedDiffs = (props.result?.data as Record<string, any>)?.failedDiffs as any[] | undefined
-  
-  // 向后兼容旧格式（带有 results 或 diffs 的情况）
-  const data = props.result?.data as Record<string, any> | undefined
-  if (data?.results || data?.diffs) {
-    const results = data.results || data.diffs
-    return argsDiffs.map((diff, i) => {
-      const res = results.find((r: any) => r.index === i) || {}
-      return {
-        ...diff,
-        success: res.success,
-        error: res.error,
-        // 不要默认填充为 1：start_line 仅在“参数中提供/后端返回匹配行号”时才展示
-        start_line: res.matchedLine ?? res.start_line ?? diff.start_line
-      }
-    })
-  }
-
-  // 新格式：仅使用 failedDiffs 判断
-  return argsDiffs.map((diff, i) => {
-    const failure = failedDiffs?.find(f => f.index === i)
-    return {
-      ...diff,
-      success: !failure,
-      error: failure?.error,
-      // start_line 允许为空；为空时前端不显示“line xx”标记，但内部行号仍会从 1 开始计算
-      start_line: diff.start_line
-    }
-  })
+  return []
 })
 
 // 获取结果信息
@@ -245,7 +215,7 @@ const resultData = computed(() => {
 })
 
 // 变更数量
-// 优先使用可渲染的 diffList（用于展示），否则回退到后端统计字段（避免 patch 过大未透传导致显示 0）
+// 优先使用可渲染的 diffList（用于展示），否则使用后端统计字段（避免 patch 过大未透传导致显示 0）
 const changesCount = computed(() => {
   if (diffList.value.length > 0) return diffList.value.length
 

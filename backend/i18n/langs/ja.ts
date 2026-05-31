@@ -765,7 +765,6 @@ const ja: BackendLanguageMessages = {
             getInstallPathFailed: 'インストールパスの取得に失敗しました',
             
             showNotificationFailed: '通知の表示に失敗しました',
-            rejectToolCallsFailed: 'ツール呼び出しの拒否に失敗しました',
             
             getStorageConfigFailed: 'ストレージ設定の取得に失敗しました',
             updateStorageConfigFailed: 'ストレージ設定の更新に失敗しました',

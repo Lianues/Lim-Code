@@ -48,6 +48,11 @@ const DIFF_SUPPORTED_TOOLS = ['apply_diff', 'write_file', 'search_in_files', 'in
 
 type ApplyDiffAutoSaveConfig = { autoSave: boolean; autoSaveDelay: number }
 
+interface StreamStartResponse {
+  started?: boolean
+  streamId?: string
+}
+
 type PendingDiffSession = {
   id: string
   toolId?: string
@@ -767,19 +772,21 @@ async function sendToolConfirmation(
     }
 
     // 为本次工具确认流绑定 streamId，避免流式过滤器把后端返回的 chunk 当作“未知流”丢弃
-    const streamId = generateId()
-    chatStore.activeStreamId = streamId
+    chatStore.activeStreamId = null
     chatStore.isWaitingForResponse = true
 
-    await sendToExtension('toolConfirmation', {
+    const startResponse = await sendToExtension<StreamStartResponse>('toolConfirmation', {
       conversationId: currentConversationId,
       configId: currentConfig.id,
       modelOverride: chatStore.pendingModelOverride || undefined,
       toolResponses,
       annotation,
-      streamId,
       promptModeId: chatStore.currentPromptModeId
     })
+    const streamId = typeof startResponse?.streamId === 'string' ? startResponse.streamId.trim() : ''
+    if (streamId) {
+      chatStore.activeStreamId = streamId
+    }
     return true
   } catch (error) {
     console.error('Failed to send tool confirmation:', error)

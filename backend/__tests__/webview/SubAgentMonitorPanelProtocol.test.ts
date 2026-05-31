@@ -1,6 +1,7 @@
 import { SubAgentMonitorPanel, createMonitorEventPayload } from '../../../webview/SubAgentMonitorPanel';
 import { WEBVIEW_CLIENT_IDS } from '../../../webview/runtime/WebviewClientRegistry';
 import { subAgentRunEventBus, subAgentRunController } from '../../../backend/tools/subagents';
+import { subAgentRuntimeLedgerBridge } from '../../../backend/tools/subagents/runtimeLedgerBridge';
 import * as vscode from 'vscode';
 import type { Content } from '../../../backend/modules/conversation/types';
 
@@ -47,6 +48,10 @@ function createContent(index: number, text: string): Content {
   } as Content;
 }
 
+function flushRuntimeLedger(): Promise<void> {
+  return new Promise(resolve => setImmediate(resolve));
+}
+
 describe('SubAgentMonitorPanel manifest/window protocol', () => {
   const runIds: string[] = [];
 
@@ -68,6 +73,7 @@ describe('SubAgentMonitorPanel manifest/window protocol', () => {
       snapshots?.delete(runId);
       stores?.delete(runId);
     }
+    subAgentRuntimeLedgerBridge.resetForTests();
   });
 
   function createRun(runId: string, contents: Content[]) {
@@ -100,6 +106,7 @@ describe('SubAgentMonitorPanel manifest/window protocol', () => {
   it('monitorReady returns manifests without full snapshot contents', async () => {
     createRun('protocol-run-1', [createContent(0, '首条'), createContent(1, '尾条')]);
     const { panel, sink } = openPanel();
+    await flushRuntimeLedger();
 
     await sink.receiveHandlers[0]({
       type: 'subagents.monitorReady',
@@ -126,7 +133,7 @@ describe('SubAgentMonitorPanel manifest/window protocol', () => {
     panel.dispose();
   });
 
-  it('pushes low-frequency events with manifest but without full snapshot or long response payload', () => {
+  it('pushes low-frequency events with manifest/runtimeLedger but without full snapshot or long response payload', async () => {
     createRun('protocol-run-1', [createContent(0, '首条'), createContent(1, '尾条')]);
     const { panel, sink } = openPanel();
     sink.messages.length = 0;
@@ -137,6 +144,7 @@ describe('SubAgentMonitorPanel manifest/window protocol', () => {
       type: 'run_completed',
       payload: { response: 'x'.repeat(2000), steps: 1, modelVersion: 'test-model' }
     });
+    await flushRuntimeLedger();
 
     const pushed = sink.messages.find(message => message.type === 'subagentMonitor.event');
     expect(pushed.data.manifest).toMatchObject({
@@ -146,6 +154,21 @@ describe('SubAgentMonitorPanel manifest/window protocol', () => {
       eventSequence: 2
     });
     expect(pushed.data.snapshot).toBeUndefined();
+    expect(pushed.data.runtimeLedger).toMatchObject({
+      status: 'ok',
+      health: {
+        content: 'ok',
+        renderable: true
+      },
+      ledger: {
+        eventSequence: 2,
+        eventCountsByType: {
+          'runtime.subagent.run_event': 2,
+          'runtime.subagent.content_snapshot': 1
+        }
+      }
+    });
+    expect(pushed.data.runtimeLedger.ledger.contentWindow).toBeUndefined();
     expect(pushed.data.event.payload.response).toBeUndefined();
     expect(pushed.data.event.payload).toMatchObject({ steps: 1, modelVersion: 'test-model' });
     panel.dispose();
@@ -214,22 +237,19 @@ describe('SubAgentMonitorPanel manifest/window protocol', () => {
     expect((unknownEvent.payload as any).result).toBeUndefined();
     expect((unknownEvent.payload as any).data).toBeUndefined();
     expect(unknownEvent.payload).toMatchObject({ status: 'running', attempt: 2 });
-    // 修改原因：Monitor 必须实时显示 SubAgent 输出，但不能回退到每个事件携带完整 transcript。
-    // 修改方式：llm_delta 只允许轻量 text/thought/functionCall delta 通过，contentSnapshot/functionResponse/result 仍被剥离。
-    // 修改目的：锁定“实时正文走轻量 delta，大对象走 window”的 docs/pm 统一协议。
+    // 修改原因：Monitor 的 raw event 通道只承载控制/诊断字段，不能再成为第二条正文渲染路径。
+    // 修改方式：llm_delta 的 text/thought/functionCall delta 也必须从 raw payload 剥离，正文只允许走 runtimeLedger.ledger.liveDelta。
+    // 修改目的：锁定“raw event 不渲染正文，Runtime Ledger projection 才是正文 source-of-truth”的统一协议。
     expect(llmDeltaEvent.payload).toMatchObject({
-      delta: [
-        { text: '实时正文' },
-        { text: '思考', thought: true },
-        { functionCall: { id: 'tool-1', name: 'read_file', partialArgs: '{"path"', args: { path: 'README.md' } } }
-      ],
       contentCount: 1,
       usage: { candidatesTokenCount: 3 },
       modelVersion: 'm',
       contentRevision: 7,
       eventSequence: 9
     });
+    expect((llmDeltaEvent.payload as any).delta).toBeUndefined();
     expect(JSON.stringify(llmDeltaEvent.payload)).not.toContain('functionResponse');
+    expect(JSON.stringify(llmDeltaEvent.payload)).not.toContain('实时正文');
     expect(JSON.stringify(llmDeltaEvent.payload)).not.toContain('不应透传');
     expect(JSON.stringify(llmDeltaEvent.payload)).not.toContain('contents');
   });
@@ -238,6 +258,7 @@ describe('SubAgentMonitorPanel manifest/window protocol', () => {
     createRun('protocol-run-1', Array.from({ length: 4 }, (_, index) => createContent(index, `内容 ${index}`)));
     const { panel, sink } = openPanel();
 
+    await flushRuntimeLedger();
     await sink.receiveHandlers[0]({
       type: 'subagents.monitor.getRunWindow',
       clientId: WEBVIEW_CLIENT_IDS.subagentMonitor,
@@ -248,13 +269,23 @@ describe('SubAgentMonitorPanel manifest/window protocol', () => {
       }
     });
 
+    await flushRuntimeLedger();
     const response = sink.messages.find(message => message.requestId === 'window-1');
     expect(response).toMatchObject({
       type: 'response',
       clientId: WEBVIEW_CLIENT_IDS.subagentMonitor,
-      success: true,
-      data: {
-        window: {
+      success: true
+    });
+    expect(response.data.window).toBeUndefined();
+    expect(response.data.runtimeLedger).toMatchObject({
+      status: 'ok',
+      mismatches: [],
+      ledger: {
+        projectionStatus: 'ok',
+        eventSequence: 1,
+        contentRevision: 0,
+        contentCount: 4,
+        contentWindow: {
           runId: 'protocol-run-1',
           startIndex: 2,
           endIndex: 4,
@@ -262,11 +293,55 @@ describe('SubAgentMonitorPanel manifest/window protocol', () => {
           contentRevision: 0,
           eventSequence: 1,
           hasMoreBefore: true,
-          hasMoreAfter: false
+          hasMoreAfter: false,
+          source: 'runtime-ledger'
+        },
+        truncated: false,
+        eventCountsByType: {
+          'runtime.subagent.run_event': 1,
+          'runtime.subagent.content_snapshot': 1
+        },
+        toolStatesByInvocationId: {}
+      }
+    });
+    expect(response.data.runtimeLedger.ledger.contentWindow.contents.map((content: Content) => content.parts[0].text)).toEqual(['内容 2', '内容 3']);
+    panel.dispose();
+  });
+
+  it('getRunWindow includes a healthy Runtime Ledger content window projection when coverage exists', async () => {
+    createRun('protocol-run-1', []);
+    subAgentRunEventBus.appendContent('protocol-run-1', createContent(0, 'ledger window text'));
+    const { panel, sink } = openPanel();
+
+    await flushRuntimeLedger();
+    await sink.receiveHandlers[0]({
+      type: 'subagents.monitor.getRunWindow',
+      clientId: WEBVIEW_CLIENT_IDS.subagentMonitor,
+      requestId: 'window-ledger-1',
+      data: {
+        runId: 'protocol-run-1',
+        options: { limit: 1, fromTail: true }
+      }
+    });
+
+    await flushRuntimeLedger();
+    const response = sink.messages.find(message => message.requestId === 'window-ledger-1');
+    expect(response.data.runtimeLedger).toMatchObject({
+      status: 'ok',
+      ledger: {
+        contentWindow: {
+          runId: 'protocol-run-1',
+          startIndex: 0,
+          endIndex: 1,
+          totalCount: 1,
+          contentRevision: 1,
+          eventSequence: 2,
+          contentCoveredEventSequence: 2,
+          source: 'runtime-ledger'
         }
       }
     });
-    expect(response.data.window.contents.map((content: Content) => content.parts[0].text)).toEqual(['内容 2', '内容 3']);
+    expect(response.data.runtimeLedger.ledger.contentWindow.contents[0].parts[0].text).toBe('ledger window text');
     panel.dispose();
   });
 
