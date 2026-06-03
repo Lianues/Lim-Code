@@ -50,6 +50,7 @@ import type {
     ChannelError,
     ErrorType
 } from '../types';
+import { splitThinkTagsFromText } from '../thinkTagParser';
 
 /**
  * OpenAI 格式转换器
@@ -623,7 +624,10 @@ export class OpenAIFormatter extends BaseFormatter {
     private parseResponseFunctionCallMode(message: any, parts: ContentPart[]): ContentPart[] {
         // 添加主要内容
         if (message.content) {
-            parts.push({ text: message.content });
+            parts.push(...splitThinkTagsFromText(message.content as string).filter(part => {
+                if (!('text' in part)) return true;
+                return (part.text || '').trim().length > 0;
+            }));
         }
         
         // 处理 tool_calls（函数调用）
@@ -663,16 +667,38 @@ export class OpenAIFormatter extends BaseFormatter {
         
         const contentText = message.content as string;
 
-        const promptMode = detectPromptToolMode(contentText);
-        if (!promptMode) {
-            if (contentText.trim()) {
-                parts.push({ text: contentText });
+        return [...parts, ...this.parseTextContentParts(contentText)];
+    }
+
+    /**
+     * 解析普通文本内容：
+     * 1. 先将 <think>...</think> 标签转换为 thought parts；
+     * 2. 再仅对非思考文本检测 XML/JSON 工具调用。
+     */
+    private parseTextContentParts(contentText: string): ContentPart[] {
+        const parsedParts: ContentPart[] = [];
+
+        for (const part of splitThinkTagsFromText(contentText)) {
+            if (!('text' in part) || !(part.text || '').trim()) {
+                continue;
             }
-            return parts;
+
+            if (part.thought) {
+                parsedParts.push(part);
+                continue;
+            }
+
+            const promptMode = detectPromptToolMode(part.text || '');
+            if (!promptMode) {
+                parsedParts.push({ text: part.text });
+                continue;
+            }
+
+            const extracted = extractPromptToolParts(part.text || '', promptMode, { flushIncompleteTailAsText: true });
+            parsedParts.push(...extracted.parts);
         }
 
-        const extracted = extractPromptToolParts(contentText, promptMode, { flushIncompleteTailAsText: true });
-        return [...parts, ...extracted.parts];
+        return parsedParts;
     }
     
     /**
